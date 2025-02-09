@@ -992,6 +992,7 @@ mod test {
         // And then receive a scroll event _before_ the next paint
         cx.simulate_event(ScrollWheelEvent {
             position: point(px(1.), px(1.)),
+            absolute_position: point(px(1.), px(1.)),
             delta: ScrollDelta::Pixels(point(px(0.), px(-500.))),
             ..Default::default()
         });

@@ -15,7 +15,10 @@ pub trait InputEvent: Sealed + 'static {
 pub trait KeyEvent: InputEvent {}
 
 /// A mouse event from the platform.
-pub trait MouseEvent: InputEvent {}
+pub trait MouseEvent: InputEvent + Clone {
+    /// Converts `absolute_position` to local coordinates and assigns it to `position`
+    fn with_local_coordinates(self, origin: Point<Pixels>) -> Self;
+}
 
 /// The key down event equivalent for the platform.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -92,8 +95,11 @@ pub struct MouseDownEvent {
     /// Which mouse button was pressed.
     pub button: MouseButton,
 
-    /// The position of the mouse on the window.
+    /// The position within the current element
     pub position: Point<Pixels>,
+
+    /// The position of the mouse on the window.
+    pub absolute_position: Point<Pixels>,
 
     /// The modifiers that were held down when the mouse was pressed.
     pub modifiers: Modifiers,
@@ -111,7 +117,12 @@ impl InputEvent for MouseDownEvent {
         PlatformInput::MouseDown(self)
     }
 }
-impl MouseEvent for MouseDownEvent {}
+impl MouseEvent for MouseDownEvent {
+    fn with_local_coordinates(mut self, origin: Point<Pixels>) -> Self {
+        self.position = self.absolute_position - origin;
+        self
+    }
+}
 
 /// A mouse up event from the platform
 #[derive(Clone, Debug, Default)]
@@ -119,8 +130,11 @@ pub struct MouseUpEvent {
     /// Which mouse button was released.
     pub button: MouseButton,
 
-    /// The position of the mouse on the window.
+    /// The position within the current element
     pub position: Point<Pixels>,
+
+    /// The position of the mouse on the window.
+    pub absolute_position: Point<Pixels>,
 
     /// The modifiers that were held down when the mouse was released.
     pub modifiers: Modifiers,
@@ -135,7 +149,12 @@ impl InputEvent for MouseUpEvent {
         PlatformInput::MouseUp(self)
     }
 }
-impl MouseEvent for MouseUpEvent {}
+impl MouseEvent for MouseUpEvent {
+    fn with_local_coordinates(mut self, origin: Point<Pixels>) -> Self {
+        self.position = self.absolute_position - origin;
+        self
+    }
+}
 
 /// A click event, generated when a mouse button is pressed and released.
 #[derive(Clone, Debug, Default)]
@@ -215,8 +234,11 @@ impl Default for NavigationDirection {
 /// A mouse move event from the platform
 #[derive(Clone, Debug, Default)]
 pub struct MouseMoveEvent {
-    /// The position of the mouse on the window.
+    /// The position within the current element
     pub position: Point<Pixels>,
+
+    /// The position of the mouse on the window.
+    pub absolute_position: Point<Pixels>,
 
     /// The mouse button that was pressed, if any.
     pub pressed_button: Option<MouseButton>,
@@ -231,7 +253,12 @@ impl InputEvent for MouseMoveEvent {
         PlatformInput::MouseMove(self)
     }
 }
-impl MouseEvent for MouseMoveEvent {}
+impl MouseEvent for MouseMoveEvent {
+    fn with_local_coordinates(mut self, origin: Point<Pixels>) -> Self {
+        self.position = self.absolute_position - origin;
+        self
+    }
+}
 
 impl MouseMoveEvent {
     /// Returns true if the left mouse button is currently held down.
@@ -243,8 +270,11 @@ impl MouseMoveEvent {
 /// A mouse wheel event from the platform
 #[derive(Clone, Debug, Default)]
 pub struct ScrollWheelEvent {
-    /// The position of the mouse on the window.
+    /// The position within the current element
     pub position: Point<Pixels>,
+
+    /// The position of the mouse on the window.
+    pub absolute_position: Point<Pixels>,
 
     /// The change in scroll wheel position for this event.
     pub delta: ScrollDelta,
@@ -262,7 +292,12 @@ impl InputEvent for ScrollWheelEvent {
         PlatformInput::ScrollWheel(self)
     }
 }
-impl MouseEvent for ScrollWheelEvent {}
+impl MouseEvent for ScrollWheelEvent {
+    fn with_local_coordinates(mut self, origin: Point<Pixels>) -> Self {
+        self.position = self.absolute_position - origin;
+        self
+    }
+}
 
 impl Deref for ScrollWheelEvent {
     type Target = Modifiers;
@@ -364,7 +399,12 @@ impl InputEvent for MouseExitEvent {
         PlatformInput::MouseExited(self)
     }
 }
-impl MouseEvent for MouseExitEvent {}
+impl MouseEvent for MouseExitEvent {
+    fn with_local_coordinates(self, _origin: Point<Pixels>) -> Self {
+        // TODO: convert to local coordinates
+        self
+    }
+}
 
 impl Deref for MouseExitEvent {
     type Target = Modifiers;
@@ -422,7 +462,12 @@ impl InputEvent for FileDropEvent {
         PlatformInput::FileDrop(self)
     }
 }
-impl MouseEvent for FileDropEvent {}
+impl MouseEvent for FileDropEvent {
+    fn with_local_coordinates(self, _origin: Point<Pixels>) -> Self {
+        // TODO: convert to local coordinates
+        self
+    }
+}
 
 /// An enum corresponding to all kinds of platform input events.
 #[derive(Clone, Debug)]

@@ -120,13 +120,16 @@ impl PlatformInput {
                     _ => return None,
                 };
                 window_height.map(|window_height| {
+                    let position = point(
+                        px(native_event.locationInWindow().x as f32),
+                        // MacOS screen coordinates are relative to bottom left
+                        window_height - px(native_event.locationInWindow().y as f32),
+                    );
+
                     Self::MouseDown(MouseDownEvent {
                         button,
-                        position: point(
-                            px(native_event.locationInWindow().x as f32),
-                            // MacOS screen coordinates are relative to bottom left
-                            window_height - px(native_event.locationInWindow().y as f32),
-                        ),
+                        position,
+                        absolute_position: position,
                         modifiers: read_modifiers(native_event),
                         click_count: native_event.clickCount() as usize,
                         first_mouse: false,
@@ -147,12 +150,15 @@ impl PlatformInput {
                 };
 
                 window_height.map(|window_height| {
+                    let position = point(
+                        px(native_event.locationInWindow().x as f32),
+                        window_height - px(native_event.locationInWindow().y as f32),
+                    );
+
                     Self::MouseUp(MouseUpEvent {
                         button,
-                        position: point(
-                            px(native_event.locationInWindow().x as f32),
-                            window_height - px(native_event.locationInWindow().y as f32),
-                        ),
+                        position,
+                        absolute_position: position,
                         modifiers: read_modifiers(native_event),
                         click_count: native_event.clickCount() as usize,
                     })
@@ -171,12 +177,15 @@ impl PlatformInput {
 
                 match navigation_direction {
                     Some(direction) => window_height.map(|window_height| {
+                        let position = point(
+                            px(native_event.locationInWindow().x as f32),
+                            window_height - px(native_event.locationInWindow().y as f32),
+                        );
+
                         Self::MouseDown(MouseDownEvent {
                             button: MouseButton::Navigate(direction),
-                            position: point(
-                                px(native_event.locationInWindow().x as f32),
-                                window_height - px(native_event.locationInWindow().y as f32),
-                            ),
+                            position,
+                            absolute_position: position,
                             modifiers: read_modifiers(native_event),
                             click_count: 1,
                             first_mouse: false,
@@ -205,11 +214,14 @@ impl PlatformInput {
                     ScrollDelta::Lines(raw_data)
                 };
 
+                let position = point(
+                    px(native_event.locationInWindow().x as f32),
+                    window_height - px(native_event.locationInWindow().y as f32),
+                );
+
                 Self::ScrollWheel(ScrollWheelEvent {
-                    position: point(
-                        px(native_event.locationInWindow().x as f32),
-                        window_height - px(native_event.locationInWindow().y as f32),
-                    ),
+                    position,
+                    absolute_position: position,
                     delta,
                     touch_phase: phase,
                     modifiers: read_modifiers(native_event),
@@ -229,22 +241,28 @@ impl PlatformInput {
                 };
 
                 window_height.map(|window_height| {
+                    let position = point(
+                        px(native_event.locationInWindow().x as f32),
+                        window_height - px(native_event.locationInWindow().y as f32),
+                    );
+
                     Self::MouseMove(MouseMoveEvent {
                         pressed_button: Some(pressed_button),
-                        position: point(
-                            px(native_event.locationInWindow().x as f32),
-                            window_height - px(native_event.locationInWindow().y as f32),
-                        ),
+                        position,
+                        absolute_position: position,
                         modifiers: read_modifiers(native_event),
                     })
                 })
             }
             NSEventType::NSMouseMoved => window_height.map(|window_height| {
+                let position = point(
+                    px(native_event.locationInWindow().x as f32),
+                    window_height - px(native_event.locationInWindow().y as f32),
+                );
+
                 Self::MouseMove(MouseMoveEvent {
-                    position: point(
-                        px(native_event.locationInWindow().x as f32),
-                        window_height - px(native_event.locationInWindow().y as f32),
-                    ),
+                    position,
+                    absolute_position: position,
                     pressed_button: None,
                     modifiers: read_modifiers(native_event),
                 })

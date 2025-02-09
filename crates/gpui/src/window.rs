@@ -2809,7 +2809,13 @@ impl Window {
             content_mask,
             opaque,
         };
-        self.next_frame.hitboxes.push(hitbox.clone());
+        self.next_frame.hitboxes.push(Hitbox {
+            bounds: Bounds {
+                origin: bounds.origin + self.coordinate_space_origin,
+                size: bounds.size,
+            },
+            ..hitbox.clone()
+        });
         hitbox
     }
 
@@ -2896,10 +2902,12 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
+        let local_origin = self.coordinate_space_origin;
         self.next_frame.mouse_listeners.push(Some(Box::new(
             move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
-                if let Some(event) = event.downcast_ref() {
-                    handler(event, phase, window, cx)
+                if let Some(event) = event.downcast_ref::<Event>() {
+                    let event = event.clone().with_local_coordinates(local_origin);
+                    handler(&event, phase, window, cx)
                 }
             },
         )));
@@ -3107,6 +3115,7 @@ impl Window {
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {
                         position,
+                        absolute_position: position,
                         pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
                     })
@@ -3115,6 +3124,7 @@ impl Window {
                     self.mouse_position = position;
                     PlatformInput::MouseMove(MouseMoveEvent {
                         position,
+                        absolute_position: position,
                         pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
                     })
@@ -3125,6 +3135,7 @@ impl Window {
                     PlatformInput::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,
                         position,
+                        absolute_position: position,
                         modifiers: Modifiers::default(),
                         click_count: 1,
                     })

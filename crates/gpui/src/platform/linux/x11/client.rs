@@ -1028,6 +1028,7 @@ impl X11Client {
                         window.handle_input(PlatformInput::MouseDown(crate::MouseDownEvent {
                             button,
                             position,
+                            absolute_position: position,
                             modifiers,
                             click_count: current_count,
                             first_mouse: false,
@@ -1074,6 +1075,7 @@ impl X11Client {
                         window.handle_input(PlatformInput::MouseUp(crate::MouseUpEvent {
                             button,
                             position,
+                            absolute_position: position,
                             modifiers,
                             click_count,
                         }));
@@ -1097,6 +1099,7 @@ impl X11Client {
                 if event.valuator_mask[0] & 3 != 0 {
                     window.handle_input(PlatformInput::MouseMove(crate::MouseMoveEvent {
                         position,
+                        absolute_position: position,
                         pressed_button,
                         modifiers,
                     }));
@@ -1933,6 +1936,7 @@ fn make_scroll_wheel_event(
     };
     crate::ScrollWheelEvent {
         position,
+        absolute_position: position,
         delta: ScrollDelta::Lines(delta),
         modifiers,
         touch_phase: TouchPhase::default(),
