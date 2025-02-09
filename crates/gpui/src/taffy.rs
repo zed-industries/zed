@@ -20,7 +20,7 @@ struct NodeContext {
 }
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
-    absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
+    layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     computed_layouts: FxHashSet<LayoutId>,
 }
 
@@ -30,14 +30,14 @@ impl TaffyLayoutEngine {
     pub fn new() -> Self {
         TaffyLayoutEngine {
             taffy: TaffyTree::new(),
-            absolute_layout_bounds: FxHashMap::default(),
+            layout_bounds: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
         }
     }
 
     pub fn clear(&mut self) {
         self.taffy.clear();
-        self.absolute_layout_bounds.clear();
+        self.layout_bounds.clear();
         self.computed_layouts.clear();
     }
 
@@ -159,7 +159,7 @@ impl TaffyLayoutEngine {
             let mut stack = SmallVec::<[LayoutId; 64]>::new();
             stack.push(id);
             while let Some(id) = stack.pop() {
-                self.absolute_layout_bounds.remove(&id);
+                self.layout_bounds.remove(&id);
                 stack.extend(
                     self.taffy
                         .children(id.into())
@@ -195,7 +195,7 @@ impl TaffyLayoutEngine {
     }
 
     pub fn layout_bounds(&mut self, id: LayoutId) -> Bounds<Pixels> {
-        if let Some(layout) = self.absolute_layout_bounds.get(&id).cloned() {
+        if let Some(layout) = self.layout_bounds.get(&id).cloned() {
             return layout;
         }
 
@@ -205,12 +205,7 @@ impl TaffyLayoutEngine {
             size: layout.size.into(),
         };
 
-        if let Some(parent_id) = self.taffy.parent(id.0) {
-            let parent_bounds = self.layout_bounds(parent_id.into());
-            bounds.origin += parent_bounds.origin;
-        }
-        self.absolute_layout_bounds.insert(id, bounds);
-
+        self.layout_bounds.insert(id, bounds);
         bounds
     }
 }

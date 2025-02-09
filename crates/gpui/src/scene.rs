@@ -696,6 +696,27 @@ impl Path<Pixels> {
         }
     }
 
+    /// Translate this path by a given offset.
+    pub fn offset(&self, offset: Point<Pixels>) -> Path<Pixels> {
+        Path {
+            id: self.id,
+            order: self.order,
+            bounds: self.bounds + offset,
+            content_mask: ContentMask {
+                bounds: self.content_mask.bounds + offset,
+            },
+            vertices: self
+                .vertices
+                .iter()
+                .map(|vertex| vertex.offset(offset))
+                .collect(),
+            start: self.start + offset,
+            current: self.current + offset,
+            contour_count: self.contour_count,
+            color: self.color,
+        }
+    }
+
     /// Scale this path by the given factor.
     pub fn scale(&self, factor: f32) -> Path<ScaledPixels> {
         Path {
@@ -805,6 +826,16 @@ pub(crate) struct PathVertex<P: Clone + Default + Debug> {
 }
 
 impl PathVertex<Pixels> {
+    pub fn offset(&self, offset: Point<Pixels>) -> Self {
+        Self {
+            xy_position: self.xy_position + offset,
+            st_position: self.st_position,
+            content_mask: ContentMask {
+                bounds: self.content_mask.bounds + offset,
+            },
+        }
+    }
+
     pub fn scale(&self, factor: f32) -> PathVertex<ScaledPixels> {
         PathVertex {
             xy_position: self.xy_position.scale(factor),

@@ -334,14 +334,20 @@ impl<E: Element> Drawable<E> {
                 }
 
                 let bounds = window.layout_bounds(layout_id);
+                window.coordinate_space_layout_id = Some(layout_id);
                 let node_id = window.next_frame.dispatch_tree.push_node();
-                let prepaint = self.element.prepaint(
-                    global_id.as_ref(),
-                    bounds,
-                    &mut request_layout,
-                    window,
-                    cx,
-                );
+                let prepaint = window.with_coordinate_origin(bounds.origin, |window| {
+                    self.element.prepaint(
+                        global_id.as_ref(),
+                        Bounds {
+                            origin: Point::default(),
+                            size: bounds.size,
+                        },
+                        &mut request_layout,
+                        window,
+                        cx,
+                    )
+                });
                 window.next_frame.dispatch_tree.pop_node();
 
                 if global_id.is_some() {
@@ -380,14 +386,19 @@ impl<E: Element> Drawable<E> {
                 }
 
                 window.next_frame.dispatch_tree.set_active_node(node_id);
-                self.element.paint(
-                    global_id.as_ref(),
-                    bounds,
-                    &mut request_layout,
-                    &mut prepaint,
-                    window,
-                    cx,
-                );
+                window.with_coordinate_origin(bounds.origin, |window| {
+                    self.element.paint(
+                        global_id.as_ref(),
+                        Bounds {
+                            origin: Point::default(),
+                            size: bounds.size,
+                        },
+                        &mut request_layout,
+                        &mut prepaint,
+                        window,
+                        cx,
+                    );
+                });
 
                 if global_id.is_some() {
                     window.element_id_stack.pop();
@@ -407,7 +418,9 @@ impl<E: Element> Drawable<E> {
         cx: &mut App,
     ) -> Size<Pixels> {
         if matches!(&self.phase, ElementDrawPhase::Start) {
-            self.request_layout(window, cx);
+            window.with_coordinate_origin(Point::default(), |window| {
+                self.request_layout(window, cx);
+            });
         }
 
         let layout_id = match mem::take(&mut self.phase) {
@@ -545,7 +558,9 @@ impl AnyElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<FocusHandle> {
-        window.with_absolute_element_offset(origin, |window| self.prepaint(window, cx))
+        window.with_coordinate_origin(origin + window.coordinate_space_origin, |window| {
+            self.prepaint(window, cx)
+        })
     }
 
     /// Performs layout on this element in the available space, then prepaints it at the given absolute origin.
