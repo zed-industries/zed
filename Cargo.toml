@@ -135,6 +135,7 @@ members = [
     "crates/terminal",
     "crates/terminal_view",
     "crates/text",
+    "crates/text_space",
     "crates/theme",
     "crates/theme_extension",
     "crates/theme_importer",
@@ -333,6 +334,7 @@ telemetry_events = { path = "crates/telemetry_events" }
 terminal = { path = "crates/terminal" }
 terminal_view = { path = "crates/terminal_view" }
 text = { path = "crates/text" }
+text_space = { path = "crates/text_space" }
 theme = { path = "crates/theme" }
 theme_extension = { path = "crates/theme_extension" }
 theme_importer = { path = "crates/theme_importer" }
