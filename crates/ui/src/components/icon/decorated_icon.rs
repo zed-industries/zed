@@ -1,10 +1,8 @@
-use gpui::{IntoElement, Point};
+use gpui::{AnyElement, IntoElement, Point};
 
-use crate::{
-    prelude::*, traits::component_preview::ComponentPreview, IconDecoration, IconDecorationKind,
-};
+use crate::{prelude::*, IconDecoration, IconDecorationKind};
 
-#[derive(IntoElement)]
+#[derive(IntoElement, IntoComponent)]
 pub struct DecoratedIcon {
     icon: Icon,
     decoration: Option<IconDecoration>,
@@ -27,12 +25,7 @@ impl RenderOnce for DecoratedIcon {
 }
 
 impl ComponentPreview for DecoratedIcon {
-    fn examples(_: &mut Window, cx: &mut App) -> Vec<ComponentExampleGroup<Self>> {
-        let icon_1 = Icon::new(IconName::FileDoc);
-        let icon_2 = Icon::new(IconName::FileDoc);
-        let icon_3 = Icon::new(IconName::FileDoc);
-        let icon_4 = Icon::new(IconName::FileDoc);
-
+    fn preview(_window: &mut Window, cx: &App) -> AnyElement {
         let decoration_x = IconDecoration::new(
             IconDecorationKind::X,
             cx.theme().colors().surface_background,
@@ -66,22 +59,32 @@ impl ComponentPreview for DecoratedIcon {
             y: px(-2.),
         });
 
-        let examples = vec![
-            single_example("no_decoration", DecoratedIcon::new(icon_1, None)),
-            single_example(
-                "with_decoration",
-                DecoratedIcon::new(icon_2, Some(decoration_x)),
-            ),
-            single_example(
-                "with_decoration",
-                DecoratedIcon::new(icon_3, Some(decoration_triangle)),
-            ),
-            single_example(
-                "with_decoration",
-                DecoratedIcon::new(icon_4, Some(decoration_dot)),
-            ),
-        ];
-
-        vec![example_group(examples)]
+        v_flex()
+            .gap_6()
+            .children(vec![example_group_with_title(
+                "Decorations",
+                vec![
+                    single_example(
+                        "No Decoration",
+                        DecoratedIcon::new(Icon::new(IconName::FileDoc), None).into_any_element(),
+                    ),
+                    single_example(
+                        "X Decoration",
+                        DecoratedIcon::new(Icon::new(IconName::FileDoc), Some(decoration_x))
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "Triangle Decoration",
+                        DecoratedIcon::new(Icon::new(IconName::FileDoc), Some(decoration_triangle))
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "Dot Decoration",
+                        DecoratedIcon::new(Icon::new(IconName::FileDoc), Some(decoration_dot))
+                            .into_any_element(),
+                    ),
+                ],
+            )])
+            .into_any_element()
     }
 }
