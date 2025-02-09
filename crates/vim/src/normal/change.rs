@@ -110,17 +110,32 @@ impl Vim {
                         if found && !around && object.is_multiline() {
                             let is_multiline = selection.start.row() != selection.end.row();
                             if is_multiline {
-                                let end_offset = selection.end.to_offset(map, Bias::Left);
-                                let mut text = String::new();
-                                for (ch, _) in map.buffer_chars_at(end_offset) {
-                                    if ch == '\n' || !ch.is_whitespace() {
-                                        text.push(ch);
-                                        break;
+                                let start_offset = selection.start.to_offset(map, Bias::Left);
+                                let mut pos = start_offset;
+
+                                // Check backwards from selection start
+                                while pos > 0 {
+                                    pos -= 1;
+                                    if let Some((ch, _)) = map.buffer_chars_at(pos).next() {
+                                        // If we hit non-whitespace before newline, no indent preservation
+                                        if !ch.is_whitespace() {
+                                            break;
+                                        }
+                                        // Found newline, now check for opening brace
+                                        if ch == '\n' {
+                                            if pos > 0 {
+                                                if let Some((prev_ch, _)) =
+                                                    map.buffer_chars_at(pos - 1).next()
+                                                {
+                                                    if prev_ch == '{' {
+                                                        preserve_indented_line = true;
+                                                    }
+                                                }
+                                            }
+                                            break;
+                                        }
                                     }
-                                    text.push(ch);
                                 }
-                                let trimmed = text.trim();
-                                preserve_indented_line = trimmed.starts_with("}");
                             }
                         }
                     });
