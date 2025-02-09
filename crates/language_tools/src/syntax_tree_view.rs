@@ -293,7 +293,8 @@ impl SyntaxTreeView {
 
 impl Render for SyntaxTreeView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut rendered = div().flex_1();
+        let colors = cx.theme().colors();
+        let mut rendered = div().flex_1().bg(colors.background);
 
         if let Some(layer) = self
             .editor
