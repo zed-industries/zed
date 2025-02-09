@@ -3414,7 +3414,7 @@ impl OutlinePanel {
             let (new_cached_entries, max_width_item_index) = new_cached_entries.await;
             outline_panel
                 .update_in(&mut cx, |outline_panel, window, cx| {
-                    outline_panel.cached_entries = dbg!(new_cached_entries);
+                    outline_panel.cached_entries = new_cached_entries;
                     outline_panel.max_width_item_index = max_width_item_index;
                     if outline_panel.selected_entry.is_invalidated()
                         || matches!(outline_panel.selected_entry, SelectedEntry::None)
@@ -3492,7 +3492,8 @@ impl OutlinePanel {
                                 .copied()
                                 .unwrap_or(0);
                             while let Some(parent) = parent_dirs.last() {
-                                if directory_entry.entry.path.starts_with(&parent.path) {
+                                if !is_root && directory_entry.entry.path.starts_with(&parent.path)
+                                {
                                     break;
                                 }
                                 parent_dirs.pop();
@@ -5213,7 +5214,7 @@ mod tests {
                 });
         });
 
-        let all_matches = r#"/
+        let all_matches = r#"/rust-analyzer/
   crates/
     ide/src/
       inlay_hints/
@@ -5248,9 +5249,11 @@ mod tests {
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 select_first_in_all_matches(
                     "search: match config.param_names_for_lifetime_elision_hints {"
@@ -5262,9 +5265,11 @@ mod tests {
             outline_panel.select_parent(&SelectParent, window, cx);
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 select_first_in_all_matches("fn_lifetime_fn.rs")
             );
@@ -5278,12 +5283,14 @@ mod tests {
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 format!(
-                    r#"/
+                    r#"/rust-analyzer/
   crates/
     ide/src/
       inlay_hints/
@@ -5313,9 +5320,11 @@ mod tests {
             outline_panel.select_parent(&SelectParent, window, cx);
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 select_first_in_all_matches("inlay_hints/")
             );
@@ -5325,9 +5334,11 @@ mod tests {
             outline_panel.select_parent(&SelectParent, window, cx);
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 select_first_in_all_matches("ide/src/")
             );
@@ -5342,12 +5353,14 @@ mod tests {
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 format!(
-                    r#"/
+                    r#"/rust-analyzer/
   crates/
     ide/src/{SELECTED_MARKER}
     rust-analyzer/src/
@@ -5368,9 +5381,11 @@ mod tests {
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 select_first_in_all_matches("ide/src/")
             );
@@ -5427,7 +5442,7 @@ mod tests {
                     );
                 });
         });
-        let all_matches = r#"/
+        let all_matches = r#"/rust-analyzer/
   crates/
     ide/src/
       inlay_hints/
@@ -5454,9 +5469,11 @@ mod tests {
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
                     None,
+                    cx,
                 ),
                 all_matches,
             );
@@ -5475,12 +5492,15 @@ mod tests {
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
                     None,
+                    cx,
                 ),
                 all_matches
                     .lines()
+                    .skip(1) // `/rust-analyzer/` is a root entry with path `` and it will be filtered out
                     .filter(|item| item.contains(filter_text))
                     .collect::<Vec<_>>()
                     .join("\n"),
@@ -5498,9 +5518,11 @@ mod tests {
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
                     None,
+                    cx,
                 ),
                 all_matches,
             );
@@ -5557,7 +5579,7 @@ mod tests {
                     );
                 });
         });
-        let all_matches = r#"/
+        let all_matches = r#"/rust-analyzer/
   crates/
     ide/src/
       inlay_hints/
@@ -5599,9 +5621,11 @@ mod tests {
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
+                    cx,
                 ),
                 select_first_in_all_matches(initial_outline_selection)
             );
@@ -5620,9 +5644,11 @@ mod tests {
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
+                    cx,
                 ),
                 select_first_in_all_matches(navigated_outline_selection)
             );
@@ -5656,9 +5682,11 @@ mod tests {
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
+                    cx,
                 ),
                 select_first_in_all_matches(next_navigated_outline_selection)
             );
@@ -5691,9 +5719,11 @@ mod tests {
             );
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry(),
+                    cx,
                 ),
                 "fn_lifetime_fn.rs  <==== selected"
             );
@@ -5783,29 +5813,96 @@ mod tests {
                 });
         });
 
-        dbg!("~~~~~~~~~~~~~~~~~~~~~");
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
-                r#"/
-  one/
-    a.txt
-      search: aaa aaa  <==== selected
-      search: aaa aaa
-  two/
-    b.txt
-      search: a aaa"#
+                r#"/root/one/
+  a.txt
+    search: aaa aaa  <==== selected
+    search: aaa aaa
+/root/two/
+  b.txt
+    search: a aaa"#
             );
         });
 
-        // TODO kb toggle
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.select_prev(&SelectPrev, window, cx);
+            outline_panel.open(&Open, window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                r#"/root/one/
+  a.txt  <==== selected
+/root/two/
+  b.txt
+    search: a aaa"#
+            );
+        });
+
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.select_next(&SelectNext, window, cx);
+            outline_panel.open(&Open, window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                r#"/root/one/
+  a.txt
+/root/two/  <==== selected"#
+            );
+        });
+
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.open(&Open, window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry(),
+                    cx,
+                ),
+                r#"/root/one/
+  a.txt
+/root/two/  <==== selected
+  b.txt
+    search: a aaa"#
+            );
+        });
     }
 
     #[gpui::test]
@@ -5873,9 +5970,11 @@ struct OutlineEntryExcerpt {
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 indoc!(
                     "
@@ -5898,9 +5997,11 @@ outline: struct OutlineEntryExcerpt
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 indoc!(
                     "
@@ -5923,9 +6024,11 @@ outline: struct OutlineEntryExcerpt  <==== selected
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 indoc!(
                     "
@@ -5948,9 +6051,11 @@ outline: struct OutlineEntryExcerpt
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 indoc!(
                     "
@@ -5973,9 +6078,11 @@ outline: struct OutlineEntryExcerpt
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 indoc!(
                     "
@@ -5998,9 +6105,11 @@ outline: struct OutlineEntryExcerpt
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 indoc!(
                     "
@@ -6023,9 +6132,11 @@ outline: struct OutlineEntryExcerpt  <==== selected
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 indoc!(
                     "
@@ -6048,9 +6159,11 @@ outline: struct OutlineEntryExcerpt
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 indoc!(
                     "
@@ -6073,9 +6186,11 @@ outline: struct OutlineEntryExcerpt
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 indoc!(
                     "
@@ -6098,9 +6213,11 @@ outline: struct OutlineEntryExcerpt
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 indoc!(
                     "
@@ -6123,9 +6240,11 @@ outline: struct OutlineEntryExcerpt  <==== selected
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
                 indoc!(
                     "
@@ -6227,11 +6346,13 @@ outline: struct OutlineEntryExcerpt
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
-                r#"/
+                r#"/frontend-project/
   public/lottie/
     syntax-tree.json
       search: { "something": "static" }  <==== selected
@@ -6262,11 +6383,13 @@ outline: struct OutlineEntryExcerpt
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
-                r#"/
+                r#"/frontend-project/
   public/lottie/
     syntax-tree.json
       search: { "something": "static" }
@@ -6288,11 +6411,13 @@ outline: struct OutlineEntryExcerpt
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
-                r#"/
+                r#"/frontend-project/
   public/lottie/
     syntax-tree.json
       search: { "something": "static" }
@@ -6318,11 +6443,13 @@ outline: struct OutlineEntryExcerpt
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
-                r#"/
+                r#"/frontend-project/
   public/lottie/
     syntax-tree.json
       search: { "something": "static" }
@@ -6347,11 +6474,13 @@ outline: struct OutlineEntryExcerpt
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &project,
                     &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
-                    outline_panel.selected_entry()
+                    outline_panel.selected_entry(),
+                    cx,
                 ),
-                r#"/
+                r#"/frontend-project/
   public/lottie/
     syntax-tree.json
       search: { "something": "static" }
@@ -6398,9 +6527,11 @@ outline: struct OutlineEntryExcerpt
     }
 
     fn display_entries(
+        project: &Entity<Project>,
         multi_buffer_snapshot: &MultiBufferSnapshot,
         cached_entries: &[CachedEntry],
         selected_entry: Option<&PanelEntry>,
+        cx: &mut App,
     ) -> String {
         let mut display_string = String::new();
         for entry in cached_entries {
@@ -6415,15 +6546,32 @@ outline: struct OutlineEntryExcerpt
                     FsEntry::ExternalFile(_) => {
                         panic!("Did not cover external files with tests")
                     }
-                    FsEntry::Directory(directory) => format!(
-                        "{}/",
-                        directory
-                            .entry
-                            .path
-                            .file_name()
-                            .map(|name| name.to_string_lossy().to_string())
-                            .unwrap_or_default()
-                    ),
+                    FsEntry::Directory(directory) => {
+                        match project
+                            .read(cx)
+                            .worktree_for_id(directory.worktree_id, cx)
+                            .and_then(|worktree| {
+                                if worktree.read(cx).root_entry() == Some(&directory.entry.entry) {
+                                    Some(worktree.read(cx).abs_path())
+                                } else {
+                                    None
+                                }
+                            }) {
+                            Some(root_path) => root_path
+                                .join(&directory.entry.path)
+                                .to_string_lossy()
+                                .to_string(),
+                            None => format!(
+                                "{}/",
+                                directory
+                                    .entry
+                                    .path
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                            ),
+                        }
+                    }
                     FsEntry::File(file) => file
                         .entry
                         .path
