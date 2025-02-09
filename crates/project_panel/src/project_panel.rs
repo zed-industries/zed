@@ -4025,7 +4025,7 @@ impl ProjectPanel {
                             if !this.marked_entries.contains(&selection) {
                                 this.marked_entries.clear();
                             }
-                            this.deploy_context_menu(event.position, entry_id, window, cx);
+                            this.deploy_context_menu(event.absolute_position, entry_id, window, cx);
                         },
                     ))
                     .overflow_x(),
@@ -4482,7 +4482,7 @@ impl Render for ProjectPanel {
                         // When deploying the context menu anywhere below the last project entry,
                         // act as if the user clicked the root of the last worktree.
                         if let Some(entry_id) = this.last_worktree_root_id {
-                            this.deploy_context_menu(event.position, entry_id, window, cx);
+                            this.deploy_context_menu(event.absolute_position, entry_id, window, cx);
                         }
                     }),
                 )

@@ -671,10 +671,10 @@ impl EditorElement {
         if !position_map.text_hitbox.is_hovered(window) {
             return;
         }
-        let point_for_position = position_map.point_for_position(event.position);
+        let point_for_position = position_map.point_for_position(event.absolute_position);
         mouse_context_menu::deploy_context_menu(
             editor,
-            Some(event.position),
+            Some(event.absolute_position),
             point_for_position.previous_valid,
             window,
             cx,
@@ -5102,7 +5102,7 @@ impl EditorElement {
 
                 let hitbox = hitbox.clone();
 
-                let mut mouse_position = window.mouse_position();
+                let mut mouse_position = window.mouse_position() - window.element_origin();
                 move |event: &MouseMoveEvent, phase, window, cx| {
                     if phase == DispatchPhase::Capture {
                         return;

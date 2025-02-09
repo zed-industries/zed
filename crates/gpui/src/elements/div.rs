@@ -1276,14 +1276,11 @@ impl Element for Div {
             window,
             cx,
             |_style, scroll_offset, hitbox, window, cx| {
-                window.with_coordinate_origin(
-                    scroll_offset + window.element_origin,
-                    |window| {
-                        for child in &mut self.children {
-                            child.prepaint(window, cx);
-                        }
-                    },
-                );
+                window.with_element_origin(scroll_offset + window.element_origin(), |window| {
+                    for child in &mut self.children {
+                        child.prepaint(window, cx);
+                    }
+                });
 
                 if let Some(listener) = self.prepaint_listener.as_ref() {
                     listener(children_bounds, window, cx);
@@ -2014,14 +2011,16 @@ impl Interactivity {
                 // Use bounds instead of testing hitbox since this is called during prepaint.
                 let check_is_hovered_during_prepaint = Rc::new({
                     let pending_mouse_down = pending_mouse_down.clone();
-                    let source_bounds = hitbox.bounds;
+                    let mut source_bounds = hitbox.bounds;
+                    source_bounds.origin += window.element_origin();
                     move |window: &Window| {
                         pending_mouse_down.borrow().is_none()
                             && source_bounds.contains(&window.mouse_position())
                     }
                 });
                 let check_is_hovered = Rc::new({
-                    let hitbox = hitbox.clone();
+                    let mut hitbox = hitbox.clone();
+                    hitbox.bounds.origin += window.element_origin();
                     move |window: &Window| {
                         pending_mouse_down.borrow().is_none() && hitbox.is_hovered(window)
                     }

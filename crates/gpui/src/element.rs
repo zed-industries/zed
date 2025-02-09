@@ -336,7 +336,7 @@ impl<E: Element> Drawable<E> {
                 let bounds = window.layout_bounds(layout_id);
                 window.element_layout_id = Some(layout_id);
                 let node_id = window.next_frame.dispatch_tree.push_node();
-                let prepaint = window.with_coordinate_origin(bounds.origin, |window| {
+                let prepaint = window.with_element_origin(bounds.origin, |window| {
                     self.element.prepaint(
                         global_id.as_ref(),
                         Bounds {
@@ -386,7 +386,7 @@ impl<E: Element> Drawable<E> {
                 }
 
                 window.next_frame.dispatch_tree.set_active_node(node_id);
-                window.with_coordinate_origin(bounds.origin, |window| {
+                window.with_element_origin(bounds.origin, |window| {
                     self.element.paint(
                         global_id.as_ref(),
                         Bounds {
@@ -418,7 +418,7 @@ impl<E: Element> Drawable<E> {
         cx: &mut App,
     ) -> Size<Pixels> {
         if matches!(&self.phase, ElementDrawPhase::Start) {
-            window.with_coordinate_origin(Point::default(), |window| {
+            window.with_element_origin(Point::default(), |window| {
                 self.request_layout(window, cx);
             });
         }
@@ -558,7 +558,7 @@ impl AnyElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<FocusHandle> {
-        window.with_coordinate_origin(origin + window.element_origin, |window| {
+        window.with_element_origin(origin + window.element_origin(), |window| {
             self.prepaint(window, cx)
         })
     }

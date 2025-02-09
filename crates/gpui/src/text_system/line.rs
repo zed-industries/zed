@@ -351,7 +351,7 @@ fn paint_line(
                 }
 
                 let max_glyph_bounds = Bounds {
-                    origin: glyph_origin + window.element_origin,
+                    origin: glyph_origin + window.element_origin(),
                     size: max_glyph_size,
                 };
 

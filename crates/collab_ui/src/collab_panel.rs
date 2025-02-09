@@ -859,7 +859,7 @@ impl CollabPanel {
                 el.on_secondary_mouse_down(cx.listener(
                     move |this, event: &MouseDownEvent, window, cx| {
                         this.deploy_participant_context_menu(
-                            event.position,
+                            event.absolute_position,
                             user_id,
                             role,
                             window,
@@ -2438,7 +2438,7 @@ impl CollabPanel {
                                     let contact = contact.clone();
                                     move |this, event: &ClickEvent, window, cx| {
                                         this.deploy_contact_context_menu(
-                                            event.down.position,
+                                            event.down.absolute_position,
                                             contact.clone(),
                                             window,
                                             cx,
@@ -2451,7 +2451,12 @@ impl CollabPanel {
             .on_secondary_mouse_down(cx.listener({
                 let contact = contact.clone();
                 move |this, event: &MouseDownEvent, window, cx| {
-                    this.deploy_contact_context_menu(event.position, contact.clone(), window, cx);
+                    this.deploy_contact_context_menu(
+                        event.absolute_position,
+                        contact.clone(),
+                        window,
+                        cx,
+                    );
                 }
             }))
             .start_slot(
@@ -2711,7 +2716,7 @@ impl CollabPanel {
                     .on_secondary_mouse_down(cx.listener(
                         move |this, event: &MouseDownEvent, window, cx| {
                             this.deploy_channel_context_menu(
-                                event.position,
+                                event.absolute_position,
                                 channel_id,
                                 ix,
                                 window,

@@ -239,7 +239,9 @@ impl Render for TitleBar {
                                 .when(supported_controls.window_menu, |titlebar| {
                                     titlebar.on_mouse_down(
                                         gpui::MouseButton::Right,
-                                        move |ev, window, _| window.show_window_menu(ev.position),
+                                        move |ev, window, _| {
+                                            window.show_window_menu(ev.absolute_position)
+                                        },
                                     )
                                 })
                                 .on_mouse_move(cx.listener(move |this, _ev, window, _| {

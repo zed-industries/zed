@@ -2492,7 +2492,7 @@ impl OutlinePanel {
                             // panel from being deployed.
                             cx.stop_propagation();
                             outline_panel.deploy_context_menu(
-                                event.position,
+                                event.absolute_position,
                                 rendered_entry.clone(),
                                 window,
                                 cx,
@@ -4929,10 +4929,15 @@ impl Render for OutlinePanel {
                 MouseButton::Right,
                 cx.listener(move |outline_panel, event: &MouseDownEvent, window, cx| {
                     if let Some(entry) = outline_panel.selected_entry().cloned() {
-                        outline_panel.deploy_context_menu(event.position, entry, window, cx)
+                        outline_panel.deploy_context_menu(
+                            event.absolute_position,
+                            entry,
+                            window,
+                            cx,
+                        )
                     } else if let Some(entry) = outline_panel.fs_entries.first().cloned() {
                         outline_panel.deploy_context_menu(
-                            event.position,
+                            event.absolute_position,
                             PanelEntry::Fs(entry),
                             window,
                             cx,

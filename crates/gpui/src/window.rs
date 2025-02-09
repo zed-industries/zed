@@ -633,7 +633,7 @@ pub struct Window {
     modifiers: Modifiers,
     scale_factor: f32,
     pub(crate) element_layout_id: Option<LayoutId>,
-    pub(crate) element_origin: Point<Pixels>,
+    element_origin: Point<Pixels>,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
@@ -1499,6 +1499,11 @@ impl Window {
             .is_action_available(action, target)
     }
 
+    /// The absolute origin of the current element within the window.
+    pub fn element_origin(&self) -> Point<Pixels> {
+        self.element_origin
+    }
+
     /// The position of the mouse relative to the window.
     pub fn mouse_position(&self) -> Point<Pixels> {
         self.mouse_position
@@ -1724,9 +1729,7 @@ impl Window {
                 continue;
             }
 
-            self.with_coordinate_origin(tooltip_bounds.origin, |window| {
-                element.prepaint(window, cx)
-            });
+            self.with_element_origin(tooltip_bounds.origin, |window| element.prepaint(window, cx));
 
             self.tooltip_bounds = Some(TooltipBounds {
                 id: tooltip_request.id,
@@ -1754,7 +1757,7 @@ impl Window {
             let prepaint_start = self.prepaint_index();
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_rendered_view(deferred_draw.current_view, |window| {
-                    window.with_coordinate_origin(deferred_draw.absolute_offset, |window| {
+                    window.with_element_origin(deferred_draw.absolute_offset, |window| {
                         element.prepaint(window, cx)
                     });
                 })
@@ -1965,12 +1968,11 @@ impl Window {
         }
     }
 
-    pub(crate) fn with_coordinate_origin<R>(
+    pub(crate) fn with_element_origin<R>(
         &mut self,
         origin: Point<Pixels>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        self.invalidator.debug_assert_paint_or_prepaint();
         let old_origin = self.element_origin;
         self.element_origin = origin;
         let result = f(self);
@@ -2856,12 +2858,14 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        let local_origin = self.element_origin;
+        let origin = self.element_origin;
         self.next_frame.mouse_listeners.push(Some(Box::new(
             move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
                 if let Some(event) = event.downcast_ref::<Event>() {
-                    let event = event.clone().with_local_coordinates(local_origin);
-                    handler(&event, phase, window, cx)
+                    window.with_element_origin(origin, |window| {
+                        let event = event.clone().with_local_coordinates(origin);
+                        handler(&event, phase, window, cx)
+                    })
                 }
             },
         )));
@@ -2881,10 +2885,11 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
+        let origin = self.element_origin;
         self.next_frame.dispatch_tree.on_key_event(Rc::new(
             move |event: &dyn Any, phase, window: &mut Window, cx: &mut App| {
                 if let Some(event) = event.downcast_ref::<Event>() {
-                    listener(event, phase, window, cx)
+                    window.with_element_origin(origin, |window| listener(event, phase, window, cx))
                 }
             },
         ));
@@ -2902,9 +2907,10 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
+        let origin = self.element_origin;
         self.next_frame.dispatch_tree.on_modifiers_changed(Rc::new(
             move |event: &ModifiersChangedEvent, window: &mut Window, cx: &mut App| {
-                listener(event, window, cx)
+                window.with_element_origin(origin, |window| listener(event, window, cx))
             },
         ));
     }
@@ -2919,10 +2925,13 @@ impl Window {
         mut listener: impl FnMut(&mut Window, &mut App) + 'static,
     ) -> Subscription {
         let focus_id = handle.id;
+        let origin = self.element_origin;
         let (subscription, activate) =
             self.new_focus_listener(Box::new(move |event, window, cx| {
                 if event.is_focus_in(focus_id) {
-                    listener(window, cx);
+                    window.with_element_origin(origin, |window| {
+                        listener(window, cx);
+                    });
                 }
                 true
             }));
@@ -2939,6 +2948,7 @@ impl Window {
         mut listener: impl FnMut(FocusOutEvent, &mut Window, &mut App) + 'static,
     ) -> Subscription {
         let focus_id = handle.id;
+        let origin = self.element_origin;
         let (subscription, activate) =
             self.new_focus_listener(Box::new(move |event, window, cx| {
                 if let Some(blurred_id) = event.previous_focus_path.last().copied() {
@@ -2949,7 +2959,7 @@ impl Window {
                                 handles: Arc::downgrade(&cx.focus_handles),
                             },
                         };
-                        listener(event, window, cx)
+                        window.with_element_origin(origin, |window| listener(event, window, cx))
                     }
                 }
                 true
@@ -3731,9 +3741,13 @@ impl Window {
         action_type: TypeId,
         listener: impl Fn(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static,
     ) {
-        self.next_frame
-            .dispatch_tree
-            .on_action(action_type, Rc::new(listener));
+        let origin = self.element_origin;
+        self.next_frame.dispatch_tree.on_action(
+            action_type,
+            Rc::new(move |action, phase, window, cx| {
+                window.with_element_origin(origin, |window| listener(action, phase, window, cx))
+            }),
+        );
     }
 
     /// Read information about the GPU backing this window.
