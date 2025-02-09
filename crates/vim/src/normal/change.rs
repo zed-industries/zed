@@ -106,9 +106,22 @@ impl Vim {
                     s.move_with(|map, selection| {
                         let found = object.expand_selection(map, selection, around);
                         objects_found |= found;
-                        // Check if selection is an inside multiline object
+                        // Check if selection is an inside multiline { } object
                         if found && !around && object.is_multiline() {
-                            preserve_indented_line |= selection.start.row() != selection.end.row();
+                            let is_multiline = selection.start.row() != selection.end.row();
+                            if is_multiline {
+                                let end_offset = selection.end.to_offset(map, Bias::Left);
+                                let mut text = String::new();
+                                for (ch, _) in map.buffer_chars_at(end_offset) {
+                                    if ch == '\n' || !ch.is_whitespace() {
+                                        text.push(ch);
+                                        break;
+                                    }
+                                    text.push(ch);
+                                }
+                                let trimmed = text.trim();
+                                preserve_indented_line = trimmed.starts_with("}");
+                            }
                         }
                     });
                 });

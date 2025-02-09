@@ -101,9 +101,22 @@ impl Vim {
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
                         object.expand_selection(map, selection, around);
-                        // Check if selection is an inside multiline object
+                        // Check if selection is an inside multiline { } object
                         if !around && object.is_multiline() {
-                            preserve_indented_line |= selection.start.row() != selection.end.row();
+                            let is_multiline = selection.start.row() != selection.end.row();
+                            if is_multiline {
+                                let end_offset = selection.end.to_offset(map, Bias::Left);
+                                let mut text = String::new();
+                                for (ch, _) in map.buffer_chars_at(end_offset) {
+                                    if ch == '\n' || !ch.is_whitespace() {
+                                        text.push(ch);
+                                        break;
+                                    }
+                                    text.push(ch);
+                                }
+                                let trimmed = text.trim();
+                                preserve_indented_line = trimmed.starts_with("}");
+                            }
                         }
                         let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
                         let mut move_selection_start_to_previous_line =
