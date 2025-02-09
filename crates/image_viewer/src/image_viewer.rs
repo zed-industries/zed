@@ -8,8 +8,9 @@ use editor::items::entry_git_aware_label_color;
 use file_icons::FileIcons;
 use gpui::{
     canvas, div, fill, img, opaque_grey, point, size, AnyElement, App, Bounds, Context, Entity,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ObjectFit,
-    ParentElement, Render, Styled, Task, WeakEntity, Window,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, ParentElement, Point, Render,
+    ScrollDelta, ScrollWheelEvent, Size, Styled, Task, WeakEntity, Window,
 };
 use persistence::IMAGE_VIEWER;
 use project::{image_store::ImageItemEvent, ImageItem, Project, ProjectPath};
@@ -29,6 +30,11 @@ pub struct ImageView {
     image_item: Entity<ImageItem>,
     project: Entity<Project>,
     focus_handle: FocusHandle,
+    pan_offset: Point<Pixels>,
+    zoom_level: f32,
+    is_panning: bool,
+    initial_layout: Option<Size<Pixels>>,
+    last_mouse_position: Option<Point<Pixels>>,
 }
 
 impl ImageView {
@@ -42,6 +48,11 @@ impl ImageView {
             image_item,
             project,
             focus_handle: cx.focus_handle(),
+            pan_offset: Point::default(),
+            zoom_level: 1.0,
+            is_panning: false,
+            initial_layout: None,
+            last_mouse_position: None,
         }
     }
 
@@ -170,6 +181,11 @@ impl Item for ImageView {
             image_item: self.image_item.clone(),
             project: self.project.clone(),
             focus_handle: cx.focus_handle(),
+            initial_layout: self.initial_layout,
+            zoom_level: self.zoom_level,
+            is_panning: self.is_panning,
+            last_mouse_position: self.last_mouse_position,
+            pan_offset: self.pan_offset,
         }))
     }
 }
@@ -274,73 +290,171 @@ impl Focusable for ImageView {
 }
 
 impl Render for ImageView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let image = self.image_item.read(cx).image.clone();
-        let checkered_background = |bounds: Bounds<Pixels>,
-                                    _,
-                                    window: &mut Window,
-                                    _cx: &mut App| {
-            let square_size = 32.0;
+        let metadata = self.image_item.read(cx).image_metadata.as_ref();
 
-            let start_y = bounds.origin.y.0;
-            let height = bounds.size.height.0;
-            let start_x = bounds.origin.x.0;
-            let width = bounds.size.width.0;
-
-            let mut y = start_y;
-            let mut x = start_x;
-            let mut color_swapper = true;
-            // draw checkerboard pattern
-            while y <= start_y + height {
-                // Keeping track of the grid in order to be resilient to resizing
-                let start_swap = color_swapper;
-                while x <= start_x + width {
-                    let rect =
-                        Bounds::new(point(px(x), px(y)), size(px(square_size), px(square_size)));
-
-                    let color = if color_swapper {
-                        opaque_grey(0.6, 0.4)
-                    } else {
-                        opaque_grey(0.7, 0.4)
-                    };
-
-                    window.paint_quad(fill(rect, color));
-                    color_swapper = !color_swapper;
-                    x += square_size;
-                }
-                x = start_x;
-                color_swapper = !start_swap;
-                y += square_size;
-            }
+        let (rendered_width, rendered_height) = if let Some(meta) = metadata {
+            (
+                px(meta.width as f32 * self.zoom_level),
+                px(meta.height as f32 * self.zoom_level),
+            )
+        } else {
+            (px(0.0), px(0.0))
         };
 
-        let checkered_background = canvas(|_, _, _| (), checkered_background)
-            .border_2()
-            .border_color(cx.theme().styles.colors.border)
-            .size_full()
-            .absolute()
-            .top_0()
-            .left_0();
+        if self.initial_layout.is_none() {
+            if let Some(meta) = self.image_item.read(cx).image_metadata.as_ref() {
+                let container_size = window.bounds().size;
+                let image_width = px(meta.width as f32);
+                let image_height = px(meta.height as f32);
+
+                let scale_width = container_size.width / image_width;
+                let scale_height = container_size.height / image_height;
+                let initial_zoom = scale_width.min(scale_height).min(px(1.0).into());
+
+                self.pan_offset = Point {
+                    x: (container_size.width - (image_width * initial_zoom)) / 2.0,
+                    y: (container_size.height - (image_height * initial_zoom)) / 2.0,
+                };
+                self.zoom_level = initial_zoom;
+                self.initial_layout = Some(container_size);
+            }
+        }
+
+        fn create_checkered_background(cx: &mut Context<ImageView>) -> impl IntoElement {
+            let checkered_background_fn =
+                |bounds: Bounds<Pixels>, _, window: &mut Window, _cx: &mut App| {
+                    let square_size = 32.0;
+
+                    let start_y = bounds.origin.y.0;
+                    let height = bounds.size.height.0;
+                    let start_x = bounds.origin.x.0;
+                    let width = bounds.size.width.0;
+
+                    let mut y = start_y;
+                    let mut x = start_x;
+                    let mut color_swapper = true;
+
+                    while y <= start_y + height {
+                        let start_swap = color_swapper;
+                        while x <= start_x + width {
+                            let rect = Bounds::new(
+                                point(px(x), px(y)),
+                                size(px(square_size), px(square_size)),
+                            );
+
+                            let color = if color_swapper {
+                                opaque_grey(0.6, 0.4)
+                            } else {
+                                opaque_grey(0.7, 0.4)
+                            };
+
+                            window.paint_quad(fill(rect, color));
+                            color_swapper = !color_swapper;
+                            x += square_size;
+                        }
+                        x = start_x;
+                        color_swapper = !start_swap;
+                        y += square_size;
+                    }
+                };
+
+            canvas(|_, _, _| (), checkered_background_fn)
+                .border_2()
+                .border_color(cx.theme().styles.colors.border)
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0()
+        }
 
         div()
             .track_focus(&self.focus_handle(cx))
             .size_full()
-            .child(checkered_background)
+            .child(create_checkered_background(cx))
             .child(
                 div()
                     .flex()
                     .justify_center()
                     .items_center()
                     .w_full()
-                    // TODO: In browser based Tailwind & Flex this would be h-screen and we'd use w-full
                     .h_full()
                     .child(
-                        img(image)
+                        img(image.clone())
                             .object_fit(ObjectFit::ScaleDown)
                             .max_w_full()
                             .max_h_full()
                             .id("img"),
                     ),
+            );
+
+        div()
+            .track_focus(&self.focus_handle(cx))
+            .size_full()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this: &mut ImageView, event: &MouseDownEvent, _, cx| {
+                    this.is_panning = true;
+                    this.last_mouse_position = Some(event.position);
+                    cx.refresh_windows();
+                }),
+            )
+            .on_mouse_move(
+                cx.listener(|this: &mut ImageView, event: &MouseMoveEvent, _, cx| {
+                    if this.is_panning {
+                        if let Some(last_pos) = this.last_mouse_position {
+                            let delta = event.position - last_pos;
+                            this.pan_offset += delta;
+                            this.last_mouse_position = Some(event.position);
+                            cx.refresh_windows();
+                        }
+                    }
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this: &mut ImageView, event: &MouseUpEvent, _, cx| {
+                    this.is_panning = false;
+                    this.last_mouse_position = None;
+                    cx.refresh_windows();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(
+                |this: &mut ImageView, event: &ScrollWheelEvent, _, cx| {
+                    let sensitivity = 0.1;
+                    let delta = match event.delta {
+                        ScrollDelta::Lines(delta) => delta.y,
+                        ScrollDelta::Pixels(pixels) => pixels.y.0,
+                    };
+
+                    let old_zoom = this.zoom_level;
+                    let new_zoom = (old_zoom * (1.0 + delta * sensitivity)).clamp(0.1, 10.0);
+
+                    if let Some(meta) = this.image_item.read(cx).image_metadata.as_ref() {
+                        let mouse_pos = event.position;
+
+                        let image_x = (mouse_pos.x - this.pan_offset.x) / old_zoom;
+                        let image_y = (mouse_pos.y - this.pan_offset.y) / old_zoom;
+
+                        this.pan_offset.x = mouse_pos.x - image_x * new_zoom;
+                        this.pan_offset.y = mouse_pos.y - image_y * new_zoom;
+                        this.zoom_level = new_zoom;
+
+                        cx.refresh_windows();
+                    }
+                },
+            ))
+            .child(create_checkered_background(cx))
+            .child(
+                div().size_full().overflow_hidden().relative().child(
+                    img(image)
+                        .absolute()
+                        .left(self.pan_offset.x)
+                        .top(self.pan_offset.y)
+                        .w(rendered_width)
+                        .h(rendered_height),
+                ),
             )
     }
 }
