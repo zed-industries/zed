@@ -930,7 +930,7 @@ impl OutlinePanel {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
             self.toggle_expanded(&selected_entry, window, cx);
-            self.scroll_editor_to_entry(&selected_entry, true, false, window, cx);
+            self.scroll_editor_to_entry(&selected_entry, true, true, window, cx);
         }
     }
 
@@ -985,7 +985,7 @@ impl OutlinePanel {
         &mut self,
         entry: &PanelEntry,
         prefer_selection_change: bool,
-        change_focus: bool,
+        prefer_focus_change: bool,
         window: &mut Window,
         cx: &mut Context<OutlinePanel>,
     ) {
@@ -995,9 +995,13 @@ impl OutlinePanel {
         let active_multi_buffer = active_editor.read(cx).buffer().clone();
         let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
         let mut change_selection = prefer_selection_change;
+        let mut change_focus = prefer_focus_change;
         let mut scroll_to_buffer = None;
         let scroll_target = match entry {
-            PanelEntry::FoldedDirs(..) | PanelEntry::Fs(FsEntry::Directory(..)) => None,
+            PanelEntry::FoldedDirs(..) | PanelEntry::Fs(FsEntry::Directory(..)) => {
+                change_focus = false;
+                None
+            }
             PanelEntry::Fs(FsEntry::ExternalFile(file)) => {
                 change_selection = false;
                 scroll_to_buffer = Some(file.buffer_id);
@@ -1041,6 +1045,7 @@ impl OutlinePanel {
                 }),
             PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
                 change_selection = false;
+                change_focus = false;
                 multi_buffer_snapshot.anchor_in_excerpt(excerpt.id, excerpt.range.context.start)
             }
             PanelEntry::Search(search_entry) => Some(search_entry.match_range.start),
