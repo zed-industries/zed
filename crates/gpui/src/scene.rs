@@ -702,9 +702,7 @@ impl Path<Pixels> {
             id: self.id,
             order: self.order,
             bounds: self.bounds + offset,
-            content_mask: ContentMask {
-                bounds: self.content_mask.bounds + offset,
-            },
+            content_mask: self.content_mask.clone(),
             vertices: self
                 .vertices
                 .iter()
