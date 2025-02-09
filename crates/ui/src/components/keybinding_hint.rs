@@ -1,6 +1,6 @@
 use crate::{h_flex, prelude::*};
 use crate::{ElevationIndex, KeyBinding};
-use gpui::{point, App, BoxShadow, IntoElement, Window};
+use gpui::{point, AnyElement, App, BoxShadow, IntoElement, Window};
 use smallvec::smallvec;
 
 /// Represents a hint for a keybinding, optionally with a prefix and suffix.
@@ -17,7 +17,7 @@ use smallvec::smallvec;
 ///     .prefix("Save:")
 ///     .size(Pixels::from(14.0));
 /// ```
-#[derive(Debug, IntoElement, Clone)]
+#[derive(Debug, IntoElement, IntoComponent)]
 pub struct KeybindingHint {
     prefix: Option<SharedString>,
     suffix: Option<SharedString>,
@@ -206,102 +206,99 @@ impl RenderOnce for KeybindingHint {
 }
 
 impl ComponentPreview for KeybindingHint {
-    fn description() -> impl Into<Option<&'static str>> {
-        "Used to display hint text for keyboard shortcuts. Can have a prefix and suffix."
-    }
-
-    fn examples(window: &mut Window, _cx: &mut App) -> Vec<ComponentExampleGroup<Self>> {
-        let home_fallback = gpui::KeyBinding::new("home", menu::SelectFirst, None);
-        let home = KeyBinding::for_action(&menu::SelectFirst, window)
-            .unwrap_or(KeyBinding::new(home_fallback));
-
-        let end_fallback = gpui::KeyBinding::new("end", menu::SelectLast, None);
-        let end = KeyBinding::for_action(&menu::SelectLast, window)
-            .unwrap_or(KeyBinding::new(end_fallback));
-
+    fn preview(window: &mut Window, _cx: &App) -> AnyElement {
         let enter_fallback = gpui::KeyBinding::new("enter", menu::Confirm, None);
         let enter = KeyBinding::for_action(&menu::Confirm, window)
             .unwrap_or(KeyBinding::new(enter_fallback));
 
-        let escape_fallback = gpui::KeyBinding::new("escape", menu::Cancel, None);
-        let escape = KeyBinding::for_action(&menu::Cancel, window)
-            .unwrap_or(KeyBinding::new(escape_fallback));
-
-        vec![
-            example_group_with_title(
-                "Basic",
-                vec![
-                    single_example(
-                        "With Prefix",
-                        KeybindingHint::with_prefix("Go to Start:", home.clone()),
-                    ),
-                    single_example(
-                        "With Suffix",
-                        KeybindingHint::with_suffix(end.clone(), "Go to End"),
-                    ),
-                    single_example(
-                        "With Prefix and Suffix",
-                        KeybindingHint::new(enter.clone())
-                            .prefix("Confirm:")
-                            .suffix("Execute selected action"),
-                    ),
-                ],
-            ),
-            example_group_with_title(
-                "Sizes",
-                vec![
-                    single_example(
-                        "Small",
-                        KeybindingHint::new(home.clone())
-                            .size(Pixels::from(12.0))
-                            .prefix("Small:"),
-                    ),
-                    single_example(
-                        "Medium",
-                        KeybindingHint::new(end.clone())
-                            .size(Pixels::from(16.0))
-                            .suffix("Medium"),
-                    ),
-                    single_example(
-                        "Large",
-                        KeybindingHint::new(enter.clone())
-                            .size(Pixels::from(20.0))
-                            .prefix("Large:")
-                            .suffix("Size"),
-                    ),
-                ],
-            ),
-            example_group_with_title(
-                "Elevations",
-                vec![
-                    single_example(
-                        "Surface",
-                        KeybindingHint::new(home.clone())
-                            .elevation(ElevationIndex::Surface)
-                            .prefix("Surface:"),
-                    ),
-                    single_example(
-                        "Elevated Surface",
-                        KeybindingHint::new(end.clone())
-                            .elevation(ElevationIndex::ElevatedSurface)
-                            .suffix("Elevated"),
-                    ),
-                    single_example(
-                        "Editor Surface",
-                        KeybindingHint::new(enter.clone())
-                            .elevation(ElevationIndex::EditorSurface)
-                            .prefix("Editor:")
-                            .suffix("Surface"),
-                    ),
-                    single_example(
-                        "Modal Surface",
-                        KeybindingHint::new(escape.clone())
-                            .elevation(ElevationIndex::ModalSurface)
-                            .prefix("Modal:")
-                            .suffix("Escape"),
-                    ),
-                ],
-            ),
-        ]
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Basic",
+                    vec![
+                        single_example(
+                            "With Prefix",
+                            KeybindingHint::with_prefix("Go to Start:", enter.clone())
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "With Suffix",
+                            KeybindingHint::with_suffix(enter.clone(), "Go to End")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "With Prefix and Suffix",
+                            KeybindingHint::new(enter.clone())
+                                .prefix("Confirm:")
+                                .suffix("Execute selected action")
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Sizes",
+                    vec![
+                        single_example(
+                            "Small",
+                            KeybindingHint::new(enter.clone())
+                                .size(Pixels::from(12.0))
+                                .prefix("Small:")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Medium",
+                            KeybindingHint::new(enter.clone())
+                                .size(Pixels::from(16.0))
+                                .suffix("Medium")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Large",
+                            KeybindingHint::new(enter.clone())
+                                .size(Pixels::from(20.0))
+                                .prefix("Large:")
+                                .suffix("Size")
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Elevations",
+                    vec![
+                        single_example(
+                            "Surface",
+                            KeybindingHint::new(enter.clone())
+                                .elevation(ElevationIndex::Surface)
+                                .prefix("Surface:")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Elevated Surface",
+                            KeybindingHint::new(enter.clone())
+                                .elevation(ElevationIndex::ElevatedSurface)
+                                .suffix("Elevated")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Editor Surface",
+                            KeybindingHint::new(enter.clone())
+                                .elevation(ElevationIndex::EditorSurface)
+                                .prefix("Editor:")
+                                .suffix("Surface")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Modal Surface",
+                            KeybindingHint::new(enter.clone())
+                                .elevation(ElevationIndex::ModalSurface)
+                                .prefix("Modal:")
+                                .suffix("Enter")
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+            ])
+            .into_any_element()
     }
 }

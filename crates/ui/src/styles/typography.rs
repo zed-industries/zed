@@ -1,5 +1,7 @@
+use crate::prelude::*;
 use gpui::{
-    div, rems, App, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled, Window,
+    div, rems, AnyElement, App, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled,
+    Window,
 };
 use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
@@ -188,7 +190,7 @@ impl HeadlineSize {
 
 /// A headline element, used to emphasize some text and
 /// create a visual hierarchy.
-#[derive(IntoElement)]
+#[derive(IntoElement, IntoComponent)]
 pub struct Headline {
     size: HeadlineSize,
     text: SharedString,
@@ -228,5 +230,46 @@ impl Headline {
     pub fn color(mut self, color: Color) -> Self {
         self.color = color;
         self
+    }
+}
+
+impl ComponentPreview for Headline {
+    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![example_group_with_title(
+                "Headline Sizes",
+                vec![
+                    single_example(
+                        "XLarge",
+                        Headline::new("XLarge Headline")
+                            .size(HeadlineSize::XLarge)
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "Large",
+                        Headline::new("Large Headline")
+                            .size(HeadlineSize::Large)
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "Medium (Default)",
+                        Headline::new("Medium Headline").into_any_element(),
+                    ),
+                    single_example(
+                        "Small",
+                        Headline::new("Small Headline")
+                            .size(HeadlineSize::Small)
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "XSmall",
+                        Headline::new("XSmall Headline")
+                            .size(HeadlineSize::XSmall)
+                            .into_any_element(),
+                    ),
+                ],
+            )])
+            .into_any_element()
     }
 }

@@ -7,17 +7,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub use decorated_icon::*;
-use gpui::{img, svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
+use gpui::{img, svg, AnimationElement, AnyElement, Hsla, IntoElement, Rems, Transformation};
 pub use icon_decoration::*;
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
 use ui_macros::DerivePathStr;
 
-use crate::{
-    prelude::*,
-    traits::component_preview::{ComponentExample, ComponentPreview},
-    Indicator,
-};
+use crate::{prelude::*, Indicator};
 
 #[derive(IntoElement)]
 pub enum AnyIcon {
@@ -364,7 +360,7 @@ impl IconSource {
     }
 }
 
-#[derive(IntoElement)]
+#[derive(IntoElement, IntoComponent)]
 pub struct Icon {
     source: IconSource,
     color: Color,
@@ -494,24 +490,41 @@ impl RenderOnce for IconWithIndicator {
 }
 
 impl ComponentPreview for Icon {
-    fn examples(_window: &mut Window, _cx: &mut App) -> Vec<ComponentExampleGroup<Icon>> {
-        let arrow_icons = vec![
-            IconName::ArrowDown,
-            IconName::ArrowLeft,
-            IconName::ArrowRight,
-            IconName::ArrowUp,
-            IconName::ArrowCircle,
-        ];
-
-        vec![example_group_with_title(
-            "Arrow Icons",
-            arrow_icons
-                .into_iter()
-                .map(|icon| {
-                    let name = format!("{:?}", icon).to_string();
-                    ComponentExample::new(name, Icon::new(icon))
-                })
-                .collect(),
-        )]
+    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Sizes",
+                    vec![
+                        single_example("Default", Icon::new(IconName::Star).into_any_element()),
+                        single_example(
+                            "Small",
+                            Icon::new(IconName::Star)
+                                .size(IconSize::Small)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Large",
+                            Icon::new(IconName::Star)
+                                .size(IconSize::XLarge)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Colors",
+                    vec![
+                        single_example("Default", Icon::new(IconName::Bell).into_any_element()),
+                        single_example(
+                            "Custom Color",
+                            Icon::new(IconName::Bell)
+                                .color(Color::Error)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+            ])
+            .into_any_element()
     }
 }

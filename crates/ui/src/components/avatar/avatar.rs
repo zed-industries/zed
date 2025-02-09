@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::{prelude::*, Indicator};
 
 use gpui::{img, AnyElement, Hsla, ImageSource, Img, IntoElement, Styled};
 
@@ -14,7 +14,7 @@ use gpui::{img, AnyElement, Hsla, ImageSource, Img, IntoElement, Styled};
 ///     .grayscale(true)
 ///     .border_color(gpui::red());
 /// ```
-#[derive(IntoElement)]
+#[derive(IntoElement, IntoComponent)]
 pub struct Avatar {
     image: Img,
     size: Option<AbsoluteLength>,
@@ -94,5 +94,62 @@ impl RenderOnce for Avatar {
                     .bg(cx.theme().colors().ghost_element_background),
             )
             .children(self.indicator.map(|indicator| div().child(indicator)))
+    }
+}
+
+impl ComponentPreview for Avatar {
+    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+        let example_avatar = "https://avatars.githubusercontent.com/u/1714999?v=4";
+
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Sizes",
+                    vec![
+                        single_example(
+                            "Default",
+                            Avatar::new("https://avatars.githubusercontent.com/u/1714999?v=4")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Small",
+                            Avatar::new(example_avatar).size(px(24.)).into_any_element(),
+                        ),
+                        single_example(
+                            "Large",
+                            Avatar::new(example_avatar).size(px(48.)).into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Styles",
+                    vec![
+                        single_example("Default", Avatar::new(example_avatar).into_any_element()),
+                        single_example(
+                            "Grayscale",
+                            Avatar::new(example_avatar)
+                                .grayscale(true)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "With Border",
+                            Avatar::new(example_avatar)
+                                .border_color(gpui::red())
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "With Indicator",
+                    vec![single_example(
+                        "Dot",
+                        Avatar::new(example_avatar)
+                            .indicator(Indicator::dot().color(Color::Success))
+                            .into_any_element(),
+                    )],
+                ),
+            ])
+            .into_any_element()
     }
 }
