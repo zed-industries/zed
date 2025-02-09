@@ -63,7 +63,7 @@ impl ComponentPreview {
     fn render_preview(
         &self,
         component: &ComponentMetadata,
-        window: &Window,
+        window: &mut Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let name = component.name();
@@ -104,7 +104,7 @@ impl ComponentPreview {
             .into_any_element()
     }
 
-    fn render_previews(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
+    fn render_previews(&self, window: &mut Window, cx: &Context<Self>) -> impl IntoElement {
         v_flex()
             .id("component-previews")
             .size_full()

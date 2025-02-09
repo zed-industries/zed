@@ -489,7 +489,7 @@ impl RenderOnce for IconWithIndicator {
 }
 
 impl ComponentPreview for Icon {
-    fn preview(_window: &Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
         v_flex()
             .gap_6()
             .children(vec![

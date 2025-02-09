@@ -173,7 +173,7 @@ impl RenderOnce for Tab {
 }
 
 impl ComponentPreview for Tab {
-    fn preview(_window: &Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
         v_flex()
             .gap_6()
             .children(vec![example_group_with_title(

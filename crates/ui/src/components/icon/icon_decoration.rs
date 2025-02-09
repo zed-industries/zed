@@ -149,21 +149,3 @@ impl RenderOnce for IconDecoration {
             .child(background)
     }
 }
-
-// impl ComponentPreview for IconDecoration {
-//     fn examples(_: &mut Window, cx: &mut App) -> Vec<ComponentExampleGroup<Self>> {
-//         let all_kinds = IconDecorationKind::iter().collect::<Vec<_>>();
-
-//         let examples = all_kinds
-//             .iter()
-//             .map(|kind| {
-//                 single_example(
-//                     format!("{kind:?}"),
-//                     IconDecoration::new(*kind, cx.theme().colors().surface_background, cx),
-//                 )
-//             })
-//             .collect();
-
-//         vec![example_group(examples)]
-//     }
-// }

@@ -89,7 +89,7 @@ impl RenderOnce for ContentGroup {
 }
 
 impl ComponentPreview for ContentGroup {
-    fn preview(_window: &Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
         example_group(vec![
             single_example(
                 "Default",

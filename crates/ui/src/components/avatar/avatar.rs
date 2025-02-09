@@ -98,7 +98,7 @@ impl RenderOnce for Avatar {
 }
 
 impl ComponentPreview for Avatar {
-    fn preview(_window: &Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
         let example_avatar = "https://avatars.githubusercontent.com/u/1714999?v=4";
 
         v_flex()
