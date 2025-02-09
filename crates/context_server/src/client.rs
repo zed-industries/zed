@@ -1,23 +1,15 @@
 use anyhow::{anyhow, Context, Result};
-use async_trait::async_trait;
 use collections::HashMap;
-use futures::{
-    channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, FutureExt, Stream, StreamExt,
-};
+use futures::{channel::oneshot, select, FutureExt, StreamExt};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::barrier;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{value::RawValue, Value};
-use smol::{
-    channel,
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::Child,
-};
+use smol::channel;
 use std::{
     fmt,
     path::PathBuf,
-    pin::Pin,
     sync::{
         atomic::{AtomicI32, Ordering::SeqCst},
         Arc,
@@ -25,6 +17,8 @@ use std::{
     time::{Duration, Instant},
 };
 use util::TryFutureExt;
+
+use crate::transport::{StdioTransport, Transport};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -38,138 +32,6 @@ pub const INTERNAL_ERROR: i32 = -32603;
 
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type NotificationHandler = Box<dyn Send + FnMut(Value, AsyncApp)>;
-
-#[async_trait]
-pub trait Transport: Send + Sync {
-    async fn send(&self, message: String) -> Result<()>;
-    fn receive(&self) -> Pin<Box<dyn Stream<Item = String> + Send>>;
-    fn receive_err(&self) -> Pin<Box<dyn Stream<Item = String> + Send>>;
-}
-
-pub struct StdinTransport {
-    stdout_sender: channel::Sender<String>,
-    stdin_receiver: channel::Receiver<String>,
-    stderr_receiver: channel::Receiver<String>,
-    server: Child,
-}
-
-impl StdinTransport {
-    pub fn new(binary: ModelContextServerBinary, cx: &AsyncApp) -> Result<Self> {
-        let mut command = util::command::new_smol_command(&binary.executable);
-        command
-            .args(&binary.args)
-            .envs(binary.env.unwrap_or_default())
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true);
-
-        let mut server = command.spawn().with_context(|| {
-            format!(
-                "failed to spawn command. (path={:?}, args={:?})",
-                binary.executable, &binary.args
-            )
-        })?;
-
-        let stdin = server.stdin.take().unwrap();
-        let stdout = server.stdout.take().unwrap();
-        let stderr = server.stderr.take().unwrap();
-
-        let (stdin_sender, stdin_receiver) = channel::unbounded::<String>();
-        let (stdout_sender, stdout_receiver) = channel::unbounded::<String>();
-        let (stderr_sender, stderr_receiver) = channel::unbounded::<String>();
-
-        cx.spawn(|_| Self::handle_output(stdin, stdout_receiver).log_err())
-            .detach();
-
-        cx.spawn(|_| async move { Self::handle_input(stdout, stdin_sender).await })
-            .detach();
-
-        cx.spawn(|_| async move { Self::handle_err(stderr, stderr_sender).await })
-            .detach();
-
-        Ok(Self {
-            stdout_sender,
-            stdin_receiver,
-            stderr_receiver,
-            server,
-        })
-    }
-
-    async fn handle_input<Stdout>(stdin: Stdout, inbound_rx: channel::Sender<String>)
-    where
-        Stdout: AsyncRead + Unpin + Send + 'static,
-    {
-        let mut stdin = BufReader::new(stdin);
-        let mut line = String::new();
-        while let Ok(n) = stdin.read_line(&mut line).await {
-            if n == 0 {
-                break;
-            }
-            if inbound_rx.send(line.clone()).await.is_err() {
-                break;
-            }
-            line.clear();
-        }
-    }
-
-    async fn handle_output<Stdin>(
-        stdin: Stdin,
-        outbound_rx: channel::Receiver<String>,
-    ) -> Result<()>
-    where
-        Stdin: AsyncWrite + Unpin + Send + 'static,
-    {
-        let mut stdin = BufWriter::new(stdin);
-        let mut pinned_rx = Box::pin(outbound_rx);
-        while let Some(message) = pinned_rx.next().await {
-            log::trace!("outgoing message: {}", message);
-
-            stdin.write_all(message.as_bytes()).await?;
-            stdin.write_all(b"\n").await?;
-            stdin.flush().await?;
-        }
-        Ok(())
-    }
-
-    async fn handle_err<Stderr>(stderr: Stderr, stderr_tx: channel::Sender<String>)
-    where
-        Stderr: AsyncRead + Unpin + Send + 'static,
-    {
-        let mut stderr = BufReader::new(stderr);
-        let mut line = String::new();
-        while let Ok(n) = stderr.read_line(&mut line).await {
-            if n == 0 {
-                break;
-            }
-            if stderr_tx.send(line.clone()).await.is_err() {
-                break;
-            }
-            line.clear();
-        }
-    }
-}
-
-#[async_trait]
-impl Transport for StdinTransport {
-    async fn send(&self, message: String) -> Result<()> {
-        Ok(self.stdout_sender.send(message).await?)
-    }
-
-    fn receive(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
-        Box::pin(self.stdin_receiver.clone())
-    }
-
-    fn receive_err(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
-        Box::pin(self.stderr_receiver.clone())
-    }
-}
-
-impl Drop for StdinTransport {
-    fn drop(&mut self) {
-        let _ = self.server.kill();
-    }
-}
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -294,7 +156,7 @@ impl Client {
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(String::new);
 
-        let transport = Arc::new(StdinTransport::new(binary, &cx)?);
+        let transport = Arc::new(StdioTransport::new(binary, &cx)?);
 
         let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
