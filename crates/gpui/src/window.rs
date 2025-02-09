@@ -615,7 +615,6 @@ pub struct Window {
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
-    pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: Option<f32>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
@@ -633,8 +632,8 @@ pub struct Window {
     mouse_hit_test: HitTest,
     modifiers: Modifiers,
     scale_factor: f32,
-    pub(crate) coordinate_space_layout_id: Option<LayoutId>,
-    pub(crate) coordinate_space_origin: Point<Pixels>,
+    pub(crate) element_layout_id: Option<LayoutId>,
+    pub(crate) element_origin: Point<Pixels>,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
@@ -901,8 +900,9 @@ impl Window {
             element_id_stack: SmallVec::default(),
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
-            element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
+            element_layout_id: None,
+            element_origin: Point::default(),
             element_opacity: None,
             requested_autoscroll: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
@@ -919,8 +919,6 @@ impl Window {
             mouse_hit_test: HitTest::default(),
             modifiers,
             scale_factor,
-            coordinate_space_layout_id: None,
-            coordinate_space_origin: Point::default(),
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
@@ -1726,7 +1724,7 @@ impl Window {
                 continue;
             }
 
-            self.with_absolute_element_offset(tooltip_bounds.origin, |window| {
+            self.with_coordinate_origin(tooltip_bounds.origin, |window| {
                 element.prepaint(window, cx)
             });
 
@@ -1756,7 +1754,7 @@ impl Window {
             let prepaint_start = self.prepaint_index();
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_rendered_view(deferred_draw.current_view, |window| {
-                    window.with_absolute_element_offset(deferred_draw.absolute_offset, |window| {
+                    window.with_coordinate_origin(deferred_draw.absolute_offset, |window| {
                         element.prepaint(window, cx)
                     });
                 })
@@ -1956,7 +1954,7 @@ impl Window {
     ) -> R {
         self.invalidator.debug_assert_paint_or_prepaint();
         if let Some(mut mask) = mask {
-            mask.bounds.origin += self.coordinate_space_origin;
+            mask.bounds.origin += self.element_origin;
             mask = mask.intersect(&self.content_mask());
             self.content_mask_stack.push(mask);
             let result = f(self);
@@ -1967,48 +1965,16 @@ impl Window {
         }
     }
 
-    /// Updates the global element offset relative to the current offset. This is used to implement
-    /// scrolling. This method should only be called during the prepaint phase of element drawing.
-    pub fn with_element_offset<R>(
-        &mut self,
-        offset: Point<Pixels>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        self.invalidator.debug_assert_prepaint();
-
-        if offset.is_zero() {
-            return f(self);
-        };
-
-        let abs_offset = self.element_offset() + offset;
-        self.with_absolute_element_offset(abs_offset, f)
-    }
-
     pub(crate) fn with_coordinate_origin<R>(
         &mut self,
         origin: Point<Pixels>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.invalidator.debug_assert_paint_or_prepaint();
-        let old_origin = self.coordinate_space_origin;
-        self.coordinate_space_origin = origin;
+        let old_origin = self.element_origin;
+        self.element_origin = origin;
         let result = f(self);
-        self.coordinate_space_origin = old_origin;
-        result
-    }
-
-    /// Updates the global element offset based on the given offset. This is used to implement
-    /// drag handles and other manual painting of elements. This method should only be called during
-    /// the prepaint phase of element drawing.
-    pub fn with_absolute_element_offset<R>(
-        &mut self,
-        offset: Point<Pixels>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        self.invalidator.debug_assert_prepaint();
-        self.element_offset_stack.push(offset);
-        let result = f(self);
-        self.element_offset_stack.pop();
+        self.element_origin = old_origin;
         result
     }
 
@@ -2098,15 +2064,6 @@ impl Window {
 
             None
         })
-    }
-    /// Obtain the current element offset. This method should only be called during the
-    /// prepaint phase of element drawing.
-    pub fn element_offset(&self) -> Point<Pixels> {
-        self.invalidator.debug_assert_prepaint();
-        self.element_offset_stack
-            .last()
-            .copied()
-            .unwrap_or_default()
     }
 
     /// Obtain the current element opacity. This method should only be called during the
@@ -2293,8 +2250,7 @@ impl Window {
 
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        let clipped_bounds =
-            (bounds + self.coordinate_space_origin).intersect(&content_mask.bounds);
+        let clipped_bounds = (bounds + self.element_origin).intersect(&content_mask.bounds);
         if !clipped_bounds.is_empty() {
             self.next_frame
                 .scene
@@ -2324,7 +2280,7 @@ impl Window {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
-        let bounds = bounds + self.coordinate_space_origin;
+        let bounds = bounds + self.element_origin;
         for shadow in shadows {
             let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
             self.next_frame.scene.insert_primitive(Shadow {
@@ -2352,7 +2308,7 @@ impl Window {
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
             pad: 0,
-            bounds: (quad.bounds + self.coordinate_space_origin).scale(scale_factor),
+            bounds: (quad.bounds + self.element_origin).scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
             background: quad.background.opacity(opacity),
             border_color: quad.border_color.opacity(opacity),
@@ -2373,10 +2329,9 @@ impl Window {
         path.content_mask = content_mask;
         let color: Background = color.into();
         path.color = color.opacity(opacity);
-        self.next_frame.scene.insert_primitive(
-            path.offset(self.coordinate_space_origin)
-                .scale(scale_factor),
-        );
+        self.next_frame
+            .scene
+            .insert_primitive(path.offset(self.element_origin).scale(scale_factor));
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -2397,7 +2352,7 @@ impl Window {
             style.thickness
         };
         let bounds = Bounds {
-            origin: origin + self.coordinate_space_origin,
+            origin: origin + self.element_origin,
             size: size(width, height),
         };
         let content_mask = self.content_mask();
@@ -2428,7 +2383,7 @@ impl Window {
         let scale_factor = self.scale_factor();
         let height = style.thickness;
         let bounds = Bounds {
-            origin: origin + self.coordinate_space_origin,
+            origin: origin + self.element_origin,
             size: size(width, height),
         };
         let content_mask = self.content_mask();
@@ -2465,7 +2420,7 @@ impl Window {
 
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
-        let glyph_origin = (origin + self.coordinate_space_origin).scale(scale_factor);
+        let glyph_origin = (origin + self.element_origin).scale(scale_factor);
         let subpixel_variant = Point {
             x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
             y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
@@ -2524,7 +2479,7 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
-        let glyph_origin = (origin + self.coordinate_space_origin).scale(scale_factor);
+        let glyph_origin = (origin + self.element_origin).scale(scale_factor);
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
@@ -2581,7 +2536,7 @@ impl Window {
 
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
-        let bounds = (bounds + self.coordinate_space_origin).scale(scale_factor);
+        let bounds = (bounds + self.element_origin).scale(scale_factor);
         let params = RenderSvgParams {
             path,
             size: bounds.size.map(|pixels| {
@@ -2632,7 +2587,7 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
-        let bounds = (bounds + self.coordinate_space_origin).scale(scale_factor);
+        let bounds = (bounds + self.element_origin).scale(scale_factor);
         let params = RenderImageParams {
             image_id: data.id,
             frame_index,
@@ -2782,13 +2737,12 @@ impl Window {
             .layout_bounds(layout_id)
             .map(Into::into);
 
-        if Some(layout_id) != self.coordinate_space_layout_id {
-            bounds.origin += self.coordinate_space_origin;
+        if Some(layout_id) != self.element_layout_id {
+            bounds.origin += self.element_origin;
         } else {
-            bounds.origin = self.coordinate_space_origin;
+            bounds.origin = self.element_origin;
         }
 
-        bounds.origin += self.element_offset();
         bounds
     }
 
@@ -2811,7 +2765,7 @@ impl Window {
         };
         self.next_frame.hitboxes.push(Hitbox {
             bounds: Bounds {
-                origin: bounds.origin + self.coordinate_space_origin,
+                origin: bounds.origin + self.element_origin,
                 size: bounds.size,
             },
             ..hitbox.clone()
@@ -2902,7 +2856,7 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        let local_origin = self.coordinate_space_origin;
+        let local_origin = self.element_origin;
         self.next_frame.mouse_listeners.push(Some(Box::new(
             move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
                 if let Some(event) = event.downcast_ref::<Event>() {

@@ -201,7 +201,7 @@ impl Element for Anchored {
         let offset = desired.origin - bounds.origin;
         let offset = point(offset.x.round(), offset.y.round());
 
-        window.with_element_offset(offset, |window| {
+        window.with_coordinate_origin(offset, |window| {
             for child in &mut self.children {
                 child.prepaint(window, cx);
             }

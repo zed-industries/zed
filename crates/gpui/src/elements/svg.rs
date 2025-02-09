@@ -100,7 +100,7 @@ impl Element for Svg {
                         .as_ref()
                         .map(|transformation| {
                             transformation.into_matrix(
-                                (bounds + window.coordinate_space_origin).center(),
+                                (bounds + window.element_origin).center(),
                                 window.scale_factor(),
                             )
                         })

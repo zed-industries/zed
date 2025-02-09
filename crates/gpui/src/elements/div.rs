@@ -1232,7 +1232,7 @@ impl Element for Div {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
         if let Some(handle) = self.interactivity.scroll_anchor.as_ref() {
-            *handle.last_origin.borrow_mut() = bounds.origin - window.element_offset();
+            *handle.last_origin.borrow_mut() = bounds.origin; // TODO
         }
         let content_size = if request_layout.child_layout_ids.is_empty() {
             bounds.size
@@ -1276,11 +1276,14 @@ impl Element for Div {
             window,
             cx,
             |_style, scroll_offset, hitbox, window, cx| {
-                window.with_element_offset(scroll_offset, |window| {
-                    for child in &mut self.children {
-                        child.prepaint(window, cx);
-                    }
-                });
+                window.with_coordinate_origin(
+                    scroll_offset + window.element_origin,
+                    |window| {
+                        for child in &mut self.children {
+                            child.prepaint(window, cx);
+                        }
+                    },
+                );
 
                 if let Some(listener) = self.prepaint_listener.as_ref() {
                     listener(children_bounds, window, cx);

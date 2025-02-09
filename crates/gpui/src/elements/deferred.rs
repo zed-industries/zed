@@ -1,5 +1,5 @@
 use crate::{
-    AnyElement, App, Bounds, Element, GlobalElementId, IntoElement, LayoutId, Pixels, Window,
+    AnyElement, App, Bounds, Element, GlobalElementId, IntoElement, LayoutId, Pixels, Point, Window,
 };
 
 /// Builds a `Deferred` element, which delays the layout and paint of its child.
@@ -54,8 +54,7 @@ impl Element for Deferred {
         _cx: &mut App,
     ) {
         let child = self.child.take().unwrap();
-        let element_offset = window.element_offset();
-        window.defer_draw(child, element_offset, self.priority)
+        window.defer_draw(child, Point::default(), self.priority)
     }
 
     fn paint(

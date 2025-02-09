@@ -334,7 +334,7 @@ impl<E: Element> Drawable<E> {
                 }
 
                 let bounds = window.layout_bounds(layout_id);
-                window.coordinate_space_layout_id = Some(layout_id);
+                window.element_layout_id = Some(layout_id);
                 let node_id = window.next_frame.dispatch_tree.push_node();
                 let prepaint = window.with_coordinate_origin(bounds.origin, |window| {
                     self.element.prepaint(
@@ -558,7 +558,7 @@ impl AnyElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<FocusHandle> {
-        window.with_coordinate_origin(origin + window.coordinate_space_origin, |window| {
+        window.with_coordinate_origin(origin + window.element_origin, |window| {
             self.prepaint(window, cx)
         })
     }
@@ -573,7 +573,7 @@ impl AnyElement {
         cx: &mut App,
     ) -> Option<FocusHandle> {
         self.layout_as_root(available_space, window, cx);
-        window.with_absolute_element_offset(origin, |window| self.prepaint(window, cx))
+        self.prepaint_at(origin, window, cx)
     }
 }
 
