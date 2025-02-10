@@ -12,18 +12,34 @@ pub fn init(cx: &mut App) {
     ContextServerSettings::register(cx);
 }
 
-#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug, Default)]
-pub struct ServerConfig {
-    /// The command to run this context server.
-    ///
-    /// This will override the command set by an extension.
-    pub command: Option<ServerCommand>,
-    /// The settings for this context server.
-    ///
-    /// Consult the documentation for the context server to see what settings
-    /// are supported.
-    #[schemars(schema_with = "server_config_settings_json_schema")]
-    pub settings: Option<serde_json::Value>,
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
+#[serde(rename_all = "snake_case", untagged)]
+pub enum ServerConfig {
+    Stdio {
+        /// The command to run this context server.
+        ///
+        /// This will override the command set by an extension.
+        command: Option<ServerCommand>,
+        /// The settings for this context server.
+        ///
+        /// Consult the documentation for the context server to see what settings
+        /// are supported.
+        #[schemars(schema_with = "server_config_settings_json_schema")]
+        settings: Option<serde_json::Value>,
+    },
+    Sse {
+        /// The remote SSE endpoint.
+        endpoint: String,
+    },
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        ServerConfig::Stdio {
+            command: None,
+            settings: None,
+        }
+    }
 }
 
 fn server_config_settings_json_schema(_generator: &mut SchemaGenerator) -> Schema {
