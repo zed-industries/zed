@@ -112,10 +112,18 @@ OLD_VERSION=$(grep '^version = ' extension.toml | cut -d'"' -f2)
 NEW_VERSION=$(echo "$OLD_VERSION" | awk -F. '{$NF = $NF + 1;} 1' OFS=.)
 echo $OLD_VERSION $NEW_VERSION
 perl -i -pe "s/$OLD_VERSION/$NEW_VERSION/" extension.toml
+perl -i -pe "s#https://github.com/zed-industries/zed#https://github.com/zed-extensions/${LANGNAME}#g" extension.toml
 
 # if there's rust code, update this too.
-test -f Cargo.toml && perl -i -pe "s/$OLD_VERSION/$NEW_VERSION/" cargo.toml
+test -f Cargo.toml && perl -i -pe "s/$OLD_VERSION/$NEW_VERSION/" Cargo.toml
+# remove workspace Cargo.toml lines
+test -f Cargo.toml && perl -ni -e 'print unless /^.*(workspace\s*=\s*true|\[lints\])\s*$/' Cargo.toml
 test -f Cargo.toml && cargo check
+
+# add a .gitignore
+echo "target/
+grammars/
+*.wasm" > .gitignore
 
 # commit and push
 git add -u
