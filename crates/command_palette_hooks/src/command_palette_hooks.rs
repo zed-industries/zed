@@ -108,7 +108,7 @@ pub struct CommandInterceptResult {
 /// An interceptor for the command palette.
 #[derive(Default)]
 pub struct CommandPaletteInterceptor(
-    Option<Box<dyn Fn(&str, &App) -> Option<CommandInterceptResult>>>,
+    Option<Box<dyn Fn(&str, &App) -> Vec<CommandInterceptResult>>>,
 );
 
 #[derive(Default)]
@@ -132,10 +132,12 @@ impl CommandPaletteInterceptor {
     }
 
     /// Intercepts the given query from the command palette.
-    pub fn intercept(&self, query: &str, cx: &App) -> Option<CommandInterceptResult> {
-        let handler = self.0.as_ref()?;
-
-        (handler)(query, cx)
+    pub fn intercept(&self, query: &str, cx: &App) -> Vec<CommandInterceptResult> {
+        if let Some(handler) = self.0.as_ref() {
+            (handler)(query, cx)
+        } else {
+            Vec::new()
+        }
     }
 
     /// Clears the global interceptor.
@@ -146,7 +148,7 @@ impl CommandPaletteInterceptor {
     /// Sets the global interceptor.
     ///
     /// This will override the previous interceptor, if it exists.
-    pub fn set(&mut self, handler: Box<dyn Fn(&str, &App) -> Option<CommandInterceptResult>>) {
+    pub fn set(&mut self, handler: Box<dyn Fn(&str, &App) -> Vec<CommandInterceptResult>>) {
         self.0 = Some(handler);
     }
 }
