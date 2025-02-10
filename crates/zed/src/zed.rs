@@ -27,7 +27,7 @@ use gpui::{
     Entity, Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel,
     ReadGlobal, SharedString, Styled, Task, TitlebarOptions, Window, WindowKind, WindowOptions,
 };
-use image_viewer::ImageInfo;
+use image_viewer::{zoom_controls, ImageInfo};
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
@@ -204,6 +204,7 @@ pub fn initialize_workspace(
             cx.new(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
         let vim_mode_indicator = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let image_info = cx.new(|_cx| ImageInfo::new(workspace));
+        let zoom_controls = cx.new(|_cx| zoom_controls::ZoomControls::new(workspace));
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
@@ -215,6 +216,7 @@ pub fn initialize_workspace(
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
             status_bar.add_right_item(image_info, window, cx);
+            status_bar.add_right_item(zoom_controls, window, cx);
         });
 
         let handle = cx.entity().downgrade();
