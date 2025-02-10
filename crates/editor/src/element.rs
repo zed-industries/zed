@@ -3560,13 +3560,11 @@ impl EditorElement {
 
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
-                let previewing = false;
                 let target_display_point = target.to_display_point(editor_snapshot);
                 if target_display_point.row().as_f32() < scroll_top {
                     let mut element = inline_completion_accept_indicator(
                         "Jump to Edit",
                         Some(IconName::ArrowUp),
-                        previewing,
                         editor,
                         window,
                         cx,
@@ -3579,7 +3577,6 @@ impl EditorElement {
                     let mut element = inline_completion_accept_indicator(
                         "Jump to Edit",
                         Some(IconName::ArrowDown),
-                        previewing,
                         editor,
                         window,
                         cx,
@@ -3595,7 +3592,6 @@ impl EditorElement {
                     let mut element = inline_completion_accept_indicator(
                         "Jump to Edit",
                         None,
-                        previewing,
                         editor,
                         window,
                         cx,
@@ -3658,12 +3654,7 @@ impl EditorElement {
                         let (mut element, origin) = self.editor.update(cx, |editor, cx| {
                             Some((
                                 inline_completion_accept_indicator(
-                                    "Accept",
-                                    None,
-                                    editor.previewing_inline_completion,
-                                    editor,
-                                    window,
-                                    cx,
+                                    "Accept", None, editor, window, cx,
                                 )?,
                                 editor.display_to_pixel_point(
                                     target_line_end,
@@ -5669,7 +5660,6 @@ fn header_jump_data(
 fn inline_completion_accept_indicator(
     label: impl Into<SharedString>,
     icon: Option<IconName>,
-    previewing: bool,
     editor: &Editor,
     window: &mut Window,
     cx: &App,
@@ -5683,7 +5673,7 @@ fn inline_completion_accept_indicator(
         .text_size(TextSize::XSmall.rems(cx))
         .text_color(cx.theme().colors().text)
         .gap_1()
-        .when(!previewing, |parent| {
+        .when(!editor.previewing_inline_completion, |parent| {
             parent.children(ui::render_modifiers(
                 &accept_keystroke.modifiers,
                 PlatformStyle::platform(),
