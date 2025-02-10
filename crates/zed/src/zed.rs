@@ -1252,8 +1252,7 @@ fn show_settings_migration_notification_if_needed(
         return;
     }
     let message = MarkdownString(format!(
-        "Settings migration needed, as the format for some settings has changed. \
-            You can migrate your settings by clicking below. A backup will be created at {}.",
+        "Automatically migrate them and get a backup of your previous settings stored at {}.",
         MarkdownString::inline_code(&paths::settings_backup_file().to_string_lossy())
     ));
     show_markdown_app_notification(
@@ -1319,17 +1318,69 @@ fn show_markdown_app_notification<F>(
                 cx.new(move |_cx| {
                     MessageNotification::new_from_builder(move |window, cx| {
                         gpui::div()
-                            .text_xs()
-                            .child(markdown_preview::markdown_renderer::render_parsed_markdown(
-                                &parsed_markdown.clone(),
-                                Some(workspace_handle.clone()),
-                                window,
-                                cx,
+                            // .child(Label::new("Settings Update"))
+                            .child(
+                                Label::new("A few settings were updated in Zed v1.0:")
+                                    .size(LabelSize::Small),
+                            )
+                            .child(
+                                v_flex()
+                                    .my_2()
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .child(
+                                                Label::new("inline_completions")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Disabled)
+                                                    .buffer_font(cx),
+                                            )
+                                            .child(
+                                                Icon::new(IconName::ArrowRight)
+                                                    .size(IconSize::XSmall)
+                                                    .color(Color::Muted),
+                                            )
+                                            .child(
+                                                Label::new("edit_predictions")
+                                                    .size(LabelSize::Small)
+                                                    .buffer_font(cx),
+                                            ),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .child(
+                                                Label::new("show_inline_completions")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Disabled)
+                                                    .buffer_font(cx),
+                                            )
+                                            .child(
+                                                Icon::new(IconName::ArrowRight)
+                                                    .size(IconSize::XSmall)
+                                                    .color(Color::Muted),
+                                            )
+                                            .child(
+                                                Label::new("show_edit_predictions")
+                                                    .size(LabelSize::Small)
+                                                    .buffer_font(cx),
+                                            ),
+                                    ),
+                            )
+                            .child(div().text_xs().child(
+                                markdown_preview::markdown_renderer::render_parsed_markdown(
+                                    &parsed_markdown.clone(),
+                                    Some(workspace_handle.clone()),
+                                    window,
+                                    cx,
+                                ),
                             ))
                             .into_any()
                     })
+                    .show_close_button(false)
                     .primary_message(primary_button_message)
                     .primary_on_click_arc(primary_button_on_click)
+                    // .primary_icon(IconName::Check)
                 })
             })
         })
