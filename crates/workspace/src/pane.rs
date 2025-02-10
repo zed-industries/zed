@@ -1550,6 +1550,8 @@ impl Pane {
                 let should_save = dirty_project_item_ids
                     .iter()
                     .any(|id| saved_project_items_ids.insert(*id))
+                    || save_intent == SaveIntent::Save
+                    || save_intent == SaveIntent::Overwrite
                     // Always propose to save singleton files without any project paths: those cannot be saved via multibuffer, as require a file path selection modal.
                     || cx
                         .update(|_window, cx| {
