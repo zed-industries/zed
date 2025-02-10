@@ -15,9 +15,7 @@ use gpui::*;
 use language::{Buffer, File};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use multi_buffer::ExcerptInfo;
-use panel::{
-    panel_editor_container, panel_editor_style, panel_filled_button, panel_icon_button, PanelHeader,
-};
+use panel::{panel_editor_container, panel_editor_style, panel_filled_button, PanelHeader};
 use project::{
     git::{GitEvent, Repository},
     Fs, Project, ProjectPath,
@@ -26,8 +24,8 @@ use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration, usize};
 use ui::{
-    prelude::*, ButtonLike, Checkbox, Divider, DividerColor, ElevationIndex, IndentGuideColors,
-    ListItem, ListItemSpacing, Scrollbar, ScrollbarState, SwitchWithLabel, Tooltip,
+    prelude::*, ButtonLike, Checkbox, CheckboxWithLabel, Divider, DividerColor, ElevationIndex,
+    IndentGuideColors, ListItem, ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -1199,43 +1197,14 @@ impl GitPanel {
                 cx.listener(move |this, _: &ClickEvent, window, cx| this.commit_changes(window, cx))
             });
 
-        let enable_coauthors_switch = SwitchWithLabel::new(
+        let enable_coauthors = CheckboxWithLabel::new(
             "enable-coauthors",
-            Label::new("Add Co-authors"),
-            self.enable_auto_coauthors,
+            Label::new("Add Co-authors")
+                .color(Color::Disabled)
+                .size(LabelSize::XSmall),
+            self.enable_auto_coauthors.into(),
             cx.listener(move |this, _, _, cx| this.toggle_auto_coauthors(cx)),
         );
-
-        // let enable_coauthors_button = panel_icon_button("enable-coauthors", IconName::UserGroup)
-        //     .icon_color(Color::Muted)
-        //     .icon_size(IconSize::Small)
-        //     .selected_style(ButtonStyle::Filled)
-        //     .selected_icon_color(Color::Default)
-        //     .layer(ElevationIndex::Surface)
-        //     .toggle_state(co_authors_enabled)
-        //     .on_click({
-        //         cx.listener(move |this, _: &ClickEvent, _, cx| {
-        //             this.toggle_auto_coauthors(cx);
-        //             cx.notify();
-        //         })
-        //     })
-        //     .tooltip(move |window, cx| {
-        //         Tooltip::with_meta(
-        //             if co_authors_enabled {
-        //                 "Add co-authors automatically"
-        //             } else {
-        //                 "Don't add co-authors automatically"
-        //             },
-        //             None,
-        //             if co_authors_enabled {
-        //                 "Current collaborators will be added. Click to disable."
-        //             } else {
-        //                 "Current collaborators won't be added. Click to enable."
-        //             },
-        //             window,
-        //             cx,
-        //         )
-        //     });
 
         panel_editor_container(window, cx)
             .id("commit-editor-container")
@@ -1252,11 +1221,9 @@ impl GitPanel {
             .child(div().flex_1())
             .child(
                 h_flex()
-                    .items_center()
-                    .h_8()
                     .justify_between()
                     .gap_1()
-                    .child(enable_coauthors_switch)
+                    .child(enable_coauthors)
                     .child(commit_button),
             )
     }
