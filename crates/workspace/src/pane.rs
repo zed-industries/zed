@@ -1050,6 +1050,17 @@ impl Pane {
         self.items.get(self.active_item_index).cloned()
     }
 
+    pub fn active_nearest_item(&self) -> Option<Box<dyn ItemHandle>> {
+        if self.items_len() == 1 {
+            return None;
+        }
+        let index = match self.active_item_index {
+            0 => self.active_item_index + 1,
+            _ => self.active_item_index - 1,
+        };
+        self.items.get(index).cloned()
+    }
+
     pub fn pixel_position_of_cursor(&self, cx: &App) -> Option<Point<Pixels>> {
         self.items
             .get(self.active_item_index)?
@@ -1599,6 +1610,7 @@ impl Pane {
                         item_ix,
                         &*item_to_close,
                         save_intent,
+                        None,
                         &mut cx,
                     )
                     .await?
@@ -1780,6 +1792,7 @@ impl Pane {
         item_ix: usize,
         item: &dyn ItemHandle,
         save_intent: SaveIntent,
+        relative_project_path: Option<ProjectPath>,
         cx: &mut AsyncWindowContext,
     ) -> Result<bool> {
         const CONFLICT_MESSAGE: &str =
@@ -1940,7 +1953,7 @@ impl Pane {
             } else if can_save_as {
                 let abs_path = pane.update_in(cx, |pane, window, cx| {
                     pane.workspace.update(cx, |workspace, cx| {
-                        workspace.prompt_for_new_path(window, cx)
+                        workspace.prompt_for_new_path(relative_project_path, window, cx)
                     })
                 })??;
                 if let Some(abs_path) = abs_path.await.ok().flatten() {
