@@ -40,6 +40,7 @@ use crate::ssh_connections::RemoteSettingsContent;
 use crate::ssh_connections::SshConnection;
 use crate::ssh_connections::SshConnectionHeader;
 use crate::ssh_connections::SshConnectionModal;
+use crate::ssh_connections::SshPortForward;
 use crate::ssh_connections::SshProject;
 use crate::ssh_connections::SshPrompt;
 use crate::ssh_connections::SshSettings;
@@ -878,6 +879,20 @@ impl RemoteServerProjects {
                     nickname: None,
                     args: connection_options.args.unwrap_or_default(),
                     upload_binary_over_ssh: None,
+                    port_forwards: match connection_options.port_forwards {
+                        Some(forwards) => Some(
+                            forwards
+                                .into_iter()
+                                .map(|v| SshPortForward {
+                                    local_host: v.local_host,
+                                    local_port: v.local_port,
+                                    remote_host: v.remote_host,
+                                    remote_port: v.remote_port,
+                                })
+                                .collect(),
+                        ),
+                        None => None,
+                    },
                 })
         });
     }

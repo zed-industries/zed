@@ -29,6 +29,7 @@ use rpc::{
     AnyProtoClient, EntityMessageSubscriber, ErrorExt, ProtoClient, ProtoMessageHandlerSet,
     RpcError,
 };
+use serde::{Deserialize, Serialize};
 use smol::{
     fs,
     process::{self, Child, Stdio},
@@ -59,6 +60,14 @@ pub struct SshSocket {
     socket_path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
+pub struct SshPortForwardOption {
+    pub local_host: Option<String>,
+    pub local_port: u16,
+    pub remote_host: String,
+    pub remote_port: u16,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct SshConnectionOptions {
     pub host: String,
@@ -66,6 +75,7 @@ pub struct SshConnectionOptions {
     pub port: Option<u16>,
     pub password: Option<String>,
     pub args: Option<Vec<String>>,
+    pub port_forwards: Option<Vec<SshPortForwardOption>>,
 
     pub nickname: Option<String>,
     pub upload_binary_over_ssh: bool,
@@ -83,6 +93,93 @@ macro_rules! shell_script {
     }};
 }
 
+fn parse_port_number(port_str: &str) -> Result<u16> {
+    port_str
+        .parse()
+        .map_err(|e| anyhow!("Invalid port number: {}: {}", port_str, e))
+}
+
+fn parse_port_forward_spec(spec: &str) -> Result<SshPortForwardOption> {
+    let parts: Vec<&str> = spec.split(':').collect();
+
+    match parts.len() {
+        4 => {
+            let local_port = parse_port_number(parts[1])?;
+            let remote_port = parse_port_number(parts[3])?;
+
+            Ok(SshPortForwardOption {
+                local_host: Some(parts[0].to_string()),
+                local_port,
+                remote_host: parts[2].to_string(),
+                remote_port,
+            })
+        }
+        3 => {
+            let local_port = parse_port_number(parts[0])?;
+            let remote_port = parse_port_number(parts[2])?;
+
+            Ok(SshPortForwardOption {
+                local_host: None,
+                local_port,
+                remote_host: parts[1].to_string(),
+                remote_port,
+            })
+        }
+        _ => anyhow::bail!("Invalid port forward format"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_port_forward_spec;
+    use super::parse_port_number;
+
+    #[test]
+    fn test_port_number_parsing() {
+        // Test successful case
+        assert_eq!(parse_port_number("8080").unwrap(), 8080);
+
+        // Test error formatting
+        assert!(parse_port_number("invalid")
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid port number: invalid"));
+    }
+
+    #[test]
+    fn test_parse_local_and_remote_ports() {
+        let result = parse_port_forward_spec("8080:example.com:80").unwrap();
+        assert_eq!(result.local_port, 8080);
+        assert_eq!(result.remote_port, 80);
+        assert_eq!(result.remote_host, "example.com");
+        assert_eq!(result.local_host, None);
+    }
+
+    #[test]
+    fn test_parse_with_local_host() {
+        let result = parse_port_forward_spec("localhost:8080:example.com:80").unwrap();
+        assert_eq!(result.local_host, Some("localhost".to_string()));
+        assert_eq!(result.local_port, 8080);
+        assert_eq!(result.remote_host, "example.com");
+        assert_eq!(result.remote_port, 80);
+    }
+
+    #[test]
+    fn test_invalid_formats() {
+        // Too few parts
+        assert!(parse_port_forward_spec("8080:80").is_err());
+
+        // Too many parts
+        assert!(parse_port_forward_spec("local:8080:remote:80:extra").is_err());
+
+        // Invalid port numbers
+        assert!(parse_port_forward_spec("abc:example.com:80").is_err());
+        assert!(parse_port_forward_spec("8080:example.com:abc").is_err());
+        assert!(parse_port_forward_spec("localhost:abc:example.com:80").is_err());
+        assert!(parse_port_forward_spec("localhost:8080:example.com:abc").is_err());
+    }
+}
+
 impl SshConnectionOptions {
     pub fn parse_command_line(input: &str) -> Result<Self> {
         let input = input.trim_start_matches("ssh ");
@@ -90,14 +187,14 @@ impl SshConnectionOptions {
         let mut username: Option<String> = None;
         let mut port: Option<u16> = None;
         let mut args = Vec::new();
+        let mut port_forwards: Vec<SshPortForwardOption> = Vec::new();
 
         // disallowed: -E, -e, -F, -f, -G, -g, -M, -N, -n, -O, -q, -S, -s, -T, -t, -V, -v, -W
         const ALLOWED_OPTS: &[&str] = &[
             "-4", "-6", "-A", "-a", "-C", "-K", "-k", "-X", "-x", "-Y", "-y",
         ];
         const ALLOWED_ARGS: &[&str] = &[
-            "-B", "-b", "-c", "-D", "-I", "-i", "-J", "-L", "-l", "-m", "-o", "-P", "-p", "-R",
-            "-w",
+            "-B", "-b", "-c", "-D", "-I", "-i", "-J", "-l", "-m", "-o", "-P", "-p", "-R", "-w",
         ];
 
         let mut tokens = shlex::split(input)
@@ -123,6 +220,20 @@ impl SshConnectionOptions {
                 username = Some(l.to_string());
                 continue;
             }
+            if arg == "-L" || arg.starts_with("-L") {
+                let forward_spec = if arg == "-L" {
+                    tokens.next()
+                } else {
+                    Some(arg.strip_prefix("-L").unwrap().to_string())
+                };
+
+                if let Some(spec) = forward_spec {
+                    port_forwards.push(parse_port_forward_spec(&spec)?);
+                } else {
+                    anyhow::bail!("Missing port forward format");
+                }
+            }
+
             for a in ALLOWED_ARGS {
                 if arg == *a {
                     args.push(arg);
@@ -154,10 +265,16 @@ impl SshConnectionOptions {
             anyhow::bail!("missing hostname");
         };
 
+        let port_forwards = match port_forwards.len() {
+            0 => None,
+            _ => Some(port_forwards),
+        };
+
         Ok(Self {
             host: hostname.to_string(),
             username: username.clone(),
             port,
+            port_forwards,
             args: Some(args),
             password: None,
             nickname: None,
@@ -179,8 +296,20 @@ impl SshConnectionOptions {
         result
     }
 
-    pub fn additional_args(&self) -> Option<&Vec<String>> {
-        self.args.as_ref()
+    pub fn additional_args(&self) -> Vec<String> {
+        let mut args = self.args.iter().flatten().cloned().collect::<Vec<String>>();
+
+        if let Some(forwards) = &self.port_forwards {
+            args.extend(forwards.iter().map(|pf| match &pf.local_host {
+                Some(host) => format!(
+                    "-L {}:{}:{}:{}",
+                    host, pf.local_port, pf.remote_host, pf.remote_port
+                ),
+                None => format!("-L {}:{}:{}", pf.local_port, pf.remote_host, pf.remote_port),
+            }));
+        }
+
+        args
     }
 
     fn scp_url(&self) -> String {
@@ -1454,7 +1583,7 @@ impl SshRemoteConnection {
             .stderr(Stdio::piped())
             .env("SSH_ASKPASS_REQUIRE", "force")
             .env("SSH_ASKPASS", &askpass_script_path)
-            .args(connection_options.additional_args().unwrap_or(&Vec::new()))
+            .args(connection_options.additional_args())
             .args([
                 "-N",
                 "-o",
