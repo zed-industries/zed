@@ -1788,7 +1788,6 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     fs.insert_tree(path!("/dir"), json!({ "a.rs": text })).await;
 
     let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
     language_registry.add(rust_lang());
