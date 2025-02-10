@@ -5606,10 +5606,10 @@ impl Editor {
         if provider.provider.needs_terms_acceptance(cx) {
             return Some(
                 h_flex()
-                    .h(self.edit_prediction_cursor_popover_height())
                     .min_w(min_width)
                     .flex_1()
                     .px_2()
+                    .py_1()
                     .gap_3()
                     .elevation_2(cx)
                     .hover(|style| style.bg(cx.theme().colors().element_hover))
@@ -5699,11 +5699,11 @@ impl Editor {
 
         Some(
             h_flex()
-                .h(self.edit_prediction_cursor_popover_height())
                 .min_w(min_width)
                 .max_w(max_width)
                 .flex_1()
                 .px_2()
+                .py_1()
                 .elevation_2(cx)
                 .child(completion)
                 .child(ui::Divider::vertical())
