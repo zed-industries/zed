@@ -91,7 +91,6 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        let mut preserve_indented_line = false;
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -101,38 +100,6 @@ impl Vim {
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
                         object.expand_selection(map, selection, around);
-                        // Check if selection is an inside multiline { } object
-                        if !around && object.is_multiline() {
-                            let is_multiline = selection.start.row() != selection.end.row();
-                            if is_multiline {
-                                let start_offset = selection.start.to_offset(map, Bias::Left);
-                                let mut pos = start_offset;
-
-                                // Check backwards from selection start
-                                while pos > 0 {
-                                    pos -= 1;
-                                    if let Some((ch, _)) = map.buffer_chars_at(pos).next() {
-                                        // If we hit non-whitespace before newline, no indent preservation
-                                        if !ch.is_whitespace() {
-                                            break;
-                                        }
-                                        // Found newline, now check for opening brace
-                                        if ch == '\n' {
-                                            if pos > 0 {
-                                                if let Some((prev_ch, _)) =
-                                                    map.buffer_chars_at(pos - 1).next()
-                                                {
-                                                    if prev_ch == '{' {
-                                                        preserve_indented_line = true;
-                                                    }
-                                                }
-                                            }
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
                         let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
                         let mut move_selection_start_to_previous_line =
                             |map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>| {
@@ -184,22 +151,6 @@ impl Vim {
                 });
                 vim.copy_selections_content(editor, false, cx);
                 editor.insert("", window, cx);
-
-                // Preserve an indented line on inside multiline object deletion
-                if preserve_indented_line {
-                    editor.change_selections(None, window, cx, |s| {
-                        s.move_with(|_map, selection| {
-                            selection.collapse_to(selection.start, selection.goal);
-                        });
-                    });
-                    editor.insert("\n", window, cx);
-                    editor.change_selections(None, window, cx, |s| {
-                        s.move_with(|map, selection| {
-                            selection.end = movement::left(map, selection.end);
-                            selection.start = selection.end;
-                        });
-                    });
-                }
 
                 // Fixup cursor position after the deletion
                 editor.set_clip_at_line_ends(true, cx);
