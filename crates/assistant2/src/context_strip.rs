@@ -411,22 +411,22 @@ impl Render for ContextStrip {
 
                         Some(context_picker.clone())
                     })
-                    .trigger(
+                    .trigger_with_tooltip(
                         IconButton::new("add-context", IconName::Plus)
                             .icon_size(IconSize::Small)
-                            .style(ui::ButtonStyle::Filled)
-                            .tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |window, cx| {
-                                    Tooltip::for_action_in(
-                                        "Add Context",
-                                        &ToggleContextPicker,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                }
-                            }),
+                            .style(ui::ButtonStyle::Filled),
+                        {
+                            let focus_handle = focus_handle.clone();
+                            move |window, cx| {
+                                Tooltip::for_action_in(
+                                    "Add Context",
+                                    &ToggleContextPicker,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        },
                     )
                     .attach(gpui::Corner::TopLeft)
                     .anchor(gpui::Corner::BottomLeft)

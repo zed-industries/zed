@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
-    Task, WeakEntity,
+    AnyElement, AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    Subscription, Task, WeakEntity,
 };
 use picker::{Picker, PickerDelegate};
 use project::{
@@ -79,20 +79,27 @@ impl Render for RepositorySelector {
 }
 
 #[derive(IntoElement)]
-pub struct RepositorySelectorPopoverMenu<T>
+pub struct RepositorySelectorPopoverMenu<T, TT>
 where
-    T: PopoverTrigger,
+    T: PopoverTrigger + ButtonCommon,
+    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
 {
     repository_selector: Entity<RepositorySelector>,
     trigger: T,
+    tooltip: TT,
     handle: Option<PopoverMenuHandle<RepositorySelector>>,
 }
 
-impl<T: PopoverTrigger> RepositorySelectorPopoverMenu<T> {
-    pub fn new(repository_selector: Entity<RepositorySelector>, trigger: T) -> Self {
+impl<T, TT> RepositorySelectorPopoverMenu<T, TT>
+where
+    T: PopoverTrigger + ButtonCommon,
+    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
+{
+    pub fn new(repository_selector: Entity<RepositorySelector>, trigger: T, tooltip: TT) -> Self {
         Self {
             repository_selector,
             trigger,
+            tooltip,
             handle: None,
         }
     }
@@ -103,13 +110,17 @@ impl<T: PopoverTrigger> RepositorySelectorPopoverMenu<T> {
     }
 }
 
-impl<T: PopoverTrigger> RenderOnce for RepositorySelectorPopoverMenu<T> {
+impl<T, TT> RenderOnce for RepositorySelectorPopoverMenu<T, TT>
+where
+    T: PopoverTrigger + ButtonCommon,
+    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
+{
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let repository_selector = self.repository_selector.clone();
 
         PopoverMenu::new("repository-switcher")
             .menu(move |_window, _cx| Some(repository_selector.clone()))
-            .trigger(self.trigger)
+            .trigger_with_tooltip(self.trigger, self.tooltip)
             .attach(gpui::Corner::BottomLeft)
             .when_some(self.handle.clone(), |menu, handle| menu.with_handle(handle))
     }

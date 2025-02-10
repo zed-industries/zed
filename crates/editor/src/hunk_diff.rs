@@ -763,7 +763,7 @@ impl Editor {
                                                 this.child({
                                                     let focus = editor.focus_handle(cx);
                                                     PopoverMenu::new("hunk-controls-dropdown")
-                                                        .trigger(
+                                                        .trigger_with_tooltip(
                                                             IconButton::new(
                                                                 "toggle_editor_selections_icon",
                                                                 IconName::EllipsisVertical,
@@ -774,19 +774,8 @@ impl Editor {
                                                             .toggle_state(
                                                                 hunk_controls_menu_handle
                                                                     .is_deployed(),
-                                                            )
-                                                            .when(
-                                                                !hunk_controls_menu_handle
-                                                                    .is_deployed(),
-                                                                |this| {
-                                                                    this.tooltip(|_, cx| {
-                                                                        Tooltip::simple(
-                                                                            "Hunk Controls",
-                                                                            cx,
-                                                                        )
-                                                                    })
-                                                                },
                                                             ),
+                                                            Tooltip::simple("Hunk Controls", cx),
                                                         )
                                                         .anchor(Corner::TopRight)
                                                         .with_handle(hunk_controls_menu_handle)

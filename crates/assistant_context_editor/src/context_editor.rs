@@ -2359,8 +2359,8 @@ impl ContextEditor {
                 .icon(IconName::Plus)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
-                .icon_position(IconPosition::Start)
-                .tooltip(Tooltip::text("Type / to insert via keyboard")),
+                .icon_position(IconPosition::Start),
+            Tooltip::text("Type / to insert via keyboard"),
         )
     }
 
@@ -3323,10 +3323,10 @@ impl Render for ContextEditorToolbarItem {
                                         .color(Color::Muted)
                                         .size(IconSize::XSmall),
                                 ),
-                        )
-                        .tooltip(move |window, cx| {
-                            Tooltip::for_action("Change Model", &ToggleModelSelector, window, cx)
-                        }),
+                        ),
+                    move |window, cx| {
+                        Tooltip::for_action("Change Model", &ToggleModelSelector, window, cx)
+                    },
                 )
                 .with_handle(self.language_model_selector_menu_handle.clone()),
             )

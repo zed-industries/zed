@@ -139,10 +139,9 @@ impl TerminalPanel {
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
                         PopoverMenu::new("terminal-tab-bar-popover-menu")
-                            .trigger(
-                                IconButton::new("plus", IconName::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("New…")),
+                            .trigger_with_tooltip(
+                                IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
+                                Tooltip::text("New…"),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
@@ -169,10 +168,10 @@ impl TerminalPanel {
                     .children(assistant_tab_bar_button.clone())
                     .child(
                         PopoverMenu::new("terminal-pane-tab-bar-split")
-                            .trigger(
+                            .trigger_with_tooltip(
                                 IconButton::new("terminal-pane-split", IconName::Split)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Split Pane")),
+                                    .icon_size(IconSize::Small),
+                                Tooltip::text("Split Pane"),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
