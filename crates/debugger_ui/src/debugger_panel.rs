@@ -187,6 +187,8 @@ impl DebugPanel {
                                         window,
                                         cx,
                                     );
+                                } else {
+                                    debug_assert!("Encountered unexpected command type");
                                 }
                             }
                             _ => unreachable!(),
