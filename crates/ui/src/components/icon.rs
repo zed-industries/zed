@@ -315,8 +315,6 @@ pub enum IconName {
     Unpin,
     Update,
     UserGroup,
-    UserPlus,
-    UserX,
     Visible,
     Wand,
     Warning,
