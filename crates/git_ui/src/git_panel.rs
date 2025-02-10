@@ -1220,6 +1220,48 @@ impl GitPanel {
             )
     }
 
+    fn render_previous_commit(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let active_repository = self.active_repository.as_ref()?;
+        let branch = active_repository.read(cx).branch()?;
+        let commit = branch.most_recent_commit.as_ref()?;
+
+        let branch_selector = Button::new("branch-selector", branch.name.clone())
+            .color(Color::Muted)
+            .style(ButtonStyle::Subtle)
+            .icon(IconName::GitBranch)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .size(ButtonSize::Compact)
+            .icon_position(IconPosition::Start)
+            .tooltip(Tooltip::for_action_title(
+                "Switch Branch",
+                &zed_actions::git::Branch,
+            ))
+            .on_click(cx.listener(|_, _, window, cx| {
+                window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
+            }))
+            .style(ButtonStyle::Transparent);
+
+        let timestamp = Label::new(time_format::format_local_timestamp(
+            OffsetDateTime::from_unix_timestamp(commit.commit_timestamp).log_err()?,
+            OffsetDateTime::now_utc(),
+            time_format::TimestampFormat::Relative,
+        ))
+        .size(LabelSize::Small)
+        .color(Color::Muted);
+
+        let commit_msg = Label::new(util::truncate_and_trailoff(&commit.subject, 80));
+
+        let undo_button = Button::new("undo button", "uncommit");
+
+        Some(
+            v_flex()
+                .child(branch_selector)
+                .child(timestamp)
+                .child(h_flex().child(commit_msg).child(undo_button)),
+        )
+    }
+
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .h_full()
@@ -1706,6 +1748,7 @@ impl Render for GitPanel {
                 self.render_empty_state(cx).into_any_element()
             })
             .child(self.render_commit_editor(window, cx))
+            .children(self.render_previous_commit(cx))
     }
 }
 
