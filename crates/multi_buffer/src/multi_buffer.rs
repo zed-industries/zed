@@ -305,12 +305,20 @@ impl ExcerptBoundary {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ExpandInfo {
+    pub direction: ExpandExcerptDirection,
+    pub excerpt_id: ExcerptId,
+    pub enabled: bool,
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct RowInfo {
     pub buffer_id: Option<BufferId>,
     pub buffer_row: Option<u32>,
     pub multibuffer_row: Option<MultiBufferRow>,
     pub diff_status: Option<diff::DiffHunkStatus>,
+    pub expand_info: Option<ExpandInfo>,
 }
 
 /// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
@@ -383,6 +391,7 @@ pub struct DiffTransformSummary {
 pub struct MultiBufferRows<'a> {
     point: Point,
     is_empty: bool,
+    is_singleton: bool,
     cursor: MultiBufferCursor<'a, Point>,
 }
 
@@ -3473,6 +3482,11 @@ impl MultiBufferSnapshot {
         })
     }
 
+    pub fn max_excerpt_buffer_row(&self, excerpt_id: ExcerptId) -> Option<u32> {
+        self.excerpt(excerpt_id)
+            .map(|excerpt| excerpt.max_buffer_row)
+    }
+
     pub fn excerpt_ids_for_range<T: ToOffset>(
         &self,
         range: Range<T>,
@@ -3971,6 +3985,7 @@ impl MultiBufferSnapshot {
         let mut result = MultiBufferRows {
             point: Point::new(0, 0),
             is_empty: self.excerpts.is_empty(),
+            is_singleton: self.is_singleton(),
             cursor,
         };
         result.seek(start_row);
@@ -6979,6 +6994,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
                 buffer_row: Some(0),
                 multibuffer_row: Some(MultiBufferRow(0)),
                 diff_status: None,
+                expand_info: None,
             });
         }
 
@@ -7007,6 +7023,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
                         buffer_row: Some(last_row),
                         multibuffer_row: Some(multibuffer_row),
                         diff_status: None,
+                        expand_info: None,
                     });
                 } else {
                     return None;
@@ -7016,6 +7033,23 @@ impl<'a> Iterator for MultiBufferRows<'a> {
 
         let overshoot = self.point - region.range.start;
         let buffer_point = region.buffer_range.start + overshoot;
+        let expand_info = if self.is_singleton {
+            None
+        } else if self.point.row == region.range.start.row {
+            Some(ExpandInfo {
+                direction: ExpandExcerptDirection::Up,
+                enabled: buffer_point.row > 0,
+                excerpt_id: region.excerpt.id,
+            })
+        } else if self.point.row + 1 == region.range.end.row {
+            Some(ExpandInfo {
+                direction: ExpandExcerptDirection::Down,
+                enabled: buffer_point.row + 1 < region.buffer.max_point().row,
+                excerpt_id: region.excerpt.id,
+            })
+        } else {
+            None
+        };
         let result = Some(RowInfo {
             buffer_id: Some(region.buffer.remote_id()),
             buffer_row: Some(buffer_point.row),
@@ -7027,6 +7061,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
             } else {
                 None
             },
+            expand_info,
         });
         self.point += Point::new(1, 0);
         result
