@@ -177,6 +177,8 @@ pub struct Style {
     /// Controls the maximum size of the item
     #[refineable]
     pub max_size: Size<Length>,
+    /// Controls the scale of the item and its children, relative to its parent's scale.
+    pub scale: f32,
     /// Sets the preferred aspect ratio for the item. The ratio is calculated as width divided by height.
     pub aspect_ratio: Option<f32>,
 
@@ -711,6 +713,7 @@ impl Default for Style {
             size: Size::auto(),
             min_size: Size::auto(),
             max_size: Size::auto(),
+            scale: 1.0,
             aspect_ratio: None,
             gap: Size::default(),
             // Alignment

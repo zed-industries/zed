@@ -274,6 +274,7 @@ enum ElementDrawPhase<RequestLayoutState, PrepaintState> {
         node_id: DispatchNodeId,
         global_id: Option<GlobalElementId>,
         bounds: Bounds<Pixels>,
+        scale: f32,
         request_layout: RequestLayoutState,
         prepaint: PrepaintState,
     },
@@ -334,19 +335,23 @@ impl<E: Element> Drawable<E> {
                 }
 
                 let bounds = window.layout_bounds(layout_id);
+                let scale = window.layout_scale(layout_id);
                 window.element_layout_id = Some(layout_id);
+
                 let node_id = window.next_frame.dispatch_tree.push_node();
                 let prepaint = window.with_element_origin(bounds.origin, |window| {
-                    self.element.prepaint(
-                        global_id.as_ref(),
-                        Bounds {
-                            origin: Point::default(),
-                            size: bounds.size,
-                        },
-                        &mut request_layout,
-                        window,
-                        cx,
-                    )
+                    window.with_element_scale(scale, |window| {
+                        self.element.prepaint(
+                            global_id.as_ref(),
+                            Bounds {
+                                origin: Point::default(),
+                                size: bounds.size,
+                            },
+                            &mut request_layout,
+                            window,
+                            cx,
+                        )
+                    })
                 });
                 window.next_frame.dispatch_tree.pop_node();
 
@@ -358,6 +363,7 @@ impl<E: Element> Drawable<E> {
                     node_id,
                     global_id,
                     bounds,
+                    scale,
                     request_layout,
                     prepaint,
                 };
@@ -376,6 +382,7 @@ impl<E: Element> Drawable<E> {
                 node_id,
                 global_id,
                 bounds,
+                scale,
                 mut request_layout,
                 mut prepaint,
                 ..
@@ -387,17 +394,19 @@ impl<E: Element> Drawable<E> {
 
                 window.next_frame.dispatch_tree.set_active_node(node_id);
                 window.with_element_origin(bounds.origin, |window| {
-                    self.element.paint(
-                        global_id.as_ref(),
-                        Bounds {
-                            origin: Point::default(),
-                            size: bounds.size,
-                        },
-                        &mut request_layout,
-                        &mut prepaint,
-                        window,
-                        cx,
-                    );
+                    window.with_element_scale(scale, |window| {
+                        self.element.paint(
+                            global_id.as_ref(),
+                            Bounds {
+                                origin: Point::default(),
+                                size: bounds.size,
+                            },
+                            &mut request_layout,
+                            &mut prepaint,
+                            window,
+                            cx,
+                        );
+                    })
                 });
 
                 if global_id.is_some() {

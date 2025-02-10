@@ -21,6 +21,7 @@ struct NodeContext {
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
     layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
+    layout_scales: FxHashMap<LayoutId, f32>,
     computed_layouts: FxHashSet<LayoutId>,
 }
 
@@ -31,6 +32,7 @@ impl TaffyLayoutEngine {
         TaffyLayoutEngine {
             taffy: TaffyTree::new(),
             layout_bounds: FxHashMap::default(),
+            layout_scales: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
         }
     }
@@ -38,6 +40,7 @@ impl TaffyLayoutEngine {
     pub fn clear(&mut self) {
         self.taffy.clear();
         self.layout_bounds.clear();
+        self.layout_scales.clear();
         self.computed_layouts.clear();
     }
 
@@ -64,6 +67,7 @@ impl TaffyLayoutEngine {
                 .into();
             parent_id
         };
+        self.layout_scales.insert(layout_id, style.scale);
         layout_id
     }
 
@@ -86,6 +90,7 @@ impl TaffyLayoutEngine {
             )
             .expect(EXPECT_MESSAGE)
             .into();
+        self.layout_scales.insert(layout_id, style.scale);
         layout_id
     }
 
@@ -207,6 +212,10 @@ impl TaffyLayoutEngine {
 
         self.layout_bounds.insert(id, bounds);
         bounds
+    }
+
+    pub fn layout_scale(&mut self, id: LayoutId) -> f32 {
+        *self.layout_scales.get(&id).unwrap()
     }
 }
 

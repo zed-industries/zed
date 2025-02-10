@@ -351,6 +351,12 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the scale of the element and its children, relative to the scale of its parent.
+    fn scale(mut self, scale: f32) -> Self {
+        self.style().scale = Some(scale);
+        self
+    }
+
     /// Sets the background color of the element.
     fn bg<F>(mut self, fill: F) -> Self
     where

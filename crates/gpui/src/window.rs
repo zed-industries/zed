@@ -634,6 +634,7 @@ pub struct Window {
     scale_factor: f32,
     pub(crate) element_layout_id: Option<LayoutId>,
     element_origin: Point<Pixels>,
+    element_scale: f32,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
@@ -903,6 +904,7 @@ impl Window {
             content_mask_stack: Vec::new(),
             element_layout_id: None,
             element_origin: Point::default(),
+            element_scale: 1.0,
             element_opacity: None,
             requested_autoscroll: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
@@ -1504,6 +1506,11 @@ impl Window {
         self.element_origin
     }
 
+    /// The absolute scale of the current element
+    pub fn element_scale(&self) -> f32 {
+        self.element_scale
+    }
+
     /// The position of the mouse relative to the window.
     pub fn mouse_position(&self) -> Point<Pixels> {
         self.mouse_position
@@ -1980,6 +1987,24 @@ impl Window {
         result
     }
 
+    pub(crate) fn with_element_scale<R>(
+        &mut self,
+        scale: f32,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let old_scale = self.element_scale;
+        self.element_scale = scale;
+        let result = f(self);
+        self.element_scale = old_scale;
+        result
+    }
+
+    fn to_absolute_bounds(&self, mut bounds: Bounds<Pixels>) -> Bounds<Pixels> {
+        bounds.origin += self.element_origin();
+        bounds.size *= self.element_scale();
+        bounds
+    }
+
     pub(crate) fn with_element_opacity<R>(
         &mut self,
         opacity: Option<f32>,
@@ -2252,7 +2277,9 @@ impl Window {
 
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        let clipped_bounds = (bounds + self.element_origin).intersect(&content_mask.bounds);
+        let clipped_bounds = self
+            .to_absolute_bounds(bounds)
+            .intersect(&content_mask.bounds);
         if !clipped_bounds.is_empty() {
             self.next_frame
                 .scene
@@ -2280,17 +2307,19 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
+        let scale = self.element_scale() * scale_factor;
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
-        let bounds = bounds + self.element_origin;
         for shadow in shadows {
-            let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
+            let shadow_bounds = self
+                .to_absolute_bounds(bounds + shadow.offset)
+                .dilate(shadow.spread_radius * self.element_scale());
             self.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
-                blur_radius: shadow.blur_radius.scale(scale_factor),
+                blur_radius: shadow.blur_radius.scale(scale),
                 bounds: shadow_bounds.scale(scale_factor),
                 content_mask: content_mask.scale(scale_factor),
-                corner_radii: corner_radii.scale(scale_factor),
+                corner_radii: corner_radii.scale(scale),
                 color: shadow.color.opacity(opacity),
             });
         }
@@ -2305,17 +2334,18 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
+        let scale = self.element_scale() * scale_factor;
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
             pad: 0,
-            bounds: (quad.bounds + self.element_origin).scale(scale_factor),
+            bounds: self.to_absolute_bounds(quad.bounds).scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
             background: quad.background.opacity(opacity),
             border_color: quad.border_color.opacity(opacity),
-            corner_radii: quad.corner_radii.scale(scale_factor),
-            border_widths: quad.border_widths.scale(scale_factor),
+            corner_radii: quad.corner_radii.scale(scale),
+            border_widths: quad.border_widths.scale(scale),
         });
     }
 
@@ -2331,9 +2361,10 @@ impl Window {
         path.content_mask = content_mask;
         let color: Background = color.into();
         path.color = color.opacity(opacity);
-        self.next_frame
-            .scene
-            .insert_primitive(path.offset(self.element_origin).scale(scale_factor));
+        self.next_frame.scene.insert_primitive(
+            path.offset(self.element_origin)
+                .scale(scale_factor * self.element_scale()),
+        );
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -2353,10 +2384,10 @@ impl Window {
         } else {
             style.thickness
         };
-        let bounds = Bounds {
-            origin: origin + self.element_origin,
+        let bounds = self.to_absolute_bounds(Bounds {
+            origin,
             size: size(width, height),
-        };
+        });
         let content_mask = self.content_mask();
         let element_opacity = self.element_opacity();
 
@@ -2366,7 +2397,7 @@ impl Window {
             bounds: bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
             color: style.color.unwrap_or_default().opacity(element_opacity),
-            thickness: style.thickness.scale(scale_factor),
+            thickness: style.thickness.scale(scale_factor * self.element_scale()),
             wavy: style.wavy,
         });
     }
@@ -2384,10 +2415,10 @@ impl Window {
 
         let scale_factor = self.scale_factor();
         let height = style.thickness;
-        let bounds = Bounds {
-            origin: origin + self.element_origin,
+        let bounds = self.to_absolute_bounds(Bounds {
+            origin,
             size: size(width, height),
-        };
+        });
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
 
@@ -2396,7 +2427,7 @@ impl Window {
             pad: 0,
             bounds: bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
-            thickness: style.thickness.scale(scale_factor),
+            thickness: style.thickness.scale(scale_factor * self.element_scale()),
             color: style.color.unwrap_or_default().opacity(opacity),
             wavy: false,
         });
@@ -2422,7 +2453,8 @@ impl Window {
 
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
-        let glyph_origin = (origin + self.element_origin).scale(scale_factor);
+        let glyph_origin =
+            (origin + self.element_origin).scale(scale_factor * self.element_scale());
         let subpixel_variant = Point {
             x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
             y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
@@ -2430,7 +2462,7 @@ impl Window {
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
-            font_size,
+            font_size: font_size * self.element_scale(),
             subpixel_variant,
             scale_factor,
             is_emoji: false,
@@ -2481,11 +2513,12 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
-        let glyph_origin = (origin + self.element_origin).scale(scale_factor);
+        let glyph_origin =
+            (origin + self.element_origin).scale(scale_factor * self.element_scale());
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
-            font_size,
+            font_size: font_size * self.element_scale(),
             // We don't render emojis with subpixel variants.
             subpixel_variant: Default::default(),
             scale_factor,
@@ -2538,7 +2571,7 @@ impl Window {
 
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
-        let bounds = (bounds + self.element_origin).scale(scale_factor);
+        let bounds = self.to_absolute_bounds(bounds).scale(scale_factor);
         let params = RenderSvgParams {
             path,
             size: bounds.size.map(|pixels| {
@@ -2589,7 +2622,7 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
-        let bounds = (bounds + self.element_origin).scale(scale_factor);
+        let bounds = self.to_absolute_bounds(bounds).scale(scale_factor);
         let params = RenderImageParams {
             image_id: data.id,
             frame_index,
@@ -2634,7 +2667,7 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
-        let bounds = (bounds + self.coordinate_space_origin).scale(scale_factor);
+        let bounds = self.to_absolute_bounds(bounds).scale(scale_factor);
         let content_mask = self.content_mask().scale(scale_factor);
         self.next_frame.scene.insert_primitive(PaintSurface {
             order: 0,
@@ -2746,6 +2779,17 @@ impl Window {
         }
 
         bounds
+    }
+
+    pub fn layout_scale(&mut self, layout_id: LayoutId) -> f32 {
+        self.invalidator.debug_assert_prepaint();
+
+        let mut scale = self.layout_engine.as_mut().unwrap().layout_scale(layout_id);
+        if Some(layout_id) != self.element_layout_id {
+            scale * self.element_scale
+        } else {
+            self.element_scale
+        }
     }
 
     /// This method should be called during `prepaint`. You can use
