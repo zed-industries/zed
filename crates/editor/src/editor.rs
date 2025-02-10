@@ -82,8 +82,8 @@ use gpui::{
     ElementId, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable,
     FontId, FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext, Modifiers,
     MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size,
-    Styled, StyledText, Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, TextRun,
-    UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    Styled, StyledText, Subscription, Task, TextRun, TextStyle, TextStyleRefinement,
+    UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
