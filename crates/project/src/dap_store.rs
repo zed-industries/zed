@@ -1275,6 +1275,13 @@ impl DapStore {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
+        if !request.is_supported(&self.capabilities_by_id(client_id)) {
+            return Task::ready(Err(anyhow!(
+                "Request {} is not supported",
+                R::DapRequest::COMMAND
+            )));
+        }
+
         let client_id = *client_id;
         let request = Arc::new(request);
 

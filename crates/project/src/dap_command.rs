@@ -5,8 +5,8 @@ use dap::{
     client::DebugAdapterClientId,
     proto_conversions::ProtoConversion,
     requests::{Continue, Next},
-    ContinueArguments, NextArguments, StepInArguments, StepOutArguments, SteppingGranularity,
-    ValueFormat, Variable, VariablesArgumentsFilter,
+    Capabilities, ContinueArguments, NextArguments, StepInArguments, StepOutArguments,
+    SteppingGranularity, ValueFormat, Variable, VariablesArgumentsFilter,
 };
 use gpui::{AsyncApp, WeakEntity};
 use rpc::proto;
@@ -18,6 +18,8 @@ pub(crate) trait DapCommand: 'static + Send + Sync + std::fmt::Debug {
     type Response: 'static + Send + std::fmt::Debug;
     type DapRequest: 'static + Send + dap::requests::Request;
     type ProtoRequest: 'static + Send + proto::RequestMessage;
+
+    fn is_supported(&self, capabilities: &Capabilities) -> bool;
 
     fn handle_response(
         &self,
@@ -61,6 +63,10 @@ impl<T: DapCommand> DapCommand for Arc<T> {
     type Response = T::Response;
     type DapRequest = T::DapRequest;
     type ProtoRequest = T::ProtoRequest;
+
+    fn is_supported(&self, capabilities: &Capabilities) -> bool {
+        T::is_supported(self, capabilities)
+    }
 
     fn client_id_from_proto(request: &Self::ProtoRequest) -> DebugAdapterClientId {
         T::client_id_from_proto(request)
@@ -140,6 +146,10 @@ impl DapCommand for NextCommand {
     type DapRequest = Next;
     type ProtoRequest = proto::DapNextRequest;
 
+    fn is_supported(&self, _capabilities: &Capabilities) -> bool {
+        true
+    }
+
     fn client_id_from_proto(request: &Self::ProtoRequest) -> DebugAdapterClientId {
         DebugAdapterClientId::from_proto(request.client_id)
     }
@@ -203,6 +213,10 @@ impl DapCommand for StepInCommand {
     type Response = <dap::requests::StepIn as dap::requests::Request>::Response;
     type DapRequest = dap::requests::StepIn;
     type ProtoRequest = proto::DapStepInRequest;
+
+    fn is_supported(&self, _capabilities: &Capabilities) -> bool {
+        true
+    }
 
     fn client_id_from_proto(request: &Self::ProtoRequest) -> DebugAdapterClientId {
         DebugAdapterClientId::from_proto(request.client_id)
@@ -275,6 +289,10 @@ impl DapCommand for StepOutCommand {
     type Response = <dap::requests::StepOut as dap::requests::Request>::Response;
     type DapRequest = dap::requests::StepOut;
     type ProtoRequest = proto::DapStepOutRequest;
+
+    fn is_supported(&self, _capabilities: &Capabilities) -> bool {
+        true
+    }
 
     fn handle_response(
         &self,
@@ -376,6 +394,10 @@ impl DapCommand for StepBackCommand {
     type DapRequest = dap::requests::StepBack;
     type ProtoRequest = proto::DapStepBackRequest;
 
+    fn is_supported(&self, capabilities: &Capabilities) -> bool {
+        capabilities.supports_step_back.unwrap_or_default()
+    }
+
     fn client_id_from_proto(request: &Self::ProtoRequest) -> DebugAdapterClientId {
         DebugAdapterClientId::from_proto(request.client_id)
     }
@@ -445,6 +467,10 @@ impl DapCommand for ContinueCommand {
     type Response = <Continue as dap::requests::Request>::Response;
     type DapRequest = Continue;
     type ProtoRequest = proto::DapContinueRequest;
+
+    fn is_supported(&self, _capabilities: &Capabilities) -> bool {
+        true
+    }
 
     fn handle_response(
         &self,
@@ -543,6 +569,10 @@ impl DapCommand for PauseCommand {
     type DapRequest = dap::requests::Pause;
     type ProtoRequest = proto::DapPauseRequest;
 
+    fn is_supported(&self, _capabilities: &Capabilities) -> bool {
+        true
+    }
+
     fn client_id_from_proto(request: &Self::ProtoRequest) -> DebugAdapterClientId {
         DebugAdapterClientId::from_proto(request.client_id)
     }
@@ -604,6 +634,10 @@ impl DapCommand for DisconnectCommand {
     type Response = <dap::requests::Disconnect as dap::requests::Request>::Response;
     type DapRequest = dap::requests::Disconnect;
     type ProtoRequest = proto::DapDisconnectRequest;
+
+    fn is_supported(&self, _capabilities: &Capabilities) -> bool {
+        true
+    }
 
     fn client_id_from_proto(request: &Self::ProtoRequest) -> DebugAdapterClientId {
         DebugAdapterClientId::from_proto(request.client_id)
@@ -671,6 +705,12 @@ impl DapCommand for TerminateThreadsCommand {
     type DapRequest = dap::requests::TerminateThreads;
     type ProtoRequest = proto::DapTerminateThreadsRequest;
 
+    fn is_supported(&self, capabilities: &Capabilities) -> bool {
+        capabilities
+            .supports_terminate_threads_request
+            .unwrap_or_default()
+    }
+
     fn client_id_from_proto(request: &Self::ProtoRequest) -> DebugAdapterClientId {
         DebugAdapterClientId::from_proto(request.client_id)
     }
@@ -735,6 +775,10 @@ impl DapCommand for TerminateCommand {
     type DapRequest = dap::requests::Terminate;
     type ProtoRequest = proto::DapTerminateRequest;
 
+    fn is_supported(&self, capabilities: &Capabilities) -> bool {
+        capabilities.supports_terminate_request.unwrap_or_default()
+    }
+
     fn client_id_from_proto(request: &Self::ProtoRequest) -> DebugAdapterClientId {
         DebugAdapterClientId::from_proto(request.client_id)
     }
@@ -794,6 +838,10 @@ impl DapCommand for RestartCommand {
     type Response = <dap::requests::Restart as dap::requests::Request>::Response;
     type DapRequest = dap::requests::Restart;
     type ProtoRequest = proto::DapRestartRequest;
+
+    fn is_supported(&self, capabilities: &Capabilities) -> bool {
+        capabilities.supports_restart_request.unwrap_or_default()
+    }
 
     fn client_id_from_proto(request: &Self::ProtoRequest) -> DebugAdapterClientId {
         DebugAdapterClientId::from_proto(request.client_id)
@@ -866,6 +914,10 @@ impl DapCommand for VariablesCommand {
     type Response = Vec<Variable>;
     type DapRequest = dap::requests::Variables;
     type ProtoRequest = proto::VariablesRequest;
+
+    fn is_supported(&self, _capabilities: &Capabilities) -> bool {
+        true
+    }
 
     fn handle_response(
         &self,
@@ -984,6 +1036,10 @@ impl DapCommand for RestartStackFrameCommand {
     type DapRequest = dap::requests::RestartFrame;
     type ProtoRequest = proto::DapRestartStackFrameRequest;
 
+    fn is_supported(&self, capabilities: &Capabilities) -> bool {
+        capabilities.supports_restart_frame.unwrap_or_default()
+    }
+
     fn client_id_from_proto(request: &Self::ProtoRequest) -> DebugAdapterClientId {
         DebugAdapterClientId::from_proto(request.client_id)
     }
@@ -1041,6 +1097,10 @@ impl DapCommand for ModulesCommand {
     type Response = Vec<dap::Module>;
     type DapRequest = dap::requests::Modules;
     type ProtoRequest = proto::DapModulesRequest;
+
+    fn is_supported(&self, capabilities: &Capabilities) -> bool {
+        capabilities.supports_modules_request.unwrap_or_default()
+    }
 
     fn client_id_from_proto(request: &Self::ProtoRequest) -> DebugAdapterClientId {
         DebugAdapterClientId::from_proto(request.client_id)
@@ -1107,6 +1167,12 @@ impl DapCommand for LoadedSourcesCommand {
     type Response = Vec<dap::Source>;
     type DapRequest = dap::requests::LoadedSources;
     type ProtoRequest = proto::DapLoadedSourcesRequest;
+
+    fn is_supported(&self, capabilities: &Capabilities) -> bool {
+        capabilities
+            .supports_loaded_sources_request
+            .unwrap_or_default()
+    }
 
     fn client_id_from_proto(request: &Self::ProtoRequest) -> DebugAdapterClientId {
         DebugAdapterClientId::from_proto(request.client_id)
