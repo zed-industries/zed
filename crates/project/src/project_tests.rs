@@ -3397,7 +3397,7 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs, [Path::new("/dir")], cx).await;
+    let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
     let tree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let tree_id = tree.update(cx, |tree, _| tree.id());
 
