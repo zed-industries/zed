@@ -1454,7 +1454,7 @@ impl BufferStore {
                                 unstaged_diff
                             };
 
-                            diff.update(cx, |diff, cx| diff.set_secondary_diff(unstaged_diff, cx));
+                            diff.update(cx, |diff, _| diff.set_secondary_diff(unstaged_diff));
                             diff_state.uncommitted_diff = Some(diff.downgrade())
                         }
                     };

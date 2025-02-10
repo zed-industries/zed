@@ -11,7 +11,7 @@ use util::ResultExt;
 pub struct BufferDiff {
     pub buffer_id: BufferId,
     inner: BufferDiffInner,
-    secondary_diff: Option<(Entity<BufferDiff>, gpui::Subscription)>,
+    secondary_diff: Option<Entity<BufferDiff>>,
 }
 
 #[derive(Clone)]
@@ -572,20 +572,12 @@ impl BufferDiff {
         }
     }
 
-    pub fn set_secondary_diff(&mut self, diff: Entity<BufferDiff>, cx: &mut Context<Self>) {
-        let subscription = cx.subscribe(&diff, |_, _, event, cx| {
-            if let BufferDiffEvent::DiffChanged { changed_range } = event {
-                cx.emit(BufferDiffEvent::DiffChanged {
-                    // TODO translate/expand range to align with our (uncommitted) hunk boundaries
-                    changed_range: changed_range.clone(),
-                });
-            }
-        });
-        self.secondary_diff = Some((diff, subscription));
+    pub fn set_secondary_diff(&mut self, diff: Entity<BufferDiff>) {
+        self.secondary_diff = Some(diff);
     }
 
     pub fn secondary_diff(&self) -> Option<Entity<BufferDiff>> {
-        Some(self.secondary_diff.as_ref()?.0.clone())
+        Some(self.secondary_diff.as_ref()?.clone())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -642,21 +634,21 @@ impl BufferDiff {
 
     fn set_state(
         &mut self,
-        snapshot: BufferDiffInner,
+        inner: BufferDiffInner,
         buffer: &text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) {
-        let changed_range = match (self.inner.base_text.as_ref(), snapshot.base_text.as_ref()) {
+        let changed_range = match (self.inner.base_text.as_ref(), inner.base_text.as_ref()) {
             (None, None) => None,
             (Some(old), Some(new)) if old.remote_id() == new.remote_id() => {
-                snapshot.compare(&self.inner, buffer)
+                inner.compare(&self.inner, buffer)
             }
             _ => Some(text::Anchor::MIN..text::Anchor::MAX),
         };
         if let Some(changed_range) = changed_range {
             cx.emit(BufferDiffEvent::DiffChanged { changed_range });
         }
-        self.inner = snapshot;
+        self.inner = inner;
     }
 
     pub fn base_text(&self) -> Option<&language::BufferSnapshot> {
@@ -669,7 +661,7 @@ impl BufferDiff {
             secondary_diff: self
                 .secondary_diff
                 .as_ref()
-                .map(|(diff, _)| Box::new(diff.read(cx).snapshot(cx))),
+                .map(|diff| Box::new(diff.read(cx).snapshot(cx))),
         }
     }
 
@@ -682,9 +674,18 @@ impl BufferDiff {
         let unstaged_counterpart = self
             .secondary_diff
             .as_ref()
-            .map(|(diff, _)| &diff.read(cx).inner);
+            .map(|diff| &diff.read(cx).inner);
         self.inner
             .hunks_intersecting_range(range, buffer_snapshot, unstaged_counterpart)
+    }
+
+    pub fn hunks_intersecting_range_rev<'a>(
+        &'a self,
+        range: Range<text::Anchor>,
+        buffer_snapshot: &'a text::BufferSnapshot,
+    ) -> impl 'a + Iterator<Item = DiffHunk> {
+        self.inner
+            .hunks_intersecting_range_rev(range, buffer_snapshot)
     }
 
     pub fn hunks_in_row_range<'a>(
