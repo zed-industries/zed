@@ -5102,7 +5102,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.show_edit_predictions_in_menu(cx) {
+        if self.show_edit_predictions_in_menu(cx) {
             let accept_binding =
                 AcceptEditPredictionBinding::resolve(self.focus_handle(cx), window);
             if let Some(accept_keystroke) = accept_binding.keystroke() {
