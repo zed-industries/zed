@@ -936,9 +936,24 @@ impl WorktreeStore {
                         .map(|proto_branch| git::repository::Branch {
                             is_head: proto_branch.is_head,
                             name: proto_branch.name.into(),
-                            unix_timestamp: proto_branch
-                                .unix_timestamp
-                                .map(|timestamp| timestamp as i64),
+                            upstream: proto_branch.upstream.map(|upstream| {
+                                git::repository::Upstream {
+                                    ref_name: upstream.ref_name.into(),
+                                    tracking: upstream.tracking.map(|tracking| {
+                                        git::repository::UpstreamTracking {
+                                            ahead: tracking.ahead as u32,
+                                            behind: tracking.behind as u32,
+                                        }
+                                    }),
+                                }
+                            }),
+                            most_recent_commit: proto_branch.most_recent_commit.map(|commit| {
+                                git::repository::CommitSummary {
+                                    sha: commit.sha.into(),
+                                    subject: commit.subject.into(),
+                                    commit_timestamp: commit.commit_date.into(),
+                                }
+                            }),
                         })
                         .collect();
 
@@ -1129,7 +1144,24 @@ impl WorktreeStore {
                 .map(|branch| proto::Branch {
                     is_head: branch.is_head,
                     name: branch.name.to_string(),
-                    unix_timestamp: branch.unix_timestamp.map(|timestamp| timestamp as u64),
+                    unix_timestamp: branch
+                        .most_recent_commit
+                        .as_ref()
+                        .map(|commit| commit.commit_timestamp as u64),
+                    most_recent_commit: branch.most_recent_commit.map(|commit| {
+                        proto::CommitSummary {
+                            sha: commit.sha.to_string(),
+                            subject: commit.subject.to_string(),
+                            commit_date: commit.commit_timestamp,
+                        }
+                    }),
+                    upstream: branch.upstream.map(|upstream| proto::GitUpstream {
+                        ref_name: upstream.ref_name.to_string(),
+                        tracking: upstream.tracking.map(|tracking| proto::UpstreamTracking {
+                            ahead: tracking.ahead as u64,
+                            behind: tracking.behind as u64,
+                        }),
+                    }),
                 })
                 .collect(),
         })

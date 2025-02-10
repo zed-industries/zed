@@ -1,7 +1,7 @@
 use crate::status::FileStatus;
 use crate::GitHostingProviderRegistry;
 use crate::{blame::Blame, status::GitStatus};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Context, Result};
 use collections::{HashMap, HashSet};
 use git2::BranchType;
 use gpui::SharedString;
@@ -22,8 +22,39 @@ use util::ResultExt;
 pub struct Branch {
     pub is_head: bool,
     pub name: SharedString,
-    /// Timestamp of most recent commit, normalized to Unix Epoch format.
-    pub unix_timestamp: Option<i64>,
+    pub upstream: Option<Upstream>,
+    pub most_recent_commit: Option<CommitSummary>,
+}
+
+impl Branch {
+    pub fn priority_key(&self) -> (bool, Option<i64>) {
+        (
+            self.is_head,
+            self.most_recent_commit
+                .as_ref()
+                .map(|commit| commit.commit_timestamp),
+        )
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub struct Upstream {
+    pub ref_name: SharedString,
+    pub tracking: Option<UpstreamTracking>,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub struct UpstreamTracking {
+    pub ahead: u32,
+    pub behind: u32,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub struct CommitSummary {
+    pub sha: SharedString,
+    pub subject: SharedString,
+    /// This is a unix timestamp
+    pub commit_timestamp: i64,
 }
 
 pub trait GitRepository: Send + Sync {
@@ -213,33 +244,69 @@ impl GitRepository for RealGitRepository {
     }
 
     fn branches(&self) -> Result<Vec<Branch>> {
-        let repo = self.repository.lock();
-        let local_branches = repo.branches(Some(BranchType::Local))?;
-        let valid_branches = local_branches
-            .filter_map(|branch| {
-                branch.ok().and_then(|(branch, _)| {
-                    let is_head = branch.is_head();
-                    let name = branch
-                        .name()
-                        .ok()
-                        .flatten()
-                        .map(|name| name.to_string().into())?;
-                    let timestamp = branch.get().peel_to_commit().ok()?.time();
-                    let unix_timestamp = timestamp.seconds();
-                    let timezone_offset = timestamp.offset_minutes();
-                    let utc_offset =
-                        time::UtcOffset::from_whole_seconds(timezone_offset * 60).ok()?;
-                    let unix_timestamp =
-                        time::OffsetDateTime::from_unix_timestamp(unix_timestamp).ok()?;
-                    Some(Branch {
-                        is_head,
-                        name,
-                        unix_timestamp: Some(unix_timestamp.to_offset(utc_offset).unix_timestamp()),
+        let working_directory = self
+            .repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")?
+            .to_path_buf();
+        let args = vec!["for-each-ref", "refs/heads/*", "--format", "%(HEAD)%00%(objectname)%00%(refname)%00%(upstream)%00%(upstream:track)%00%(committerdate)%00%(contents:subject)"];
+
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(args)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to git git branches:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        let mut branches = Vec::default();
+        let input = String::from_utf8_lossy(&output.stdout);
+        for line in input.split('\n') {
+            let mut fields = line.split('\x00');
+            let is_current_branch = fields.next().context("no HEAD")? == "*";
+            let head_sha: SharedString = fields.next().context("no objectname")?.to_string().into();
+            let ref_name: SharedString = fields
+                .next()
+                .context("no refname")?
+                .strip_prefix("refs/heads")
+                .context("unexpected format for refname")?
+                .to_string()
+                .into();
+            let upstream_name = fields.next().context("no upstream")?.to_string();
+            let upstream_tracking =
+                parse_upstream_track(fields.next().context("no upstream:track")?)?;
+            let commiterdate = fields.next().context("no committerdate")?.parse::<i64>()?;
+            let subject: SharedString = fields
+                .next()
+                .context("no contents:subject")?
+                .to_string()
+                .into();
+
+            branches.push(Branch {
+                is_head: is_current_branch,
+                name: ref_name,
+                most_recent_commit: Some(CommitSummary {
+                    sha: head_sha,
+                    subject,
+                    commit_timestamp: commiterdate,
+                }),
+                upstream: if upstream_name.is_empty() {
+                    None
+                } else {
+                    Some(Upstream {
+                        ref_name: upstream_name.into(),
+                        tracking: upstream_tracking,
                     })
-                })
+                },
             })
-            .collect();
-        Ok(valid_branches)
+        }
+
+        Ok(branches)
     }
 
     fn change_branch(&self, name: &str) -> Result<()> {
@@ -471,7 +538,8 @@ impl GitRepository for FakeGitRepository {
             .map(|branch_name| Branch {
                 is_head: Some(branch_name) == current_branch.as_ref(),
                 name: branch_name.into(),
-                unix_timestamp: None,
+                most_recent_commit: None,
+                upstream: None,
             })
             .collect())
     }
@@ -644,4 +712,26 @@ impl<'a> MapSeekTarget<RepoPath> for RepoPathDescendants<'a> {
             self.0.cmp(key)
         }
     }
+}
+fn parse_upstream_track(upstream_track: &str) -> Result<Option<UpstreamTracking>> {
+    let upstream_track = upstream_track
+        .strip_prefix("[")
+        .ok_or_else(|| anyhow!("missing ["))?;
+    let upstream_track = upstream_track
+        .strip_suffix("]")
+        .ok_or_else(|| anyhow!("missing ["))?;
+    let mut ahead: u32 = 0;
+    let mut behind: u32 = 0;
+    for component in upstream_track.split(", ") {
+        if component == "Gone" {
+            return Ok(None);
+        }
+        if let Some(ahead_num) = component.strip_prefix("ahead ") {
+            ahead = ahead_num.parse::<u32>()?;
+        }
+        if let Some(behind_num) = component.strip_prefix("behind ") {
+            behind = behind_num.parse::<u32>()?;
+        }
+    }
+    Ok(Some(UpstreamTracking { ahead, behind }))
 }

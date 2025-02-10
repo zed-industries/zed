@@ -190,9 +190,7 @@ impl PickerDelegate for BranchListDelegate {
                         // Truncate list of recent branches
                         // Do a partial sort to show recent-ish branches first.
                         branches.select_nth_unstable_by(RECENT_BRANCHES_COUNT - 1, |lhs, rhs| {
-                            rhs.is_head
-                                .cmp(&lhs.is_head)
-                                .then(rhs.unix_timestamp.cmp(&lhs.unix_timestamp))
+                            rhs.priority_key().cmp(&lhs.priority_key())
                         });
                         branches.truncate(RECENT_BRANCHES_COUNT);
                     }
