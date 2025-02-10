@@ -1,11 +1,14 @@
 use ::settings::Settings;
 use editor::{tasks::task_context, Editor};
-use gpui::{App, Context, Task as AsyncTask, Window};
+use gpui::{App, AppContext as _, Context, Task as AsyncTask, Window};
+use itertools::Itertools as _;
 use modal::{TaskOverrides, TasksModal};
-use project::{Location, WorktreeId};
+use project::{Location, TaskSourceKind, WorktreeId};
 use task::{RevealTarget, TaskId};
+use util::ResultExt;
+use workspace::notifications::NotifyResultExt as _;
 use workspace::tasks::schedule_task;
-use workspace::{tasks::schedule_resolved_task, Workspace};
+use workspace::{tasks::schedule_resolved_tasks, Workspace};
 
 mod modal;
 mod settings;
@@ -37,12 +40,15 @@ pub fn init(cx: &mut App) {
                     {
                         if action.reevaluate_context {
                             let mut original_task = last_scheduled_task.original_task().clone();
+
                             if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
                                 original_task.allow_concurrent_runs = allow_concurrent_runs;
                             }
+
                             if let Some(use_new_terminal) = action.use_new_terminal {
                                 original_task.use_new_terminal = use_new_terminal;
                             }
+
                             let context_task = task_context(workspace, window, cx);
                             cx.spawn_in(window, |workspace, mut cx| async move {
                                 let task_context = context_task.await;
@@ -70,13 +76,58 @@ pub fn init(cx: &mut App) {
                                 }
                             }
 
-                            schedule_resolved_task(
-                                workspace,
-                                task_source_kind,
-                                last_scheduled_task,
-                                false,
-                                cx,
-                            );
+                            let task_context = task_context(workspace, window, cx);
+
+                            cx.spawn_in(window, |workspace, mut cx| async move {
+                                let task_context = task_context.await;
+                                let Some(workspace) = workspace.upgrade() else {
+                                    return;
+                                };
+
+                                cx.update_entity(&workspace, |workspace, cx| {
+                                    let pre_tasks = match task_source_kind {
+                                        TaskSourceKind::AbsPath { .. }
+                                        | TaskSourceKind::Worktree { .. } => {
+                                            let inventory = workspace
+                                                .project()
+                                                .read(cx)
+                                                .task_store()
+                                                .read(cx)
+                                                .task_inventory();
+
+                                            let Some(inventory) = inventory else {
+                                                return;
+                                            };
+
+                                            inventory
+                                                .read(cx)
+                                                .resolve_file_based_task_queue(
+                                                    &last_scheduled_task,
+                                                    &task_source_kind,
+                                                    &task_context,
+                                                )
+                                                .notify_err(workspace, cx)
+                                                .unwrap_or(vec![])
+                                                .into_iter()
+                                                .map(|(_, task)| task)
+                                                .collect_vec()
+                                        }
+
+                                        _ => vec![],
+                                    };
+
+                                    schedule_resolved_tasks(
+                                        workspace,
+                                        task_source_kind,
+                                        pre_tasks,
+                                        last_scheduled_task,
+                                        false,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                            })
+                            .detach();
                         }
                     } else {
                         toggle_modal(workspace, None, window, cx).detach();

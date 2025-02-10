@@ -68,6 +68,7 @@ use serde::Deserialize;
 use session::AppSession;
 use settings::Settings;
 use shared_screen::SharedScreen;
+use smol::channel::Sender;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
@@ -759,6 +760,7 @@ pub enum Event {
     WorkspaceCreated(WeakEntity<Workspace>),
     SpawnTask {
         action: Box<SpawnInTerminal>,
+        completion_tx: Box<Sender<Result<i32>>>,
     },
     OpenBundledFile {
         text: Cow<'static, str>,
