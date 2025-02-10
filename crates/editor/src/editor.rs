@@ -190,6 +190,8 @@ pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 
+pub(crate) const EDITOR_KEY_CONTEXT: &str = "Editor";
+pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
 pub(crate) const EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT: &str =
     "edit_prediction_requires_modifier";
 
@@ -1496,7 +1498,7 @@ impl Editor {
 
     fn key_context(&self, window: &mut Window, cx: &mut Context<Self>) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
-        key_context.add("Editor");
+        key_context.add(EDITOR_KEY_CONTEXT);
         let mode = match self.mode {
             EditorMode::SingleLine { .. } => "single_line",
             EditorMode::AutoHeight { .. } => "auto_height",
@@ -1547,7 +1549,7 @@ impl Editor {
 
         if self.has_active_inline_completion() {
             key_context.add("copilot_suggestion");
-            key_context.add("edit_prediction");
+            key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
 
             if showing_completions || self.edit_prediction_requires_modifier() {
                 key_context.add(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT);
@@ -5128,8 +5130,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if self.show_edit_predictions_in_menu() {
-            let accept_binding =
-                AcceptEditPredictionBinding::resolve(self.focus_handle(cx), window);
+            let accept_binding = AcceptEditPredictionBinding::resolve(window);
             if let Some(accept_keystroke) = accept_binding.keystroke() {
                 let was_previewing_inline_completion = self.previewing_inline_completion;
                 self.previewing_inline_completion = modifiers == accept_keystroke.modifiers

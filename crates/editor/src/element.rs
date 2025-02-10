@@ -21,8 +21,8 @@ use crate::{
     GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
     InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
     RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR,
-    EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT, FILE_HEADER_HEIGHT,
+    StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, EDITOR_KEY_CONTEXT,
+    EDIT_PREDICTION_KEY_CONTEXT, EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
@@ -36,10 +36,10 @@ use gpui::{
     ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase,
     Edges, Element, ElementInputHandler, Entity, FocusHandle, Focusable as _, FontId,
     GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, KeyBindingContextPredicate,
-    Keystroke, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
-    SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription, TextRun,
-    TextStyleRefinement, WeakEntity, Window,
+    KeyContext, Keystroke, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent,
+    ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription,
+    TextRun, TextStyleRefinement, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -3167,8 +3167,7 @@ impl EditorElement {
                 );
 
                 let edit_prediction = if edit_prediction_popover_visible {
-                    let accept_binding =
-                        AcceptEditPredictionBinding::resolve(self.editor.focus_handle(cx), window);
+                    let accept_binding = AcceptEditPredictionBinding::resolve(window);
 
                     self.editor.update(cx, move |editor, cx| {
                         let mut element = editor.render_edit_prediction_cursor_popover(
@@ -5679,7 +5678,7 @@ fn inline_completion_accept_indicator(
     window: &Window,
     cx: &App,
 ) -> Option<AnyElement> {
-    let accept_binding = AcceptEditPredictionBinding::resolve(editor_focus_handle, window);
+    let accept_binding = AcceptEditPredictionBinding::resolve(window);
     let accept_keystroke = accept_binding.keystroke()?;
 
     let accept_key = h_flex()
@@ -5731,10 +5730,14 @@ fn inline_completion_accept_indicator(
 pub struct AcceptEditPredictionBinding(Option<gpui::KeyBinding>);
 
 impl AcceptEditPredictionBinding {
-    pub fn resolve(editor_focus_handle: FocusHandle, window: &Window) -> Self {
+    pub fn resolve(window: &Window) -> Self {
+        let mut context = KeyContext::new_with_defaults();
+        context.add(EDITOR_KEY_CONTEXT);
+        context.add(EDIT_PREDICTION_KEY_CONTEXT);
+
         AcceptEditPredictionBinding(
             window
-                .bindings_for_action_in(&AcceptEditPrediction, &editor_focus_handle)
+                .bindings_for_action_in_context(&AcceptEditPrediction, context)
                 .into_iter()
                 .next(),
         )
