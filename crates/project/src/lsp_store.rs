@@ -3326,7 +3326,6 @@ impl LspStore {
     pub(crate) fn register_buffer_with_language_servers(
         &mut self,
         buffer: &Entity<Buffer>,
-        peer_id: Option<proto::PeerId>,
         cx: &mut Context<Self>,
     ) -> OpenLspBufferHandle {
         let handle = buffer.clone();
@@ -6013,7 +6012,7 @@ impl LspStore {
                 anyhow::bail!("buffer is not open");
             };
 
-            let handle = this.register_buffer_with_language_servers(&buffer, Some(peer_id), cx);
+            let handle = this.register_buffer_with_language_servers(&buffer, cx);
             this.buffer_store().update(cx, |buffer_store, _| {
                 buffer_store.register_shared_lsp_handle(peer_id, buffer_id, handle);
             });

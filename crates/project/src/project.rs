@@ -1955,14 +1955,13 @@ impl Project {
     pub fn open_buffer_with_lsp(
         &mut self,
         path: impl Into<ProjectPath>,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) -> Task<Result<(Entity<Buffer>, lsp_store::OpenLspBufferHandle)>> {
         let buffer = self.open_buffer(path, cx);
-        let lsp_store = self.lsp_store().clone();
-        cx.spawn(|mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let buffer = buffer.await?;
-            let handle = lsp_store.update(&mut cx, |lsp_store, cx| {
-                lsp_store.register_buffer_with_language_servers(&buffer, cx)
+            let handle = this.update(&mut cx, |project, cx| {
+                project.register_buffer_with_language_servers(&buffer, cx)
             })?;
             Ok((buffer, handle))
         })
@@ -1974,7 +1973,7 @@ impl Project {
         cx: &mut App,
     ) -> OpenLspBufferHandle {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.register_buffer_with_language_servers(&buffer, self.client.peer_id(), cx)
+            lsp_store.register_buffer_with_language_servers(&buffer, cx)
         })
     }
 

@@ -1807,8 +1807,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let _handle = lsp_store.update(cx, |lsp_store, cx| {
-        lsp_store.register_buffer_with_language_servers(&buffer, cx)
+    let _handle = project.update(cx, |project, cx| {
+        project.register_buffer_with_language_servers(&buffer, cx)
     });
 
     let mut fake_server = fake_servers.next().await.unwrap();
@@ -2653,7 +2653,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
             list_worktrees(&project, cx),
             [
                 (path!("/another_dir/a.rs").as_ref(), false),
-                (path!("/dir".as_ref()), true)
+                (path!("/dir").as_ref(), true)
             ],
         );
 
