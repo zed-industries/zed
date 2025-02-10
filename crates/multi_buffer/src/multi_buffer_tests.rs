@@ -979,8 +979,6 @@ fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
 
     let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_all_diff_hunks_expanded(cx);
-        multibuffer.add_diff(diff.clone(), cx);
         multibuffer.push_excerpts(
             buffer.clone(),
             [ExcerptRange {
@@ -989,6 +987,8 @@ fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
             }],
             cx,
         );
+        multibuffer.set_all_diff_hunks_expanded(cx);
+        multibuffer.add_diff(diff.clone(), cx);
     });
     cx.run_until_parked();
 

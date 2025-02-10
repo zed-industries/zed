@@ -1,5 +1,5 @@
 use crate::{Event, *};
-use buffer_diff::{assert_hunks, DiffHunkStatus};
+use buffer_diff::{assert_hunks, DiffHunkSecondaryStatus, DiffHunkStatus};
 use fs::FakeFs;
 use futures::{future, StreamExt};
 use gpui::{App, SemanticVersion, UpdateGlobal};
@@ -5814,7 +5814,12 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
             &snapshot,
             &uncommitted_diff.base_text_string().unwrap(),
             &[
-                (0..1, "", "// print goodbye\n", DiffHunkStatus::added()),
+                (
+                    0..1,
+                    "",
+                    "// print goodbye\n",
+                    DiffHunkStatus::Added(DiffHunkSecondaryStatus::HasSecondaryHunk),
+                ),
                 (
                     2..3,
                     "    println!(\"hello world\");\n",

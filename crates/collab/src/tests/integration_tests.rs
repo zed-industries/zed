@@ -8,7 +8,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use assistant_context_editor::ContextStore;
 use assistant_slash_command::SlashCommandWorkingSet;
-use buffer_diff::{assert_hunks, DiffHunkStatus};
+use buffer_diff::{assert_hunks, DiffHunkSecondaryStatus, DiffHunkStatus};
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
@@ -2668,7 +2668,12 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(1..2, "TWO\n", "two\n", DiffHunkStatus::modified())],
+            &[(
+                1..2,
+                "TWO\n",
+                "two\n",
+                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::HasSecondaryHunk),
+            )],
         );
     });
 
@@ -2722,7 +2727,12 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(1..2, "TWO_HUNDRED\n", "two\n", DiffHunkStatus::modified())],
+            &[(
+                1..2,
+                "TWO_HUNDRED\n",
+                "two\n",
+                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk),
+            )],
         );
     });
 
@@ -2831,7 +2841,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &new_staged_text,
-            &[(2..3, "", "three\n", DiffHunkStatus::removed())],
+            &[(2..3, "", "three\n", DiffHunkStatus::added())],
         );
     });
 }

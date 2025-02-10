@@ -370,10 +370,13 @@ fn compute_hunks(
         )
         .log_err();
 
+        eprintln!("one level up");
+
         // A common case in Zed is that the empty buffer is represented as just a newline,
         // but if we just compute a naive diff you get a "preserved" line in the middle,
         // which is a bit odd.
-        if buffer_text == "\n" && diff_base.ends_with("\n") && diff_base.len() > 1 {
+        if dbg!(&buffer_text) == "\n" && dbg!(&diff_base).ends_with("\n") && diff_base.len() > 1 {
+            eprintln!("hit the case");
             tree.push(
                 InternalDiffHunk {
                     buffer_range: buffer.anchor_before(0)..buffer.anchor_before(0),
@@ -1056,7 +1059,7 @@ mod tests {
             &buffer,
             &diff_base,
             &[
-                (6..7, "", "HELLO\n", DiffHunkStatus::removed()),
+                (6..7, "", "HELLO\n", DiffHunkStatus::added()),
                 (9..10, "six\n", "SIXTEEN\n", DiffHunkStatus::modified()),
                 (12..13, "", "WORLD\n", DiffHunkStatus::added()),
             ],
