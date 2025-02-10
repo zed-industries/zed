@@ -80,17 +80,26 @@ impl ImageView {
         let scaled_height = content_size.height.0 * new_zoom;
 
         self.pan_offset = Point {
-            x: center.x - px(scaled_width),
-            y: center.y - px(scaled_height),
+            x: center.x - px(scaled_width / 2.0),
+            y: center.y - px(scaled_height / 2.0),
         };
         self.zoom_level = new_zoom;
         cx.refresh_windows();
     }
 
+    pub fn get_center_point(&self, window_size: Size<Pixels>) -> Point<Pixels> {
+        Point::new(window_size.width / 2.0, window_size.height / 2.0)
+    }
+
     pub fn reset_view(&mut self, window_size: Size<Pixels>, cx: &mut Context<Self>) {
-        let center = Point::new(window_size.width, window_size.height);
+        let content_size = self.content_size(cx);
+        let center = Point::new(window_size.width / 2.0, window_size.height / 2.0);
+
+        self.pan_offset = Point {
+            x: center.x - content_size.width / 2.0,
+            y: center.y - content_size.height / 2.0,
+        };
         self.zoom_level = 1.0;
-        self.pan_offset = center;
         cx.refresh_windows();
     }
 

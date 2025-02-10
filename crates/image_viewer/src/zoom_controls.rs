@@ -35,6 +35,7 @@ impl ZoomControls {
                 let new_zoom = (view.zoom_level * 1.2).clamp(0.1, 10.0);
                 let center = Point::new(window_size.width / 2.0, window_size.height / 2.0);
                 view.update_zoom(new_zoom, center, cx);
+                cx.notify();
             });
         }
     }
@@ -45,6 +46,7 @@ impl ZoomControls {
                 let new_zoom = (view.zoom_level / 1.2).clamp(0.1, 10.0);
                 let center = Point::new(window_size.width / 2.0, window_size.height / 2.0);
                 view.update_zoom(new_zoom, center, cx);
+                cx.notify();
             });
         }
     }
@@ -53,6 +55,7 @@ impl ZoomControls {
         if let Some(image_view) = self.active_image_view.as_ref().and_then(|v| v.upgrade()) {
             image_view.update(cx, |view, cx| {
                 view.reset_view(window_size, cx);
+                cx.notify();
             });
         }
     }
