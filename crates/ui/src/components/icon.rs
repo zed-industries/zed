@@ -328,6 +328,8 @@ pub enum IconName {
     ZedAssistant2,
     ZedAssistantFilled,
     ZedPredict,
+    ZedPredictUp,
+    ZedPredictDown,
     ZedPredictDisabled,
     ZedXCopilot,
 }

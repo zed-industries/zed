@@ -40,6 +40,7 @@ use gpui::{
     StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement,
     WeakEntity, Window,
 };
+use http_client::http::header::MAX_FORWARDS;
 use itertools::Itertools;
 use language::{
     language_settings::{
@@ -65,6 +66,7 @@ use std::{
     ops::{Deref, Range},
     rc::Rc,
     sync::Arc,
+    time::Instant,
 };
 use sum_tree::Bias;
 use text::BufferId;
@@ -1137,6 +1139,7 @@ impl EditorElement {
         em_width: Pixels,
         em_advance: Pixels,
         autoscroll_containing_element: bool,
+        newest_selection_head: Option<DisplayPoint>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<CursorLayout> {
@@ -1277,21 +1280,22 @@ impl EditorElement {
                 }
             }
 
-            if show_local_cursors {
-                if let Some(target) = move_preview_cursor {
-                    cursors.push(self.layout_edit_prediction_preview_cursor(
-                        snapshot,
-                        visible_display_row_range,
-                        line_layouts,
-                        content_origin,
-                        scroll_pixel_position,
-                        line_height,
-                        em_advance,
-                        target,
-                        window,
-                        cx,
-                    ));
-                }
+            if let Some((start_instant, forwards, target)) = move_preview_cursor {
+                cursors.extend(self.layout_edit_prediction_preview_cursor(
+                    snapshot,
+                    visible_display_row_range,
+                    line_layouts,
+                    content_origin,
+                    scroll_pixel_position,
+                    line_height,
+                    em_advance,
+                    start_instant,
+                    forwards,
+                    target,
+                    newest_selection_head,
+                    window,
+                    cx,
+                ));
             }
 
             cursors
@@ -1313,11 +1317,19 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
         em_advance: Pixels,
+        start_instant: Instant,
+        forwards: bool,
         target: Anchor,
+        newest_selection_head: Option<DisplayPoint>,
         window: &mut Window,
         cx: &mut App,
-    ) -> CursorLayout {
+    ) -> Option<CursorLayout> {
         let cursor_position = target.to_display_point(&snapshot.display_snapshot);
+
+        if !visible_display_row_range.contains(&cursor_position.row()) {
+            return None;
+        }
+
         let cursor_row_layout =
             &line_layouts[cursor_position.row().minus(visible_display_row_range.start) as usize];
         let cursor_column = cursor_position.column() as usize;
@@ -1329,9 +1341,50 @@ impl EditorElement {
             block_width = em_advance;
         }
 
-        let x = cursor_character_x - scroll_pixel_position.x;
-        let y =
+        let mut target_x = cursor_character_x - scroll_pixel_position.x;
+        let mut target_y =
             (cursor_position.row().as_f32() - scroll_pixel_position.y / line_height) * line_height;
+
+        let (mut x, mut y) = (target_x, target_y);
+
+        if let Some(head) = newest_selection_head {
+            if visible_display_row_range.contains(&head.row()) {
+                // todo az: move this calculation to preview state?
+                let mut origin_x = line_layouts
+                    [head.row().minus(visible_display_row_range.start) as usize]
+                    .x_for_index(head.column() as usize);
+                let mut origin_y =
+                    (head.row().as_f32() - scroll_pixel_position.y / line_height) * line_height;
+
+                if !forwards {
+                    std::mem::swap(&mut target_x, &mut origin_x);
+                    std::mem::swap(&mut target_y, &mut origin_y);
+                }
+
+                const ANIMATION_SPEED: f32 = 1.8; // pixels per millisecond
+
+                let distance = ((target_x - origin_x).pow(2.) + (target_y - origin_y).pow(2.))
+                    .0
+                    .sqrt();
+                let duration = distance / ANIMATION_SPEED;
+                let delta = (start_instant.elapsed().as_millis() as f32 / duration).min(1.0);
+                // todo! az: put back
+                let delta: f32 = 1.;
+
+                // if delta >= 2.0 && !show_local_cursors {
+                //     return None;
+                // }
+
+                let delta = gpui::ease_in_out(delta.clamp(0., 1.));
+
+                x = origin_x + (target_x - origin_x) * delta;
+                y = origin_y + (target_y - origin_y) * delta;
+
+                if delta < 1. {
+                    window.request_animation_frame();
+                }
+            }
+        }
 
         let mut cursor = CursorLayout {
             color: self.style.local_player.cursor,
@@ -1344,7 +1397,7 @@ impl EditorElement {
         };
 
         cursor.layout(content_origin, None, window, cx);
-        cursor
+        Some(cursor)
     }
 
     fn layout_scrollbars(
@@ -3688,11 +3741,51 @@ impl EditorElement {
         if editor.inline_completion_visible_in_cursor_popover(true, cx) {
             return None;
         }
+        let instant = editor.previewing_inline_completion_since.clone();
+        let requires_modifier = editor.inline_completion_requires_modifier(cx);
+        drop(editor);
 
-        match &active_inline_completion.completion {
+        match &active_inline_completion.completion.clone() {
             InlineCompletion::Move { target, .. } => {
                 // todo! az clean up
-                if editor.inline_completion_requires_modifier(cx) {
+
+                if requires_modifier {
+                    if let Some((instant, _)) = instant {
+                        // if instant.elapsed() > Duration::from_millis(80) {
+                        // todo! az wire up for linux
+                        // Use the `buffer_font` method from the new Label for the `tab` text.
+                        let mut element = div()
+                            .px_2()
+                            .py_1()
+                            .elevation_2(cx)
+                            .rounded_br(px(0.))
+                            .child(Label::new("tab").buffer_font(cx))
+                            .into_any();
+
+                        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+
+                        let cursor_position =
+                            target.to_display_point(&editor_snapshot.display_snapshot);
+                        let cursor_row_layout = &line_layouts
+                            [cursor_position.row().minus(visible_row_range.start) as usize];
+                        let cursor_column = cursor_position.column() as usize;
+
+                        let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
+                        let target_y = (cursor_position.row().as_f32()
+                            - scroll_pixel_position.y / line_height)
+                            * line_height;
+
+                        let offset = point(
+                            cursor_character_x - size.width,
+                            target_y - size.height - PADDING_Y,
+                        );
+
+                        element.prepaint_at(text_bounds.origin + offset, window, cx);
+
+                        return Some(element);
+                    }
+                    // }
+
                     return None;
                 }
 
@@ -3794,7 +3887,7 @@ impl EditorElement {
                         let (previewing_inline_completion, origin) =
                             self.editor.update(cx, |editor, _cx| {
                                 Some((
-                                    editor.previewing_inline_completion,
+                                    editor.previewing_inline_completion_since,
                                     editor.display_to_pixel_point(
                                         target_line_end,
                                         editor_snapshot,
@@ -3806,7 +3899,7 @@ impl EditorElement {
                         let mut element = inline_completion_accept_indicator(
                             "Accept",
                             None,
-                            previewing_inline_completion,
+                            previewing_inline_completion.is_some(),
                             self.editor.focus_handle(cx),
                             window,
                             cx,
@@ -7322,6 +7415,7 @@ impl Element for EditorElement {
                         em_width,
                         em_advance,
                         autoscroll_containing_element,
+                        newest_selection_head,
                         window,
                         cx,
                     );

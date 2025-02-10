@@ -76,14 +76,14 @@ use code_context_menus::{
 use diff::DiffHunkStatus;
 use git::blame::GitBlame;
 use gpui::{
-    div, impl_actions, linear_color_stop, linear_gradient, point, prelude::*, pulsating_between,
-    px, relative, size, Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext,
-    AvailableSpace, Bounds, ClipboardEntry, ClipboardItem, Context, DispatchPhase, ElementId,
-    Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId,
-    FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext, Modifiers, MouseButton,
-    MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled,
-    StyledText, Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection,
-    UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    div, impl_actions, point, prelude::*, pulsating_between, px, relative, size, Action, Animation,
+    AnimationExt, AnyElement, App, AsyncWindowContext, AvailableSpace, Bounds, ClipboardEntry,
+    ClipboardItem, Context, DispatchPhase, ElementId, Entity, EntityInputHandler, EventEmitter,
+    FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla,
+    InteractiveText, KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad, ParentElement,
+    Pixels, Render, SharedString, Size, Styled, StyledText, Subscription, Task, TextStyle,
+    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
+    WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -467,12 +467,16 @@ pub fn make_suggestion_styles(cx: &mut App) -> InlineCompletionStyles {
 
 type CompletionId = usize;
 
+// TODO az shouldn't needs this
+#[derive(Clone)]
 pub(crate) enum EditDisplayMode {
     TabAccept,
     DiffPopover,
     Inline,
 }
 
+// TODO az shouldn't needs this
+#[derive(Clone)]
 enum InlineCompletion {
     Edit {
         edits: Vec<(Range<Anchor>, String)>,
@@ -684,7 +688,7 @@ pub struct Editor {
     show_inline_completions: bool,
     show_inline_completions_override: Option<bool>,
     menu_inline_completions_policy: MenuInlineCompletionsPolicy,
-    previewing_inline_completion: bool,
+    previewing_inline_completion_since: Option<(Instant, bool)>,
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
@@ -1376,7 +1380,7 @@ impl Editor {
             inline_completion_provider: None,
             active_inline_completion: None,
             stale_inline_completion_in_menu: None,
-            previewing_inline_completion: false,
+            previewing_inline_completion_since: None,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -5037,7 +5041,7 @@ impl Editor {
         has_completion: bool,
         cx: &App,
     ) -> bool {
-        if self.previewing_inline_completion
+        if self.previewing_inline_completion_since.is_some()
             || !self.show_inline_completions_in_menu(cx)
             || !self.should_show_inline_completions(cx)
         {
@@ -5061,8 +5065,42 @@ impl Editor {
             return;
         }
 
-        self.previewing_inline_completion = modifiers.alt;
-        self.update_visible_inline_completion(window, cx);
+        if modifiers.alt {
+            self.previewing_inline_completion_since = self
+                .previewing_inline_completion_since
+                .or_else(|| Some((Instant::now(), true)));
+            self.update_visible_inline_completion(window, cx);
+        } else {
+            if let Some((_, true)) = self.previewing_inline_completion_since {
+                let cancel_start = Instant::now();
+                self.previewing_inline_completion_since = Some((cancel_start, false));
+
+                cx.spawn(|this, mut cx| async move {
+                    // TODO az: calculate
+                    smol::Timer::after(Duration::from_millis(200)).await;
+
+                    if let Some(this) = this.upgrade() {
+                        this.update(&mut cx, |this, cx| {
+                            if let Some((instant, false)) = this.previewing_inline_completion_since
+                            {
+                                if instant == cancel_start {
+                                    // TODO az check that we are still in this state
+                                    this.previewing_inline_completion_since = None;
+                                    // this.update_visible_inline_completion(window, cx);
+                                    cx.notify()
+                                }
+                            }
+                        })
+                        .ok();
+                    }
+                })
+                .detach();
+            } else {
+                self.previewing_inline_completion_since = None;
+                self.update_visible_inline_completion(window, cx);
+            }
+        }
+
         cx.notify();
     }
 
@@ -5221,6 +5259,10 @@ impl Editor {
             completion,
             invalidation_range,
         });
+
+        if self.previewing_inline_completion_since.is_some() {
+            self.previewing_inline_completion_since = Some((Instant::now(), true));
+        }
 
         cx.notify();
 
@@ -5455,7 +5497,7 @@ impl Editor {
     }
 
     pub fn context_menu_visible(&self) -> bool {
-        !self.previewing_inline_completion
+        self.previewing_inline_completion_since.is_none()
             && self
                 .context_menu
                 .borrow()
@@ -13584,15 +13626,15 @@ impl Editor {
         }
     }
 
-    pub fn previewing_edit_prediction_move(&self) -> Option<Anchor> {
-        if !self.previewing_inline_completion {
+    pub fn previewing_edit_prediction_move(&self) -> Option<(Instant, bool, Anchor)> {
+        let Some((instant, forwards)) = self.previewing_inline_completion_since else {
             return None;
-        }
+        };
 
         self.active_inline_completion
             .as_ref()
             .and_then(|completion| match completion.completion {
-                InlineCompletion::Move { target, .. } => Some(target),
+                InlineCompletion::Move { target, .. } => Some((instant, forwards, target)),
                 _ => None,
             })
     }
@@ -14428,7 +14470,7 @@ impl Editor {
     }
 
     pub fn has_visible_completions_menu(&self) -> bool {
-        !self.previewing_inline_completion
+        self.previewing_inline_completion_since.is_none()
             && self.context_menu.borrow().as_ref().map_or(false, |menu| {
                 menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
             })
