@@ -1108,6 +1108,7 @@ impl GitPanel {
             .active_repository
             .as_ref()
             .and_then(|repository| repository.read(cx).branch())
+            .map(|branch| branch.name.clone())
             .unwrap_or_else(|| "(no current branch)".into());
 
         let has_repo_above = all_repositories.iter().any(|repo| {

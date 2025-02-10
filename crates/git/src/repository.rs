@@ -18,7 +18,7 @@ use sum_tree::MapSeekTarget;
 use util::command::new_std_command;
 use util::ResultExt;
 
-#[derive(Clone, Debug, Hash, PartialEq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Branch {
     pub is_head: bool,
     pub name: SharedString,
@@ -37,19 +37,19 @@ impl Branch {
     }
 }
 
-#[derive(Clone, Debug, Hash, PartialEq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Upstream {
     pub ref_name: SharedString,
     pub tracking: Option<UpstreamTracking>,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct UpstreamTracking {
     pub ahead: u32,
     pub behind: u32,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct CommitSummary {
     pub sha: SharedString,
     pub subject: SharedString,
@@ -72,7 +72,6 @@ pub trait GitRepository: Send + Sync {
 
     /// Returns the URL of the remote with the given name.
     fn remote_url(&self, name: &str) -> Option<String>;
-    fn branch_name(&self) -> Option<String>;
 
     /// Returns the SHA of the current HEAD.
     fn head_sha(&self) -> Option<String>;
@@ -198,13 +197,6 @@ impl GitRepository for RealGitRepository {
         remote.url().map(|url| url.to_string())
     }
 
-    fn branch_name(&self) -> Option<String> {
-        let repo = self.repository.lock();
-        let head = repo.head().log_err()?;
-        let branch = String::from_utf8_lossy(head.shorthand_bytes());
-        Some(branch.to_string())
-    }
-
     fn head_sha(&self) -> Option<String> {
         Some(self.repository.lock().head().ok()?.target()?.to_string())
     }
@@ -250,7 +242,17 @@ impl GitRepository for RealGitRepository {
             .workdir()
             .context("failed to read git work directory")?
             .to_path_buf();
-        let args = vec!["for-each-ref", "refs/heads/*", "--format", "%(HEAD)%00%(objectname)%00%(refname)%00%(upstream)%00%(upstream:track)%00%(committerdate)%00%(contents:subject)"];
+        let fields = [
+            "%(HEAD)",
+            "%(objectname)",
+            "%(refname)",
+            "%(upstream)",
+            "%(upstream:track)",
+            "%(committerdate:unix)",
+            "%(contents:subject)",
+        ]
+        .join("%00");
+        let args = vec!["for-each-ref", "refs/heads/*", "--format", &fields];
 
         let output = new_std_command(&self.git_binary_path)
             .current_dir(&working_directory)
@@ -264,46 +266,32 @@ impl GitRepository for RealGitRepository {
             ));
         }
 
-        let mut branches = Vec::default();
         let input = String::from_utf8_lossy(&output.stdout);
-        for line in input.split('\n') {
-            let mut fields = line.split('\x00');
-            let is_current_branch = fields.next().context("no HEAD")? == "*";
-            let head_sha: SharedString = fields.next().context("no objectname")?.to_string().into();
-            let ref_name: SharedString = fields
-                .next()
-                .context("no refname")?
-                .strip_prefix("refs/heads")
-                .context("unexpected format for refname")?
-                .to_string()
-                .into();
-            let upstream_name = fields.next().context("no upstream")?.to_string();
-            let upstream_tracking =
-                parse_upstream_track(fields.next().context("no upstream:track")?)?;
-            let commiterdate = fields.next().context("no committerdate")?.parse::<i64>()?;
-            let subject: SharedString = fields
-                .next()
-                .context("no contents:subject")?
-                .to_string()
-                .into();
+
+        let mut branches = parse_branch_input(&input)?;
+        // handle the case when you're in a new git repo with no commits
+        if !branches.iter().any(|branch| branch.is_head) {
+            let args = vec!["symbolic-ref", "--short", "HEAD"];
+
+            let output = new_std_command(&self.git_binary_path)
+                .current_dir(&working_directory)
+                .args(args)
+                .output()?;
+
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "Failed to git git branches:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
             branches.push(Branch {
-                is_head: is_current_branch,
-                name: ref_name,
-                most_recent_commit: Some(CommitSummary {
-                    sha: head_sha,
-                    subject,
-                    commit_timestamp: commiterdate,
-                }),
-                upstream: if upstream_name.is_empty() {
-                    None
-                } else {
-                    Some(Upstream {
-                        ref_name: upstream_name.into(),
-                        tracking: upstream_tracking,
-                    })
-                },
-            })
+                name: name.into(),
+                is_head: true,
+                upstream: None,
+                most_recent_commit: None,
+            });
         }
 
         Ok(branches)
@@ -481,11 +469,6 @@ impl GitRepository for FakeGitRepository {
 
     fn remote_url(&self, _name: &str) -> Option<String> {
         None
-    }
-
-    fn branch_name(&self) -> Option<String> {
-        let state = self.state.lock();
-        state.current_branch_name.clone()
     }
 
     fn head_sha(&self) -> Option<String> {
@@ -713,7 +696,59 @@ impl<'a> MapSeekTarget<RepoPath> for RepoPathDescendants<'a> {
         }
     }
 }
+
+fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
+    let mut branches = Vec::new();
+    for line in input.split('\n') {
+        if line.is_empty() {
+            continue;
+        }
+        let mut fields = line.split('\x00');
+        let is_current_branch = fields.next().context("no HEAD")? == "*";
+        let head_sha: SharedString = fields.next().context("no objectname")?.to_string().into();
+        let ref_name: SharedString = fields
+            .next()
+            .context("no refname")?
+            .strip_prefix("refs/heads/")
+            .context("unexpected format for refname")?
+            .to_string()
+            .into();
+        let upstream_name = fields.next().context("no upstream")?.to_string();
+        let upstream_tracking = parse_upstream_track(fields.next().context("no upstream:track")?)?;
+        let commiterdate = fields.next().context("no committerdate")?.parse::<i64>()?;
+        let subject: SharedString = fields
+            .next()
+            .context("no contents:subject")?
+            .to_string()
+            .into();
+
+        branches.push(Branch {
+            is_head: is_current_branch,
+            name: ref_name,
+            most_recent_commit: Some(CommitSummary {
+                sha: head_sha,
+                subject,
+                commit_timestamp: commiterdate,
+            }),
+            upstream: if upstream_name.is_empty() {
+                None
+            } else {
+                Some(Upstream {
+                    ref_name: upstream_name.into(),
+                    tracking: upstream_tracking,
+                })
+            },
+        })
+    }
+
+    Ok(branches)
+}
+
 fn parse_upstream_track(upstream_track: &str) -> Result<Option<UpstreamTracking>> {
+    if upstream_track == "" {
+        return Ok(None);
+    }
+
     let upstream_track = upstream_track
         .strip_prefix("[")
         .ok_or_else(|| anyhow!("missing ["))?;
@@ -734,4 +769,25 @@ fn parse_upstream_track(upstream_track: &str) -> Result<Option<UpstreamTracking>
         }
     }
     Ok(Some(UpstreamTracking { ahead, behind }))
+}
+
+#[test]
+fn test_branches_parsing() {
+    let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\0\01733187470\0generated protobuf\n";
+    assert_eq!(
+        parse_branch_input(&input).unwrap(),
+        vec![Branch {
+            is_head: true,
+            name: "zed-patches".into(),
+            upstream: Some(Upstream {
+                ref_name: "refs/remotes/origin/zed-patches".into(),
+                tracking: None
+            }),
+            most_recent_commit: Some(CommitSummary {
+                sha: "060964da10574cd9bf06463a53bf6e0769c5c45e".into(),
+                subject: "generated protobuf".into(),
+                commit_timestamp: 1733187470,
+            })
+        }]
+    )
 }

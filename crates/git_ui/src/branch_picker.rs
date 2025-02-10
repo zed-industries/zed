@@ -253,6 +253,25 @@ impl PickerDelegate for BranchListDelegate {
         let Some(branch) = self.matches.get(self.selected_index()) else {
             return;
         };
+
+        let current_branch = self
+            .workspace
+            .update(cx, |workspace, cx| {
+                workspace
+                    .project()
+                    .read(cx)
+                    .active_repository(cx)
+                    .and_then(|repo| repo.read(cx).branch())
+                    .map(|branch| branch.name.to_string())
+            })
+            .ok()
+            .flatten();
+
+        if current_branch == Some(branch.name().to_string()) {
+            cx.emit(DismissEvent);
+            return;
+        }
+
         cx.spawn_in(window, {
             let branch = branch.clone();
             |picker, mut cx| async move {

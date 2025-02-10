@@ -1798,11 +1798,13 @@ message Entry {
 
 message RepositoryEntry {
     uint64 work_directory_id = 1;
-    optional string branch = 2;
+    optional string branch = 2; // deprecated
+    optional Branch branch_summary = 6;
     repeated StatusEntry updated_statuses = 3;
     repeated string removed_statuses = 4;
     repeated string current_merge_conflicts = 5;
 }
+
 
 message StatusEntry {
     string repo_path = 1;
@@ -2608,7 +2610,7 @@ message ActiveToolchainResponse {
 message CommitSummary {
     string sha = 1;
     string subject = 2;
-    int64 commit_date = 3;
+    int64 commit_timestamp = 3;
 }
 
 message Branch {

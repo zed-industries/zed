@@ -12,6 +12,7 @@ use futures::{
     future::{BoxFuture, Shared},
     FutureExt, SinkExt,
 };
+use git::repository::Branch;
 use gpui::{App, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity};
 use postage::oneshot;
 use rpc::{
@@ -24,7 +25,10 @@ use smol::{
 };
 use text::ReplicaId;
 use util::{paths::SanitizedPath, ResultExt};
-use worktree::{Entry, ProjectEntryId, UpdatedEntriesSet, Worktree, WorktreeId, WorktreeSettings};
+use worktree::{
+    branch_to_proto, Entry, ProjectEntryId, UpdatedEntriesSet, Worktree, WorktreeId,
+    WorktreeSettings,
+};
 
 use crate::{search::SearchQuery, ProjectPath};
 
@@ -133,11 +137,12 @@ impl WorktreeStore {
             .find(|worktree| worktree.read(cx).id() == id)
     }
 
-    pub fn current_branch(&self, repository: ProjectPath, cx: &App) -> Option<Arc<str>> {
+    pub fn current_branch(&self, repository: ProjectPath, cx: &App) -> Option<Branch> {
         self.worktree_for_id(repository.worktree_id, cx)?
             .read(cx)
             .git_entry(repository.path)?
             .branch()
+            .cloned()
     }
 
     pub fn worktree_for_entry(
@@ -951,7 +956,7 @@ impl WorktreeStore {
                                 git::repository::CommitSummary {
                                     sha: commit.sha.into(),
                                     subject: commit.subject.into(),
-                                    commit_timestamp: commit.commit_date.into(),
+                                    commit_timestamp: commit.commit_timestamp.into(),
                                 }
                             }),
                         })
@@ -1139,31 +1144,7 @@ impl WorktreeStore {
             .await?;
 
         Ok(proto::GitBranchesResponse {
-            branches: branches
-                .into_iter()
-                .map(|branch| proto::Branch {
-                    is_head: branch.is_head,
-                    name: branch.name.to_string(),
-                    unix_timestamp: branch
-                        .most_recent_commit
-                        .as_ref()
-                        .map(|commit| commit.commit_timestamp as u64),
-                    most_recent_commit: branch.most_recent_commit.map(|commit| {
-                        proto::CommitSummary {
-                            sha: commit.sha.to_string(),
-                            subject: commit.subject.to_string(),
-                            commit_date: commit.commit_timestamp,
-                        }
-                    }),
-                    upstream: branch.upstream.map(|upstream| proto::GitUpstream {
-                        ref_name: upstream.ref_name.to_string(),
-                        tracking: upstream.tracking.map(|tracking| proto::UpstreamTracking {
-                            ahead: tracking.ahead as u64,
-                            behind: tracking.behind as u64,
-                        }),
-                    }),
-                })
-                .collect(),
+            branches: branches.iter().map(branch_to_proto).collect(),
         })
     }
 

@@ -5,6 +5,7 @@ use anyhow::Context as _;
 use client::ProjectId;
 use futures::channel::{mpsc, oneshot};
 use futures::StreamExt as _;
+use git::repository::Branch;
 use git::{
     repository::{GitRepository, RepoPath},
     status::{GitSummary, TrackedSummary},
@@ -299,7 +300,7 @@ impl Repository {
         (self.worktree_id, self.repository_entry.work_directory_id())
     }
 
-    pub fn branch(&self) -> Option<Arc<str>> {
+    pub fn branch(&self) -> Option<&Branch> {
         self.repository_entry.branch()
     }
 
