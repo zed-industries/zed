@@ -458,7 +458,14 @@ impl InlineCompletionButton {
                                 );
                             }
                         })
-                )
+                );
+
+                let msg = if data_collection.is_project_open_source() {
+                    "(Current project is open-source)"
+                } else {
+                    "(Current project is not open-source)"
+                };
+                menu = menu.item(ContextMenuEntry::new(msg));
             }
         }
 
