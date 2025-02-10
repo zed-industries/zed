@@ -3402,10 +3402,16 @@ impl LspStore {
                                     }
                                 }
                             });
-                            let servers_to_drop = this.refresh_server_tree(cx);
-                            for server in servers_to_drop {
-                                this.stop_local_language_server(server, cx);
-                            }
+                            let servers_to_drop = this
+                                .refresh_server_tree(cx)
+                                .into_iter()
+                                .map(|server| this.stop_local_language_server(server, cx))
+                                .collect::<Vec<_>>();
+                            cx.background_executor()
+                                .spawn(async move {
+                                    futures::future::join_all(servers_to_drop).await;
+                                })
+                                .detach();
                         })
                         .ok();
                     }
@@ -7372,7 +7378,7 @@ impl LspStore {
                     })
                 })
                 .collect::<BTreeSet<_>>();
-            local.lsp_tree.update(cx, |this, cx| {
+            local.lsp_tree.update(cx, |this, _| {
                 this.remove_nodes(&language_servers_to_stop);
             });
             let tasks = language_servers_to_stop

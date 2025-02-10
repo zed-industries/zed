@@ -24,7 +24,6 @@ use language::{
 use lsp::LanguageServerName;
 use once_cell::sync::OnceCell;
 use settings::{Settings, SettingsLocation, WorktreeId};
-use util::maybe;
 
 use crate::{project_settings::LspSettings, LanguageServerId, ProjectPath};
 
