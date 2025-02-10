@@ -7,6 +7,7 @@ use crate::{
     },
     JoinLines,
 };
+use diff::{BufferDiff, DiffHunkStatus};
 use futures::StreamExt;
 use gpui::{
     div, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
@@ -26,7 +27,7 @@ use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use multi_buffer::IndentGuide;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
-use project::{buffer_store::BufferChangeSet, FakeFs};
+use project::FakeFs;
 use project::{
     lsp_command::SIGNATURE_HELP_HIGHLIGHT_CURRENT,
     project_settings::{LspSettings, ProjectSettings},
@@ -1158,7 +1159,7 @@ fn test_fold_at_level(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.fold_at_level(&FoldAtLevel { level: 2 }, window, cx);
+        editor.fold_at_level(&FoldAtLevel(2), window, cx);
         assert_eq!(
             editor.display_text(cx),
             "
@@ -1182,7 +1183,7 @@ fn test_fold_at_level(cx: &mut TestAppContext) {
             .unindent(),
         );
 
-        editor.fold_at_level(&FoldAtLevel { level: 1 }, window, cx);
+        editor.fold_at_level(&FoldAtLevel(1), window, cx);
         assert_eq!(
             editor.display_text(cx),
             "
@@ -1197,7 +1198,7 @@ fn test_fold_at_level(cx: &mut TestAppContext) {
         );
 
         editor.unfold_all(&UnfoldAll, window, cx);
-        editor.fold_at_level(&FoldAtLevel { level: 0 }, window, cx);
+        editor.fold_at_level(&FoldAtLevel(0), window, cx);
         assert_eq!(
             editor.display_text(cx),
             "
@@ -10653,6 +10654,176 @@ async fn go_to_prev_overlapping_diagnostic(
 }
 
 #[gpui::test]
+async fn cycle_through_same_place_diagnostics(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+
+    cx.set_state(indoc! {"
+        ˇfn func(abc def: i32) -> u32 {
+        }
+    "});
+
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        version: None,
+                        diagnostics: vec![
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 11),
+                                    lsp::Position::new(0, 12),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 12),
+                                    lsp::Position::new(0, 15),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 12),
+                                    lsp::Position::new(0, 15),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 25),
+                                    lsp::Position::new(0, 28),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                        ],
+                    },
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+    executor.run_until_parked();
+
+    //// Backward
+
+    // Fourth diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+
+    // Third diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc ˇdef: i32) -> u32 {
+        }
+    "});
+
+    // Second diagnostic, same place
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc ˇdef: i32) -> u32 {
+        }
+    "});
+
+    // First diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    // Wrapped over, fourth diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_beginning(&MoveToBeginning, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        ˇfn func(abc def: i32) -> u32 {
+        }
+    "});
+
+    //// Forward
+
+    // First diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    // Second diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc ˇdef: i32) -> u32 {
+        }
+    "});
+
+    // Third diagnostic, same place
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc ˇdef: i32) -> u32 {
+        }
+    "});
+
+    // Fourth diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+
+    // Wrapped around, first diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+}
+
+#[gpui::test]
 async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -12440,11 +12611,10 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
             (buffer_2.clone(), base_text_2),
             (buffer_3.clone(), base_text_3),
         ] {
-            let change_set =
-                cx.new(|cx| BufferChangeSet::new_with_base_text(&diff_base, &buffer, cx));
+            let diff = cx.new(|cx| BufferDiff::new_with_base_text(&diff_base, &buffer, cx));
             editor
                 .buffer
-                .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
+                .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
         }
     });
     cx.executor().run_until_parked();
@@ -13134,11 +13304,10 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
                 (buffer_2.clone(), file_2_old),
                 (buffer_3.clone(), file_3_old),
             ] {
-                let change_set =
-                    cx.new(|cx| BufferChangeSet::new_with_base_text(&diff_base, &buffer, cx));
+                let diff = cx.new(|cx| BufferDiff::new_with_base_text(&diff_base, &buffer, cx));
                 editor
                     .buffer
-                    .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
+                    .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
             }
         })
         .unwrap();
@@ -13251,10 +13420,10 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
     });
     editor
         .update(cx, |editor, _window, cx| {
-            let change_set = cx.new(|cx| BufferChangeSet::new_with_base_text(base, &buffer, cx));
+            let diff = cx.new(|cx| BufferDiff::new_with_base_text(base, &buffer, cx));
             editor
                 .buffer
-                .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx))
+                .update(cx, |buffer, cx| buffer.add_diff(diff, cx))
         })
         .unwrap();
 
@@ -14420,11 +14589,10 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut gpui::TestAppContex
 
         editor.buffer().update(cx, |multibuffer, cx| {
             let buffer = multibuffer.as_singleton().unwrap();
-            let change_set =
-                cx.new(|cx| BufferChangeSet::new_with_base_text(base_text, &buffer, cx));
+            let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
 
             multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer.add_change_set(change_set, cx);
+            multibuffer.add_diff(diff, cx);
 
             buffer.read(cx).remote_id()
         })
@@ -14877,7 +15045,7 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/a",
+        path!("/a"),
         json!({
             "first.rs": sample_text_1,
             "second.rs": sample_text_2,
@@ -14885,7 +15053,7 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
         }),
     )
     .await;
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let worktree = project.update(cx, |project, cx| {
@@ -15061,7 +15229,7 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut gpui::TestAppContext
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/a",
+        path!("/a"),
         json!({
             "first.rs": sample_text_1,
             "second.rs": sample_text_2,
@@ -15069,7 +15237,7 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut gpui::TestAppContext
         }),
     )
     .await;
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let worktree = project.update(cx, |project, cx| {
@@ -15208,13 +15376,13 @@ async fn test_multi_buffer_with_single_excerpt_folding(cx: &mut gpui::TestAppCon
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/a",
+        path!("/a"),
         json!({
             "main.rs": sample_text,
         }),
     )
     .await;
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let worktree = project.update(cx, |project, cx| {

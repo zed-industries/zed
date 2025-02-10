@@ -75,6 +75,11 @@ impl LabelCommon for HighlightedLabel {
         self.base = self.base.single_line();
         self
     }
+
+    fn buffer_font(mut self, cx: &App) -> Self {
+        self.base = self.base.buffer_font(cx);
+        self
+    }
 }
 
 pub fn highlight_ranges(

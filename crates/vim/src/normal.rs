@@ -182,6 +182,9 @@ impl Vim {
             Some(Operator::ToggleComments) => {
                 self.toggle_comments_motion(motion, times, window, cx)
             }
+            Some(Operator::ReplaceWithRegister) => {
+                self.replace_with_register_motion(motion, times, window, cx)
+            }
             Some(operator) => {
                 // Can't do anything for text objects, Ignoring
                 error!("Unexpected normal mode motion operator: {:?}", operator)
@@ -227,6 +230,9 @@ impl Vim {
                 }
                 Some(Operator::ToggleComments) => {
                     self.toggle_comments_object(object, around, window, cx)
+                }
+                Some(Operator::ReplaceWithRegister) => {
+                    self.replace_with_register_object(object, around, window, cx)
                 }
                 _ => {
                     // Can't do anything for namespace operators. Ignoring
@@ -1544,5 +1550,41 @@ mod test {
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n");
         cx.simulate_shared_keystrokes("x escape shift-o").await;
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n// x\n");
+    }
+
+    #[gpui::test]
+    async fn test_yank_line_with_trailing_newline(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("heˇllo\n").await;
+        cx.simulate_shared_keystrokes("y y p").await;
+        cx.shared_state().await.assert_eq("hello\nˇhello\n");
+    }
+
+    #[gpui::test]
+    async fn test_yank_line_without_trailing_newline(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("heˇllo").await;
+        cx.simulate_shared_keystrokes("y y p").await;
+        cx.shared_state().await.assert_eq("hello\nˇhello");
+    }
+
+    #[gpui::test]
+    async fn test_yank_multiline_without_trailing_newline(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("heˇllo\nhello").await;
+        cx.simulate_shared_keystrokes("2 y y p").await;
+        cx.shared_state()
+            .await
+            .assert_eq("hello\nˇhello\nhello\nhello");
+    }
+
+    #[gpui::test]
+    async fn test_dd_then_paste_without_trailing_newline(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("heˇllo").await;
+        cx.simulate_shared_keystrokes("d d").await;
+        cx.shared_state().await.assert_eq("ˇ");
+        cx.simulate_shared_keystrokes("p p").await;
+        cx.shared_state().await.assert_eq("\nhello\nˇhello");
     }
 }

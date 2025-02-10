@@ -35,7 +35,7 @@ pub struct EditorSettings {
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     pub jupyter: Jupyter,
-    pub show_inline_completions_in_menu: bool,
+    pub show_edit_predictions_in_menu: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -372,7 +372,7 @@ pub struct EditorSettingsContent {
     /// Only has an effect if edit prediction provider supports it.
     ///
     /// Default: true
-    pub show_inline_completions_in_menu: Option<bool>,
+    pub show_edit_predictions_in_menu: Option<bool>,
 
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,

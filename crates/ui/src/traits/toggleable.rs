@@ -63,7 +63,7 @@ impl From<Option<bool>> for ToggleState {
         match selected {
             Some(true) => Self::Selected,
             Some(false) => Self::Unselected,
-            None => Self::Unselected,
+            None => Self::Indeterminate,
         }
     }
 }

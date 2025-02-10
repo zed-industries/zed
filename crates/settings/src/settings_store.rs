@@ -4,9 +4,10 @@ use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
 use futures::{channel::mpsc, future::LocalBoxFuture, FutureExt, StreamExt};
 use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
+use migrator::migrate_settings;
 use paths::{local_settings_file_relative_path, EDITORCONFIG_NAME};
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
-use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     any::{type_name, Any, TypeId},
@@ -17,7 +18,9 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use tree_sitter::Query;
-use util::{merge_non_null_json_value_into, RangeExt, ResultExt as _};
+use util::RangeExt;
+
+use util::{merge_non_null_json_value_into, ResultExt as _};
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
@@ -412,11 +415,11 @@ impl SettingsStore {
                     let new_text = cx.read_global(|store: &SettingsStore, cx| {
                         store.new_text_for_update::<T>(old_text, |content| update(content, cx))
                     })?;
-                    let initial_path = paths::settings_file().as_path();
-                    if fs.is_file(initial_path).await {
+                    let settings_path = paths::settings_file().as_path();
+                    if fs.is_file(settings_path).await {
                         let resolved_path =
-                            fs.canonicalize(initial_path).await.with_context(|| {
-                                format!("Failed to canonicalize settings path {:?}", initial_path)
+                            fs.canonicalize(settings_path).await.with_context(|| {
+                                format!("Failed to canonicalize settings path {:?}", settings_path)
                             })?;
 
                         fs.atomic_write(resolved_path.clone(), new_text)
@@ -425,10 +428,10 @@ impl SettingsStore {
                                 format!("Failed to write settings to file {:?}", resolved_path)
                             })?;
                     } else {
-                        fs.atomic_write(initial_path.to_path_buf(), new_text)
+                        fs.atomic_write(settings_path.to_path_buf(), new_text)
                             .await
                             .with_context(|| {
-                                format!("Failed to write settings to file {:?}", initial_path)
+                                format!("Failed to write settings to file {:?}", settings_path)
                             })?;
                     }
 
@@ -544,7 +547,11 @@ impl SettingsStore {
     }
 
     /// Sets the user settings via a JSON string.
-    pub fn set_user_settings(&mut self, user_settings_content: &str, cx: &mut App) -> Result<()> {
+    pub fn set_user_settings(
+        &mut self,
+        user_settings_content: &str,
+        cx: &mut App,
+    ) -> Result<serde_json::Value> {
         let settings: serde_json::Value = if user_settings_content.is_empty() {
             parse_json_with_comments("{}")?
         } else {
@@ -552,9 +559,9 @@ impl SettingsStore {
         };
 
         anyhow::ensure!(settings.is_object(), "settings must be an object");
-        self.raw_user_settings = settings;
+        self.raw_user_settings = settings.clone();
         self.recompute_values(None, cx)?;
-        Ok(())
+        Ok(settings)
     }
 
     pub fn set_server_settings(
@@ -988,6 +995,51 @@ impl SettingsStore {
         properties.use_fallbacks();
         Some(properties)
     }
+
+    pub fn should_migrate_settings(settings: &serde_json::Value) -> bool {
+        let Ok(old_text) = serde_json::to_string(settings) else {
+            return false;
+        };
+        migrate_settings(&old_text).is_some()
+    }
+
+    pub fn migrate_settings(&self, fs: Arc<dyn Fs>) {
+        self.setting_file_updates_tx
+            .unbounded_send(Box::new(move |_: AsyncApp| {
+                async move {
+                    let old_text = Self::load_settings(&fs).await?;
+                    let Some(new_text) = migrate_settings(&old_text) else {
+                        return anyhow::Ok(());
+                    };
+                    let settings_path = paths::settings_file().as_path();
+                    if fs.is_file(settings_path).await {
+                        fs.atomic_write(paths::settings_backup_file().to_path_buf(), old_text)
+                            .await
+                            .with_context(|| {
+                                "Failed to create settings backup in home directory".to_string()
+                            })?;
+                        let resolved_path =
+                            fs.canonicalize(settings_path).await.with_context(|| {
+                                format!("Failed to canonicalize settings path {:?}", settings_path)
+                            })?;
+                        fs.atomic_write(resolved_path.clone(), new_text)
+                            .await
+                            .with_context(|| {
+                                format!("Failed to write settings to file {:?}", resolved_path)
+                            })?;
+                    } else {
+                        fs.atomic_write(settings_path.to_path_buf(), new_text)
+                            .await
+                            .with_context(|| {
+                                format!("Failed to write settings to file {:?}", settings_path)
+                            })?;
+                    }
+                    anyhow::Ok(())
+                }
+                .boxed_local()
+            }))
+            .ok();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1235,7 +1287,9 @@ fn replace_value_in_json_text(
 
         let found_key = text
             .get(key_range.clone())
-            .map(|key_text| key_text == format!("\"{}\"", key_path[depth]))
+            .map(|key_text| {
+                depth < key_path.len() && key_text == format!("\"{}\"", key_path[depth])
+            })
             .unwrap_or(false);
 
         if found_key {

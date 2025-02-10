@@ -45,6 +45,13 @@ pub enum IconPosition {
     End,
 }
 
+#[derive(Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+pub enum KeybindingPosition {
+    Start,
+    #[default]
+    End,
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum TintColor {
     #[default]

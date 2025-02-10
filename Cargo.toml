@@ -26,12 +26,15 @@ members = [
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette_hooks",
+    "crates/component",
+    "crates/component_preview",
     "crates/context_server",
     "crates/context_server_settings",
     "crates/copilot",
     "crates/db",
     "crates/deepseek",
     "crates/diagnostics",
+    "crates/diff",
     "crates/docs_preprocessor",
     "crates/editor",
     "crates/evals",
@@ -80,6 +83,7 @@ members = [
     "crates/markdown_preview",
     "crates/media",
     "crates/menu",
+    "crates/migrator",
     "crates/multi_buffer",
     "crates/node_runtime",
     "crates/notifications",
@@ -145,7 +149,6 @@ members = [
     "crates/ui_macros",
     "crates/util",
     "crates/util_macros",
-    "crates/vcs_menu",
     "crates/vim",
     "crates/vim_mode_setting",
     "crates/welcome",
@@ -225,12 +228,15 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
+component = { path = "crates/component" }
+component_preview = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
 context_server_settings = { path = "crates/context_server_settings" }
 copilot = { path = "crates/copilot" }
 db = { path = "crates/db" }
 deepseek = { path = "crates/deepseek" }
 diagnostics = { path = "crates/diagnostics" }
+diff = { path = "crates/diff" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
@@ -277,6 +283,7 @@ markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
+migrator = { path = "crates/migrator" }
 multi_buffer = { path = "crates/multi_buffer" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
@@ -342,7 +349,6 @@ ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
 util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
-vcs_menu = { path = "crates/vcs_menu" }
 vim = { path = "crates/vim" }
 vim_mode_setting = { path = "crates/vim_mode_setting" }
 welcome = { path = "crates/welcome" }
@@ -376,9 +382,9 @@ async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "091a8401033847bb9b6ace3fcf70448d069621c5" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "091a8401033847bb9b6ace3fcf70448d069621c5" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "091a8401033847bb9b6ace3fcf70448d069621c5" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
 naga = { version = "23.1.0", features = ["wgsl-in"] }
 blake3 = "1.5.3"
 bytes = "1.0"
@@ -424,6 +430,7 @@ jupyter-websocket-client = { version = "0.9.0" }
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
+linkme = "0.3.31"
 livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "811ceae29fabee455f110c56cd66b3f49a7e5003", features = [
     "dispatcher",
     "services-dispatcher",
@@ -474,7 +481,7 @@ runtimelib = { version = "0.25.0", default-features = false, features = [
 rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
-rustls = "0.21.12"
+rustls = { version = "0.23.22" }
 rustls-native-certs = "0.8.0"
 schemars = { version = "0.8", features = ["impl_json_schema", "indexmap2"] }
 semver = "1.0"
@@ -557,7 +564,7 @@ wasmtime = { version = "24", default-features = false, features = [
 wasmtime-wasi = "24"
 which = "6.0.0"
 wit-component = "0.201"
-zed_llm_client = "0.1.1"
+zed_llm_client = "0.4"
 zstd = "0.11"
 metal = "0.31"
 
@@ -618,6 +625,7 @@ features = [
 # TODO livekit https://github.com/RustAudio/cpal/pull/891
 [patch.crates-io]
 cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
+real-async-tls = { git = "https://github.com/zed-industries/async-tls", rev = "1e759a4b5e370f87dc15e40756ac4f8815b61d9d", package = "async-tls"}
 
 [profile.dev]
 split-debuginfo = "unpacked"
@@ -671,7 +679,6 @@ telemetry_events = { codegen-units = 1 }
 theme_selector = { codegen-units = 1 }
 time_format = { codegen-units = 1 }
 ui_input = { codegen-units = 1 }
-vcs_menu = { codegen-units = 1 }
 zed_actions = { codegen-units = 1 }
 
 [profile.release]

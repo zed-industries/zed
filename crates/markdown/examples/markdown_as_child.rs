@@ -83,7 +83,6 @@ pub fn main() {
                         selection.fade_out(0.7);
                         selection
                     },
-                    break_style: Default::default(),
                     heading: Default::default(),
                 };
                 let markdown = cx.new(|cx| {

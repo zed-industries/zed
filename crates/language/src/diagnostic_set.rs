@@ -2,6 +2,7 @@ use crate::{range_to_lsp, Diagnostic};
 use anyhow::Result;
 use collections::HashMap;
 use lsp::LanguageServerId;
+use serde::Serialize;
 use std::{
     cmp::{Ordering, Reverse},
     iter,
@@ -25,7 +26,7 @@ pub struct DiagnosticSet {
 /// the diagnostics are stored internally as [`Anchor`]s, but can be
 /// resolved to different coordinates types like [`usize`] byte offsets or
 /// [`Point`](gpui::Point)s.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct DiagnosticEntry<T> {
     /// The range of the buffer where the diagnostic applies.
     pub range: Range<T>,
@@ -35,12 +36,26 @@ pub struct DiagnosticEntry<T> {
 
 /// A group of related diagnostics, ordered by their start position
 /// in the buffer.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct DiagnosticGroup<T> {
     /// The diagnostics.
     pub entries: Vec<DiagnosticEntry<T>>,
     /// The index into `entries` where the primary diagnostic is stored.
     pub primary_ix: usize,
+}
+
+impl DiagnosticGroup<Anchor> {
+    /// Converts the entries in this [`DiagnosticGroup`] to a different buffer coordinate type.
+    pub fn resolve<O: FromAnchor>(&self, buffer: &text::BufferSnapshot) -> DiagnosticGroup<O> {
+        DiagnosticGroup {
+            entries: self
+                .entries
+                .iter()
+                .map(|entry| entry.resolve(buffer))
+                .collect(),
+            primary_ix: self.primary_ix,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -56,17 +71,11 @@ impl DiagnosticEntry<PointUtf16> {
     /// Returns a raw LSP diagnostic used to provide diagnostic context to LSP
     /// codeAction request
     pub fn to_lsp_diagnostic_stub(&self) -> Result<lsp::Diagnostic> {
-        let code = self
-            .diagnostic
-            .code
-            .clone()
-            .map(lsp::NumberOrString::String);
-
         let range = range_to_lsp(self.range.clone())?;
 
         Ok(lsp::Diagnostic {
-            code,
             range,
+            code: self.diagnostic.code.clone(),
             severity: Some(self.diagnostic.severity),
             source: self.diagnostic.source.clone(),
             message: self.diagnostic.message.clone(),

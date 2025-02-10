@@ -7,7 +7,7 @@ Elm support is available through the [Elm extension](https://github.com/zed-exte
 
 ## Setup
 
-Zed support for Elm requires installation of `elm`, `elm-format`, `elm-review` and `elm`.
+Zed support for Elm requires installation of `elm`, `elm-format`, and `elm-review`.
 
 1. [Install Elm](https://guide.elm-lang.org/install/elm.html) (or run `brew install elm` on macOS).
 2. Install `elm-review` to support code linting:
