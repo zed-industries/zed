@@ -4442,10 +4442,12 @@ impl Workspace {
         if let Some(focus_on) = focus_on {
             focus_on.update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
         } else {
-            self.panes
-                .last()
-                .unwrap()
-                .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
+            if self.active_pane() == pane {
+                self.panes
+                    .last()
+                    .unwrap()
+                    .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
+            }
         }
         if self.last_active_center_pane == Some(pane.downgrade()) {
             self.last_active_center_pane = None;

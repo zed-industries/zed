@@ -9,12 +9,14 @@ pub mod branch_picker;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod project_diff;
+// mod quick_commit;
 pub mod repository_selector;
 
 pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);
     branch_picker::init(cx);
     cx.observe_new(ProjectDiff::register).detach();
+    // quick_commit::init(cx);
 }
 
 // TODO: Add updated status colors to theme
