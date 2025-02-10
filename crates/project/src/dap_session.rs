@@ -151,8 +151,9 @@ impl DebugAdapterClientState {
                 let task = cx
                     .spawn(|this, mut cx| async move {
                         let result = request.await.log_err()?;
-                        this.update(&mut cx, |this, _| {
+                        this.update(&mut cx, |this, cx| {
                             process_result(this, result);
+                            cx.notify();
                         })
                         .log_err()
                     })
@@ -161,6 +162,14 @@ impl DebugAdapterClientState {
                 vacant.insert(task);
             }
         }
+    }
+
+    pub fn invalidate(&mut self, cx: &mut Context<Self>) {
+        self.requests.clear();
+        self.modules.clear();
+        self.loaded_sources.clear();
+
+        cx.notify();
     }
 
     pub fn modules(&mut self, cx: &mut Context<Self>) -> &[Module] {

@@ -298,6 +298,10 @@ impl DebugPanelItem {
             return;
         }
 
+        if let Some(client_state) = self.session.read(cx).client_state(*client_id) {
+            client_state.update(cx, |state, cx| state.invalidate(cx));
+        }
+
         cx.emit(DebugPanelItemEvent::Stopped { go_to_stack_frame });
 
         if let Some((downstream_client, project_id)) = self.dap_store.read(cx).downstream_client() {
