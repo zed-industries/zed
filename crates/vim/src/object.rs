@@ -1745,60 +1745,46 @@ mod test {
 
     #[gpui::test]
     async fn test_multiline_surrounding_character_objects(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let mut cx = VimTestContext::new(cx, true).await;
 
-        cx.set_shared_state(indoc! {
-            "func empty(a string) bool {
-               if a == \"\" {
-                  return true
-               }
-               ˇreturn false
-            }"
-        })
-        .await;
-        cx.simulate_shared_keystrokes("v i {").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-            func empty(a string) bool {
-               «if a == \"\" {
-                  return true
-               }
-               return false
-            ˇ»}"});
-        cx.set_shared_state(indoc! {
-            "func empty(a string) bool {
-                 if a == \"\" {
-                     ˇreturn true
-                 }
-                 return false
-            }"
-        })
-        .await;
-        cx.simulate_shared_keystrokes("v i {").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-            func empty(a string) bool {
-                 if a == \"\" {
-                     «return true
-            ˇ»     }
-                 return false
-            }"});
+        cx.set_state(
+            indoc! {
+                "func empty(a string) bool {
+                   if a == \"\" {
+                      return true
+                   }
+                   ˇreturn false
+                }"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v i {");
 
-        cx.set_shared_state(indoc! {
-            "func empty(a string) bool {
-                 if a == \"\" ˇ{
-                     return true
-                 }
-                 return false
-            }"
-        })
-        .await;
-        cx.simulate_shared_keystrokes("v i {").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-            func empty(a string) bool {
-                 if a == \"\" {
-                     «return true
-            ˇ»     }
-                 return false
-            }"});
+        cx.set_state(
+            indoc! {
+                "func empty(a string) bool {
+                     if a == \"\" {
+                         ˇreturn true
+                     }
+                     return false
+                }"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v i {");
+
+        cx.set_state(
+            indoc! {
+                "func empty(a string) bool {
+                     if a == \"\" ˇ{
+                         return true
+                     }
+                     return false
+                }"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v i {");
     }
 
     #[gpui::test]
