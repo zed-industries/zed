@@ -1754,7 +1754,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     });
     let _rs_buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/dir/a.rs", cx)
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
         })
         .await
         .unwrap();
@@ -3388,7 +3388,7 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        path!("/dir"),
         json!({
             "a": {
                 "file1": "",
