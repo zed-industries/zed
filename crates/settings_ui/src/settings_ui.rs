@@ -117,10 +117,37 @@ impl Render for SettingsPage {
             .p_8()
             .child(
                 v_flex()
-                    .elevation_3(cx)
+                    .elevation_2(cx)
                     .p_8()
                     .max_w(px(800.))
                     .gap_4()
+                    .child(
+                        v_group()
+                            .unfilled()
+                            .gap_2()
+                            .child(
+                                div().max_w(px(580.)).p_1()
+                                    .child(Headline::new("Welcome to the settings UI alpha!").size(HeadlineSize::Small))
+                                    .child(Label::new("We have a lot to build, and many settings to cover.")
+                                        .italic(true).color(Color::Muted))
+                                    .child(Label::new("Help us out by giving feedback, and contributing to coverage of visual settings.")
+                                        .italic(true).color(Color::Muted)))
+                            .child(
+                                // TODO: Update URLs
+                                h_flex()
+                                    .gap_3()
+                                    .child(Button::new("give-feedback", "Give Feedback")
+                                        .layer(ui::ElevationIndex::Surface)
+                                        .on_click(cx.listener(|_, _, _, cx| {
+                                        cx.open_url("https://github.com/zed-industries/zed/discussions");
+                                })))
+                                .child(Button::new("contribute", "Contribute")
+                                    .layer(ui::ElevationIndex::Surface)
+                                    .on_click(cx.listener(|_, _, _, cx| {
+                                    cx.open_url("https://github.com/zed-industries/zed");
+                                })))
+                            )
+                    )
                     .child(
                         v_flex()
                             .gap_1()
