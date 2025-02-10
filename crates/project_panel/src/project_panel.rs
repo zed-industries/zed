@@ -7251,7 +7251,7 @@ mod tests {
         save_task.await.unwrap();
 
         // Rename the file
-        select_path(&panel, path!("/root/new"), cx);
+        select_path(&panel, path!("root/new"), cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &["v root", "      new  <== selected"]
