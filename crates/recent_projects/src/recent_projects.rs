@@ -671,7 +671,7 @@ mod tests {
                     }];
                     delegate.set_workspaces(vec![(
                         WorkspaceId::default(),
-                        SerializedWorkspaceLocation::from_local_paths(vec!["/test/path/"]),
+                        SerializedWorkspaceLocation::from_local_paths(vec![path!("/test/path/")]),
                     )]);
                 });
             })

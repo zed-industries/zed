@@ -5535,8 +5535,8 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
-        populate_with_test_ra_project(&fs, "/rust-analyzer").await;
-        let project = Project::test(fs.clone(), ["/rust-analyzer".as_ref()], cx).await;
+        populate_with_test_ra_project(&fs, path!("/rust-analyzer")).await;
+        let project = Project::test(fs.clone(), [path!("/rust-analyzer").as_ref()], cx).await;
         project.read_with(cx, |project, _| {
             project.languages().add(Arc::new(rust_lang()))
         });
@@ -5910,7 +5910,7 @@ mod tests {
     async fn test_navigating_in_singleton(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let root = "/root";
+        let root = path!("/root");
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             root,
@@ -5927,7 +5927,7 @@ struct OutlineEntryExcerpt {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), [root.as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!(root).as_ref()], cx).await;
         project.read_with(cx, |project, _| {
             project.languages().add(Arc::new(
                 rust_lang()
@@ -5957,7 +5957,7 @@ struct OutlineEntryExcerpt {
 
         let _editor = workspace
             .update(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/root/src/lib.rs"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(path!("/root/src/lib.rs")), true, window, cx)
             })
             .unwrap()
             .await
