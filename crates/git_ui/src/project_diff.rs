@@ -1,8 +1,8 @@
 use std::any::{Any, TypeId};
 
 use anyhow::Result;
+use buffer_diff::BufferDiff;
 use collections::HashSet;
-use diff::BufferDiff;
 use editor::{scroll::Autoscroll, Editor, EditorEvent};
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
@@ -126,6 +126,7 @@ impl ProjectDiff {
                 window,
                 cx,
             );
+            diff_display_editor.set_distinguish_unstaged_diff_hunks();
             diff_display_editor.set_expand_all_diff_hunks(cx);
             diff_display_editor.register_addon(GitPanelAddon {
                 git_panel: git_panel.clone(),
@@ -317,10 +318,10 @@ impl ProjectDiff {
 
         let snapshot = buffer.read(cx).snapshot();
         let diff = diff.read(cx);
-        let diff_hunk_ranges = if diff.snapshot.base_text.is_none() {
+        let diff_hunk_ranges = if diff.base_text().is_none() {
             vec![Point::zero()..snapshot.max_point()]
         } else {
-            diff.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot)
+            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                 .collect::<Vec<_>>()
         };

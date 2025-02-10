@@ -21,7 +21,7 @@ mod project_tests;
 
 mod direnv;
 mod environment;
-use diff::BufferDiff;
+use buffer_diff::BufferDiff;
 pub use environment::EnvironmentErrorMessage;
 use git::Repository;
 pub mod search_history;
