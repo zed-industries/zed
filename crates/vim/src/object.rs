@@ -407,51 +407,54 @@ impl Object {
         if let Some(range) = self.range(map, selection.clone(), around) {
             selection.start = range.start;
             selection.end = range.end;
-
-            // Preserve an indented newline on inner {} blocks when they span multiple lines
             if !around && self.is_multiline() {
-                let start_point = selection.start.to_point(map);
-                let end_point = selection.end.to_point(map);
-
-                if start_point.row != end_point.row {
-                    let start_offset = selection.start.to_offset(map, Bias::Left);
-                    let mut pos = start_offset;
-
-                    while pos > 0 {
-                        pos -= 1;
-                        if let Some((ch, _)) = map.buffer_chars_at(pos).next() {
-                            if !ch.is_whitespace() {
-                                break;
-                            }
-                            if ch == '\n' {
-                                if pos > 0 {
-                                    if let Some((prev_ch, _)) = map.buffer_chars_at(pos - 1).next()
-                                    {
-                                        if prev_ch == '{' {
-                                            // Preserve the final newline
-                                            let end_pos = selection.end.to_offset(map, Bias::Left);
-                                            for (ch, offset) in map.reverse_buffer_chars_at(end_pos)
-                                            {
-                                                if ch == '\n' {
-                                                    selection.end = offset.to_display_point(map);
-                                                    break;
-                                                }
-                                                if !ch.is_whitespace() {
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
+                preserve_indented_newline(map, selection);
             }
             true
         } else {
             false
+        }
+    }
+}
+
+/// Adjusts a selection range to preserve indentation after an opening brace.
+///
+/// If the selection spans multiple lines and is preceded by an opening brace (`{`),
+/// this function will extend the selection to include the indented newline.
+fn preserve_indented_newline(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) {
+    let (start_point, end_point) = (selection.start.to_point(map), selection.end.to_point(map));
+
+    if start_point.row == end_point.row {
+        return;
+    }
+
+    let start_offset = selection.start.to_offset(map, Bias::Left);
+    let mut pos = start_offset;
+
+    while pos > 0 {
+        pos -= 1;
+        let current_char = map.buffer_chars_at(pos).next().map(|(ch, _)| ch);
+
+        match current_char {
+            Some(ch) if !ch.is_whitespace() => break,
+            Some('\n') if pos > 0 => {
+                let prev_char = map.buffer_chars_at(pos - 1).next().map(|(ch, _)| ch);
+                if prev_char == Some('{') {
+                    let end_pos = selection.end.to_offset(map, Bias::Left);
+                    for (ch, offset) in map.reverse_buffer_chars_at(end_pos) {
+                        match ch {
+                            '\n' => {
+                                selection.end = offset.to_display_point(map);
+                                break;
+                            }
+                            ch if !ch.is_whitespace() => break,
+                            _ => continue,
+                        }
+                    }
+                }
+                break;
+            }
+            _ => continue,
         }
     }
 }
