@@ -548,7 +548,6 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        let workspace = self.workspace.clone();
         ContextMenu::build(window, cx, |menu, _window, cx| {
             self.build_language_settings_menu(menu, cx).when(
                 cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>(),
