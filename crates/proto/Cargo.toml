@@ -1,9 +1,9 @@
 [package]
 description = "Shared protocol for communication between the Zed app and the zed.dev server"
-edition = "2021"
+edition.workspace = true
 name = "proto"
 version = "0.1.0"
-publish = false
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [features]

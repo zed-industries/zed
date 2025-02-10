@@ -3,7 +3,7 @@
     allow(dead_code)
 )]
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use clap::Parser;
 use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
 use collections::HashMap;
@@ -19,10 +19,7 @@ use tempfile::NamedTempFile;
 use util::paths::PathWithPosition;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-use {
-    std::io::IsTerminal,
-    util::{load_login_shell_environment, load_shell_from_passwd, ResultExt},
-};
+use std::io::IsTerminal;
 
 struct Detect;
 
@@ -36,7 +33,19 @@ trait InstalledApp {
 #[command(
     name = "zed",
     disable_version_flag = true,
-    after_help = "To read from stdin, append '-' (e.g. 'ps axf | zed -')"
+    before_help = "The Zed CLI binary.
+This CLI is a separate binary that invokes Zed.
+
+Examples:
+    `zed`
+          Simply opens Zed
+    `zed --foreground`
+          Runs in foreground (shows all logs)
+    `zed path-to-your-project`
+          Open your project in Zed
+    `zed -n path-to-file `
+          Open file/folder in a new window",
+    after_help = "To read from stdin, append '-', e.g. 'ps axf | zed -'"
 )]
 struct Args {
     /// Wait for all of the given paths to be opened/closed before exiting.
@@ -48,10 +57,9 @@ struct Args {
     /// Create a new workspace
     #[arg(short, long, overrides_with = "add")]
     new: bool,
-    /// A sequence of space-separated paths that you want to open.
+    /// The paths to open in Zed (space-separated).
     ///
-    /// Use `path:line:row` syntax to open a file at a specific location.
-    /// Non-existing paths and directories will ignore `:line:row` suffix.
+    /// Use `path:line:column` syntax to open a file at the given line and column.
     paths_with_position: Vec<String>,
     /// Print Zed's version and the app path.
     #[arg(short, long)]
@@ -79,7 +87,7 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
         Ok(existing_path) => PathWithPosition::from_path(existing_path),
         Err(_) => {
             let path = PathWithPosition::parse_str(argument_str);
-            let curdir = env::current_dir().context("reteiving current directory")?;
+            let curdir = env::current_dir().context("retrieving current directory")?;
             path.map_path(|path| match fs::canonicalize(&path) {
                 Ok(path) => Ok(path),
                 Err(e) => {
@@ -167,15 +175,24 @@ fn main() -> Result<()> {
         None
     };
 
-    // On Linux, desktop entry uses `cli` to spawn `zed`, so we need to load env vars from the shell
-    // since it doesn't inherit env vars from the terminal.
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    if !std::io::stdout().is_terminal() {
-        load_shell_from_passwd().log_err();
-        load_login_shell_environment().log_err();
-    }
+    let env = {
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        {
+            // On Linux, the desktop entry uses `cli` to spawn `zed`.
+            // We need to handle env vars correctly since std::env::vars() may not contain
+            // project-specific vars (e.g. those set by direnv).
+            // By setting env to None here, the LSP will use worktree env vars instead,
+            // which is what we want.
+            if !std::io::stdout().is_terminal() {
+                None
+            } else {
+                Some(std::env::vars().collect::<HashMap<_, _>>())
+            }
+        }
 
-    let env = Some(std::env::vars().collect::<HashMap<_, _>>());
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        Some(std::env::vars().collect::<HashMap<_, _>>())
+    };
 
     let exit_status = Arc::new(Mutex::new(None));
     let mut paths = vec![];
@@ -322,13 +339,17 @@ mod linux {
     impl InstalledApp for App {
         fn zed_version_string(&self) -> String {
             format!(
-                "Zed {}{} – {}",
+                "Zed {}{}{} – {}",
                 if *RELEASE_CHANNEL == "stable" {
                     "".to_string()
                 } else {
-                    format!(" {} ", *RELEASE_CHANNEL)
+                    format!("{} ", *RELEASE_CHANNEL)
                 },
                 option_env!("RELEASE_VERSION").unwrap_or_default(),
+                match option_env!("ZED_COMMIT_SHA") {
+                    Some(commit_sha) => format!(" {commit_sha} "),
+                    None => "".to_string(),
+                },
                 self.0.display(),
             )
         }
@@ -530,7 +551,7 @@ mod windows {
 
 #[cfg(target_os = "macos")]
 mod mac_os {
-    use anyhow::{anyhow, Context, Result};
+    use anyhow::{anyhow, Context as _, Result};
     use core_foundation::{
         array::{CFArray, CFIndex},
         string::kCFStringEncodingUTF8,

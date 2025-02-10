@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use util::paths::PathExt;
 
 use crate::statement::{SqlType, Statement};

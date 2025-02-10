@@ -55,6 +55,9 @@ pub trait LabelCommon {
 
     /// Sets the label to render as a single line.
     fn single_line(self) -> Self;
+
+    /// Sets the font to the buffer's
+    fn buffer_font(self, cx: &App) -> Self;
 }
 
 #[derive(IntoElement)]
@@ -159,6 +162,13 @@ impl LabelCommon for LabelLike {
         self.single_line = true;
         self
     }
+
+    fn buffer_font(mut self, cx: &App) -> Self {
+        self.base = self
+            .base
+            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone());
+        self
+    }
 }
 
 impl ParentElement for LabelLike {
@@ -168,9 +178,7 @@ impl ParentElement for LabelLike {
 }
 
 impl RenderOnce for LabelLike {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let mut color = self.color.color(cx);
         if let Some(alpha) = self.alpha {
             color.fade_out(1.0 - alpha);
@@ -203,7 +211,10 @@ impl RenderOnce for LabelLike {
                 this.overflow_x_hidden().text_ellipsis()
             })
             .text_color(color)
-            .font_weight(self.weight.unwrap_or(settings.ui_font.weight))
+            .font_weight(
+                self.weight
+                    .unwrap_or(ThemeSettings::get_global(cx).ui_font.weight),
+            )
             .children(self.children)
     }
 }

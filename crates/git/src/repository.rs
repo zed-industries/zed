@@ -1,18 +1,21 @@
+use crate::status::FileStatus;
 use crate::GitHostingProviderRegistry;
 use crate::{blame::Blame, status::GitStatus};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, HashSet};
 use git2::BranchType;
 use gpui::SharedString;
 use parking_lot::Mutex;
 use rope::Rope;
-use serde::{Deserialize, Serialize};
+use std::borrow::Borrow;
+use std::sync::LazyLock;
 use std::{
     cmp::Ordering,
     path::{Component, Path, PathBuf},
     sync::Arc,
 };
 use sum_tree::MapSeekTarget;
+use util::command::new_std_command;
 use util::ResultExt;
 
 #[derive(Clone, Debug, Hash, PartialEq)]
@@ -26,9 +29,15 @@ pub struct Branch {
 pub trait GitRepository: Send + Sync {
     fn reload_index(&self);
 
-    /// Loads a git repository entry's contents.
+    /// Returns the contents of an entry in the repository's index, or None if there is no entry for the given path.
+    ///
     /// Note that for symlink entries, this will return the contents of the symlink, not the target.
-    fn load_index_text(&self, relative_file_path: &Path) -> Option<String>;
+    fn load_index_text(&self, path: &RepoPath) -> Option<String>;
+
+    /// Returns the contents of an entry in the repository's HEAD, or None if HEAD does not exist or has no entry for the given path.
+    ///
+    /// Note that for symlink entries, this will return the contents of the symlink, not the target.
+    fn load_committed_text(&self, path: &RepoPath) -> Option<String>;
 
     /// Returns the URL of the remote with the given name.
     fn remote_url(&self, name: &str) -> Option<String>;
@@ -37,7 +46,10 @@ pub trait GitRepository: Send + Sync {
     /// Returns the SHA of the current HEAD.
     fn head_sha(&self) -> Option<String>;
 
-    fn status(&self, path_prefixes: &[PathBuf]) -> Result<GitStatus>;
+    fn merge_head_shas(&self) -> Vec<String>;
+
+    /// Returns the list of git statuses, sorted by path
+    fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
 
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
@@ -46,8 +58,28 @@ pub trait GitRepository: Send + Sync {
 
     fn blame(&self, path: &Path, content: Rope) -> Result<crate::blame::Blame>;
 
-    /// Returns the path to the repository, typically the `.git` folder.
-    fn dot_git_dir(&self) -> PathBuf;
+    /// Returns the absolute path to the repository. For worktrees, this will be the path to the
+    /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
+    fn path(&self) -> PathBuf;
+
+    /// Returns the absolute path to the ".git" dir for the main repository, typically a `.git`
+    /// folder. For worktrees, this will be the path to the repository the worktree was created
+    /// from. Otherwise, this is the same value as `path()`.
+    ///
+    /// Git documentation calls this the "commondir", and for git CLI is overridden by
+    /// `GIT_COMMON_DIR`.
+    fn main_repository_path(&self) -> PathBuf;
+
+    /// Updates the index to match the worktree at the given paths.
+    ///
+    /// If any of the paths have been deleted from the worktree, they will be removed from the index if found there.
+    fn stage_paths(&self, paths: &[RepoPath]) -> Result<()>;
+    /// Updates the index to match HEAD at the given paths.
+    ///
+    /// If any of the paths were previously staged but do not exist in HEAD, they will be removed from the index.
+    fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()>;
+
+    fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -86,20 +118,25 @@ impl GitRepository for RealGitRepository {
         }
     }
 
-    fn dot_git_dir(&self) -> PathBuf {
+    fn path(&self) -> PathBuf {
         let repo = self.repository.lock();
         repo.path().into()
     }
 
-    fn load_index_text(&self, relative_file_path: &Path) -> Option<String> {
-        fn logic(repo: &git2::Repository, relative_file_path: &Path) -> Result<Option<String>> {
+    fn main_repository_path(&self) -> PathBuf {
+        let repo = self.repository.lock();
+        repo.commondir().into()
+    }
+
+    fn load_index_text(&self, path: &RepoPath) -> Option<String> {
+        fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
             const STAGE_NORMAL: i32 = 0;
             let index = repo.index()?;
 
             // This check is required because index.get_path() unwraps internally :(
-            check_path_to_repo_path_errors(relative_file_path)?;
+            check_path_to_repo_path_errors(path)?;
 
-            let oid = match index.get_path(relative_file_path, STAGE_NORMAL) {
+            let oid = match index.get_path(path, STAGE_NORMAL) {
                 Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
                 _ => return Ok(None),
             };
@@ -108,11 +145,20 @@ impl GitRepository for RealGitRepository {
             Ok(Some(String::from_utf8(content)?))
         }
 
-        match logic(&self.repository.lock(), relative_file_path) {
+        match logic(&self.repository.lock(), path) {
             Ok(value) => return value,
-            Err(err) => log::error!("Error loading head text: {:?}", err),
+            Err(err) => log::error!("Error loading index text: {:?}", err),
         }
         None
+    }
+
+    fn load_committed_text(&self, path: &RepoPath) -> Option<String> {
+        let repo = self.repository.lock();
+        let head = repo.head().ok()?.peel_to_tree().log_err()?;
+        let oid = head.get_path(path).ok()?.id();
+        let content = repo.find_blob(oid).log_err()?.content().to_owned();
+        let content = String::from_utf8(content).log_err()?;
+        Some(content)
     }
 
     fn remote_url(&self, name: &str) -> Option<String> {
@@ -132,7 +178,19 @@ impl GitRepository for RealGitRepository {
         Some(self.repository.lock().head().ok()?.target()?.to_string())
     }
 
-    fn status(&self, path_prefixes: &[PathBuf]) -> Result<GitStatus> {
+    fn merge_head_shas(&self) -> Vec<String> {
+        let mut shas = Vec::default();
+        self.repository
+            .lock()
+            .mergehead_foreach(|oid| {
+                shas.push(oid.to_string());
+                true
+            })
+            .ok();
+        shas
+    }
+
+    fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
         let working_directory = self
             .repository
             .lock()
@@ -149,7 +207,7 @@ impl GitRepository for RealGitRepository {
             Ok(_) => Ok(true),
             Err(e) => match e.code() {
                 git2::ErrorCode::NotFound => Ok(false),
-                _ => Err(anyhow::anyhow!(e)),
+                _ => Err(anyhow!(e)),
             },
         }
     }
@@ -193,7 +251,7 @@ impl GitRepository for RealGitRepository {
         repo.set_head(
             revision
                 .name()
-                .ok_or_else(|| anyhow::anyhow!("Branch name could not be retrieved"))?,
+                .ok_or_else(|| anyhow!("Branch name could not be retrieved"))?,
         )?;
         Ok(())
     }
@@ -225,6 +283,82 @@ impl GitRepository for RealGitRepository {
             self.hosting_provider_registry.clone(),
         )
     }
+
+    fn stage_paths(&self, paths: &[RepoPath]) -> Result<()> {
+        let working_directory = self
+            .repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")?
+            .to_path_buf();
+
+        if !paths.is_empty() {
+            let output = new_std_command(&self.git_binary_path)
+                .current_dir(&working_directory)
+                .args(["update-index", "--add", "--remove", "--"])
+                .args(paths.iter().map(|p| p.as_ref()))
+                .output()?;
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "Failed to stage paths:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()> {
+        let working_directory = self
+            .repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")?
+            .to_path_buf();
+
+        if !paths.is_empty() {
+            let output = new_std_command(&self.git_binary_path)
+                .current_dir(&working_directory)
+                .args(["reset", "--quiet", "--"])
+                .args(paths.iter().map(|p| p.as_ref()))
+                .output()?;
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "Failed to unstage:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()> {
+        let working_directory = self
+            .repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")?
+            .to_path_buf();
+        let mut args = vec!["commit", "--quiet", "-m", message, "--cleanup=strip"];
+        let author = name_and_email.map(|(name, email)| format!("{name} <{email}>"));
+        if let Some(author) = author.as_deref() {
+            args.push("--author");
+            args.push(author);
+        }
+
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(args)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to commit:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -234,11 +368,12 @@ pub struct FakeGitRepository {
 
 #[derive(Debug, Clone)]
 pub struct FakeGitRepositoryState {
-    pub dot_git_dir: PathBuf,
+    pub path: PathBuf,
     pub event_emitter: smol::channel::Sender<PathBuf>,
-    pub index_contents: HashMap<PathBuf, String>,
-    pub blames: HashMap<PathBuf, Blame>,
-    pub worktree_statuses: HashMap<RepoPath, GitFileStatus>,
+    pub head_contents: HashMap<RepoPath, String>,
+    pub index_contents: HashMap<RepoPath, String>,
+    pub blames: HashMap<RepoPath, Blame>,
+    pub statuses: HashMap<RepoPath, FileStatus>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
 }
@@ -250,13 +385,14 @@ impl FakeGitRepository {
 }
 
 impl FakeGitRepositoryState {
-    pub fn new(dot_git_dir: PathBuf, event_emitter: smol::channel::Sender<PathBuf>) -> Self {
+    pub fn new(path: PathBuf, event_emitter: smol::channel::Sender<PathBuf>) -> Self {
         FakeGitRepositoryState {
-            dot_git_dir,
+            path,
             event_emitter,
+            head_contents: Default::default(),
             index_contents: Default::default(),
             blames: Default::default(),
-            worktree_statuses: Default::default(),
+            statuses: Default::default(),
             current_branch_name: Default::default(),
             branches: Default::default(),
         }
@@ -266,9 +402,14 @@ impl FakeGitRepositoryState {
 impl GitRepository for FakeGitRepository {
     fn reload_index(&self) {}
 
-    fn load_index_text(&self, path: &Path) -> Option<String> {
+    fn load_index_text(&self, path: &RepoPath) -> Option<String> {
         let state = self.state.lock();
-        state.index_contents.get(path).cloned()
+        state.index_contents.get(path.as_ref()).cloned()
+    }
+
+    fn load_committed_text(&self, path: &RepoPath) -> Option<String> {
+        let state = self.state.lock();
+        state.head_contents.get(path.as_ref()).cloned()
     }
 
     fn remote_url(&self, _name: &str) -> Option<String> {
@@ -284,15 +425,24 @@ impl GitRepository for FakeGitRepository {
         None
     }
 
-    fn dot_git_dir(&self) -> PathBuf {
-        let state = self.state.lock();
-        state.dot_git_dir.clone()
+    fn merge_head_shas(&self) -> Vec<String> {
+        vec![]
     }
 
-    fn status(&self, path_prefixes: &[PathBuf]) -> Result<GitStatus> {
+    fn path(&self) -> PathBuf {
         let state = self.state.lock();
+        state.path.clone()
+    }
+
+    fn main_repository_path(&self) -> PathBuf {
+        self.path()
+    }
+
+    fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
+        let state = self.state.lock();
+
         let mut entries = state
-            .worktree_statuses
+            .statuses
             .iter()
             .filter_map(|(repo_path, status)| {
                 if path_prefixes
@@ -305,7 +455,8 @@ impl GitRepository for FakeGitRepository {
                 }
             })
             .collect::<Vec<_>>();
-        entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(&b));
+
         Ok(GitStatus {
             entries: entries.into(),
         })
@@ -335,7 +486,7 @@ impl GitRepository for FakeGitRepository {
         state.current_branch_name = Some(name.to_owned());
         state
             .event_emitter
-            .try_send(state.dot_git_dir.clone())
+            .try_send(state.path.clone())
             .expect("Dropped repo change event");
         Ok(())
     }
@@ -345,7 +496,7 @@ impl GitRepository for FakeGitRepository {
         state.branches.insert(name.to_owned());
         state
             .event_emitter
-            .try_send(state.dot_git_dir.clone())
+            .try_send(state.path.clone())
             .expect("Dropped repo change event");
         Ok(())
     }
@@ -357,6 +508,18 @@ impl GitRepository for FakeGitRepository {
             .get(path)
             .with_context(|| format!("failed to get blame for {:?}", path))
             .cloned()
+    }
+
+    fn stage_paths(&self, _paths: &[RepoPath]) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn unstage_paths(&self, _paths: &[RepoPath]) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn commit(&self, _message: &str, _name_and_email: Option<(&str, &str)>) -> Result<()> {
+        unimplemented!()
     }
 }
 
@@ -389,52 +552,46 @@ fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum GitFileStatus {
-    Added,
-    Modified,
-    Conflict,
-}
-
-impl GitFileStatus {
-    pub fn merge(
-        this: Option<GitFileStatus>,
-        other: Option<GitFileStatus>,
-        prefer_other: bool,
-    ) -> Option<GitFileStatus> {
-        if prefer_other {
-            return other;
-        }
-
-        match (this, other) {
-            (Some(GitFileStatus::Conflict), _) | (_, Some(GitFileStatus::Conflict)) => {
-                Some(GitFileStatus::Conflict)
-            }
-            (Some(GitFileStatus::Modified), _) | (_, Some(GitFileStatus::Modified)) => {
-                Some(GitFileStatus::Modified)
-            }
-            (Some(GitFileStatus::Added), _) | (_, Some(GitFileStatus::Added)) => {
-                Some(GitFileStatus::Added)
-            }
-            _ => None,
-        }
-    }
-}
+pub static WORK_DIRECTORY_REPO_PATH: LazyLock<RepoPath> =
+    LazyLock::new(|| RepoPath(Path::new("").into()));
 
 #[derive(Clone, Debug, Ord, Hash, PartialOrd, Eq, PartialEq)]
-pub struct RepoPath(pub PathBuf);
+pub struct RepoPath(pub Arc<Path>);
 
 impl RepoPath {
     pub fn new(path: PathBuf) -> Self {
         debug_assert!(path.is_relative(), "Repo paths must be relative");
 
-        RepoPath(path)
+        RepoPath(path.into())
+    }
+
+    pub fn from_str(path: &str) -> Self {
+        let path = Path::new(path);
+        debug_assert!(path.is_relative(), "Repo paths must be relative");
+
+        RepoPath(path.into())
+    }
+
+    pub fn to_proto(&self) -> String {
+        self.0.to_string_lossy().to_string()
+    }
+}
+
+impl std::fmt::Display for RepoPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.to_string_lossy().fmt(f)
     }
 }
 
 impl From<&Path> for RepoPath {
     fn from(value: &Path) -> Self {
-        RepoPath::new(value.to_path_buf())
+        RepoPath::new(value.into())
+    }
+}
+
+impl From<Arc<Path>> for RepoPath {
+    fn from(value: Arc<Path>) -> Self {
+        RepoPath(value)
     }
 }
 
@@ -444,9 +601,15 @@ impl From<PathBuf> for RepoPath {
     }
 }
 
+impl From<&str> for RepoPath {
+    fn from(value: &str) -> Self {
+        Self::from_str(value)
+    }
+}
+
 impl Default for RepoPath {
     fn default() -> Self {
-        RepoPath(PathBuf::new())
+        RepoPath(Path::new("").into())
     }
 }
 
@@ -457,10 +620,16 @@ impl AsRef<Path> for RepoPath {
 }
 
 impl std::ops::Deref for RepoPath {
-    type Target = PathBuf;
+    type Target = Path;
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl Borrow<Path> for RepoPath {
+    fn borrow(&self) -> &Path {
+        self.0.as_ref()
     }
 }
 

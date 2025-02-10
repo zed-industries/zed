@@ -11,12 +11,14 @@ use serde::{Deserialize, Serialize};
 // https://github.com/mmastrac/rust-ctor/issues/280
 pub fn init() {}
 
-#[derive(Clone, PartialEq, Deserialize)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenBrowser {
     pub url: String,
 }
 
-#[derive(Clone, PartialEq, Deserialize)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenZedUrl {
     pub url: String,
 }
@@ -45,10 +47,10 @@ actions!(
     ]
 );
 
-pub mod branches {
-    use gpui::actions;
+pub mod git {
+    use gpui::action_with_deprecated_aliases;
 
-    actions!(branches, [OpenRecent]);
+    action_with_deprecated_aliases!(git, Branch, ["branches::OpenRecent"]);
 }
 
 pub mod command_palette {
@@ -65,9 +67,11 @@ pub mod feedback {
 
 pub mod theme_selector {
     use gpui::impl_actions;
+    use schemars::JsonSchema;
     use serde::Deserialize;
 
-    #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Toggle {
         /// A list of theme names to filter the theme selector down to.
         pub themes_filter: Option<Vec<String>>,
@@ -76,20 +80,46 @@ pub mod theme_selector {
     impl_actions!(theme_selector, [Toggle]);
 }
 
-#[derive(Clone, Default, Deserialize, PartialEq)]
-pub struct InlineAssist {
-    pub prompt: Option<String>,
+pub mod icon_theme_selector {
+    use gpui::impl_actions;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Toggle {
+        /// A list of icon theme names to filter the theme selector down to.
+        pub themes_filter: Option<Vec<String>>,
+    }
+
+    impl_actions!(icon_theme_selector, [Toggle]);
 }
 
-impl_actions!(assistant, [InlineAssist]);
+pub mod assistant {
+    use gpui::{actions, impl_actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+    actions!(assistant, [ToggleFocus, DeployPromptLibrary]);
+
+    #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct InlineAssist {
+        pub prompt: Option<String>,
+    }
+
+    impl_actions!(assistant, [InlineAssist]);
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenRecent {
     #[serde(default)]
     pub create_new_window: bool,
 }
-gpui::impl_actions!(projects, [OpenRecent]);
-gpui::actions!(projects, [OpenRemote]);
+
+impl_actions!(projects, [OpenRecent]);
+actions!(projects, [OpenRemote]);
 
 /// Where to spawn the task in the UI.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -102,8 +132,8 @@ pub enum RevealTarget {
     Dock,
 }
 
-/// Spawn a task with name or open tasks modal
-#[derive(Debug, PartialEq, Clone, Deserialize)]
+/// Spawn a task with name or open tasks modal.
+#[derive(Debug, PartialEq, Clone, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum Spawn {
     /// Spawns a task by the name given.
@@ -128,8 +158,9 @@ impl Spawn {
     }
 }
 
-/// Rerun last task
-#[derive(PartialEq, Clone, Deserialize, Default)]
+/// Rerun the last task.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Rerun {
     /// Controls whether the task context is reevaluated prior to execution of a task.
     /// If it is not, environment variables such as ZED_COLUMN, ZED_FILE are gonna be the same as in the last execution of a task
@@ -147,6 +178,7 @@ pub struct Rerun {
     pub use_new_terminal: Option<bool>,
 
     /// If present, rerun the task with this ID, otherwise rerun the last task.
+    #[serde(skip)]
     pub task_id: Option<String>,
 }
 
@@ -155,9 +187,11 @@ impl_actions!(task, [Spawn, Rerun]);
 pub mod outline {
     use std::sync::OnceLock;
 
-    use gpui::{action_as, AnyView, WindowContext};
+    use gpui::{action_as, AnyView, App, Window};
 
     action_as!(outline, ToggleOutline as Toggle);
     /// A pointer to outline::toggle function, exposed here to sewer the breadcrumbs <-> outline dependency.
-    pub static TOGGLE_OUTLINE: OnceLock<fn(AnyView, &mut WindowContext<'_>)> = OnceLock::new();
+    pub static TOGGLE_OUTLINE: OnceLock<fn(AnyView, &mut Window, &mut App)> = OnceLock::new();
 }
+
+actions!(zed_predict_onboarding, [OpenZedPredictOnboarding]);

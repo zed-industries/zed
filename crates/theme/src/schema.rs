@@ -270,7 +270,7 @@ pub struct ThemeColorsContent {
 
     /// Fill Color. Used for the muted or deemphasized fill color of an icon.
     ///
-    /// This might be used to show an icon in an inactive pane, or to demphasize a series of icons to give them less visual weight.
+    /// This might be used to show an icon in an inactive pane, or to deemphasize a series of icons to give them less visual weight.
     #[serde(rename = "icon.muted")]
     pub icon_muted: Option<String>,
 
@@ -389,6 +389,10 @@ pub struct ThemeColorsContent {
     /// Text Color. Used for the text of the line number in the editor gutter when the line is highlighted.
     #[serde(rename = "editor.active_line_number")]
     pub editor_active_line_number: Option<String>,
+
+    /// Text Color. Used for the text of the line number in the editor gutter when the line is hovered over.
+    #[serde(rename = "editor.hover_line_number")]
+    pub editor_hover_line_number: Option<String>,
 
     /// Text Color. Used to mark invisible characters in the editor.
     ///
@@ -548,6 +552,46 @@ pub struct ThemeColorsContent {
 
     #[serde(rename = "link_text.hover")]
     pub link_text_hover: Option<String>,
+
+    /// Added version control color.
+    #[serde(rename = "version_control.added")]
+    pub version_control_added: Option<String>,
+
+    /// Added version control background color.
+    #[serde(rename = "version_control.added_background")]
+    pub version_control_added_background: Option<String>,
+
+    /// Deleted version control color.
+    #[serde(rename = "version_control.deleted")]
+    pub version_control_deleted: Option<String>,
+
+    /// Deleted version control background color.
+    #[serde(rename = "version_control.deleted_background")]
+    pub version_control_deleted_background: Option<String>,
+
+    /// Modified version control color.
+    #[serde(rename = "version_control.modified")]
+    pub version_control_modified: Option<String>,
+
+    /// Modified version control background color.
+    #[serde(rename = "version_control.modified_background")]
+    pub version_control_modified_background: Option<String>,
+
+    /// Renamed version control color.
+    #[serde(rename = "version_control.renamed")]
+    pub version_control_renamed: Option<String>,
+
+    /// Conflict version control color.
+    #[serde(rename = "version_control.conflict")]
+    pub version_control_conflict: Option<String>,
+
+    /// Conflict version control background color.
+    #[serde(rename = "version_control.conflict_background")]
+    pub version_control_conflict_background: Option<String>,
+
+    /// Ignored version control color.
+    #[serde(rename = "version_control.ignored")]
+    pub version_control_ignored: Option<String>,
 }
 
 impl ThemeColorsContent {
@@ -793,6 +837,10 @@ impl ThemeColorsContent {
                 .editor_line_number
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
+            editor_hover_line_number: self
+                .editor_hover_line_number
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
             editor_active_line_number: self
                 .editor_active_line_number
                 .as_ref()
@@ -946,6 +994,46 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             link_text_hover: self
                 .link_text_hover
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            version_control_added: self
+                .version_control_added
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            version_control_added_background: self
+                .version_control_added_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            version_control_deleted: self
+                .version_control_deleted
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            version_control_deleted_background: self
+                .version_control_deleted_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            version_control_modified: self
+                .version_control_modified
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            version_control_modified_background: self
+                .version_control_modified_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            version_control_renamed: self
+                .version_control_renamed
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            version_control_conflict: self
+                .version_control_conflict
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            version_control_conflict_background: self
+                .version_control_conflict_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            version_control_ignored: self
+                .version_control_ignored
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
         }

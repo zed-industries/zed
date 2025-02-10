@@ -1,14 +1,14 @@
 use crate::stdout_is_a_pty;
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use backtrace::{self, Backtrace};
 use chrono::Utc;
 use client::{telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{AppContext, SemanticVersion};
+use gpui::{App, SemanticVersion};
 use http_client::{self, HttpClient, HttpClientWithUrl, HttpRequestExt, Method};
 use paths::{crashes_dir, crashes_retired_dir};
 use project::Project;
-use release_channel::{ReleaseChannel, RELEASE_CHANNEL};
+use release_channel::{AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
@@ -25,6 +25,7 @@ static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub fn init_panic_hook(
     app_version: SemanticVersion,
+    app_commit_sha: Option<AppCommitSha>,
     system_id: Option<String>,
     installation_id: Option<String>,
     session_id: String,
@@ -54,12 +55,22 @@ pub fn init_panic_hook(
             let location = info.location().unwrap();
             let backtrace = Backtrace::new();
             eprintln!(
-                "Thread {:?} panicked with {:?} at {}:{}:{}\n{:?}",
+                "Thread {:?} panicked with {:?} at {}:{}:{}\n{}{:?}",
                 thread_name,
                 payload,
                 location.file(),
                 location.line(),
                 location.column(),
+                match app_commit_sha.as_ref() {
+                    Some(commit_sha) => format!(
+                        "https://github.com/zed-industries/zed/blob/{}/src/{}#L{} \
+                        (may not be uploaded, line may be incorrect if files modified)\n",
+                        commit_sha.0,
+                        location.file(),
+                        location.line()
+                    ),
+                    None => "".to_string(),
+                },
                 backtrace,
             );
             std::process::exit(-1);
@@ -103,6 +114,7 @@ pub fn init_panic_hook(
                 line: location.line(),
             }),
             app_version: app_version.to_string(),
+            app_commit_sha: app_commit_sha.as_ref().map(|sha| sha.0.clone()),
             release_channel: RELEASE_CHANNEL.dev_name().into(),
             target: env!("TARGET").to_owned().into(),
             os_name: telemetry::os_name(),
@@ -163,7 +175,7 @@ pub fn init(
     system_id: Option<String>,
     installation_id: Option<String>,
     session_id: String,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     #[cfg(target_os = "macos")]
     monitor_main_thread_hangs(http_client.clone(), installation_id.clone(), cx);
@@ -182,7 +194,7 @@ pub fn init(
         cx,
     );
 
-    cx.observe_new_models(move |project: &mut Project, cx| {
+    cx.observe_new(move |project: &mut Project, _, cx| {
         let http_client = http_client.clone();
         let panic_report_url = panic_report_url.clone();
         let session_id = session_id.clone();
@@ -233,7 +245,7 @@ pub fn init(
 pub fn monitor_main_thread_hangs(
     http_client: Arc<HttpClientWithUrl>,
     installation_id: Option<String>,
-    cx: &AppContext,
+    cx: &App,
 ) {
     // This is too noisy to ship to stable for now.
     if !matches!(
@@ -435,7 +447,7 @@ fn upload_panics_and_crashes(
     http: Arc<HttpClientWithUrl>,
     panic_report_url: Url,
     installation_id: Option<String>,
-    cx: &AppContext,
+    cx: &App,
 ) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
     cx.background_executor()

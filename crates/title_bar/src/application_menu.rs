@@ -1,6 +1,31 @@
-use gpui::{OwnedMenu, OwnedMenuItem, View};
+use gpui::{Entity, OwnedMenu, OwnedMenuItem};
+
+#[cfg(not(target_os = "macos"))]
+use gpui::{actions, impl_actions};
+
+#[cfg(not(target_os = "macos"))]
+use schemars::JsonSchema;
+#[cfg(not(target_os = "macos"))]
+use serde::Deserialize;
+
 use smallvec::SmallVec;
 use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
+
+#[cfg(not(target_os = "macos"))]
+impl_actions!(app_menu, [OpenApplicationMenu]);
+
+#[cfg(not(target_os = "macos"))]
+actions!(app_menu, [ActivateMenuRight, ActivateMenuLeft]);
+
+#[cfg(not(target_os = "macos"))]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Default)]
+pub struct OpenApplicationMenu(String);
+
+#[cfg(not(target_os = "macos"))]
+pub enum ActivateDirection {
+    Left,
+    Right,
+}
 
 #[derive(Clone)]
 struct MenuEntry {
@@ -10,10 +35,11 @@ struct MenuEntry {
 
 pub struct ApplicationMenu {
     entries: SmallVec<[MenuEntry; 8]>,
+    pending_menu_open: Option<String>,
 }
 
 impl ApplicationMenu {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
         let menus = cx.get_menus().unwrap_or_default();
         Self {
             entries: menus
@@ -23,6 +49,7 @@ impl ApplicationMenu {
                     handle: PopoverMenuHandle::default(),
                 })
                 .collect(),
+            pending_menu_open: None,
         }
     }
 
@@ -60,9 +87,14 @@ impl ApplicationMenu {
         cleaned
     }
 
-    fn build_menu_from_items(entry: MenuEntry, cx: &mut WindowContext) -> View<ContextMenu> {
-        ContextMenu::build(cx, |menu, cx| {
-            let menu = menu.when_some(cx.focused(), |menu, focused| menu.context(focused));
+    fn build_menu_from_items(
+        entry: MenuEntry,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            // Grab current focus handle so menu can shown items in context with the focused element
+            let menu = menu.when_some(window.focused(cx), |menu, focused| menu.context(focused));
             let sanitized_items = Self::sanitize_menu_items(entry.menu.items);
 
             sanitized_items
@@ -93,23 +125,22 @@ impl ApplicationMenu {
         let entry = entry.clone();
 
         // Application menu must have same ids as first menu item in standard menu
-        // Hence, we generate ids based on the menu name
         div()
             .id(SharedString::from(format!("{}-menu-item", menu_name)))
             .occlude()
             .child(
                 PopoverMenu::new(SharedString::from(format!("{}-menu-popover", menu_name)))
-                    .menu(move |cx| Self::build_menu_from_items(entry.clone(), cx).into())
-                    .trigger(
+                    .menu(move |window, cx| {
+                        Self::build_menu_from_items(entry.clone(), window, cx).into()
+                    })
+                    .trigger_with_tooltip(
                         IconButton::new(
                             SharedString::from(format!("{}-menu-trigger", menu_name)),
                             ui::IconName::Menu,
                         )
                         .style(ButtonStyle::Subtle)
-                        .icon_size(IconSize::Small)
-                        .when(!handle.is_deployed(), |this| {
-                            this.tooltip(|cx| Tooltip::text("Open Application Menu", cx))
-                        }),
+                        .icon_size(IconSize::Small),
+                        Tooltip::text("Open Application Menu"),
                     )
                     .with_handle(handle),
             )
@@ -132,7 +163,9 @@ impl ApplicationMenu {
             .occlude()
             .child(
                 PopoverMenu::new(SharedString::from(format!("{}-menu-popover", menu_name)))
-                    .menu(move |cx| Self::build_menu_from_items(entry.clone(), cx).into())
+                    .menu(move |window, cx| {
+                        Self::build_menu_from_items(entry.clone(), window, cx).into()
+                    })
                     .trigger(
                         Button::new(
                             SharedString::from(format!("{}-menu-trigger", menu_name)),
@@ -143,34 +176,114 @@ impl ApplicationMenu {
                     )
                     .with_handle(current_handle.clone()),
             )
-            .on_hover(move |hover_enter, cx| {
-                // Skip if menu is already open to avoid focus issue
+            .on_hover(move |hover_enter, window, cx| {
                 if *hover_enter && !current_handle.is_deployed() {
                     all_handles.iter().for_each(|h| h.hide(cx));
 
-                    // Defer to prevent focus race condition with the previously open menu
+                    // We need to defer this so that this menu handle can take focus from the previous menu
                     let handle = current_handle.clone();
-                    cx.defer(move |cx| handle.show(cx));
+                    window.defer(cx, move |window, cx| handle.show(window, cx));
                 }
             })
     }
 
-    pub fn is_any_deployed(&self) -> bool {
+    #[cfg(not(target_os = "macos"))]
+    pub fn open_menu(
+        &mut self,
+        action: &OpenApplicationMenu,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        self.pending_menu_open = Some(action.0.clone());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn navigate_menus_in_direction(
+        &mut self,
+        direction: ActivateDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current_index = self
+            .entries
+            .iter()
+            .position(|entry| entry.handle.is_deployed());
+        let Some(current_index) = current_index else {
+            return;
+        };
+
+        let next_index = match direction {
+            ActivateDirection::Left => {
+                if current_index == 0 {
+                    self.entries.len() - 1
+                } else {
+                    current_index - 1
+                }
+            }
+            ActivateDirection::Right => {
+                if current_index == self.entries.len() - 1 {
+                    0
+                } else {
+                    current_index + 1
+                }
+            }
+        };
+
+        self.entries[current_index].handle.hide(cx);
+
+        // We need to defer this so that this menu handle can take focus from the previous menu
+        let next_handle = self.entries[next_index].handle.clone();
+        cx.defer_in(window, move |_, window, cx| next_handle.show(window, cx));
+    }
+
+    pub fn all_menus_shown(&self) -> bool {
         self.entries.iter().any(|entry| entry.handle.is_deployed())
+            || self.pending_menu_open.is_some()
     }
 }
 
 impl Render for ApplicationMenu {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let is_any_deployed = self.is_any_deployed();
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let all_menus_shown = self.all_menus_shown();
+
+        if let Some(pending_menu_open) = self.pending_menu_open.take() {
+            if let Some(entry) = self
+                .entries
+                .iter()
+                .find(|entry| entry.menu.name == pending_menu_open && !entry.handle.is_deployed())
+            {
+                let handle_to_show = entry.handle.clone();
+                let handles_to_hide: Vec<_> = self
+                    .entries
+                    .iter()
+                    .filter(|e| e.menu.name != pending_menu_open && e.handle.is_deployed())
+                    .map(|e| e.handle.clone())
+                    .collect();
+
+                if handles_to_hide.is_empty() {
+                    // We need to wait for the next frame to show all menus first,
+                    // before we can handle show/hide operations
+                    window.on_next_frame(move |window, cx| {
+                        handles_to_hide.iter().for_each(|handle| handle.hide(cx));
+                        window.defer(cx, move |window, cx| handle_to_show.show(window, cx));
+                    });
+                } else {
+                    // Since menus are already shown, we can directly handle show/hide operations
+                    handles_to_hide.iter().for_each(|handle| handle.hide(cx));
+                    cx.defer_in(window, move |_, window, cx| handle_to_show.show(window, cx));
+                }
+            }
+        }
+
         div()
+            .key_context("ApplicationMenu")
             .flex()
             .flex_row()
             .gap_x_1()
-            .when(!is_any_deployed && !self.entries.is_empty(), |this| {
+            .when(!all_menus_shown && !self.entries.is_empty(), |this| {
                 this.child(self.render_application_menu(&self.entries[0]))
             })
-            .when(is_any_deployed, |this| {
+            .when(all_menus_shown, |this| {
                 this.children(
                     self.entries
                         .iter()

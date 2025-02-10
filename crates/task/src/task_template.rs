@@ -143,23 +143,37 @@ impl TaskTemplate {
         let truncated_variables = truncate_variables(&task_variables);
         let cwd = match self.cwd.as_deref() {
             Some(cwd) => {
-                let substitured_cwd = substitute_all_template_variables_in_str(
+                let substituted_cwd = substitute_all_template_variables_in_str(
                     cwd,
                     &task_variables,
                     &variable_names,
                     &mut substituted_variables,
                 )?;
-                Some(PathBuf::from(substitured_cwd))
+                Some(PathBuf::from(substituted_cwd))
             }
             None => None,
         }
         .or(cx.cwd.clone());
-        let human_readable_label = substitute_all_template_variables_in_str(
+        let full_label = substitute_all_template_variables_in_str(
             &self.label,
-            &truncated_variables,
+            &task_variables,
             &variable_names,
             &mut substituted_variables,
-        )?
+        )?;
+
+        // Arbitrarily picked threshold below which we don't truncate any variables.
+        const TRUNCATION_THRESHOLD: usize = 64;
+
+        let human_readable_label = if full_label.len() > TRUNCATION_THRESHOLD {
+            substitute_all_template_variables_in_str(
+                &self.label,
+                &truncated_variables,
+                &variable_names,
+                &mut substituted_variables,
+            )?
+        } else {
+            full_label.clone()
+        }
         .lines()
         .fold(String::new(), |mut string, line| {
             if string.is_empty() {
@@ -170,12 +184,7 @@ impl TaskTemplate {
             }
             string
         });
-        let full_label = substitute_all_template_variables_in_str(
-            &self.label,
-            &task_variables,
-            &variable_names,
-            &mut substituted_variables,
-        )?;
+
         let command = substitute_all_template_variables_in_str(
             &self.command,
             &task_variables,
@@ -570,7 +579,7 @@ mod tests {
                 spawn_in_terminal.label,
                 format!(
                     "test label for 1234 and …{}",
-                    &long_value[..=MAX_DISPLAY_VARIABLE_LENGTH]
+                    &long_value[long_value.len() - MAX_DISPLAY_VARIABLE_LENGTH..]
                 ),
                 "Human-readable label should have long substitutions trimmed"
             );

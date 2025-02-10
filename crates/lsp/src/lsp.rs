@@ -3,10 +3,10 @@ mod input_handler;
 pub use lsp_types::request::*;
 pub use lsp_types::*;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
-use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, SharedString, Task};
+use gpui::{App, AsyncApp, BackgroundExecutor, SharedString, Task};
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
 use schemars::{
@@ -45,7 +45,7 @@ const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, AsyncAppContext)>;
+type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, AsyncApp)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
@@ -82,7 +82,12 @@ pub struct LanguageServer {
     outbound_tx: channel::Sender<String>,
     name: LanguageServerName,
     process_name: Arc<str>,
+    binary: LanguageServerBinary,
     capabilities: RwLock<ServerCapabilities>,
+    /// Configuration sent to the server, stored for display in the language server logs
+    /// buffer. This is represented as the message sent to the LSP in order to avoid cloning it (can
+    /// be large in cases like sending schemas to the json server).
+    configuration: Arc<DidChangeConfigurationParams>,
     code_action_kinds: Option<Vec<CodeActionKind>>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
@@ -329,7 +334,7 @@ impl LanguageServer {
         binary: LanguageServerBinary,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
             root_path
@@ -347,7 +352,7 @@ impl LanguageServer {
         let mut server = util::command::new_smol_command(&binary.path)
             .current_dir(working_dir)
             .args(&binary.arguments)
-            .envs(binary.env.unwrap_or_default())
+            .envs(binary.env.clone().unwrap_or_default())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -363,7 +368,7 @@ impl LanguageServer {
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
         let stderr = server.stderr.take().unwrap();
-        let mut server = Self::new_internal(
+        let server = Self::new_internal(
             server_id,
             server_name,
             stdin,
@@ -374,6 +379,7 @@ impl LanguageServer {
             root_path,
             working_dir,
             code_action_kinds,
+            binary,
             cx,
             move |notification| {
                 log::info!(
@@ -384,10 +390,6 @@ impl LanguageServer {
                 );
             },
         );
-
-        if let Some(name) = binary.path.file_name() {
-            server.process_name = name.to_string_lossy().into();
-        }
 
         Ok(server)
     }
@@ -404,7 +406,8 @@ impl LanguageServer {
         root_path: &Path,
         working_dir: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
-        cx: AsyncAppContext,
+        binary: LanguageServerBinary,
+        cx: AsyncApp,
         on_unhandled_notification: F,
     ) -> Self
     where
@@ -460,14 +463,25 @@ impl LanguageServer {
             .log_err()
         });
 
+        let configuration = DidChangeConfigurationParams {
+            settings: Value::Null,
+        }
+        .into();
+
         Self {
             server_id,
             notification_handlers,
             response_handlers,
             io_handlers,
             name: server_name,
-            process_name: Arc::default(),
+            process_name: binary
+                .path
+                .file_name()
+                .map(|name| Arc::from(name.to_string_lossy()))
+                .unwrap_or_default(),
+            binary,
             capabilities: Default::default(),
+            configuration,
             code_action_kinds,
             next_id: Default::default(),
             outbound_tx,
@@ -491,7 +505,7 @@ impl LanguageServer {
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> anyhow::Result<()>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
@@ -600,7 +614,7 @@ impl LanguageServer {
         Ok(())
     }
 
-    pub fn default_initialize_params(&self, cx: &AppContext) -> InitializeParams {
+    pub fn default_initialize_params(&self, cx: &App) -> InitializeParams {
         let root_uri = Url::from_file_path(&self.working_dir).unwrap();
         #[allow(deprecated)]
         InitializeParams {
@@ -710,6 +724,9 @@ impl LanguageServer {
                     }),
                     rename: Some(RenameClientCapabilities {
                         prepare_support: Some(true),
+                        prepare_support_default_behavior: Some(
+                            PrepareSupportDefaultBehavior::IDENTIFIER,
+                        ),
                         ..Default::default()
                     }),
                     hover: Some(HoverClientCapabilities {
@@ -796,7 +813,8 @@ impl LanguageServer {
     pub fn initialize(
         mut self,
         initialize_params: Option<InitializeParams>,
-        cx: &AppContext,
+        configuration: Arc<DidChangeConfigurationParams>,
+        cx: &App,
     ) -> Task<Result<Arc<Self>>> {
         let params = if let Some(params) = initialize_params {
             params
@@ -810,8 +828,9 @@ impl LanguageServer {
                 self.process_name = info.name.into();
             }
             self.capabilities = RwLock::new(response.capabilities);
+            self.configuration = configuration;
 
-            self.notify::<notification::Initialized>(InitializedParams {})?;
+            self.notify::<notification::Initialized>(&InitializedParams {})?;
             Ok(Arc::new(self))
         })
     }
@@ -831,7 +850,7 @@ impl LanguageServer {
                 &executor,
                 (),
             );
-            let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, ());
+            let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, &());
             outbound_tx.close();
 
             let server = self.server.clone();
@@ -874,7 +893,7 @@ impl LanguageServer {
     pub fn on_notification<T, F>(&self, f: F) -> Subscription
     where
         T: notification::Notification,
-        F: 'static + Send + FnMut(T::Params, AsyncAppContext),
+        F: 'static + Send + FnMut(T::Params, AsyncApp),
     {
         self.on_custom_notification(T::METHOD, f)
     }
@@ -887,7 +906,7 @@ impl LanguageServer {
     where
         T: request::Request,
         T::Params: 'static + Send,
-        F: 'static + FnMut(T::Params, AsyncAppContext) -> Fut + Send,
+        F: 'static + FnMut(T::Params, AsyncApp) -> Fut + Send,
         Fut: 'static + Future<Output = Result<T::Result>>,
     {
         self.on_custom_request(T::METHOD, f)
@@ -925,7 +944,7 @@ impl LanguageServer {
     #[must_use]
     fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
-        F: 'static + FnMut(Params, AsyncAppContext) + Send,
+        F: 'static + FnMut(Params, AsyncApp) + Send,
         Params: DeserializeOwned,
     {
         let prev_handler = self.notification_handlers.lock().insert(
@@ -949,7 +968,7 @@ impl LanguageServer {
     #[must_use]
     fn on_custom_request<Params, Res, Fut, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
-        F: 'static + FnMut(Params, AsyncAppContext) -> Fut + Send,
+        F: 'static + FnMut(Params, AsyncApp) -> Fut + Send,
         Fut: 'static + Future<Output = Result<Res>>,
         Params: DeserializeOwned + Send + 'static,
         Res: Serialize,
@@ -1045,6 +1064,10 @@ impl LanguageServer {
         update(self.capabilities.write().deref_mut());
     }
 
+    pub fn configuration(&self) -> &Value {
+        &self.configuration.settings
+    }
+
     /// Get the id of the running language server.
     pub fn server_id(&self) -> LanguageServerId {
         self.server_id
@@ -1053,6 +1076,11 @@ impl LanguageServer {
     /// Get the root path of the project the language server is running against.
     pub fn root_path(&self) -> &PathBuf {
         &self.root_path
+    }
+
+    /// Language server's binary information.
+    pub fn binary(&self) -> &LanguageServerBinary {
+        &self.binary
     }
 
     /// Sends a RPC request to the language server.
@@ -1137,7 +1165,7 @@ impl LanguageServer {
                 if let Some(outbound_tx) = outbound_tx.upgrade() {
                     Self::notify_internal::<notification::Cancel>(
                         &outbound_tx,
-                        CancelParams {
+                        &CancelParams {
                             id: NumberOrString::Number(id),
                         },
                     )
@@ -1165,13 +1193,13 @@ impl LanguageServer {
     /// Sends a RPC notification to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#notificationMessage)
-    pub fn notify<T: notification::Notification>(&self, params: T::Params) -> Result<()> {
+    pub fn notify<T: notification::Notification>(&self, params: &T::Params) -> Result<()> {
         Self::notify_internal::<T>(&self.outbound_tx, params)
     }
 
     fn notify_internal<T: notification::Notification>(
         outbound_tx: &channel::Sender<String>,
-        params: T::Params,
+        params: &T::Params,
     ) -> Result<()> {
         let message = serde_json::to_string(&Notification {
             jsonrpc: JSON_RPC_VERSION,
@@ -1257,7 +1285,7 @@ impl FakeLanguageServer {
         binary: LanguageServerBinary,
         name: String,
         capabilities: ServerCapabilities,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> (LanguageServer, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
@@ -1278,12 +1306,13 @@ impl FakeLanguageServer {
             root,
             root,
             None,
+            binary.clone(),
             cx.clone(),
             |_| {},
         );
         server.process_name = process_name;
         let fake = FakeLanguageServer {
-            binary,
+            binary: binary.clone(),
             server: Arc::new({
                 let mut server = LanguageServer::new_internal(
                     server_id,
@@ -1296,7 +1325,8 @@ impl FakeLanguageServer {
                     root,
                     root,
                     None,
-                    cx,
+                    binary,
+                    cx.clone(),
                     move |msg| {
                         notifications_tx
                             .try_send((
@@ -1361,7 +1391,7 @@ impl LanguageServer {
 #[cfg(any(test, feature = "test-support"))]
 impl FakeLanguageServer {
     /// See [`LanguageServer::notify`].
-    pub fn notify<T: notification::Notification>(&self, params: T::Params) {
+    pub fn notify<T: notification::Notification>(&self, params: &T::Params) {
         self.server.notify::<T>(params).ok();
     }
 
@@ -1385,10 +1415,8 @@ impl FakeLanguageServer {
     pub async fn try_receive_notification<T: notification::Notification>(
         &mut self,
     ) -> Option<T::Params> {
-        use futures::StreamExt as _;
-
         loop {
-            let (method, params) = self.notifications_rx.next().await?;
+            let (method, params) = self.notifications_rx.recv().await.ok()?;
             if method == T::METHOD {
                 return Some(serde_json::from_str::<T::Params>(&params).unwrap());
             } else {
@@ -1405,7 +1433,7 @@ impl FakeLanguageServer {
     where
         T: 'static + request::Request,
         T::Params: 'static + Send,
-        F: 'static + Send + FnMut(T::Params, gpui::AsyncAppContext) -> Fut,
+        F: 'static + Send + FnMut(T::Params, gpui::AsyncApp) -> Fut,
         Fut: 'static + Send + Future<Output = Result<T::Result>>,
     {
         let (responded_tx, responded_rx) = futures::channel::mpsc::unbounded();
@@ -1434,7 +1462,7 @@ impl FakeLanguageServer {
     where
         T: 'static + notification::Notification,
         T::Params: 'static + Send,
-        F: 'static + Send + FnMut(T::Params, gpui::AsyncAppContext),
+        F: 'static + Send + FnMut(T::Params, gpui::AsyncApp),
     {
         let (handled_tx, handled_rx) = futures::channel::mpsc::unbounded();
         self.server.remove_notification_handler::<T>();
@@ -1471,7 +1499,7 @@ impl FakeLanguageServer {
         })
         .await
         .unwrap();
-        self.notify::<notification::Progress>(ProgressParams {
+        self.notify::<notification::Progress>(&ProgressParams {
             token: NumberOrString::String(token),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(progress)),
         });
@@ -1479,7 +1507,7 @@ impl FakeLanguageServer {
 
     /// Simulate that the server has completed work and notifies about that with the specified token.
     pub fn end_progress(&self, token: impl Into<String>) {
-        self.notify::<notification::Progress>(ProgressParams {
+        self.notify::<notification::Progress>(&ProgressParams {
             token: NumberOrString::String(token.into()),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(Default::default())),
         });
@@ -1529,9 +1557,16 @@ mod tests {
             })
             .detach();
 
-        let server = cx.update(|cx| server.initialize(None, cx)).await.unwrap();
+        let initialize_params = None;
+        let configuration = DidChangeConfigurationParams {
+            settings: Default::default(),
+        };
+        let server = cx
+            .update(|cx| server.initialize(initialize_params, configuration.into(), cx))
+            .await
+            .unwrap();
         server
-            .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
+            .notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
                     Url::from_str("file://a/b").unwrap(),
                     "rust".to_string(),
@@ -1549,11 +1584,11 @@ mod tests {
             "file://a/b"
         );
 
-        fake.notify::<notification::ShowMessage>(ShowMessageParams {
+        fake.notify::<notification::ShowMessage>(&ShowMessageParams {
             typ: MessageType::ERROR,
             message: "ok".to_string(),
         });
-        fake.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
+        fake.notify::<notification::PublishDiagnostics>(&PublishDiagnosticsParams {
             uri: Url::from_str("file://b/c").unwrap(),
             version: Some(5),
             diagnostics: vec![],

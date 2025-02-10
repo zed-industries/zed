@@ -15,6 +15,11 @@ impl SharedString {
     pub const fn new_static(str: &'static str) -> Self {
         Self(ArcCow::Borrowed(str))
     }
+
+    /// Creates a [`SharedString`] from anything that can become an `Arc<str>`
+    pub fn new(str: impl Into<Arc<str>>) -> Self {
+        SharedString(ArcCow::Owned(str.into()))
+    }
 }
 
 impl JsonSchema for SharedString {
@@ -78,6 +83,12 @@ impl PartialEq<str> for SharedString {
 impl<'a> PartialEq<&'a str> for SharedString {
     fn eq(&self, other: &&'a str) -> bool {
         self.as_ref() == *other
+    }
+}
+
+impl From<&SharedString> for SharedString {
+    fn from(value: &SharedString) -> Self {
+        value.clone()
     }
 }
 
