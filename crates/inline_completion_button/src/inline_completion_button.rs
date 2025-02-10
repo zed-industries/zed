@@ -142,9 +142,12 @@ impl Render for InlineCompletionButton {
                             })
                         })
                         .anchor(Corner::BottomRight)
-                        .trigger(IconButton::new("copilot-icon", icon).tooltip(|window, cx| {
-                            Tooltip::for_action("GitHub Copilot", &ToggleMenu, window, cx)
-                        }))
+                        .trigger_with_tooltip(
+                            IconButton::new("copilot-icon", icon),
+                            |window, cx| {
+                                Tooltip::for_action("GitHub Copilot", &ToggleMenu, window, cx)
+                            },
+                        )
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
@@ -211,7 +214,8 @@ impl Render for InlineCompletionButton {
                             _ => None,
                         })
                         .anchor(Corner::BottomRight)
-                        .trigger(IconButton::new("supermaven-icon", icon).tooltip(
+                        .trigger_with_tooltip(
+                            IconButton::new("supermaven-icon", icon),
                             move |window, cx| {
                                 if has_menu {
                                     Tooltip::for_action(
@@ -224,7 +228,7 @@ impl Render for InlineCompletionButton {
                                     Tooltip::text(tooltip_text.clone())(window, cx)
                                 }
                             },
-                        ))
+                        )
                         .with_handle(self.popover_menu_handle.clone()),
                 );
             }
@@ -287,31 +291,6 @@ impl Render for InlineCompletionButton {
                     .when(enabled && !show_editor_predictions, |this| {
                         this.indicator(Indicator::dot().color(Color::Muted))
                             .indicator_border_color(Some(cx.theme().colors().status_bar_background))
-                    })
-                    .when(!self.popover_menu_handle.is_deployed(), |element| {
-                        element.tooltip(move |window, cx| {
-                            if enabled {
-                                if show_editor_predictions {
-                                    Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
-                                } else {
-                                    Tooltip::with_meta(
-                                        "Edit Prediction",
-                                        Some(&ToggleMenu),
-                                        "Hidden For This File",
-                                        window,
-                                        cx,
-                                    )
-                                }
-                            } else {
-                                Tooltip::with_meta(
-                                    "Edit Prediction",
-                                    Some(&ToggleMenu),
-                                    "Disabled For This File",
-                                    window,
-                                    cx,
-                                )
-                            }
-                        })
                     });
 
                 let this = cx.entity().clone();

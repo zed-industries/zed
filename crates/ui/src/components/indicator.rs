@@ -83,34 +83,3 @@ impl RenderOnce for Indicator {
         }
     }
 }
-
-impl ComponentPreview for Indicator {
-    fn description() -> impl Into<Option<&'static str>> {
-        "An indicator visually represents a status or state."
-    }
-
-    fn examples(_window: &mut Window, _: &mut App) -> Vec<ComponentExampleGroup<Self>> {
-        vec![
-            example_group_with_title(
-                "Types",
-                vec![
-                    single_example("Dot", Indicator::dot().color(Color::Info)),
-                    single_example("Bar", Indicator::bar().color(Color::Player(2))),
-                    single_example(
-                        "Icon",
-                        Indicator::icon(Icon::new(IconName::Check).color(Color::Success)),
-                    ),
-                ],
-            ),
-            example_group_with_title(
-                "Examples",
-                vec![
-                    single_example("Info", Indicator::dot().color(Color::Info)),
-                    single_example("Success", Indicator::dot().color(Color::Success)),
-                    single_example("Warning", Indicator::dot().color(Color::Warning)),
-                    single_example("Error", Indicator::dot().color(Color::Error)),
-                ],
-            ),
-        ]
-    }
-}

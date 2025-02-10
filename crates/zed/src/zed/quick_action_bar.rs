@@ -168,15 +168,13 @@ impl Render for QuickActionBar {
             let focus = editor.focus_handle(cx);
 
             PopoverMenu::new("editor-selections-dropdown")
-                .trigger(
+                .trigger_with_tooltip(
                     IconButton::new("toggle_editor_selections_icon", IconName::CursorIBeam)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
-                        .toggle_state(self.toggle_selections_handle.is_deployed())
-                        .when(!self.toggle_selections_handle.is_deployed(), |this| {
-                            this.tooltip(Tooltip::text("Selection Controls"))
-                        }),
+                        .toggle_state(self.toggle_selections_handle.is_deployed()),
+                    Tooltip::text("Selection Controls"),
                 )
                 .with_handle(self.toggle_selections_handle.clone())
                 .anchor(Corner::TopRight)
@@ -219,15 +217,13 @@ impl Render for QuickActionBar {
             let vim_mode_enabled = VimModeSetting::get_global(cx).0;
 
             PopoverMenu::new("editor-settings")
-                .trigger(
+                .trigger_with_tooltip(
                     IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
-                        .toggle_state(self.toggle_settings_handle.is_deployed())
-                        .when(!self.toggle_settings_handle.is_deployed(), |this| {
-                            this.tooltip(Tooltip::text("Editor Controls"))
-                        }),
+                        .toggle_state(self.toggle_settings_handle.is_deployed()),
+                    Tooltip::text("Editor Controls"),
                 )
                 .anchor(Corner::TopRight)
                 .with_handle(self.toggle_settings_handle.clone())

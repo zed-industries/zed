@@ -74,16 +74,16 @@ impl Render for AssistantModelSelector {
                                 .color(Color::Muted)
                                 .size(IconSize::XSmall),
                         ),
+                ),
+            move |window, cx| {
+                Tooltip::for_action_in(
+                    "Change Model",
+                    &ToggleModelSelector,
+                    &focus_handle,
+                    window,
+                    cx,
                 )
-                .tooltip(move |window, cx| {
-                    Tooltip::for_action_in(
-                        "Change Model",
-                        &ToggleModelSelector,
-                        &focus_handle,
-                        window,
-                        cx,
-                    )
-                }),
+            },
         )
         .with_handle(self.menu_handle.clone())
     }
