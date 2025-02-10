@@ -450,15 +450,14 @@ impl RenderOnce for Switch {
 }
 
 /// A [`Switch`] that has a [`Label`].
-#[derive(IntoElement, IntoComponent)]
-#[component(scope = "input")]
+#[derive(IntoElement)]
+// #[component(scope = "input")]
 pub struct SwitchWithLabel {
     id: ElementId,
     label: Label,
     toggle_state: ToggleState,
     on_click: Arc<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>,
     disabled: bool,
-    key_binding: Option<KeyBinding>,
 }
 
 impl SwitchWithLabel {
@@ -466,16 +465,15 @@ impl SwitchWithLabel {
     pub fn new(
         id: impl Into<ElementId>,
         label: Label,
-        toggle_state: ToggleState,
+        toggle_state: impl Into<ToggleState>,
         on_click: impl Fn(&ToggleState, &mut Window, &mut App) + 'static,
     ) -> Self {
         Self {
             id: id.into(),
             label,
-            toggle_state,
+            toggle_state: toggle_state.into(),
             on_click: Arc::new(on_click),
             disabled: false,
-            key_binding: None,
         }
     }
 
@@ -484,37 +482,26 @@ impl SwitchWithLabel {
         self.disabled = disabled;
         self
     }
-
-    /// Display the keybinding that triggers the switch action.
-    pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
-        self.key_binding = key_binding.into();
-        self
-    }
 }
 
 impl RenderOnce for SwitchWithLabel {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
+            .id(SharedString::from(format!("{}-container", self.id)))
             .gap(DynamicSpacing::Base08.rems(cx))
             .child(
                 Switch::new(self.id.clone(), self.toggle_state)
                     .disabled(self.disabled)
                     .on_click({
                         let on_click = self.on_click.clone();
-                        move |toggle_state, window, cx| {
-                            (on_click)(toggle_state, window, cx);
+                        move |checked, window, cx| {
+                            (on_click)(checked, window, cx);
                         }
-                    })
-                    .key_binding(self.key_binding),
+                    }),
             )
             .child(
                 div()
                     .id(SharedString::from(format!("{}-label", self.id)))
-                    .on_click(move |_event, window, cx| {
-                        if !self.disabled {
-                            (self.on_click)(&self.toggle_state.inverse(), window, cx);
-                        }
-                    })
                     .child(self.label),
             )
     }
@@ -705,68 +692,6 @@ impl ComponentPreview for CheckboxWithLabel {
                     ),
                 ],
             )])
-            .into_any_element()
-    }
-}
-
-impl ComponentPreview for SwitchWithLabel {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
-        v_flex()
-            .gap_6()
-            .children(vec![
-                example_group_with_title(
-                    "States",
-                    vec![
-                        single_example(
-                            "Off",
-                            SwitchWithLabel::new(
-                                "switch_with_label_off",
-                                Label::new("Always save on quit"),
-                                ToggleState::Unselected,
-                                |_, _, _| {},
-                            )
-                            .into_any_element(),
-                        ),
-                        single_example(
-                            "On",
-                            SwitchWithLabel::new(
-                                "switch_with_label_on",
-                                Label::new("Always save on quit"),
-                                ToggleState::Selected,
-                                |_, _, _| {},
-                            )
-                            .into_any_element(),
-                        ),
-                    ],
-                ),
-                example_group_with_title(
-                    "Disabled",
-                    vec![
-                        single_example(
-                            "Off",
-                            SwitchWithLabel::new(
-                                "switch_with_label_disabled_off",
-                                Label::new("Always save on quit"),
-                                ToggleState::Unselected,
-                                |_, _, _| {},
-                            )
-                            .disabled(true)
-                            .into_any_element(),
-                        ),
-                        single_example(
-                            "On",
-                            SwitchWithLabel::new(
-                                "switch_with_label_disabled_on",
-                                Label::new("Always save on quit"),
-                                ToggleState::Selected,
-                                |_, _, _| {},
-                            )
-                            .disabled(true)
-                            .into_any_element(),
-                        ),
-                    ],
-                ),
-            ])
             .into_any_element()
     }
 }
