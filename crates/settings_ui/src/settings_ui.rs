@@ -109,23 +109,30 @@ impl Item for SettingsPage {
 impl Render for SettingsPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .p_4()
+            .id("settings-ui")
+            .overflow_y_scroll()
+            .bg(cx.theme().colors().editor_background)
             .size_full()
-            .gap_4()
-            .child(Label::new("Settings").size(LabelSize::Large))
+            .items_center()
+            .p_8()
             .child(
-                v_flex().gap_1().child(Label::new("Appearance")).child(
-                    v_flex()
-                        .elevation_2(cx)
-                        .child(AppearanceSettingsControls::new()),
-                ),
-            )
-            .child(
-                v_flex().gap_1().child(Label::new("Editor")).child(
-                    v_flex()
-                        .elevation_2(cx)
-                        .child(EditorSettingsControls::new()),
-                ),
+                v_flex()
+                    .elevation_3(cx)
+                    .p_8()
+                    .max_w(px(800.))
+                    .gap_4()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(Headline::new("Appearance").size(HeadlineSize::Small))
+                            .child(AppearanceSettingsControls::new()),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(Headline::new("Editor").size(HeadlineSize::Small))
+                            .child(EditorSettingsControls::new()),
+                    ),
             )
     }
 }

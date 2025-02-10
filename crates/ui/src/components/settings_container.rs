@@ -32,6 +32,6 @@ impl ParentElement for SettingsContainer {
 
 impl RenderOnce for SettingsContainer {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        v_flex().px_2().gap_1().children(self.children)
+        v_flex().px_2().gap_3().children(self.children)
     }
 }

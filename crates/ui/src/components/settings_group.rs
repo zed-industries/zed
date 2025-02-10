@@ -29,7 +29,7 @@ impl ParentElement for SettingsGroup {
 
 impl RenderOnce for SettingsGroup {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        v_flex()
+        v_group()
             .p_1()
             .gap_2()
             .child(ListHeader::new(self.header))
