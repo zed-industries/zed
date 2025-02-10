@@ -34,12 +34,12 @@ use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
     relative, size, svg, transparent_black, Action, AnyElement, App, AvailableSpace, Axis, Bounds,
     ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase,
-    Edges, Element, ElementInputHandler, Entity, FocusHandle, Focusable as _, FontId,
-    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, KeyBindingContextPredicate,
-    KeyContext, Keystroke, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent,
-    ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription,
-    TextRun, TextStyleRefinement, WeakEntity, Window,
+    Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
+    Hsla, InteractiveElement, IntoElement, KeyBindingContextPredicate, KeyContext, Keystroke,
+    Length, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString,
+    Size, StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement,
+    WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -3568,7 +3568,6 @@ impl EditorElement {
                         "Jump to Edit",
                         Some(IconName::ArrowUp),
                         previewing,
-                        self.editor.focus_handle(cx),
                         window,
                         cx,
                     )?;
@@ -3581,7 +3580,6 @@ impl EditorElement {
                         "Jump to Edit",
                         Some(IconName::ArrowDown),
                         previewing,
-                        self.editor.focus_handle(cx),
                         window,
                         cx,
                     )?;
@@ -3597,7 +3595,6 @@ impl EditorElement {
                         "Jump to Edit",
                         None,
                         previewing,
-                        self.editor.focus_handle(cx),
                         window,
                         cx,
                     )?;
@@ -3672,7 +3669,6 @@ impl EditorElement {
                             "Accept",
                             None,
                             previewing_inline_completion,
-                            self.editor.focus_handle(cx),
                             window,
                             cx,
                         )?;
@@ -5674,7 +5670,6 @@ fn inline_completion_accept_indicator(
     label: impl Into<SharedString>,
     icon: Option<IconName>,
     previewing: bool,
-    editor_focus_handle: FocusHandle,
     window: &Window,
     cx: &App,
 ) -> Option<AnyElement> {
