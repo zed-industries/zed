@@ -433,15 +433,50 @@ impl InlineCompletionButton {
                 let enabled = data_collection.is_enabled();
 
                 menu = menu.item(
-                    // TODO: We want to add something later that communicates whether
-                    // the current project is open-source.
                     ContextMenuEntry::new("Share Training Data")
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
-                        .documentation_aside(|_| {
-                            Label::new(indoc!{"
-                                Help us improve our open model by sharing data from open source repositories. \
-                                Zed must detect a license file in your repo for this setting to take effect.\
-                            "}).into_any_element()
+                        .documentation_aside(move |cx| {
+                            let is_open_source = data_collection.is_project_open_source();
+                            let is_collecting = data_collection.is_enabled();
+
+                            let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
+                                (true, true) => (
+                                    "This project is open-source, and we're capturing data.",
+                                    Color::Default,
+                                    IconName::Check,
+                                    Color::Success,
+                                ),
+                                (true, false) => (
+                                    "This project is open-source, but you're not sharing data.",
+                                    Color::Muted,
+                                    IconName::XCircle,
+                                    Color::Muted,
+                                ),
+                                (false, _) => (
+                                    "This project is not open-source. No data captured.",
+                                    Color::Muted,
+                                    IconName::XCircle,
+                                    Color::Muted,
+                                ),
+                            };
+                            v_flex()
+                                .gap_2()
+                                .child(
+                                    Label::new(indoc!{
+                                        "Help us improve our open model by sharing data from open source repositories. \
+                                        Zed must detect a license file in your repo for this setting to take effect."
+                                    })
+                                )
+                                .child(
+                                    h_flex()
+                                        .pt_2()
+                                        .gap_1p5()
+                                        .border_t_1()
+                                        .border_color(cx.theme().colors().border_variant)
+                                        .child(Icon::new(icon_name).size(IconSize::XSmall).color(icon_color))
+                                        .child(div().child(Label::new(msg).size(LabelSize::Small).color(label_color)))
+                                )
+                                .into_any_element()
                         })
                         .handler(move |_, cx| {
                             provider.toggle_data_collection(cx);
@@ -459,13 +494,6 @@ impl InlineCompletionButton {
                             }
                         })
                 );
-
-                let msg = if data_collection.is_project_open_source() {
-                    "(Current project is open-source)"
-                } else {
-                    "(Current project is not open-source)"
-                };
-                menu = menu.item(ContextMenuEntry::new(msg));
             }
         }
 

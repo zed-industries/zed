@@ -524,7 +524,7 @@ impl Render for ContextMenu {
                         .occlude()
                         .elevation_2(cx)
                         .p_2()
-                        .max_w_80()
+                        .max_w_96()
                         .child(aside(cx)),
                 )
             })
