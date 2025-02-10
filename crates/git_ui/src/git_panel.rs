@@ -23,6 +23,7 @@ use project::{
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration, usize};
+use time::OffsetDateTime;
 use ui::{
     prelude::*, ButtonLike, Checkbox, CheckboxWithLabel, Divider, DividerColor, ElevationIndex,
     IndentGuideColors, ListItem, ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
@@ -1104,13 +1105,6 @@ impl GitPanel {
             .read(cx)
             .all_repositories();
 
-        let branch = self
-            .active_repository
-            .as_ref()
-            .and_then(|repository| repository.read(cx).branch())
-            .map(|branch| branch.name.clone())
-            .unwrap_or_else(|| "(no current branch)".into());
-
         let has_repo_above = all_repositories.iter().any(|repo| {
             repo.read(cx)
                 .repository_entry
@@ -1118,26 +1112,7 @@ impl GitPanel {
                 .is_above_project()
         });
 
-        let icon_button = Button::new("branch-selector", branch)
-            .color(Color::Muted)
-            .style(ButtonStyle::Subtle)
-            .icon(IconName::GitBranch)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .size(ButtonSize::Compact)
-            .icon_position(IconPosition::Start)
-            .tooltip(Tooltip::for_action_title(
-                "Switch Branch",
-                &zed_actions::git::Branch,
-            ))
-            .on_click(cx.listener(|_, _, window, cx| {
-                window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
-            }))
-            .style(ButtonStyle::Transparent);
-
         self.panel_header_container(window, cx)
-            .child(h_flex().pl_1().child(icon_button))
-            .child(div().flex_grow())
             .when(all_repositories.len() > 1 || has_repo_above, |el| {
                 el.child(self.render_repository_selector(cx))
             })
@@ -1170,6 +1145,7 @@ impl GitPanel {
             && !editor.read(cx).is_empty(cx)
             && !self.has_unstaged_conflicts()
             && self.has_write_access(cx);
+
         // let can_commit_all =
         //     !self.commit_pending && self.can_commit_all && !editor.read(cx).is_empty(cx);
         let panel_editor_style = panel_editor_style(true, window, cx);
