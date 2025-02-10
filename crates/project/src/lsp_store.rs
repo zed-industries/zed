@@ -1245,7 +1245,6 @@ impl LocalLspStore {
     ) -> anyhow::Result<()> {
         let mut prev_transaction_id = initial_transaction_id;
 
-        dbg!(formatters.len());
         for formatter in formatters {
             let operation = match formatter {
                 Formatter::LanguageServer { name } => {
@@ -1382,11 +1381,6 @@ impl LocalLspStore {
                     if this_transaction_id.is_some() {
                         prev_transaction_id = this_transaction_id;
                     }
-                    dbg!((
-                        initial_transaction_id,
-                        prev_transaction_id,
-                        this_transaction_id
-                    ));
                 }
 
                 if let Some(transaction_id) = initial_transaction_id {
