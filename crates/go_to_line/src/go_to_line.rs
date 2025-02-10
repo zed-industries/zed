@@ -298,6 +298,7 @@ mod tests {
     use project::{FakeFs, Project};
     use serde_json::json;
     use std::{num::NonZeroU32, sync::Arc, time::Duration};
+    use util::path;
     use workspace::{AppState, Workspace};
 
     #[gpui::test]
