@@ -611,7 +611,7 @@ impl InlineCompletionButton {
                 .unwrap_or(true),
             )
         };
-        self.editor_show_predictions = editor.should_show_inline_completions(cx);
+        self.editor_show_predictions = editor.edit_predictions_enabled();
         self.edit_prediction_provider = editor.edit_prediction_provider();
         self.language = language.cloned();
         self.file = file;
