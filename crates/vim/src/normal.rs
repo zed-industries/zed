@@ -182,6 +182,9 @@ impl Vim {
             Some(Operator::ToggleComments) => {
                 self.toggle_comments_motion(motion, times, window, cx)
             }
+            Some(Operator::ReplaceWithRegister) => {
+                self.replace_with_register_motion(motion, times, window, cx)
+            }
             Some(operator) => {
                 // Can't do anything for text objects, Ignoring
                 error!("Unexpected normal mode motion operator: {:?}", operator)
@@ -227,6 +230,9 @@ impl Vim {
                 }
                 Some(Operator::ToggleComments) => {
                     self.toggle_comments_object(object, around, window, cx)
+                }
+                Some(Operator::ReplaceWithRegister) => {
+                    self.replace_with_register_object(object, around, window, cx)
                 }
                 _ => {
                     // Can't do anything for namespace operators. Ignoring

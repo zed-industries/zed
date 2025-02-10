@@ -72,7 +72,7 @@ impl DraggedSelection {
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub enum SaveIntent {
     /// write all files (even if unchanged)
     /// prompt before overwriting on-disk changes
@@ -96,13 +96,15 @@ pub enum SaveIntent {
 pub struct ActivateItem(pub usize);
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CloseActiveItem {
     pub save_intent: Option<SaveIntent>,
+    #[serde(default)]
+    pub close_pinned: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CloseInactiveItems {
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
@@ -110,7 +112,7 @@ pub struct CloseInactiveItems {
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CloseAllItems {
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
@@ -118,34 +120,35 @@ pub struct CloseAllItems {
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CloseCleanItems {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CloseItemsToTheRight {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CloseItemsToTheLeft {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct RevealInProjectPanel {
     #[serde(skip)]
     pub entry_id: Option<u64>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct DeploySearch {
     #[serde(default)]
     pub replace_enabled: bool,
@@ -438,10 +441,9 @@ impl Pane {
                     .gap(DynamicSpacing::Base04.rems(cx))
                     .child(
                         PopoverMenu::new("pane-tab-bar-popover-menu")
-                            .trigger(
-                                IconButton::new("plus", IconName::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("New...")),
+                            .trigger_with_tooltip(
+                                IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
+                                Tooltip::text("New..."),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
@@ -471,10 +473,10 @@ impl Pane {
                     )
                     .child(
                         PopoverMenu::new("pane-tab-bar-split")
-                            .trigger(
+                            .trigger_with_tooltip(
                                 IconButton::new("split", IconName::Split)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Split Pane")),
+                                    .icon_size(IconSize::Small),
+                                Tooltip::text("Split Pane"),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
@@ -1223,6 +1225,37 @@ impl Pane {
 
             return None;
         }
+        if self.is_tab_pinned(self.active_item_index) && !action.close_pinned {
+            // Activate any non-pinned tab in same pane
+            let non_pinned_tab_index = self
+                .items()
+                .enumerate()
+                .find(|(index, _item)| !self.is_tab_pinned(*index))
+                .map(|(index, _item)| index);
+            if let Some(index) = non_pinned_tab_index {
+                self.activate_item(index, false, false, window, cx);
+                return None;
+            }
+
+            // Activate any non-pinned tab in different pane
+            let current_pane = cx.entity();
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    let panes = workspace.center.panes();
+                    let pane_with_unpinned_tab = panes.iter().find(|pane| {
+                        if **pane == &current_pane {
+                            return false;
+                        }
+                        pane.read(cx).has_unpinned_tabs()
+                    });
+                    if let Some(pane) = pane_with_unpinned_tab {
+                        pane.update(cx, |pane, cx| pane.activate_unpinned_tab(window, cx));
+                    }
+                })
+                .ok();
+
+            return None;
+        };
         let active_item_id = self.items[self.active_item_index].item_id();
         Some(self.close_item_by_id(
             active_item_id,
@@ -2104,6 +2137,24 @@ impl Pane {
         self.pinned_tab_count != 0
     }
 
+    fn has_unpinned_tabs(&self) -> bool {
+        self.pinned_tab_count < self.items.len()
+    }
+
+    fn activate_unpinned_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.items.is_empty() {
+            return;
+        }
+        let Some(index) = self
+            .items()
+            .enumerate()
+            .find_map(|(index, _item)| (!self.is_tab_pinned(index)).then_some(index))
+        else {
+            return;
+        };
+        self.activate_item(index, true, true, window, cx);
+    }
+
     fn render_tab(
         &self,
         ix: usize,
@@ -2279,7 +2330,10 @@ impl Pane {
                             pane.unpin_tab_at(ix, window, cx);
                         }))
                 } else {
-                    end_slot_action = &CloseActiveItem { save_intent: None };
+                    end_slot_action = &CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: false,
+                    };
                     end_slot_tooltip_text = "Close Tab";
                     IconButton::new("close tab", IconName::Close)
                         .when(!always_show_close_button, |button| {
@@ -2349,7 +2403,10 @@ impl Pane {
                     menu = menu
                         .entry(
                             "Close",
-                            Some(Box::new(CloseActiveItem { save_intent: None })),
+                            Some(Box::new(CloseActiveItem {
+                                save_intent: None,
+                                close_pinned: true,
+                            })),
                             window.handler_for(&pane, move |pane, window, cx| {
                                 pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
                                     .detach_and_log_err(cx);
@@ -2990,14 +3047,9 @@ impl Pane {
 
         self.items
             .iter()
-            .map(|item| item.item_id())
-            .filter(|item_id| {
-                if let Some(ix) = self.index_for_item_id(*item_id) {
-                    self.is_tab_pinned(ix)
-                } else {
-                    true
-                }
-            })
+            .enumerate()
+            .filter(|(index, _item)| self.is_tab_pinned(*index))
+            .map(|(_, item)| item.item_id())
             .collect()
     }
 
@@ -3560,7 +3612,14 @@ mod tests {
 
         pane.update_in(cx, |pane, window, cx| {
             assert!(pane
-                .close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+                .close_active_item(
+                    &CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: false
+                    },
+                    window,
+                    cx
+                )
                 .is_none())
         });
     }
@@ -3901,7 +3960,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -3914,7 +3980,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -3922,7 +3995,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -3930,7 +4010,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "C*"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -3966,7 +4053,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -3979,7 +4073,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -3987,7 +4088,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -3995,7 +4103,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B*"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -4031,7 +4146,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -4044,7 +4166,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -4057,7 +4186,14 @@ mod tests {
         assert_item_labels(&pane, ["A*", "B", "C"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -4065,7 +4201,14 @@ mod tests {
         assert_item_labels(&pane, ["B*", "C"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -4299,7 +4442,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         let item_a = add_labeled_item(&pane, "A", false, cx);
@@ -4323,6 +4466,71 @@ mod tests {
         .await
         .unwrap();
         assert_item_labels(&pane, [], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_pinned_tab_with_non_pinned_in_same_pane(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // Non-pinned tabs in same pane
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        pane.update_in(cx, |pane, window, cx| {
+            pane.pin_tab_at(0, window, cx);
+        });
+        set_labeled_items(&pane, ["A*", "B", "C"], cx);
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            );
+        });
+        // Non-pinned tab should be active
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_pinned_tab_with_non_pinned_in_different_pane(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // No non-pinned tabs in same pane, non-pinned tabs in another pane
+        let pane1 = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+        let pane2 = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(pane1.clone(), SplitDirection::Right, window, cx)
+        });
+        add_labeled_item(&pane1, "A", false, cx);
+        pane1.update_in(cx, |pane, window, cx| {
+            pane.pin_tab_at(0, window, cx);
+        });
+        set_labeled_items(&pane1, ["A*"], cx);
+        add_labeled_item(&pane2, "B", false, cx);
+        set_labeled_items(&pane2, ["B"], cx);
+        pane1.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            );
+        });
+        //  Non-pinned tab of other pane should be active
+        assert_item_labels(&pane2, ["B*"], cx);
     }
 
     fn init_test(cx: &mut TestAppContext) {

@@ -148,6 +148,7 @@ actions!(
         Open,
         OpenFiles,
         OpenInTerminal,
+        OpenComponentPreview,
         ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
@@ -170,12 +171,7 @@ pub struct OpenPaths {
 pub struct ActivatePane(pub usize);
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
-pub struct ActivatePaneInDirection(pub SplitDirection);
-
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
-pub struct SwapPaneInDirection(pub SplitDirection);
-
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MoveItemToPane {
     pub destination: usize,
     #[serde(default = "default_true")]
@@ -183,6 +179,7 @@ pub struct MoveItemToPane {
 }
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MoveItemToPaneInDirection {
     pub direction: SplitDirection,
     #[serde(default = "default_true")]
@@ -190,25 +187,25 @@ pub struct MoveItemToPaneInDirection {
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct SaveAll {
     pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct Save {
     pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CloseAllItemsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CloseInactiveTabsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
@@ -217,6 +214,7 @@ pub struct CloseInactiveTabsAndPanes {
 pub struct SendKeystrokes(pub String);
 
 #[derive(Clone, Deserialize, PartialEq, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Reload {
     pub binary_path: Option<PathBuf>,
 }
@@ -235,7 +233,6 @@ impl_actions!(
     workspace,
     [
         ActivatePane,
-        ActivatePaneInDirection,
         CloseAllItemsAndPanes,
         CloseInactiveTabsAndPanes,
         MoveItemToPane,
@@ -244,8 +241,21 @@ impl_actions!(
         Reload,
         Save,
         SaveAll,
-        SwapPaneInDirection,
         SendKeystrokes,
+    ]
+);
+
+actions!(
+    workspace,
+    [
+        ActivatePaneLeft,
+        ActivatePaneRight,
+        ActivatePaneUp,
+        ActivatePaneDown,
+        SwapPaneLeft,
+        SwapPaneRight,
+        SwapPaneUp,
+        SwapPaneDown,
     ]
 );
 
@@ -301,6 +311,7 @@ impl PartialEq for Toast {
 }
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenTerminal {
     pub working_directory: PathBuf,
 }
@@ -368,6 +379,7 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     init_settings(cx);
+    component::init();
     theme_preview::init(cx);
 
     cx.on_action(Workspace::close_global);
@@ -4430,10 +4442,12 @@ impl Workspace {
         if let Some(focus_on) = focus_on {
             focus_on.update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
         } else {
-            self.panes
-                .last()
-                .unwrap()
-                .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
+            if self.active_pane() == pane {
+                self.panes
+                    .last()
+                    .unwrap()
+                    .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
+            }
         }
         if self.last_active_center_pane == Some(pane.downgrade()) {
             self.last_active_center_pane = None;
@@ -4821,29 +4835,38 @@ impl Workspace {
                     workspace.activate_previous_window(cx)
                 }),
             )
-            .on_action(
-                cx.listener(|workspace, action: &ActivatePaneInDirection, window, cx| {
-                    workspace.activate_pane_in_direction(action.0, window, cx)
-                }),
-            )
+            .on_action(cx.listener(|workspace, _: &ActivatePaneLeft, window, cx| {
+                workspace.activate_pane_in_direction(SplitDirection::Left, window, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &ActivatePaneRight, window, cx| {
+                workspace.activate_pane_in_direction(SplitDirection::Right, window, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &ActivatePaneUp, window, cx| {
+                workspace.activate_pane_in_direction(SplitDirection::Up, window, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &ActivatePaneDown, window, cx| {
+                workspace.activate_pane_in_direction(SplitDirection::Down, window, cx)
+            }))
             .on_action(cx.listener(|workspace, _: &ActivateNextPane, window, cx| {
                 workspace.activate_next_pane(window, cx)
             }))
-            .on_action(
-                cx.listener(|workspace, action: &ActivatePaneInDirection, window, cx| {
-                    workspace.activate_pane_in_direction(action.0, window, cx)
-                }),
-            )
             .on_action(cx.listener(
                 |workspace, action: &MoveItemToPaneInDirection, window, cx| {
                     workspace.move_item_to_pane_in_direction(action, window, cx)
                 },
             ))
-            .on_action(
-                cx.listener(|workspace, action: &SwapPaneInDirection, _, cx| {
-                    workspace.swap_pane_in_direction(action.0, cx)
-                }),
-            )
+            .on_action(cx.listener(|workspace, _: &SwapPaneLeft, _, cx| {
+                workspace.swap_pane_in_direction(SplitDirection::Left, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &SwapPaneRight, _, cx| {
+                workspace.swap_pane_in_direction(SplitDirection::Right, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &SwapPaneUp, _, cx| {
+                workspace.swap_pane_in_direction(SplitDirection::Up, cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &SwapPaneDown, _, cx| {
+                workspace.swap_pane_in_direction(SplitDirection::Down, cx)
+            }))
             .on_action(cx.listener(|this, _: &ToggleLeftDock, window, cx| {
                 this.toggle_dock(DockPosition::Left, window, cx);
             }))
@@ -8156,6 +8179,7 @@ mod tests {
                 pane.close_active_item(
                     &CloseActiveItem {
                         save_intent: Some(SaveIntent::Close),
+                        close_pinned: false,
                     },
                     window,
                     cx,
@@ -8260,7 +8284,14 @@ mod tests {
         });
         let close_singleton_buffer_task = pane
             .update_in(cx, |pane, window, cx| {
-                pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+                pane.close_active_item(
+                    &CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: false,
+                    },
+                    window,
+                    cx,
+                )
             })
             .expect("should have active singleton buffer to close");
         cx.background_executor.run_until_parked();
@@ -8366,7 +8397,14 @@ mod tests {
         });
         let _close_multi_buffer_task = pane
             .update_in(cx, |pane, window, cx| {
-                pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+                pane.close_active_item(
+                    &CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: false,
+                    },
+                    window,
+                    cx,
+                )
             })
             .expect("should have active multi buffer to close");
         cx.background_executor.run_until_parked();
@@ -8457,7 +8495,14 @@ mod tests {
         });
         let close_multi_buffer_task = pane
             .update_in(cx, |pane, window, cx| {
-                pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+                pane.close_active_item(
+                    &CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: false,
+                    },
+                    window,
+                    cx,
+                )
             })
             .expect("should have active multi buffer to close");
         cx.background_executor.run_until_parked();

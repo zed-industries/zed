@@ -517,7 +517,6 @@ impl CompletionsMenu {
                         } else {
                             None
                         };
-
                         let color_swatch = completion
                             .color()
                             .map(|color| div().size_4().bg(color).rounded_sm());

@@ -725,6 +725,7 @@ impl PaneAxis {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum SplitDirection {
     Up,
     Down,
@@ -805,14 +806,6 @@ impl SplitDirection {
             Self::Down | Self::Right => true,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, PartialEq)]
-pub enum ResizeIntent {
-    Lengthen,
-    Shorten,
-    Widen,
-    Narrow,
 }
 
 mod element {

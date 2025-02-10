@@ -477,8 +477,8 @@ impl EditorElement {
             }
         });
         register_action(editor, window, Editor::show_signature_help);
-        register_action(editor, window, Editor::next_inline_completion);
-        register_action(editor, window, Editor::previous_inline_completion);
+        register_action(editor, window, Editor::next_edit_prediction);
+        register_action(editor, window, Editor::previous_edit_prediction);
         register_action(editor, window, Editor::show_inline_completion);
         register_action(editor, window, Editor::context_menu_first);
         register_action(editor, window, Editor::context_menu_prev);
@@ -488,7 +488,7 @@ impl EditorElement {
         register_action(editor, window, Editor::unique_lines_case_insensitive);
         register_action(editor, window, Editor::unique_lines_case_sensitive);
         register_action(editor, window, Editor::accept_partial_inline_completion);
-        register_action(editor, window, Editor::accept_inline_completion);
+        register_action(editor, window, Editor::accept_edit_prediction);
         register_action(editor, window, Editor::revert_file);
         register_action(editor, window, Editor::revert_selected_hunks);
         register_action(editor, window, Editor::apply_all_diff_hunks);
@@ -561,7 +561,7 @@ impl EditorElement {
         let mut modifiers = event.modifiers;
 
         if let Some(hovered_hunk) = hovered_hunk {
-            editor.toggle_diff_hunks_in_ranges(vec![hovered_hunk], cx);
+            editor.toggle_diff_hunks_in_ranges_narrow(vec![hovered_hunk], cx);
             cx.notify();
             return;
         } else if gutter_hitbox.is_hovered(window) {
@@ -3228,7 +3228,7 @@ impl EditorElement {
 
         {
             let editor = self.editor.read(cx);
-            if editor.inline_completion_visible_in_cursor_popover(
+            if editor.edit_prediction_visible_in_cursor_popover(
                 editor.has_active_inline_completion(),
                 cx,
             ) {
@@ -3315,7 +3315,7 @@ impl EditorElement {
                     #[cfg(target_os = "macos")]
                     {
                         // let bindings = window.bindings_for_action_in(
-                        //     &crate::AcceptInlineCompletion,
+                        //     &crate::AcceptEditPrediction,
                         //     &self.editor.focus_handle(cx),
                         // );
 
@@ -3738,12 +3738,11 @@ impl EditorElement {
         let editor = self.editor.read(cx);
         let active_inline_completion = editor.active_inline_completion.as_ref()?;
 
-        if editor.inline_completion_visible_in_cursor_popover(true, cx) {
+        if editor.edit_prediction_visible_in_cursor_popover(true, cx) {
             return None;
         }
         let instant = editor.previewing_inline_completion_since.clone();
-        let requires_modifier = editor.inline_completion_requires_modifier(cx);
-        drop(editor);
+        let requires_modifier = editor.edit_prediction_requires_modifier(cx);
 
         match &active_inline_completion.completion.clone() {
             InlineCompletion::Move { target, .. } => {
@@ -3799,7 +3798,7 @@ impl EditorElement {
                         self.editor.focus_handle(cx),
                         window,
                         cx,
-                    );
+                    )?;
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
@@ -3812,7 +3811,7 @@ impl EditorElement {
                         self.editor.focus_handle(cx),
                         window,
                         cx,
-                    );
+                    )?;
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point(
                         (text_bounds.size.width - size.width) / 2.,
@@ -3828,7 +3827,7 @@ impl EditorElement {
                         self.editor.focus_handle(cx),
                         window,
                         cx,
-                    );
+                    )?;
 
                     let target_line_end = DisplayPoint::new(
                         target_display_point.row(),
@@ -3903,7 +3902,7 @@ impl EditorElement {
                             self.editor.focus_handle(cx),
                             window,
                             cx,
-                        );
+                        )?;
 
                         element.prepaint_as_root(
                             text_bounds.origin + origin + point(PADDING_X, px(0.)),
@@ -5905,35 +5904,43 @@ fn inline_completion_accept_indicator(
     focus_handle: FocusHandle,
     window: &Window,
     cx: &App,
-) -> AnyElement {
-    let use_hardcoded_linux_preview_binding;
+) -> Option<AnyElement> {
+    let use_hardcoded_linux_bindings;
 
     #[cfg(target_os = "macos")]
     {
-        use_hardcoded_linux_preview_binding = false;
+        use_hardcoded_linux_bindings = false;
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        use_hardcoded_linux_preview_binding = previewing;
+        use_hardcoded_linux_bindings = true;
     }
 
-    let accept_keystroke = if use_hardcoded_linux_preview_binding {
-        Keystroke {
-            modifiers: Default::default(),
-            key: "enter".to_string(),
-            key_char: None,
+    let accept_keystroke = if use_hardcoded_linux_bindings {
+        if previewing {
+            Keystroke {
+                modifiers: Default::default(),
+                key: "enter".to_string(),
+                key_char: None,
+            }
+        } else {
+            Keystroke {
+                modifiers: Default::default(),
+                key: "tab".to_string(),
+                key_char: None,
+            }
         }
     } else {
-        let bindings = window.bindings_for_action_in(&crate::AcceptInlineCompletion, &focus_handle);
+        let bindings = window.bindings_for_action_in(&crate::AcceptEditPrediction, &focus_handle);
         if let Some(keystroke) = bindings
             .last()
             .and_then(|binding| binding.keystrokes().first())
         {
-            // TODO: clone unnecessary once `use_hardcoded_linux_preview_binding` is removed.
+            // TODO: clone unnecessary once `use_hardcoded_linux_bindings` is removed.
             keystroke.clone()
         } else {
-            return div().into_any();
+            return None;
         }
     };
 
@@ -5955,27 +5962,32 @@ fn inline_completion_accept_indicator(
         .child(accept_keystroke.key.clone());
 
     let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
+    let accent_color = cx.theme().colors().text_accent;
+    let editor_bg_color = cx.theme().colors().editor_background;
+    let bg_color = editor_bg_color.blend(accent_color.opacity(0.2));
 
-    h_flex()
-        .py_0p5()
-        .pl_1()
-        .pr(padding_right)
-        .gap_1()
-        .bg(cx.theme().colors().text_accent.opacity(0.15))
-        .border_1()
-        .border_color(cx.theme().colors().text_accent.opacity(0.8))
-        .rounded_md()
-        .shadow_sm()
-        .child(accept_key)
-        .child(Label::new(label).size(LabelSize::Small))
-        .when_some(icon, |element, icon| {
-            element.child(
-                div()
-                    .mt(px(1.5))
-                    .child(Icon::new(icon).size(IconSize::Small)),
-            )
-        })
-        .into_any()
+    Some(
+        h_flex()
+            .py_0p5()
+            .pl_1()
+            .pr(padding_right)
+            .gap_1()
+            .bg(bg_color)
+            .border_1()
+            .border_color(cx.theme().colors().text_accent.opacity(0.8))
+            .rounded_md()
+            .shadow_sm()
+            .child(accept_key)
+            .child(Label::new(label).size(LabelSize::Small))
+            .when_some(icon, |element, icon| {
+                element.child(
+                    div()
+                        .mt(px(1.5))
+                        .child(Icon::new(icon).size(IconSize::Small)),
+                )
+            })
+            .into_any(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

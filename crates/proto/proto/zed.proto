@@ -368,6 +368,7 @@ enum ErrorCode {
     DevServerProjectPathDoesNotExist = 16;
     RemoteUpgradeRequired = 17;
     RateLimitExceeded = 18;
+    CommitFailed = 19;
     reserved 6;
     reserved 14 to 15;
 }

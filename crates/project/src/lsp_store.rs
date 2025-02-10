@@ -1977,7 +1977,12 @@ impl LocalLspStore {
             Some(local) => local.abs_path(cx),
             None => return,
         };
-        let file_url = lsp::Url::from_file_path(old_path).unwrap();
+        let file_url = lsp::Url::from_file_path(old_path.as_path()).unwrap_or_else(|_| {
+            panic!(
+                "`{}` is not parseable as an URI",
+                old_path.to_string_lossy()
+            )
+        });
         self.unregister_buffer_from_language_servers(buffer, file_url, cx);
     }
 

@@ -1,17 +1,22 @@
 use std::sync::Arc;
 
 use assistant_slash_command::SlashCommandWorkingSet;
-use gpui::{AnyElement, DismissEvent, SharedString, Task, WeakEntity};
+use gpui::{AnyElement, AnyView, DismissEvent, SharedString, Task, WeakEntity};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger, Tooltip};
 
 use crate::context_editor::ContextEditor;
 
 #[derive(IntoElement)]
-pub(super) struct SlashCommandSelector<T: PopoverTrigger> {
+pub(super) struct SlashCommandSelector<T, TT>
+where
+    T: PopoverTrigger + ButtonCommon,
+    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
+{
     working_set: Arc<SlashCommandWorkingSet>,
     active_context_editor: WeakEntity<ContextEditor>,
     trigger: T,
+    tooltip: TT,
 }
 
 #[derive(Clone)]
@@ -48,16 +53,22 @@ pub(crate) struct SlashCommandDelegate {
     selected_index: usize,
 }
 
-impl<T: PopoverTrigger> SlashCommandSelector<T> {
+impl<T, TT> SlashCommandSelector<T, TT>
+where
+    T: PopoverTrigger + ButtonCommon,
+    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
+{
     pub(crate) fn new(
         working_set: Arc<SlashCommandWorkingSet>,
         active_context_editor: WeakEntity<ContextEditor>,
         trigger: T,
+        tooltip: TT,
     ) -> Self {
         SlashCommandSelector {
             working_set,
             active_context_editor,
             trigger,
+            tooltip,
         }
     }
 }
@@ -241,7 +252,11 @@ impl PickerDelegate for SlashCommandDelegate {
     }
 }
 
-impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
+impl<T, TT> RenderOnce for SlashCommandSelector<T, TT>
+where
+    T: PopoverTrigger + ButtonCommon,
+    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
+{
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let all_models = self
             .working_set
@@ -322,7 +337,7 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
             .ok();
         PopoverMenu::new("model-switcher")
             .menu(move |_window, _cx| Some(picker_view.clone()))
-            .trigger(self.trigger)
+            .trigger_with_tooltip(self.trigger, self.tooltip)
             .attach(gpui::Corner::TopLeft)
             .anchor(gpui::Corner::BottomLeft)
             .offset(gpui::Point {
