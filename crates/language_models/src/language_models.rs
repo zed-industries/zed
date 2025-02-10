@@ -11,6 +11,7 @@ pub mod provider;
 mod settings;
 
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
+use crate::provider::bedrock::BedrockLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
 pub use crate::provider::cloud::LlmApiToken;
 pub use crate::provider::cloud::RefreshLlmTokenListener;
@@ -62,6 +63,10 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         GoogleLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        BedrockLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
     registry.register_provider(CopilotChatLanguageModelProvider::new(cx), cx);
