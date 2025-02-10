@@ -467,16 +467,12 @@ pub fn make_suggestion_styles(cx: &mut App) -> InlineCompletionStyles {
 
 type CompletionId = usize;
 
-// TODO az shouldn't needs this
-#[derive(Clone)]
 pub(crate) enum EditDisplayMode {
     TabAccept,
     DiffPopover,
     Inline,
 }
 
-// TODO az shouldn't needs this
-#[derive(Clone)]
 enum InlineCompletion {
     Edit {
         edits: Vec<(Range<Anchor>, String)>,
@@ -486,7 +482,6 @@ enum InlineCompletion {
     },
     Move {
         target: Anchor,
-        range_around_target: Range<text::Anchor>,
         snapshot: BufferSnapshot,
     },
 }
@@ -503,6 +498,178 @@ enum InlineCompletionHighlight {}
 pub enum MenuInlineCompletionsPolicy {
     Never,
     ByProvider,
+}
+
+// TODO az do we need this?
+#[derive(Clone)]
+pub enum EditPredictionPreview {
+    /// Modifier is not pressed
+    Inactive,
+    /// Modifier pressed, animating to active
+    Started(Range<Instant>),
+    /// Modifier released, animating from active
+    Cancelled(Range<Instant>),
+}
+
+impl EditPredictionPreview {
+    fn start(
+        &mut self,
+        completion: &InlineCompletion,
+        snapshot: &EditorSnapshot,
+        cursor: DisplayPoint,
+    ) {
+        if !matches!(self, Self::Started { .. }) {
+            *self = Self::start_now(completion, snapshot, cursor);
+        }
+    }
+
+    fn restart(
+        &mut self,
+        completion: &InlineCompletion,
+        snapshot: &EditorSnapshot,
+        cursor: DisplayPoint,
+    ) {
+        if matches!(self, Self::Started(_)) {
+            // todo! az check current isn't same
+            *self = Self::start_now(completion, snapshot, cursor);
+        }
+    }
+
+    fn start_now(
+        completion: &InlineCompletion,
+        snapshot: &EditorSnapshot,
+        cursor: DisplayPoint,
+    ) -> Self {
+        let now = Instant::now();
+        match completion {
+            InlineCompletion::Edit { .. } => Self::Started(now..now),
+            InlineCompletion::Move { target, .. } => {
+                let duration =
+                    Self::animation_duration(snapshot, cursor, *target).unwrap_or(Duration::ZERO);
+
+                Self::Started(now..now + duration)
+            }
+        }
+    }
+
+    fn animation_duration(
+        snapshot: &EditorSnapshot,
+        current_cursor: DisplayPoint,
+        target: Anchor,
+    ) -> Option<Duration> {
+        let target_cursor = target.to_display_point(&snapshot.display_snapshot);
+
+        let row_diff = target_cursor.row().0.abs_diff(current_cursor.row().0);
+        let column_diff = target_cursor.column().abs_diff(current_cursor.column());
+        let distance = ((row_diff.pow(2) + column_diff.pow(2)) as f32).sqrt();
+
+        // todo! az make this non-linear
+        let duration = distance * 8.;
+        let duration = Duration::from_millis(duration as u64);
+
+        Some(duration)
+    }
+
+    fn cancel(&mut self) {
+        if let Self::Started(animation) = self {
+            let now = Instant::now();
+            let duration = animation.end - animation.start;
+
+            *self = Self::Cancelled(now..now + duration);
+        }
+    }
+
+    /// Whether the preview is active or we are animating to or from it.
+    fn is_active(&self) -> bool {
+        match self {
+            Self::Inactive => false,
+            Self::Started(_) => true,
+            Self::Cancelled(animation) => animation.end > Instant::now(),
+        }
+    }
+
+    /// Returns true if the preview is active, not cancelled, and the animation is settled.
+    fn is_active_settled(&self) -> bool {
+        match self {
+            Self::Inactive => false,
+            Self::Started(animation) => animation.end < Instant::now(),
+            Self::Cancelled(_) => false,
+        }
+    }
+
+    fn move_state(
+        &self,
+        snapshot: &EditorSnapshot,
+        visible_row_range: Range<DisplayRow>,
+        line_layouts: &[LineWithInvisibles],
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_height: Pixels,
+        target: Anchor,
+        cursor: Option<DisplayPoint>,
+    ) -> Option<EditPredictionMoveState> {
+        // todo! handle out of viewport
+        let (animation, forwards) = match self {
+            Self::Inactive => return None,
+            Self::Started(animation) => (animation, true),
+            Self::Cancelled(animation) => (animation, false),
+        };
+
+        let cursor = cursor?;
+
+        if !visible_row_range.contains(&cursor.row()) {
+            return None;
+        }
+
+        let target_position = target.to_display_point(&snapshot.display_snapshot);
+
+        if !visible_row_range.contains(&target_position.row()) {
+            return None;
+        }
+
+        let target_row_layout =
+            &line_layouts[target_position.row().minus(visible_row_range.start) as usize];
+        let target_column = target_position.column() as usize;
+
+        let target_character_x = target_row_layout.x_for_index(target_column);
+
+        let mut target_x = target_character_x - scroll_pixel_position.x;
+        let mut target_y =
+            (target_position.row().as_f32() - scroll_pixel_position.y / line_height) * line_height;
+
+        let mut origin_x = line_layouts[cursor.row().minus(visible_row_range.start) as usize]
+            .x_for_index(cursor.column() as usize);
+        let mut origin_y =
+            (cursor.row().as_f32() - scroll_pixel_position.y / line_height) * line_height;
+
+        if !forwards {
+            std::mem::swap(&mut target_x, &mut origin_x);
+            std::mem::swap(&mut target_y, &mut origin_y);
+        }
+
+        let duration = animation.end - animation.start;
+        let delta = gpui::ease_in_out(
+            (animation.start.elapsed().as_secs_f32() / duration.as_secs_f32()).clamp(0., 1.),
+        );
+
+        let x = origin_x + (target_x - origin_x) * delta;
+        let y = origin_y + (target_y - origin_y) * delta;
+
+        Some(EditPredictionMoveState {
+            delta,
+            position: point(x, y),
+        })
+    }
+}
+
+pub(crate) struct EditPredictionMoveState {
+    delta: f32,
+    position: gpui::Point<Pixels>,
+}
+
+impl EditPredictionMoveState {
+    pub fn is_animation_completed(&self) -> bool {
+        self.delta >= 1.
+    }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Default)]
@@ -687,7 +854,7 @@ pub struct Editor {
     inline_completions_hidden_for_vim_mode: bool,
     show_inline_completions_override: Option<bool>,
     menu_inline_completions_policy: MenuInlineCompletionsPolicy,
-    previewing_inline_completion_since: Option<(Instant, bool)>,
+    edit_prediction_preview: EditPredictionPreview,
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
@@ -1379,7 +1546,7 @@ impl Editor {
             edit_prediction_provider: None,
             active_inline_completion: None,
             stale_inline_completion_in_menu: None,
-            previewing_inline_completion_since: None,
+            edit_prediction_preview: EditPredictionPreview::Inactive,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -5082,7 +5249,7 @@ impl Editor {
         has_completion: bool,
         cx: &App,
     ) -> bool {
-        if self.previewing_inline_completion_since.is_some()
+        if self.edit_prediction_preview.is_active()
             || !self.show_edit_predictions_in_menu(cx)
             || !self.should_show_inline_completions(cx)
         {
@@ -5099,6 +5266,7 @@ impl Editor {
     fn update_inline_completion_preview(
         &mut self,
         modifiers: &Modifiers,
+        position_map: &PositionMap,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -5107,47 +5275,31 @@ impl Editor {
         }
 
         if modifiers.alt {
-            self.previewing_inline_completion_since = self
-                .previewing_inline_completion_since
-                .or_else(|| Some((Instant::now(), true)));
-            self.update_visible_inline_completion(window, cx);
-        } else {
-            if let Some((_, true)) = self.previewing_inline_completion_since {
-                let cancel_start = Instant::now();
-                self.previewing_inline_completion_since = Some((cancel_start, false));
+            if let Some(completion) = self.active_inline_completion.as_ref() {
+                let newest_head = self
+                    .selections
+                    .newest_anchor()
+                    .head()
+                    .to_display_point(&position_map.snapshot);
 
-                cx.spawn(|this, mut cx| async move {
-                    // TODO az: calculate
-                    smol::Timer::after(Duration::from_millis(200)).await;
-
-                    if let Some(this) = this.upgrade() {
-                        this.update(&mut cx, |this, cx| {
-                            if let Some((instant, false)) = this.previewing_inline_completion_since
-                            {
-                                if instant == cancel_start {
-                                    // TODO az check that we are still in this state
-                                    this.previewing_inline_completion_since = None;
-                                    // this.update_visible_inline_completion(window, cx);
-                                    cx.notify()
-                                }
-                            }
-                        })
-                        .ok();
-                    }
-                })
-                .detach();
-            } else {
-                self.previewing_inline_completion_since = None;
-                self.update_visible_inline_completion(window, cx);
+                self.edit_prediction_preview.start(
+                    &completion.completion,
+                    &position_map.snapshot,
+                    newest_head,
+                );
             }
+        } else {
+            self.edit_prediction_preview.cancel();
         }
 
+        // TODO az this would cause a restart
+        self.update_visible_inline_completion(window, cx);
         cx.notify();
     }
 
     fn update_visible_inline_completion(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let selection = self.selections.newest_anchor();
@@ -5222,22 +5374,7 @@ impl Editor {
             invalidation_row_range =
                 move_invalidation_row_range.unwrap_or(edit_start_row..edit_end_row);
             let target = first_edit_start;
-            let target_point = text::ToPoint::to_point(&target.text_anchor, &snapshot);
-            // TODO: Base this off of TreeSitter or word boundaries?
-            let target_excerpt_begin = snapshot.anchor_before(snapshot.clip_point(
-                Point::new(target_point.row, target_point.column.saturating_sub(20)),
-                Bias::Left,
-            ));
-            let target_excerpt_end = snapshot.anchor_after(snapshot.clip_point(
-                Point::new(target_point.row, target_point.column + 20),
-                Bias::Right,
-            ));
-            let range_around_target = target_excerpt_begin..target_excerpt_end;
-            InlineCompletion::Move {
-                target,
-                range_around_target,
-                snapshot,
-            }
+            InlineCompletion::Move { target, snapshot }
         } else {
             let show_completions_in_buffer = !self
                 .edit_prediction_visible_in_cursor_popover(true, cx)
@@ -5300,16 +5437,20 @@ impl Editor {
             ));
 
         self.stale_inline_completion_in_menu = None;
+        // todo! az pass only display snaphot?
+        let editor_snapshot = self.snapshot(window, cx);
+        self.edit_prediction_preview.restart(
+            &completion,
+            &editor_snapshot,
+            cursor.to_display_point(&editor_snapshot),
+        );
+
         self.active_inline_completion = Some(InlineCompletionState {
             inlay_ids,
             completion,
             completion_id: inline_completion.id,
             invalidation_range,
         });
-
-        if self.previewing_inline_completion_since.is_some() {
-            self.previewing_inline_completion_since = Some((Instant::now(), true));
-        }
 
         cx.notify();
 
@@ -5544,7 +5685,7 @@ impl Editor {
     }
 
     pub fn context_menu_visible(&self) -> bool {
-        self.previewing_inline_completion_since.is_none()
+        !self.edit_prediction_preview.is_active()
             && self
                 .context_menu
                 .borrow()
@@ -13693,15 +13834,17 @@ impl Editor {
         }
     }
 
-    pub fn previewing_edit_prediction_move(&self) -> Option<(Instant, bool, Anchor)> {
-        let Some((instant, forwards)) = self.previewing_inline_completion_since else {
+    pub fn previewing_edit_prediction_move(&self) -> Option<(Anchor, &EditPredictionPreview)> {
+        if !self.edit_prediction_preview.is_active() {
             return None;
         };
 
         self.active_inline_completion
             .as_ref()
             .and_then(|completion| match completion.completion {
-                InlineCompletion::Move { target, .. } => Some((instant, forwards, target)),
+                InlineCompletion::Move { target, .. } => {
+                    Some((target, &self.edit_prediction_preview))
+                }
                 _ => None,
             })
     }
@@ -14537,7 +14680,7 @@ impl Editor {
     }
 
     pub fn has_visible_completions_menu(&self) -> bool {
-        self.previewing_inline_completion_since.is_none()
+        !self.edit_prediction_preview.is_active()
             && self.context_menu.borrow().as_ref().map_or(false, |menu| {
                 menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
             })
