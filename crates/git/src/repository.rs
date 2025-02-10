@@ -571,10 +571,6 @@ impl RepoPath {
 
         RepoPath(path.into())
     }
-
-    pub fn to_proto(&self) -> String {
-        self.0.to_string_lossy().to_string()
-    }
 }
 
 impl std::fmt::Display for RepoPath {
