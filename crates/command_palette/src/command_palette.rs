@@ -31,6 +31,11 @@ pub fn init(cx: &mut App) {
 
 impl ModalView for CommandPalette {}
 
+/*
+>  -> Command Palette
+"" -> File Finder
+*/
+
 pub struct CommandPalette {
     picker: Entity<Picker<CommandPaletteDelegate>>,
 }
