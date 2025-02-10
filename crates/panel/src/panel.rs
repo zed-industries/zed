@@ -73,7 +73,7 @@ pub fn panel_filled_icon_button(id: impl Into<SharedString>, icon: IconName) -> 
 pub fn panel_editor_container(_window: &mut Window, cx: &mut App) -> Div {
     v_flex()
         .size_full()
-        .gap_2()
+        .gap(px(8.))
         .p_2()
         .bg(cx.theme().colors().editor_background)
 }
@@ -81,17 +81,21 @@ pub fn panel_editor_container(_window: &mut Window, cx: &mut App) -> Div {
 pub fn panel_editor_style(monospace: bool, window: &mut Window, cx: &mut App) -> EditorStyle {
     let settings = ThemeSettings::get_global(cx);
 
-    let (font_family, font_features, font_weight) = if monospace {
+    let font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
+
+    let (font_family, font_features, font_weight, line_height) = if monospace {
         (
             settings.buffer_font.family.clone(),
             settings.buffer_font.features.clone(),
             settings.buffer_font.weight,
+            font_size * settings.buffer_line_height.value(),
         )
     } else {
         (
             settings.ui_font.family.clone(),
             settings.ui_font.features.clone(),
             settings.ui_font.weight,
+            window.line_height(),
         )
     };
 
@@ -104,7 +108,7 @@ pub fn panel_editor_style(monospace: bool, window: &mut Window, cx: &mut App) ->
             font_features,
             font_size: TextSize::Small.rems(cx).into(),
             font_weight,
-            line_height: window.line_height().into(),
+            line_height: line_height.into(),
             ..Default::default()
         },
         ..Default::default()

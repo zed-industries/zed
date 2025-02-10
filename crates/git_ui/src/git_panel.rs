@@ -183,7 +183,7 @@ fn commit_message_editor(
     let mut commit_editor = if let Some(commit_message_buffer) = commit_message_buffer {
         let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
         Editor::new(
-            EditorMode::AutoHeight { max_lines: 10 },
+            EditorMode::AutoHeight { max_lines: 6 },
             buffer,
             None,
             false,
@@ -191,7 +191,7 @@ fn commit_message_editor(
             cx,
         )
     } else {
-        Editor::auto_height(10, window, cx)
+        Editor::auto_height(6, window, cx)
     };
     commit_editor.set_use_autoclose(false);
     commit_editor.set_show_gutter(false, cx);
@@ -1206,24 +1206,39 @@ impl GitPanel {
             cx.listener(move |this, _, _, cx| this.toggle_auto_coauthors(cx)),
         );
 
+        let footer_size = px(32.);
+        let gap = px(16.0);
+
+        let max_height = window.line_height() * 6. + gap + footer_size;
+
         panel_editor_container(window, cx)
             .id("commit-editor-container")
             .relative()
+            .h(max_height)
             .w_full()
             .border_t_1()
             .border_color(cx.theme().colors().border)
-            .h(px(140.))
             .bg(cx.theme().colors().editor_background)
             .on_click(cx.listener(move |_, _: &ClickEvent, window, _cx| {
                 window.focus(&editor_focus_handle);
             }))
             .child(EditorElement::new(&self.commit_editor, panel_editor_style))
-            .child(div().flex_1())
             .child(
                 h_flex()
-                    .justify_between()
-                    .gap_1()
-                    .child(enable_coauthors)
+                    .absolute()
+                    .bottom_0()
+                    .left_2()
+                    .h(footer_size)
+                    .flex_none()
+                    .child(enable_coauthors),
+            )
+            .child(
+                h_flex()
+                    .absolute()
+                    .bottom_0()
+                    .right_2()
+                    .h(footer_size)
+                    .flex_none()
                     .child(commit_button),
             )
     }
@@ -1355,6 +1370,7 @@ impl GitPanel {
 
         v_flex()
             .size_full()
+            .flex_grow()
             .overflow_hidden()
             .child(
                 uniform_list(cx.entity().clone(), "entries", entry_count, {
