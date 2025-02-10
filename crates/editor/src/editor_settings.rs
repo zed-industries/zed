@@ -1,4 +1,4 @@
-use gpui::AppContext;
+use gpui::App;
 use language::CursorShape;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ pub struct EditorSettings {
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     pub jupyter: Jupyter,
-    pub show_inline_completions_in_menu: bool,
+    pub show_edit_predictions_in_menu: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -368,11 +368,11 @@ pub struct EditorSettingsContent {
     /// Default: false
     pub show_signature_help_after_edits: Option<bool>,
 
-    /// Whether to show the inline completions next to the completions provided by a language server.
-    /// Only has an effect if inline completion provider supports it.
+    /// Whether to show the edit predictions next to the completions provided by a language server.
+    /// Only has an effect if edit prediction provider supports it.
     ///
     /// Default: true
-    pub show_inline_completions_in_menu: Option<bool>,
+    pub show_edit_predictions_in_menu: Option<bool>,
 
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,
@@ -463,7 +463,7 @@ pub struct GutterContent {
 }
 
 impl EditorSettings {
-    pub fn jupyter_enabled(cx: &AppContext) -> bool {
+    pub fn jupyter_enabled(cx: &App) -> bool {
         EditorSettings::get_global(cx).jupyter.enabled
     }
 }
@@ -473,10 +473,7 @@ impl Settings for EditorSettings {
 
     type FileContent = EditorSettingsContent;
 
-    fn load(
-        sources: SettingsSources<Self::FileContent>,
-        _: &mut AppContext,
-    ) -> anyhow::Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         sources.json_merge()
     }
 }

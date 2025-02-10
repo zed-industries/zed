@@ -4,14 +4,13 @@ mod mac_watcher;
 #[cfg(not(target_os = "macos"))]
 pub mod fs_watcher;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use git::GitHostingProviderRegistry;
+#[cfg(any(test, feature = "test-support"))]
+use git::{repository::RepoPath, status::FileStatus};
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-use smol::process::Command;
-
 #[cfg(unix)]
 use std::os::fd::AsFd;
 #[cfg(unix)]
@@ -26,7 +25,7 @@ use std::os::unix::fs::FileTypeExt;
 use async_tar::Archive;
 use futures::{future::BoxFuture, AsyncRead, Stream, StreamExt};
 use git::repository::{GitRepository, RealGitRepository};
-use gpui::{AppContext, Global, ReadGlobal};
+use gpui::{App, Global, ReadGlobal};
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use smol::io::AsyncWriteExt;
@@ -44,7 +43,7 @@ use util::ResultExt;
 #[cfg(any(test, feature = "test-support"))]
 use collections::{btree_map, BTreeMap};
 #[cfg(any(test, feature = "test-support"))]
-use git::repository::{FakeGitRepositoryState, GitFileStatus};
+use git::repository::FakeGitRepositoryState;
 #[cfg(any(test, feature = "test-support"))]
 use parking_lot::Mutex;
 #[cfg(any(test, feature = "test-support"))]
@@ -102,7 +101,7 @@ pub trait Fs: Send + Sync {
         self.remove_file(path, options).await
     }
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>>;
-    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
+    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>>;
     async fn load(&self, path: &Path) -> Result<String> {
         Ok(String::from_utf8(self.load_bytes(path).await?)?)
     }
@@ -144,12 +143,12 @@ impl Global for GlobalFs {}
 
 impl dyn Fs {
     /// Returns the global [`Fs`].
-    pub fn global(cx: &AppContext) -> Arc<Self> {
+    pub fn global(cx: &App) -> Arc<Self> {
         GlobalFs::global(cx).0.clone()
     }
 
     /// Sets the global [`Fs`].
-    pub fn set_global(fs: Arc<Self>, cx: &mut AppContext) {
+    pub fn set_global(fs: Arc<Self>, cx: &mut App) {
         cx.set_global(GlobalFs(fs));
     }
 }
@@ -500,7 +499,7 @@ impl Fs for RealFs {
         Ok(())
     }
 
-    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {
+    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
         Ok(Box::new(std::fs::File::open(path)?))
     }
 
@@ -521,7 +520,24 @@ impl Fs for RealFs {
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         smol::unblock(move || {
-            let mut tmp_file = create_temp_file(&path)?;
+            let mut tmp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+                // Use the directory of the destination as temp dir to avoid
+                // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
+                // See https://github.com/zed-industries/zed/pull/8437 for more details.
+                NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
+            } else if cfg!(target_os = "windows") {
+                // If temp dir is set to a different drive than the destination,
+                // we receive error:
+                //
+                // failed to persist temporary file:
+                // The system cannot move the file to a different disk drive. (os error 17)
+                //
+                // So we use the directory of the destination as a temp dir to avoid it.
+                // https://github.com/zed-industries/zed/issues/16571
+                NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
+            } else {
+                NamedTempFile::new()
+            }?;
             tmp_file.write_all(data.as_bytes())?;
             tmp_file.persist(path)?;
             Ok::<(), anyhow::Error>(())
@@ -536,43 +552,13 @@ impl Fs for RealFs {
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
-        match smol::fs::File::create(path).await {
-            Ok(file) => {
-                let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
-                for chunk in chunks(text, line_ending) {
-                    writer.write_all(chunk.as_bytes()).await?;
-                }
-                writer.flush().await?;
-                Ok(())
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-                    let target_path = path.to_path_buf();
-                    let temp_file = smol::unblock(move || create_temp_file(&target_path)).await?;
-
-                    let temp_path = temp_file.into_temp_path();
-                    let temp_path_for_write = temp_path.to_path_buf();
-
-                    let async_file = smol::fs::OpenOptions::new()
-                        .write(true)
-                        .open(&temp_path)
-                        .await?;
-
-                    let mut writer = smol::io::BufWriter::with_capacity(buffer_size, async_file);
-
-                    for chunk in chunks(text, line_ending) {
-                        writer.write_all(chunk.as_bytes()).await?;
-                    }
-                    writer.flush().await?;
-
-                    write_to_file_as_root(temp_path_for_write, path.to_path_buf()).await
-                } else {
-                    // Todo: Implement for Mac and Windows
-                    Err(e.into())
-                }
-            }
-            Err(e) => Err(e.into()),
+        let file = smol::fs::File::create(path).await?;
+        let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
+        for chunk in chunks(text, line_ending) {
+            writer.write_all(chunk.as_bytes()).await?;
         }
+        writer.flush().await?;
+        Ok(())
     }
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
@@ -603,11 +589,19 @@ impl Fs for RealFs {
             }
         };
 
+        let path_buf = path.to_path_buf();
+        let path_exists = smol::unblock(move || {
+            path_buf
+                .try_exists()
+                .with_context(|| format!("checking existence for path {path_buf:?}"))
+        })
+        .await?;
         let is_symlink = symlink_metadata.file_type().is_symlink();
-        let metadata = if is_symlink {
-            smol::fs::metadata(path).await?
-        } else {
-            symlink_metadata
+        let metadata = match (is_symlink, path_exists) {
+            (true, true) => smol::fs::metadata(path)
+                .await
+                .with_context(|| "accessing symlink for path {path}")?,
+            _ => symlink_metadata,
         };
 
         #[cfg(unix)]
@@ -1007,7 +1001,7 @@ impl FakeFs {
     const SYSTEMTIME_INTERVAL: Duration = Duration::from_nanos(100);
 
     pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
-        let (tx, mut rx) = smol::channel::bounded::<PathBuf>(10);
+        let (tx, rx) = smol::channel::bounded::<PathBuf>(10);
 
         let this = Arc::new_cyclic(|this| Self {
             this: this.clone(),
@@ -1035,7 +1029,7 @@ impl FakeFs {
         executor.spawn({
             let this = this.clone();
             async move {
-                while let Some(git_event) = rx.next().await {
+                while let Ok(git_event) = rx.recv().await {
                     if let Some(mut state) = this.state.try_lock() {
                         state.emit_event([(git_event, None)]);
                     } else {
@@ -1276,36 +1270,43 @@ impl FakeFs {
         })
     }
 
-    pub fn set_index_for_repo(&self, dot_git: &Path, head_state: &[(&Path, String)]) {
+    pub fn set_index_for_repo(&self, dot_git: &Path, index_state: &[(RepoPath, String)]) {
         self.with_git_state(dot_git, true, |state| {
             state.index_contents.clear();
             state.index_contents.extend(
-                head_state
+                index_state
                     .iter()
-                    .map(|(path, content)| (path.to_path_buf(), content.clone())),
+                    .map(|(path, content)| (path.clone(), content.clone())),
             );
         });
     }
 
-    pub fn set_blame_for_repo(&self, dot_git: &Path, blames: Vec<(&Path, git::blame::Blame)>) {
+    pub fn set_head_for_repo(&self, dot_git: &Path, head_state: &[(RepoPath, String)]) {
+        self.with_git_state(dot_git, true, |state| {
+            state.head_contents.clear();
+            state.head_contents.extend(
+                head_state
+                    .iter()
+                    .map(|(path, content)| (path.clone(), content.clone())),
+            );
+        });
+    }
+
+    pub fn set_blame_for_repo(&self, dot_git: &Path, blames: Vec<(RepoPath, git::blame::Blame)>) {
         self.with_git_state(dot_git, true, |state| {
             state.blames.clear();
-            state.blames.extend(
-                blames
-                    .into_iter()
-                    .map(|(path, blame)| (path.to_path_buf(), blame)),
-            );
+            state.blames.extend(blames);
         });
     }
 
     pub fn set_status_for_repo_via_working_copy_change(
         &self,
         dot_git: &Path,
-        statuses: &[(&Path, GitFileStatus)],
+        statuses: &[(&Path, FileStatus)],
     ) {
         self.with_git_state(dot_git, false, |state| {
-            state.worktree_statuses.clear();
-            state.worktree_statuses.extend(
+            state.statuses.clear();
+            state.statuses.extend(
                 statuses
                     .iter()
                     .map(|(path, content)| ((**path).into(), *content)),
@@ -1321,11 +1322,11 @@ impl FakeFs {
     pub fn set_status_for_repo_via_git_operation(
         &self,
         dot_git: &Path,
-        statuses: &[(&Path, GitFileStatus)],
+        statuses: &[(&Path, FileStatus)],
     ) {
         self.with_git_state(dot_git, true, |state| {
-            state.worktree_statuses.clear();
-            state.worktree_statuses.extend(
+            state.statuses.clear();
+            state.statuses.extend(
                 statuses
                     .iter()
                     .map(|(path, content)| ((**path).into(), *content)),
@@ -1752,7 +1753,7 @@ impl Fs for FakeFs {
         Ok(())
     }
 
-    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {
+    async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
         let bytes = self.load_internal(path).await?;
         Ok(Box::new(io::Cursor::new(bytes)))
     }
@@ -1977,84 +1978,6 @@ fn chunks(rope: &Rope, line_ending: LineEnding) -> impl Iterator<Item = &str> {
             ending.into_iter().chain([line])
         })
     })
-}
-
-fn create_temp_file(path: &Path) -> Result<NamedTempFile> {
-    let temp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-        // Use the directory of the destination as temp dir to avoid
-        // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
-        // See https://github.com/zed-industries/zed/pull/8437 for more details.
-        NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))?
-    } else if cfg!(target_os = "windows") {
-        // If temp dir is set to a different drive than the destination,
-        // we receive error:
-        //
-        // failed to persist temporary file:
-        // The system cannot move the file to a different disk drive. (os error 17)
-        //
-        // So we use the directory of the destination as a temp dir to avoid it.
-        // https://github.com/zed-industries/zed/issues/16571
-        NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))?
-    } else {
-        NamedTempFile::new()?
-    };
-
-    Ok(temp_file)
-}
-
-#[cfg(target_os = "macos")]
-async fn write_to_file_as_root(_temp_file_path: PathBuf, _target_file_path: PathBuf) -> Result<()> {
-    unimplemented!("write_to_file_as_root is not implemented")
-}
-
-#[cfg(target_os = "windows")]
-async fn write_to_file_as_root(_temp_file_path: PathBuf, _target_file_path: PathBuf) -> Result<()> {
-    unimplemented!("write_to_file_as_root is not implemented")
-}
-
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-async fn write_to_file_as_root(temp_file_path: PathBuf, target_file_path: PathBuf) -> Result<()> {
-    use shlex::try_quote;
-    use std::os::unix::fs::PermissionsExt;
-    use which::which;
-
-    let pkexec_path = smol::unblock(|| which("pkexec"))
-        .await
-        .map_err(|_| anyhow::anyhow!("pkexec not found in PATH"))?;
-
-    let script_file = smol::unblock(move || {
-        let script_file = tempfile::Builder::new()
-            .prefix("write-to-file-as-root-")
-            .tempfile_in(paths::temp_dir())?;
-
-        writeln!(
-            script_file.as_file(),
-            "#!/usr/bin/env sh\nset -eu\ncat \"{}\" > \"{}\"",
-            try_quote(&temp_file_path.to_string_lossy())?,
-            try_quote(&target_file_path.to_string_lossy())?
-        )?;
-
-        let mut perms = script_file.as_file().metadata()?.permissions();
-        perms.set_mode(0o700); // rwx------
-        script_file.as_file().set_permissions(perms)?;
-
-        Result::<_>::Ok(script_file)
-    })
-    .await?;
-
-    let script_path = script_file.into_temp_path();
-
-    let output = Command::new(&pkexec_path)
-        .arg("--disable-internal-agent")
-        .arg(&script_path)
-        .output()
-        .await?;
-
-    if !output.status.success() {
-        return Err(anyhow::anyhow!("Failed to write to file as root"));
-    }
-
-    Ok(())
 }
 
 pub fn normalize_path(path: &Path) -> PathBuf {

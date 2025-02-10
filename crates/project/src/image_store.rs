@@ -2,13 +2,15 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     Project, ProjectEntryId, ProjectItem, ProjectPath,
 };
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::oneshot, StreamExt};
 use gpui::{
-    hash, prelude::*, AppContext, EventEmitter, Img, Model, ModelContext, Subscription, Task,
-    WeakModel,
+    hash, prelude::*, App, AsyncApp, Context, Entity, EventEmitter, Img, Subscription, Task,
+    WeakEntity,
 };
+pub use image::ImageFormat;
+use image::{ExtendedColorType, GenericImageView, ImageReader};
 use language::{DiskState, File};
 use rpc::{AnyProtoClient, ErrorExt as _};
 use std::ffi::OsStr;
@@ -33,29 +35,123 @@ impl From<NonZeroU64> for ImageId {
     }
 }
 
+#[derive(Debug)]
 pub enum ImageItemEvent {
     ReloadNeeded,
     Reloaded,
     FileHandleChanged,
+    MetadataUpdated,
 }
 
 impl EventEmitter<ImageItemEvent> for ImageItem {}
 
 pub enum ImageStoreEvent {
-    ImageAdded(Model<ImageItem>),
+    ImageAdded(Entity<ImageItem>),
 }
 
 impl EventEmitter<ImageStoreEvent> for ImageStore {}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ImageMetadata {
+    pub width: u32,
+    pub height: u32,
+    pub file_size: u64,
+    pub colors: Option<ImageColorInfo>,
+    pub format: ImageFormat,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ImageColorInfo {
+    pub channels: u8,
+    pub bits_per_channel: u8,
+}
+
+impl ImageColorInfo {
+    pub fn from_color_type(color_type: impl Into<ExtendedColorType>) -> Option<Self> {
+        let (channels, bits_per_channel) = match color_type.into() {
+            ExtendedColorType::L8 => (1, 8),
+            ExtendedColorType::L16 => (1, 16),
+            ExtendedColorType::La8 => (2, 8),
+            ExtendedColorType::La16 => (2, 16),
+            ExtendedColorType::Rgb8 => (3, 8),
+            ExtendedColorType::Rgb16 => (3, 16),
+            ExtendedColorType::Rgba8 => (4, 8),
+            ExtendedColorType::Rgba16 => (4, 16),
+            ExtendedColorType::A8 => (1, 8),
+            ExtendedColorType::Bgr8 => (3, 8),
+            ExtendedColorType::Bgra8 => (4, 8),
+            ExtendedColorType::Cmyk8 => (4, 8),
+            _ => return None,
+        };
+
+        Some(Self {
+            channels,
+            bits_per_channel,
+        })
+    }
+
+    pub const fn bits_per_pixel(&self) -> u8 {
+        self.channels * self.bits_per_channel
+    }
+}
 
 pub struct ImageItem {
     pub id: ImageId,
     pub file: Arc<dyn File>,
     pub image: Arc<gpui::Image>,
     reload_task: Option<Task<()>>,
+    pub image_metadata: Option<ImageMetadata>,
 }
 
 impl ImageItem {
-    pub fn project_path(&self, cx: &AppContext) -> ProjectPath {
+    pub async fn load_image_metadata(
+        image: Entity<ImageItem>,
+        project: Entity<Project>,
+        cx: &mut AsyncApp,
+    ) -> Result<ImageMetadata> {
+        let (fs, image_path) = cx.update(|cx| {
+            let project_path = image.read(cx).project_path(cx);
+
+            let worktree = project
+                .read(cx)
+                .worktree_for_id(project_path.worktree_id, cx)
+                .ok_or_else(|| anyhow!("worktree not found"))?;
+            let worktree_root = worktree.read(cx).abs_path();
+            let image_path = image.read(cx).path();
+            let image_path = if image_path.is_absolute() {
+                image_path.to_path_buf()
+            } else {
+                worktree_root.join(image_path)
+            };
+
+            let fs = project.read(cx).fs().clone();
+
+            anyhow::Ok((fs, image_path))
+        })??;
+
+        let image_bytes = fs.load_bytes(&image_path).await?;
+        let image_format = image::guess_format(&image_bytes)?;
+
+        let mut image_reader = ImageReader::new(std::io::Cursor::new(image_bytes));
+        image_reader.set_format(image_format);
+        let image = image_reader.decode()?;
+
+        let (width, height) = image.dimensions();
+        let file_metadata = fs
+            .metadata(image_path.as_path())
+            .await?
+            .ok_or_else(|| anyhow!("failed to load image metadata"))?;
+
+        Ok(ImageMetadata {
+            width,
+            height,
+            file_size: file_metadata.len,
+            format: image_format,
+            colors: ImageColorInfo::from_color_type(image.color()),
+        })
+    }
+
+    pub fn project_path(&self, cx: &App) -> ProjectPath {
         ProjectPath {
             worktree_id: self.file.worktree_id(cx),
             path: self.file.path().clone(),
@@ -66,7 +162,7 @@ impl ImageItem {
         self.file.path()
     }
 
-    fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut ModelContext<Self>) {
+    fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut Context<Self>) {
         let mut file_changed = false;
 
         let old_file = self.file.as_ref();
@@ -90,7 +186,7 @@ impl ImageItem {
         }
     }
 
-    fn reload(&mut self, cx: &mut ModelContext<Self>) -> Option<oneshot::Receiver<()>> {
+    fn reload(&mut self, cx: &mut Context<Self>) -> Option<oneshot::Receiver<()>> {
         let local_file = self.file.as_local()?;
         let (tx, rx) = futures::channel::oneshot::channel();
 
@@ -116,10 +212,10 @@ impl ImageItem {
 
 impl ProjectItem for ImageItem {
     fn try_open(
-        project: &Model<Project>,
+        project: &Entity<Project>,
         path: &ProjectPath,
-        cx: &mut AppContext,
-    ) -> Option<Task<gpui::Result<Model<Self>>>> {
+        cx: &mut App,
+    ) -> Option<Task<gpui::Result<Entity<Self>>>> {
         let path = path.clone();
         let project = project.clone();
 
@@ -152,11 +248,11 @@ impl ProjectItem for ImageItem {
         }
     }
 
-    fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
+    fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {
         worktree::File::from_dyn(Some(&self.file))?.entry_id
     }
 
-    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+    fn project_path(&self, cx: &App) -> Option<ProjectPath> {
         Some(self.project_path(cx).clone())
     }
 
@@ -169,17 +265,17 @@ trait ImageStoreImpl {
     fn open_image(
         &self,
         path: Arc<Path>,
-        worktree: Model<Worktree>,
-        cx: &mut ModelContext<ImageStore>,
-    ) -> Task<Result<Model<ImageItem>>>;
+        worktree: Entity<Worktree>,
+        cx: &mut Context<ImageStore>,
+    ) -> Task<Result<Entity<ImageItem>>>;
 
     fn reload_images(
         &self,
-        images: HashSet<Model<ImageItem>>,
-        cx: &mut ModelContext<ImageStore>,
+        images: HashSet<Entity<ImageItem>>,
+        cx: &mut Context<ImageStore>,
     ) -> Task<Result<()>>;
 
-    fn as_local(&self) -> Option<Model<LocalImageStore>>;
+    fn as_local(&self) -> Option<Entity<LocalImageStore>>;
 }
 
 struct RemoteImageStore {}
@@ -187,26 +283,26 @@ struct RemoteImageStore {}
 struct LocalImageStore {
     local_image_ids_by_path: HashMap<ProjectPath, ImageId>,
     local_image_ids_by_entry_id: HashMap<ProjectEntryId, ImageId>,
-    image_store: WeakModel<ImageStore>,
+    image_store: WeakEntity<ImageStore>,
     _subscription: Subscription,
 }
 
 pub struct ImageStore {
     state: Box<dyn ImageStoreImpl>,
-    opened_images: HashMap<ImageId, WeakModel<ImageItem>>,
-    worktree_store: Model<WorktreeStore>,
+    opened_images: HashMap<ImageId, WeakEntity<ImageItem>>,
+    worktree_store: Entity<WorktreeStore>,
     #[allow(clippy::type_complexity)]
     loading_images_by_path: HashMap<
         ProjectPath,
-        postage::watch::Receiver<Option<Result<Model<ImageItem>, Arc<anyhow::Error>>>>,
+        postage::watch::Receiver<Option<Result<Entity<ImageItem>, Arc<anyhow::Error>>>>,
     >,
 }
 
 impl ImageStore {
-    pub fn local(worktree_store: Model<WorktreeStore>, cx: &mut ModelContext<Self>) -> Self {
-        let this = cx.weak_model();
+    pub fn local(worktree_store: Entity<WorktreeStore>, cx: &mut Context<Self>) -> Self {
+        let this = cx.weak_entity();
         Self {
-            state: Box::new(cx.new_model(|cx| {
+            state: Box::new(cx.new(|cx| {
                 let subscription = cx.subscribe(
                     &worktree_store,
                     |this: &mut LocalImageStore, _, event, cx| {
@@ -230,32 +326,32 @@ impl ImageStore {
     }
 
     pub fn remote(
-        worktree_store: Model<WorktreeStore>,
+        worktree_store: Entity<WorktreeStore>,
         _upstream_client: AnyProtoClient,
         _remote_id: u64,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         Self {
-            state: Box::new(cx.new_model(|_| RemoteImageStore {})),
+            state: Box::new(cx.new(|_| RemoteImageStore {})),
             opened_images: Default::default(),
             loading_images_by_path: Default::default(),
             worktree_store,
         }
     }
 
-    pub fn images(&self) -> impl '_ + Iterator<Item = Model<ImageItem>> {
+    pub fn images(&self) -> impl '_ + Iterator<Item = Entity<ImageItem>> {
         self.opened_images
             .values()
             .filter_map(|image| image.upgrade())
     }
 
-    pub fn get(&self, image_id: ImageId) -> Option<Model<ImageItem>> {
+    pub fn get(&self, image_id: ImageId) -> Option<Entity<ImageItem>> {
         self.opened_images
             .get(&image_id)
             .and_then(|image| image.upgrade())
     }
 
-    pub fn get_by_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<Model<ImageItem>> {
+    pub fn get_by_path(&self, path: &ProjectPath, cx: &App) -> Option<Entity<ImageItem>> {
         self.images()
             .find(|image| &image.read(cx).project_path(cx) == path)
     }
@@ -263,8 +359,8 @@ impl ImageStore {
     pub fn open_image(
         &mut self,
         project_path: ProjectPath,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Model<ImageItem>>> {
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<ImageItem>>> {
         let existing_image = self.get_by_path(&project_path, cx);
         if let Some(existing_image) = existing_image {
             return Task::ready(Ok(existing_image));
@@ -317,9 +413,9 @@ impl ImageStore {
 
     pub async fn wait_for_loading_image(
         mut receiver: postage::watch::Receiver<
-            Option<Result<Model<ImageItem>, Arc<anyhow::Error>>>,
+            Option<Result<Entity<ImageItem>, Arc<anyhow::Error>>>,
         >,
-    ) -> Result<Model<ImageItem>, Arc<anyhow::Error>> {
+    ) -> Result<Entity<ImageItem>, Arc<anyhow::Error>> {
         loop {
             if let Some(result) = receiver.borrow().as_ref() {
                 match result {
@@ -333,8 +429,8 @@ impl ImageStore {
 
     pub fn reload_images(
         &self,
-        images: HashSet<Model<ImageItem>>,
-        cx: &mut ModelContext<ImageStore>,
+        images: HashSet<Entity<ImageItem>>,
+        cx: &mut Context<ImageStore>,
     ) -> Task<Result<()>> {
         if images.is_empty() {
             return Task::ready(Ok(()));
@@ -343,11 +439,7 @@ impl ImageStore {
         self.state.reload_images(images, cx)
     }
 
-    fn add_image(
-        &mut self,
-        image: Model<ImageItem>,
-        cx: &mut ModelContext<ImageStore>,
-    ) -> Result<()> {
+    fn add_image(&mut self, image: Entity<ImageItem>, cx: &mut Context<ImageStore>) -> Result<()> {
         let image_id = image.read(cx).id;
 
         self.opened_images.insert(image_id, image.downgrade());
@@ -359,9 +451,9 @@ impl ImageStore {
 
     fn on_image_event(
         &mut self,
-        image: Model<ImageItem>,
+        image: Entity<ImageItem>,
         event: &ImageItemEvent,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             ImageItemEvent::FileHandleChanged => {
@@ -376,13 +468,13 @@ impl ImageStore {
     }
 }
 
-impl ImageStoreImpl for Model<LocalImageStore> {
+impl ImageStoreImpl for Entity<LocalImageStore> {
     fn open_image(
         &self,
         path: Arc<Path>,
-        worktree: Model<Worktree>,
-        cx: &mut ModelContext<ImageStore>,
-    ) -> Task<Result<Model<ImageItem>>> {
+        worktree: Entity<Worktree>,
+        cx: &mut Context<ImageStore>,
+    ) -> Task<Result<Entity<ImageItem>>> {
         let this = self.clone();
 
         let load_file = worktree.update(cx, |worktree, cx| {
@@ -392,18 +484,19 @@ impl ImageStoreImpl for Model<LocalImageStore> {
             let LoadedBinaryFile { file, content } = load_file.await?;
             let image = create_gpui_image(content)?;
 
-            let model = cx.new_model(|cx| ImageItem {
+            let entity = cx.new(|cx| ImageItem {
                 id: cx.entity_id().as_non_zero_u64().into(),
                 file: file.clone(),
                 image,
+                image_metadata: None,
                 reload_task: None,
             })?;
 
-            let image_id = cx.read_model(&model, |model, _| model.id)?;
+            let image_id = cx.read_entity(&entity, |model, _| model.id)?;
 
             this.update(&mut cx, |this, cx| {
                 image_store.update(cx, |image_store, cx| {
-                    image_store.add_image(model.clone(), cx)
+                    image_store.add_image(entity.clone(), cx)
                 })??;
                 this.local_image_ids_by_path.insert(
                     ProjectPath {
@@ -420,14 +513,14 @@ impl ImageStoreImpl for Model<LocalImageStore> {
                 anyhow::Ok(())
             })??;
 
-            Ok(model)
+            Ok(entity)
         })
     }
 
     fn reload_images(
         &self,
-        images: HashSet<Model<ImageItem>>,
-        cx: &mut ModelContext<ImageStore>,
+        images: HashSet<Entity<ImageItem>>,
+        cx: &mut Context<ImageStore>,
     ) -> Task<Result<()>> {
         cx.spawn(move |_, mut cx| async move {
             for image in images {
@@ -439,13 +532,13 @@ impl ImageStoreImpl for Model<LocalImageStore> {
         })
     }
 
-    fn as_local(&self) -> Option<Model<LocalImageStore>> {
+    fn as_local(&self) -> Option<Entity<LocalImageStore>> {
         Some(self.clone())
     }
 }
 
 impl LocalImageStore {
-    fn subscribe_to_worktree(&mut self, worktree: &Model<Worktree>, cx: &mut ModelContext<Self>) {
+    fn subscribe_to_worktree(&mut self, worktree: &Entity<Worktree>, cx: &mut Context<Self>) {
         cx.subscribe(worktree, |this, worktree, event, cx| {
             if worktree.read(cx).is_local() {
                 match event {
@@ -461,9 +554,9 @@ impl LocalImageStore {
 
     fn local_worktree_entries_changed(
         &mut self,
-        worktree_handle: &Model<Worktree>,
+        worktree_handle: &Entity<Worktree>,
         changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let snapshot = worktree_handle.read(cx).snapshot();
         for (path, entry_id, _) in changes {
@@ -475,9 +568,9 @@ impl LocalImageStore {
         &mut self,
         entry_id: ProjectEntryId,
         path: &Arc<Path>,
-        worktree: &Model<worktree::Worktree>,
+        worktree: &Entity<worktree::Worktree>,
         snapshot: &worktree::Snapshot,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<()> {
         let project_path = ProjectPath {
             worktree_id: snapshot.id(),
@@ -576,7 +669,7 @@ impl LocalImageStore {
         None
     }
 
-    fn image_changed_file(&mut self, image: Model<ImageItem>, cx: &mut AppContext) -> Option<()> {
+    fn image_changed_file(&mut self, image: Entity<ImageItem>, cx: &mut App) -> Option<()> {
         let file = worktree::File::from_dyn(Some(&image.read(cx).file))?;
 
         let image_id = image.read(cx).id;
@@ -620,13 +713,13 @@ fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
     }))
 }
 
-impl ImageStoreImpl for Model<RemoteImageStore> {
+impl ImageStoreImpl for Entity<RemoteImageStore> {
     fn open_image(
         &self,
         _path: Arc<Path>,
-        _worktree: Model<Worktree>,
-        _cx: &mut ModelContext<ImageStore>,
-    ) -> Task<Result<Model<ImageItem>>> {
+        _worktree: Entity<Worktree>,
+        _cx: &mut Context<ImageStore>,
+    ) -> Task<Result<Entity<ImageItem>>> {
         Task::ready(Err(anyhow::anyhow!(
             "Opening images from remote is not supported"
         )))
@@ -634,15 +727,15 @@ impl ImageStoreImpl for Model<RemoteImageStore> {
 
     fn reload_images(
         &self,
-        _images: HashSet<Model<ImageItem>>,
-        _cx: &mut ModelContext<ImageStore>,
+        _images: HashSet<Entity<ImageItem>>,
+        _cx: &mut Context<ImageStore>,
     ) -> Task<Result<()>> {
         Task::ready(Err(anyhow::anyhow!(
             "Reloading images from remote is not supported"
         )))
     }
 
-    fn as_local(&self) -> Option<Model<LocalImageStore>> {
+    fn as_local(&self) -> Option<Entity<LocalImageStore>> {
         None
     }
 }

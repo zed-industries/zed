@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use unindent::Unindent as _;
-use util::{post_inc, RandomCharIter};
+use util::{path, post_inc, RandomCharIter};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -33,7 +33,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/test",
+        path!("/test"),
         json!({
             "consts.rs": "
                 const a: i32 = 'a';
@@ -59,9 +59,9 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     .await;
 
     let language_server_id = LanguageServerId(0);
-    let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
-    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
 
@@ -70,7 +70,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         lsp_store
             .update_diagnostic_entries(
                 language_server_id,
-                PathBuf::from("/test/main.rs"),
+                PathBuf::from(path!("/test/main.rs")),
                 None,
                 vec![
                     DiagnosticEntry {
@@ -150,18 +150,20 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     // Open the project diagnostics view while there are already diagnostics.
-    let view = window.build_view(cx, |cx| {
+    let diagnostics = window.build_entity(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
             project.clone(),
             workspace.downgrade(),
+            window,
             cx,
         )
     });
-    let editor = view.update(cx, |view, _| view.editor.clone());
+    let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
-    view.next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+    diagnostics
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -232,7 +234,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         lsp_store
             .update_diagnostic_entries(
                 language_server_id,
-                PathBuf::from("/test/consts.rs"),
+                PathBuf::from(path!("/test/consts.rs")),
                 None,
                 vec![DiagnosticEntry {
                     range: Unclipped(PointUtf16::new(0, 15))..Unclipped(PointUtf16::new(0, 15)),
@@ -251,7 +253,8 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         lsp_store.disk_based_diagnostics_finished(language_server_id, cx);
     });
 
-    view.next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+    diagnostics
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -338,7 +341,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         lsp_store
             .update_diagnostic_entries(
                 language_server_id,
-                PathBuf::from("/test/consts.rs"),
+                PathBuf::from(path!("/test/consts.rs")),
                 None,
                 vec![
                     DiagnosticEntry {
@@ -370,7 +373,8 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         lsp_store.disk_based_diagnostics_finished(language_server_id, cx);
     });
 
-    view.next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+    diagnostics
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -460,7 +464,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/test",
+        path!("/test"),
         json!({
             "main.js": "
                 a();
@@ -475,22 +479,23 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     let server_id_1 = LanguageServerId(100);
     let server_id_2 = LanguageServerId(101);
-    let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
-    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
 
-    let view = window.build_view(cx, |cx| {
+    let diagnostics = window.build_entity(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
             project.clone(),
             workspace.downgrade(),
+            window,
             cx,
         )
     });
-    let editor = view.update(cx, |view, _| view.editor.clone());
+    let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
     // Two language servers start updating diagnostics
     lsp_store.update(cx, |lsp_store, cx| {
@@ -499,7 +504,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         lsp_store
             .update_diagnostic_entries(
                 server_id_1,
-                PathBuf::from("/test/main.js"),
+                PathBuf::from(path!("/test/main.js")),
                 None,
                 vec![DiagnosticEntry {
                     range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 1)),
@@ -552,7 +557,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         lsp_store
             .update_diagnostic_entries(
                 server_id_2,
-                PathBuf::from("/test/main.js"),
+                PathBuf::from(path!("/test/main.js")),
                 None,
                 vec![DiagnosticEntry {
                     range: Unclipped(PointUtf16::new(1, 0))..Unclipped(PointUtf16::new(1, 1)),
@@ -614,7 +619,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         lsp_store
             .update_diagnostic_entries(
                 server_id_1,
-                PathBuf::from("/test/main.js"),
+                PathBuf::from(path!("/test/main.js")),
                 None,
                 vec![DiagnosticEntry {
                     range: Unclipped(PointUtf16::new(2, 0))..Unclipped(PointUtf16::new(2, 1)),
@@ -633,7 +638,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         lsp_store
             .update_diagnostic_entries(
                 server_id_2,
-                PathBuf::from("/test/main.rs"),
+                PathBuf::from(path!("/test/main.rs")),
                 None,
                 vec![],
                 cx,
@@ -684,7 +689,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         lsp_store
             .update_diagnostic_entries(
                 server_id_2,
-                PathBuf::from("/test/main.js"),
+                PathBuf::from(path!("/test/main.js")),
                 None,
                 vec![DiagnosticEntry {
                     range: Unclipped(PointUtf16::new(3, 0))..Unclipped(PointUtf16::new(3, 1)),
@@ -750,29 +755,30 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
         .unwrap_or(10);
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/test", json!({})).await;
+    fs.insert_tree(path!("/test"), json!({})).await;
 
-    let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
-    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
 
-    let mutated_view = window.build_view(cx, |cx| {
+    let mutated_diagnostics = window.build_entity(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
             project.clone(),
             workspace.downgrade(),
+            window,
             cx,
         )
     });
 
-    workspace.update(cx, |workspace, cx| {
-        workspace.add_item_to_center(Box::new(mutated_view.clone()), cx);
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_center(Box::new(mutated_diagnostics.clone()), window, cx);
     });
-    mutated_view.update(cx, |view, cx| {
-        assert!(view.focus_handle.is_focused(cx));
+    mutated_diagnostics.update_in(cx, |diagnostics, window, _cx| {
+        assert!(diagnostics.focus_handle.is_focused(window));
     });
 
     let mut next_group_id = 0;
@@ -811,7 +817,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
                         // insert a set of diagnostics for a new path
                         _ => {
                             let path: PathBuf =
-                                format!("/test/{}.rs", post_inc(&mut next_filename)).into();
+                                format!(path!("/test/{}.rs"), post_inc(&mut next_filename)).into();
                             let len = rng.gen_range(128..256);
                             let content =
                                 RandomCharIter::new(&mut rng).take(len).collect::<String>();
@@ -858,16 +864,19 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     }
 
     log::info!("updating mutated diagnostics view");
-    mutated_view.update(cx, |view, cx| view.update_stale_excerpts(cx));
+    mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
+        diagnostics.update_stale_excerpts(window, cx)
+    });
     cx.run_until_parked();
 
     log::info!("constructing reference diagnostics view");
-    let reference_view = window.build_view(cx, |cx| {
+    let reference_diagnostics = window.build_entity(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
             project.clone(),
             workspace.downgrade(),
+            window,
             cx,
         )
     });
@@ -875,14 +884,14 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
         .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.run_until_parked();
 
-    let mutated_excerpts = get_diagnostics_excerpts(&mutated_view, cx);
-    let reference_excerpts = get_diagnostics_excerpts(&reference_view, cx);
+    let mutated_excerpts = get_diagnostics_excerpts(&mutated_diagnostics, cx);
+    let reference_excerpts = get_diagnostics_excerpts(&reference_diagnostics, cx);
 
     for ((path, language_server_id), diagnostics) in current_diagnostics {
         for diagnostic in diagnostics {
             let found_excerpt = reference_excerpts.iter().any(|info| {
                 let row_range = info.range.context.start.row..info.range.context.end.row;
-                info.path == path.strip_prefix("/test").unwrap()
+                info.path == path.strip_prefix(path!("/test")).unwrap()
                     && info.language_server == language_server_id
                     && row_range.contains(&diagnostic.range.start.0.row)
             });
@@ -917,13 +926,13 @@ struct ExcerptInfo {
 }
 
 fn get_diagnostics_excerpts(
-    view: &View<ProjectDiagnosticsEditor>,
+    diagnostics: &Entity<ProjectDiagnosticsEditor>,
     cx: &mut VisualTestContext,
 ) -> Vec<ExcerptInfo> {
-    view.update(cx, |view, cx| {
+    diagnostics.update(cx, |diagnostics, cx| {
         let mut result = vec![];
         let mut excerpt_indices_by_id = HashMap::default();
-        view.excerpts.update(cx, |multibuffer, cx| {
+        diagnostics.excerpts.update(cx, |multibuffer, cx| {
             let snapshot = multibuffer.snapshot(cx);
             for (id, buffer, range) in snapshot.excerpts() {
                 excerpt_indices_by_id.insert(id, result.len());
@@ -940,7 +949,7 @@ fn get_diagnostics_excerpts(
             }
         });
 
-        for state in &view.path_states {
+        for state in &diagnostics.path_states {
             for group in &state.diagnostic_groups {
                 for (ix, excerpt_id) in group.excerpts.iter().enumerate() {
                     let excerpt_ix = excerpt_indices_by_id[excerpt_id];
@@ -1043,58 +1052,63 @@ const FILE_HEADER: &str = "file header";
 const EXCERPT_HEADER: &str = "excerpt header";
 
 fn editor_blocks(
-    editor: &View<Editor>,
+    editor: &Entity<Editor>,
     cx: &mut VisualTestContext,
 ) -> Vec<(DisplayRow, SharedString)> {
     let mut blocks = Vec::new();
-    cx.draw(gpui::Point::default(), AvailableSpace::min_size(), |cx| {
-        editor.update(cx, |editor, cx| {
-            let snapshot = editor.snapshot(cx);
-            blocks.extend(
-                snapshot
-                    .blocks_in_range(DisplayRow(0)..snapshot.max_point().row())
-                    .filter_map(|(row, block)| {
-                        let block_id = block.id();
-                        let name: SharedString = match block {
-                            Block::Custom(block) => {
-                                let mut element = block.render(&mut BlockContext {
-                                    context: cx,
-                                    anchor_x: px(0.),
-                                    gutter_dimensions: &GutterDimensions::default(),
-                                    line_height: px(0.),
-                                    em_width: px(0.),
-                                    max_width: px(0.),
-                                    block_id,
-                                    selected: false,
-                                    editor_style: &editor::EditorStyle::default(),
-                                });
-                                let element = element.downcast_mut::<Stateful<Div>>().unwrap();
-                                element
-                                    .interactivity()
-                                    .element_id
-                                    .clone()?
-                                    .try_into()
-                                    .ok()?
-                            }
-
-                            Block::FoldedBuffer { .. } => FILE_HEADER.into(),
-                            Block::ExcerptBoundary {
-                                starts_new_buffer, ..
-                            } => {
-                                if *starts_new_buffer {
-                                    FILE_HEADER.into()
-                                } else {
-                                    EXCERPT_HEADER.into()
+    cx.draw(
+        gpui::Point::default(),
+        AvailableSpace::min_size(),
+        |window, cx| {
+            editor.update(cx, |editor, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                blocks.extend(
+                    snapshot
+                        .blocks_in_range(DisplayRow(0)..snapshot.max_point().row())
+                        .filter_map(|(row, block)| {
+                            let block_id = block.id();
+                            let name: SharedString = match block {
+                                Block::Custom(block) => {
+                                    let mut element = block.render(&mut BlockContext {
+                                        app: cx,
+                                        window,
+                                        anchor_x: px(0.),
+                                        gutter_dimensions: &GutterDimensions::default(),
+                                        line_height: px(0.),
+                                        em_width: px(0.),
+                                        max_width: px(0.),
+                                        block_id,
+                                        selected: false,
+                                        editor_style: &editor::EditorStyle::default(),
+                                    });
+                                    let element = element.downcast_mut::<Stateful<Div>>().unwrap();
+                                    element
+                                        .interactivity()
+                                        .element_id
+                                        .clone()?
+                                        .try_into()
+                                        .ok()?
                                 }
-                            }
-                        };
 
-                        Some((row, name))
-                    }),
-            )
-        });
+                                Block::FoldedBuffer { .. } => FILE_HEADER.into(),
+                                Block::ExcerptBoundary {
+                                    starts_new_buffer, ..
+                                } => {
+                                    if *starts_new_buffer {
+                                        FILE_HEADER.into()
+                                    } else {
+                                        EXCERPT_HEADER.into()
+                                    }
+                                }
+                            };
 
-        div().into_any()
-    });
+                            Some((row, name))
+                        }),
+                )
+            });
+
+            div().into_any()
+        },
+    );
     blocks
 }

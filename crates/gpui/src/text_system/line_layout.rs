@@ -90,6 +90,14 @@ impl LineLayout {
             }
         }
 
+        if self.len == 1 {
+            if x > self.width / 2. {
+                return 1;
+            } else {
+                return 0;
+            }
+        }
+
         self.len
     }
 
@@ -121,9 +129,9 @@ impl LineLayout {
         &self,
         text: &str,
         wrap_width: Pixels,
+        max_lines: Option<usize>,
     ) -> SmallVec<[WrapBoundary; 1]> {
         let mut boundaries = SmallVec::new();
-
         let mut first_non_whitespace_ix = None;
         let mut last_candidate_ix = None;
         let mut last_candidate_x = px(0.);
@@ -174,7 +182,15 @@ impl LineLayout {
 
             let next_x = glyphs.peek().map_or(self.width, |(_, _, x)| *x);
             let width = next_x - last_boundary_x;
+
             if width > wrap_width && boundary > last_boundary {
+                // When used line_clamp, we should limit the number of lines.
+                if let Some(max_lines) = max_lines {
+                    if boundaries.len() >= max_lines - 1 {
+                        break;
+                    }
+                }
+
                 if let Some(last_candidate_ix) = last_candidate_ix.take() {
                     last_boundary = last_candidate_ix;
                     last_boundary_x = last_candidate_x;
@@ -182,7 +198,6 @@ impl LineLayout {
                     last_boundary = boundary;
                     last_boundary_x = x;
                 }
-
                 boundaries.push(last_boundary);
             }
             prev_ch = ch;
@@ -263,10 +278,34 @@ impl WrappedLineLayout {
     }
 
     /// The index corresponding to a given position in this layout for the given line height.
+    ///
+    /// See also [`Self::closest_index_for_position`].
     pub fn index_for_position(
+        &self,
+        position: Point<Pixels>,
+        line_height: Pixels,
+    ) -> Result<usize, usize> {
+        self._index_for_position(position, line_height, false)
+    }
+
+    /// The closest index to a given position in this layout for the given line height.
+    ///
+    /// Closest means the character boundary closest to the given position.
+    ///
+    /// See also [`LineLayout::closest_index_for_x`].
+    pub fn closest_index_for_position(
+        &self,
+        position: Point<Pixels>,
+        line_height: Pixels,
+    ) -> Result<usize, usize> {
+        self._index_for_position(position, line_height, true)
+    }
+
+    fn _index_for_position(
         &self,
         mut position: Point<Pixels>,
         line_height: Pixels,
+        closest: bool,
     ) -> Result<usize, usize> {
         let wrapped_line_ix = (position.y / line_height) as usize;
 
@@ -306,10 +345,16 @@ impl WrappedLineLayout {
         } else if position_in_unwrapped_line.x >= wrapped_line_end_x {
             Err(wrapped_line_end_index)
         } else {
-            Ok(self
-                .unwrapped_layout
-                .index_for_x(position_in_unwrapped_line.x)
-                .unwrap())
+            if closest {
+                Ok(self
+                    .unwrapped_layout
+                    .closest_index_for_x(position_in_unwrapped_line.x))
+            } else {
+                Ok(self
+                    .unwrapped_layout
+                    .index_for_x(position_in_unwrapped_line.x)
+                    .unwrap())
+            }
         }
     }
 
@@ -426,6 +471,7 @@ impl LineLayoutCache {
         font_size: Pixels,
         runs: &[FontRun],
         wrap_width: Option<Pixels>,
+        max_lines: Option<usize>,
     ) -> Arc<WrappedLineLayout>
     where
         Text: AsRef<str>,
@@ -456,7 +502,7 @@ impl LineLayoutCache {
             let text = SharedString::from(text);
             let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs);
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
-                unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width)
+                unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
             } else {
                 SmallVec::new()
             };

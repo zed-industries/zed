@@ -1,7 +1,8 @@
 use collections::{HashMap, HashSet};
 use git::diff::DiffHunkStatus;
 use gpui::{
-    Action, AppContext, Corner, CursorStyle, Hsla, Model, MouseButton, Subscription, Task, View,
+    Action, AppContext, Corner, CursorStyle, Focusable as _, Hsla, Model, MouseButton,
+    Subscription, Task,
 };
 use language::{Buffer, BufferId, Point};
 use multi_buffer::{
@@ -13,8 +14,8 @@ use std::{ops::Range, sync::Arc};
 use sum_tree::TreeMap;
 use text::OffsetRangeExt;
 use ui::{
-    prelude::*, ActiveTheme, ContextMenu, IconButtonShape, InteractiveElement, IntoElement,
-    ParentElement, PopoverMenu, Styled, Tooltip, ViewContext, VisualContext,
+    prelude::*, ActiveTheme, Context, Context, ContextMenu, IconButtonShape, InteractiveElement,
+    IntoElement, ParentElement, PopoverMenu, Styled, Tooltip, Window,
 };
 use util::RangeExt;
 use workspace::Item;
@@ -55,7 +56,7 @@ pub(super) struct ExpandedHunk {
 pub(crate) struct DiffMapSnapshot(TreeMap<BufferId, git::diff::BufferDiff>);
 
 pub(crate) struct DiffBaseState {
-    pub(crate) change_set: Model<BufferChangeSet>,
+    pub(crate) diff: Model<BufferChangeSet>,
     pub(crate) last_version: Option<usize>,
     _subscription: Subscription,
 }
@@ -79,31 +80,32 @@ impl DiffMap {
         self.snapshot.clone()
     }
 
-    pub fn add_change_set(
+    pub fn add_diff(
         &mut self,
-        change_set: Model<BufferChangeSet>,
-        cx: &mut ViewContext<Editor>,
+        diff: Model<BufferChangeSet>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
     ) {
-        let buffer_id = change_set.read(cx).buffer_id;
+        let buffer_id = diff.read(cx).buffer_id;
         self.snapshot
             .0
-            .insert(buffer_id, change_set.read(cx).diff_to_buffer.clone());
+            .insert(buffer_id, diff.read(cx).diff_to_buffer.clone());
         self.diff_bases.insert(
             buffer_id,
             DiffBaseState {
                 last_version: None,
-                _subscription: cx.observe(&change_set, move |editor, change_set, cx| {
+                _subscription: cx.observe_in(&diff, window, move |editor, diff, window, cx| {
                     editor
                         .diff_map
                         .snapshot
                         .0
-                        .insert(buffer_id, change_set.read(cx).diff_to_buffer.clone());
-                    Editor::sync_expanded_diff_hunks(&mut editor.diff_map, buffer_id, cx);
+                        .insert(buffer_id, diff.read(cx).diff_to_buffer.clone());
+                    Editor::sync_expanded_diff_hunks(&mut editor.diff_map, buffer_id, window, cx);
                 }),
-                change_set,
+                diff,
             },
         );
-        Editor::sync_expanded_diff_hunks(self, buffer_id, cx);
+        Editor::sync_expanded_diff_hunks(self, buffer_id, window, cx);
     }
 
     pub fn hunks(&self, include_folded: bool) -> impl Iterator<Item = &ExpandedHunk> {
@@ -204,23 +206,34 @@ impl Editor {
     pub(super) fn toggle_hovered_hunk(
         &mut self,
         hovered_hunk: &HoveredHunk,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
     ) {
-        let editor_snapshot = self.snapshot(cx);
+        let editor_snapshot = self.snapshot(window, cx);
         if let Some(diff_hunk) = to_diff_hunk(hovered_hunk, &editor_snapshot.buffer_snapshot) {
-            self.toggle_hunks_expanded(vec![diff_hunk], cx);
-            self.change_selections(None, cx, |selections| selections.refresh());
+            self.toggle_hunks_expanded(vec![diff_hunk], window, cx);
+            self.change_selections(None, window, cx, |selections| selections.refresh());
         }
     }
 
-    pub fn toggle_hunk_diff(&mut self, _: &ToggleHunkDiff, cx: &mut ViewContext<Self>) {
-        let snapshot = self.snapshot(cx);
+    pub fn toggle_hunk_diff(
+        &mut self,
+        _: &ToggleHunkDiff,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.snapshot(window, cx);
         let selections = self.selections.all(cx);
-        self.toggle_hunks_expanded(hunks_for_selections(&snapshot, &selections), cx);
+        self.toggle_hunks_expanded(hunks_for_selections(&snapshot, &selections), window, cx);
     }
 
-    pub fn expand_all_hunk_diffs(&mut self, _: &ExpandAllHunkDiffs, cx: &mut ViewContext<Self>) {
-        let snapshot = self.snapshot(cx);
+    pub fn expand_all_hunk_diffs(
+        &mut self,
+        _: &ExpandAllHunkDiffs,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.snapshot(window, cx);
         let display_rows_with_expanded_hunks = self
             .diff_map
             .hunks(false)
@@ -251,27 +264,28 @@ impl Editor {
                     display_rows_with_expanded_hunks.get(&hunk_display_row_range.start.row());
                 row_range_end.is_none() || row_range_end != Some(&hunk_display_row_range.end.row())
             });
-        self.toggle_hunks_expanded(hunks.collect(), cx);
+        self.toggle_hunks_expanded(hunks.collect(), window, cx);
     }
 
     fn toggle_hunks_expanded(
         &mut self,
         hunks_to_toggle: Vec<MultiBufferDiffHunk>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         if self.diff_map.expand_all {
             return;
         }
 
         let previous_toggle_task = self.diff_map.hunk_update_tasks.remove(&None);
-        let new_toggle_task = cx.spawn(move |editor, mut cx| async move {
+        let new_toggle_task = cx.spawn_in(window, move |editor, mut cx| async move {
             if let Some(task) = previous_toggle_task {
                 task.await;
             }
 
             editor
-                .update(&mut cx, |editor, cx| {
-                    let snapshot = editor.snapshot(cx);
+                .update_in(&mut cx, |editor, window, cx| {
+                    let snapshot = editor.snapshot(window, cx);
                     let mut hunks_to_toggle = hunks_to_toggle.into_iter().fuse().peekable();
                     let mut highlights_to_remove = Vec::with_capacity(editor.diff_map.hunks.len());
                     let mut blocks_to_remove = HashSet::default();
@@ -349,7 +363,7 @@ impl Editor {
                     editor.remove_highlighted_rows::<DiffRowHighlight>(highlights_to_remove, cx);
                     editor.remove_blocks(blocks_to_remove, None, cx);
                     for hunk in hunks_to_expand {
-                        editor.expand_diff_hunk(None, &hunk, cx);
+                        editor.expand_diff_hunk(None, &hunk, window, cx);
                     }
                     cx.notify();
                 })
@@ -365,7 +379,8 @@ impl Editor {
         &mut self,
         diff_base_buffer: Option<Model<Buffer>>,
         hunk: &HoveredHunk,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
     ) -> Option<()> {
         let buffer = self.buffer.clone();
         let multi_buffer_snapshot = buffer.read(cx).snapshot(cx);
@@ -375,7 +390,7 @@ impl Editor {
             self.diff_map
                 .diff_bases
                 .get(&buffer_id)?
-                .change_set
+                .diff
                 .read(cx)
                 .base_text
                 .clone()
@@ -405,7 +420,13 @@ impl Editor {
                 blocks = self.insert_blocks(
                     [
                         self.hunk_header_block(&hunk, cx),
-                        Self::deleted_text_block(hunk, diff_base_buffer, deleted_text_lines, cx),
+                        Self::deleted_text_block(
+                            hunk,
+                            diff_base_buffer,
+                            deleted_text_lines,
+                            window,
+                            cx,
+                        ),
                     ],
                     None,
                     cx,
@@ -430,7 +451,13 @@ impl Editor {
                 blocks = self.insert_blocks(
                     [
                         self.hunk_header_block(&hunk, cx),
-                        Self::deleted_text_block(hunk, diff_base_buffer, deleted_text_lines, cx),
+                        Self::deleted_text_block(
+                            hunk,
+                            diff_base_buffer,
+                            deleted_text_lines,
+                            window,
+                            cx,
+                        ),
                     ],
                     None,
                     cx,
@@ -454,7 +481,8 @@ impl Editor {
     fn apply_diff_hunks_in_range(
         &mut self,
         range: Range<Anchor>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
     ) -> Option<()> {
         let multi_buffer = self.buffer.read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
@@ -471,7 +499,7 @@ impl Editor {
             });
 
         if let Some(project) = self.project.clone() {
-            self.save(true, project, cx).detach_and_log_err(cx);
+            self.save(true, project, window, cx).detach_and_log_err(cx);
         }
 
         None
@@ -480,7 +508,8 @@ impl Editor {
     pub(crate) fn apply_all_diff_hunks(
         &mut self,
         _: &ApplyAllDiffHunks,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         let buffers = self.buffer.read(cx).all_buffers();
         for branch_buffer in buffers {
@@ -490,19 +519,20 @@ impl Editor {
         }
 
         if let Some(project) = self.project.clone() {
-            self.save(true, project, cx).detach_and_log_err(cx);
+            self.save(true, project, window, cx).detach_and_log_err(cx);
         }
     }
 
     pub(crate) fn apply_selected_diff_hunks(
         &mut self,
         _: &ApplyDiffHunk,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
-        let snapshot = self.snapshot(cx);
+        let snapshot = self.snapshot(window, cx);
         let hunks = hunks_for_selections(&snapshot, &self.selections.all(cx));
         let mut ranges_by_buffer = HashMap::default();
-        self.transact(cx, |editor, cx| {
+        self.transact(window, cx, |editor, _, cx| {
             for hunk in hunks {
                 if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
                     ranges_by_buffer
@@ -520,7 +550,7 @@ impl Editor {
         });
 
         if let Some(project) = self.project.clone() {
-            self.save(true, project, cx).detach_and_log_err(cx);
+            self.save(true, project, window, cx).detach_and_log_err(cx);
         }
     }
 
@@ -533,7 +563,7 @@ impl Editor {
     fn hunk_header_block(
         &self,
         hunk: &HoveredHunk,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> BlockProperties<Anchor> {
         let is_branch_buffer = self
             .buffer
@@ -557,7 +587,7 @@ impl Editor {
             style: BlockStyle::Sticky,
             priority: 0,
             render: Arc::new({
-                let editor = cx.view().clone();
+                let editor = cx.entity().clone();
                 let hunk = hunk.clone();
                 let has_multiple_hunks = self.has_multiple_hunks(cx);
 
@@ -568,7 +598,7 @@ impl Editor {
                     h_flex()
                         .id(cx.block_id)
                         .block_mouse_down()
-                        .h(cx.line_height())
+                        .h(cx.window.line_height())
                         .w_full()
                         .border_t_1()
                         .border_color(border_color)
@@ -576,16 +606,18 @@ impl Editor {
                         .child(
                             div()
                                 .id("gutter-strip")
-                                .w(EditorElement::diff_hunk_strip_width(cx.line_height()))
+                                .w(EditorElement::diff_hunk_strip_width(
+                                    cx.window.line_height(),
+                                ))
                                 .h_full()
                                 .bg(gutter_color)
                                 .cursor(CursorStyle::PointingHand)
                                 .on_click({
                                     let editor = editor.clone();
                                     let hunk = hunk.clone();
-                                    move |_event, cx| {
+                                    move |_event, window, cx| {
                                         editor.update(cx, |editor, cx| {
-                                            editor.toggle_hovered_hunk(&hunk, cx);
+                                            editor.toggle_hovered_hunk(&hunk, window, cx);
                                         });
                                     }
                                 }),
@@ -606,11 +638,12 @@ impl Editor {
                                                     .disabled(!has_multiple_hunks)
                                                     .tooltip({
                                                         let focus_handle = editor.focus_handle(cx);
-                                                        move |cx| {
+                                                        move |window, cx| {
                                                             Tooltip::for_action_in(
                                                                 "Next Hunk",
                                                                 &GoToHunk,
                                                                 &focus_handle,
+                                                                window,
                                                                 cx,
                                                             )
                                                         }
@@ -618,10 +651,11 @@ impl Editor {
                                                     .on_click({
                                                         let editor = editor.clone();
                                                         let hunk = hunk.clone();
-                                                        move |_event, cx| {
+                                                        move |_event, window, cx| {
                                                             editor.update(cx, |editor, cx| {
                                                                 editor.go_to_subsequent_hunk(
                                                                     hunk.multi_buffer_range.end,
+                                                                    window,
                                                                     cx,
                                                                 );
                                                             });
@@ -635,11 +669,12 @@ impl Editor {
                                                     .disabled(!has_multiple_hunks)
                                                     .tooltip({
                                                         let focus_handle = editor.focus_handle(cx);
-                                                        move |cx| {
+                                                        move |window, cx| {
                                                             Tooltip::for_action_in(
                                                                 "Previous Hunk",
                                                                 &GoToPrevHunk,
                                                                 &focus_handle,
+                                                                window,
                                                                 cx,
                                                             )
                                                         }
@@ -647,10 +682,11 @@ impl Editor {
                                                     .on_click({
                                                         let editor = editor.clone();
                                                         let hunk = hunk.clone();
-                                                        move |_event, cx| {
+                                                        move |_event, window, cx| {
                                                             editor.update(cx, |editor, cx| {
                                                                 editor.go_to_preceding_hunk(
                                                                     hunk.multi_buffer_range.start,
+                                                                    window,
                                                                     cx,
                                                                 );
                                                             });
@@ -664,11 +700,12 @@ impl Editor {
                                                 .icon_size(IconSize::Small)
                                                 .tooltip({
                                                     let focus_handle = editor.focus_handle(cx);
-                                                    move |cx| {
+                                                    move |window, cx| {
                                                         Tooltip::for_action_in(
                                                             "Discard Hunk",
                                                             &RevertSelectedHunks,
                                                             &focus_handle,
+                                                            window,
                                                             cx,
                                                         )
                                                     }
@@ -676,9 +713,13 @@ impl Editor {
                                                 .on_click({
                                                     let editor = editor.clone();
                                                     let hunk = hunk.clone();
-                                                    move |_event, cx| {
+                                                    move |_event, window, cx| {
                                                         editor.update(cx, |editor, cx| {
-                                                            editor.revert_hunk(hunk.clone(), cx);
+                                                            editor.revert_hunk(
+                                                                hunk.clone(),
+                                                                window,
+                                                                cx,
+                                                            );
                                                         });
                                                     }
                                                 }),
@@ -692,11 +733,12 @@ impl Editor {
                                                         .tooltip({
                                                             let focus_handle =
                                                                 editor.focus_handle(cx);
-                                                            move |cx| {
+                                                            move |window, cx| {
                                                                 Tooltip::for_action_in(
                                                                     "Apply Hunk",
                                                                     &ApplyDiffHunk,
                                                                     &focus_handle,
+                                                                    window,
                                                                     cx,
                                                                 )
                                                             }
@@ -704,12 +746,13 @@ impl Editor {
                                                         .on_click({
                                                             let editor = editor.clone();
                                                             let hunk = hunk.clone();
-                                                            move |_event, cx| {
+                                                            move |_event, window, cx| {
                                                                 editor.update(cx, |editor, cx| {
                                                                     editor
                                                                         .apply_diff_hunks_in_range(
                                                                             hunk.multi_buffer_range
                                                                                 .clone(),
+                                                                            window,
                                                                             cx,
                                                                         );
                                                                 });
@@ -720,7 +763,7 @@ impl Editor {
                                                 this.child({
                                                     let focus = editor.focus_handle(cx);
                                                     PopoverMenu::new("hunk-controls-dropdown")
-                                                        .trigger(
+                                                        .trigger_with_tooltip(
                                                             IconButton::new(
                                                                 "toggle_editor_selections_icon",
                                                                 IconName::EllipsisVertical,
@@ -731,27 +774,17 @@ impl Editor {
                                                             .toggle_state(
                                                                 hunk_controls_menu_handle
                                                                     .is_deployed(),
-                                                            )
-                                                            .when(
-                                                                !hunk_controls_menu_handle
-                                                                    .is_deployed(),
-                                                                |this| {
-                                                                    this.tooltip(|cx| {
-                                                                        Tooltip::text(
-                                                                            "Hunk Controls",
-                                                                            cx,
-                                                                        )
-                                                                    })
-                                                                },
                                                             ),
+                                                            Tooltip::simple("Hunk Controls", cx),
                                                         )
                                                         .anchor(Corner::TopRight)
                                                         .with_handle(hunk_controls_menu_handle)
-                                                        .menu(move |cx| {
+                                                        .menu(move |window, cx| {
                                                             let focus = focus.clone();
                                                             let menu = ContextMenu::build(
+                                                                window,
                                                                 cx,
-                                                                move |menu, _| {
+                                                                move |menu, _, _| {
                                                                     menu.context(focus.clone())
                                                                         .action(
                                                                             "Discard All Hunks",
@@ -773,11 +806,12 @@ impl Editor {
                                             .icon_size(IconSize::Small)
                                             .tooltip({
                                                 let focus_handle = editor.focus_handle(cx);
-                                                move |cx| {
+                                                move |window, cx| {
                                                     Tooltip::for_action_in(
                                                         "Collapse Hunk",
                                                         &ToggleHunkDiff,
                                                         &focus_handle,
+                                                        window,
                                                         cx,
                                                     )
                                                 }
@@ -785,9 +819,10 @@ impl Editor {
                                             .on_click({
                                                 let editor = editor.clone();
                                                 let hunk = hunk.clone();
-                                                move |_event, cx| {
+                                                move |_event, window, cx| {
                                                     editor.update(cx, |editor, cx| {
-                                                        editor.toggle_hovered_hunk(&hunk, cx);
+                                                        editor
+                                                            .toggle_hovered_hunk(&hunk, window, cx);
                                                     });
                                                 }
                                             }),
@@ -804,7 +839,8 @@ impl Editor {
         hunk: &HoveredHunk,
         diff_base_buffer: Model<Buffer>,
         deleted_text_height: u32,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
     ) -> BlockProperties<Anchor> {
         let gutter_color = match hunk.status {
             DiffHunkStatus::Added => unreachable!(),
@@ -813,8 +849,8 @@ impl Editor {
         };
         let deleted_hunk_color = deleted_hunk_color(cx);
         let (editor_height, editor_with_deleted_text) =
-            editor_with_deleted_text(diff_base_buffer, deleted_hunk_color, hunk, cx);
-        let editor = cx.view().clone();
+            editor_with_deleted_text(diff_base_buffer, deleted_hunk_color, hunk, window, cx);
+        let editor = cx.entity().clone();
         let hunk = hunk.clone();
         let height = editor_height.max(deleted_text_height);
         BlockProperties {
@@ -823,14 +859,14 @@ impl Editor {
             style: BlockStyle::Flex,
             priority: 0,
             render: Arc::new(move |cx| {
-                let width = EditorElement::diff_hunk_strip_width(cx.line_height());
-                let gutter_dimensions = editor.read(cx.context).gutter_dimensions;
+                let width = EditorElement::diff_hunk_strip_width(cx.window.line_height());
+                let gutter_dimensions = editor.read(cx.app).gutter_dimensions;
 
                 h_flex()
                     .id(cx.block_id)
                     .block_mouse_down()
                     .bg(deleted_hunk_color)
-                    .h(height as f32 * cx.line_height())
+                    .h(height as f32 * cx.window.line_height())
                     .w_full()
                     .child(
                         h_flex()
@@ -853,9 +889,9 @@ impl Editor {
                                     .on_mouse_down(MouseButton::Left, {
                                         let editor = editor.clone();
                                         let hunk = hunk.clone();
-                                        move |_event, cx| {
+                                        move |_event, window, cx| {
                                             editor.update(cx, |editor, cx| {
-                                                editor.toggle_hovered_hunk(&hunk, cx);
+                                                editor.toggle_hovered_hunk(&hunk, window, cx);
                                             });
                                         }
                                     }),
@@ -867,7 +903,7 @@ impl Editor {
         }
     }
 
-    pub(super) fn clear_expanded_diff_hunks(&mut self, cx: &mut ViewContext<Editor>) -> bool {
+    pub(super) fn clear_expanded_diff_hunks(&mut self, cx: &mut Context<Editor>) -> bool {
         if self.diff_map.expand_all {
             return false;
         }
@@ -890,27 +926,28 @@ impl Editor {
     pub(super) fn sync_expanded_diff_hunks(
         diff_map: &mut DiffMap,
         buffer_id: BufferId,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         let diff_base_state = diff_map.diff_bases.get_mut(&buffer_id);
         let mut diff_base_buffer = None;
         let mut diff_base_buffer_unchanged = true;
         if let Some(diff_base_state) = diff_base_state {
-            diff_base_state.change_set.update(cx, |change_set, _| {
-                if diff_base_state.last_version != Some(change_set.base_text_version) {
-                    diff_base_state.last_version = Some(change_set.base_text_version);
+            diff_base_state.diff.update(cx, |diff, _| {
+                if diff_base_state.last_version != Some(diff.base_text_version) {
+                    diff_base_state.last_version = Some(diff.base_text_version);
                     diff_base_buffer_unchanged = false;
                 }
-                diff_base_buffer = change_set.base_text.clone();
+                diff_base_buffer = diff.base_text.clone();
             })
         }
 
         diff_map.hunk_update_tasks.remove(&Some(buffer_id));
 
-        let new_sync_task = cx.spawn(move |editor, mut cx| async move {
+        let new_sync_task = cx.spawn_in(window, move |editor, mut cx| async move {
             editor
-                .update(&mut cx, |editor, cx| {
-                    let snapshot = editor.snapshot(cx);
+                .update_in(&mut cx, |editor, window, cx| {
+                    let snapshot = editor.snapshot(window, cx);
                     let mut recalculated_hunks = snapshot
                         .diff_map
                         .diff_hunks(&snapshot.buffer_snapshot)
@@ -1040,7 +1077,12 @@ impl Editor {
 
                     if let Some(diff_base_buffer) = &diff_base_buffer {
                         for hunk in hunks_to_reexpand {
-                            editor.expand_diff_hunk(Some(diff_base_buffer.clone()), &hunk, cx);
+                            editor.expand_diff_hunk(
+                                Some(diff_base_buffer.clone()),
+                                &hunk,
+                                window,
+                                cx,
+                            );
                         }
                     }
                 })
@@ -1053,10 +1095,15 @@ impl Editor {
         );
     }
 
-    fn go_to_subsequent_hunk(&mut self, position: Anchor, cx: &mut ViewContext<Self>) {
-        let snapshot = self.snapshot(cx);
+    fn go_to_subsequent_hunk(
+        &mut self,
+        position: Anchor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.snapshot(window, cx);
         let position = position.to_point(&snapshot.buffer_snapshot);
-        if let Some(hunk) = self.go_to_hunk_after_position(&snapshot, position, cx) {
+        if let Some(hunk) = self.go_to_hunk_after_position(&snapshot, position, window, cx) {
             let multi_buffer_start = snapshot
                 .buffer_snapshot
                 .anchor_before(Point::new(hunk.row_range.start.0, 0));
@@ -1070,15 +1117,21 @@ impl Editor {
                     status: hunk_status(&hunk),
                     diff_base_byte_range: hunk.diff_base_byte_range,
                 },
+                window,
                 cx,
             );
         }
     }
 
-    fn go_to_preceding_hunk(&mut self, position: Anchor, cx: &mut ViewContext<Self>) {
-        let snapshot = self.snapshot(cx);
+    fn go_to_preceding_hunk(
+        &mut self,
+        position: Anchor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.snapshot(window, cx);
         let position = position.to_point(&snapshot.buffer_snapshot);
-        let hunk = self.go_to_hunk_before_position(&snapshot, position, cx);
+        let hunk = self.go_to_hunk_before_position(&snapshot, position, window, cx);
         if let Some(hunk) = hunk {
             let multi_buffer_start = snapshot
                 .buffer_snapshot
@@ -1093,6 +1146,7 @@ impl Editor {
                     status: hunk_status(&hunk),
                     diff_base_byte_range: hunk.diff_base_byte_range,
                 },
+                window,
                 cx,
             );
         }
@@ -1137,12 +1191,12 @@ fn editor_with_deleted_text(
     diff_base_buffer: Model<Buffer>,
     deleted_color: Hsla,
     hunk: &HoveredHunk,
-    cx: &mut ViewContext<Editor>,
-) -> (u32, View<Editor>) {
-    let parent_editor = cx.view().downgrade();
-    let editor = cx.new_view(|cx| {
-        let multi_buffer =
-            cx.new_model(|_| MultiBuffer::without_headers(language::Capability::ReadOnly));
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) -> (u32, Model<Editor>) {
+    let parent_editor = cx.entity().downgrade();
+    let editor = cx.new(|cx| {
+        let multi_buffer = cx.new(|_| MultiBuffer::without_headers(language::Capability::ReadOnly));
         multi_buffer.update(cx, |multi_buffer, cx| {
             multi_buffer.push_excerpts(
                 diff_base_buffer,
@@ -1154,7 +1208,7 @@ fn editor_with_deleted_text(
             );
         });
 
-        let mut editor = Editor::for_multibuffer(multi_buffer, None, true, cx);
+        let mut editor = Editor::for_multibuffer(multi_buffer, None, true, window, cx);
         editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
         editor.set_show_wrap_guides(false, cx);
         editor.set_show_gutter(false, cx);
@@ -1165,7 +1219,7 @@ fn editor_with_deleted_text(
         editor.set_show_code_actions(false, cx);
         editor.scroll_manager.set_forbid_vertical_scroll(true);
         editor.set_read_only(true);
-        editor.set_show_inline_completions(Some(false), cx);
+        editor.set_show_inline_completions(Some(false), window, cx);
 
         enum DeletedBlockRowHighlight {}
         editor.highlight_rows::<DeletedBlockRowHighlight>(
@@ -1175,21 +1229,25 @@ fn editor_with_deleted_text(
             cx,
         );
         editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
-        editor
-            ._subscriptions
-            .extend([cx.on_blur(&editor.focus_handle, |editor, cx| {
-                editor.change_selections(None, cx, |s| {
+        editor._subscriptions.extend([cx.on_blur(
+            &editor.focus_handle,
+            window,
+            |editor, window, cx| {
+                editor.change_selections(None, window, cx, |s| {
                     s.try_cancel();
                 });
-            })]);
+            },
+        )]);
 
         editor
             .register_action::<RevertSelectedHunks>({
                 let hunk = hunk.clone();
                 let parent_editor = parent_editor.clone();
-                move |_, cx| {
+                move |_, window, cx| {
                     parent_editor
-                        .update(cx, |editor, cx| editor.revert_hunk(hunk.clone(), cx))
+                        .update(cx, |editor, cx| {
+                            editor.revert_hunk(hunk.clone(), window, cx)
+                        })
                         .ok();
                 }
             })
@@ -1197,10 +1255,10 @@ fn editor_with_deleted_text(
         editor
             .register_action::<ToggleHunkDiff>({
                 let hunk = hunk.clone();
-                move |_, cx| {
+                move |_, window, cx| {
                     parent_editor
                         .update(cx, |editor, cx| {
-                            editor.toggle_hovered_hunk(&hunk, cx);
+                            editor.toggle_hovered_hunk(&hunk, window, cx);
                         })
                         .ok();
                 }
@@ -1365,7 +1423,7 @@ mod tests {
             project.create_local_buffer(text_2.as_str(), None, cx)
         });
 
-        let multibuffer = cx.new_model(|cx| {
+        let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
@@ -1412,27 +1470,30 @@ mod tests {
             multibuffer
         });
 
-        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, false, cx));
+        let editor = cx
+            .add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, false, window, cx));
         editor
-            .update(cx, |editor, cx| {
+            .update(cx, |editor, window, cx| {
                 for (buffer, diff_base) in [
                     (buffer_1.clone(), diff_base_1),
                     (buffer_2.clone(), diff_base_2),
                 ] {
-                    let change_set = cx.new_model(|cx| {
+                    let diff = cx.new(|cx| {
                         BufferChangeSet::new_with_base_text(
                             diff_base.to_string(),
                             buffer.read(cx).text_snapshot(),
                             cx,
                         )
                     });
-                    editor.diff_map.add_change_set(change_set, cx)
+                    editor.diff_map.add_diff(diff, window, cx)
                 }
             })
             .unwrap();
         cx.background_executor.run_until_parked();
 
-        let snapshot = editor.update(cx, |editor, cx| editor.snapshot(cx)).unwrap();
+        let snapshot = editor
+            .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+            .unwrap();
 
         assert_eq!(
             snapshot.buffer_snapshot.text(),

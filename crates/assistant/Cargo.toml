@@ -1,8 +1,8 @@
 [package]
 name = "assistant"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -21,16 +21,14 @@ test-support = [
 ]
 
 [dependencies]
-anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
-assets.workspace = true
+assistant_context_editor.workspace = true
+assistant_settings.workspace = true
 assistant_slash_command.workspace = true
+assistant_slash_commands.workspace = true
 assistant_tool.workspace = true
 async-watch.workspace = true
-cargo_toml.workspace = true
-chrono.workspace = true
 client.workspace = true
-clock.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 context_server.workspace = true
@@ -39,13 +37,7 @@ editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
-fuzzy.workspace = true
-globset.workspace = true
 gpui.workspace = true
-handlebars.workspace = true
-heed.workspace = true
-html_to_markdown.workspace = true
-http_client.workspace = true
 indexed_docs.workspace = true
 indoc.workspace = true
 language.workspace = true
@@ -54,40 +46,30 @@ language_model_selector.workspace = true
 language_models.workspace = true
 log.workspace = true
 lsp.workspace = true
-markdown.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
-ollama = { workspace = true, features = ["schemars"] }
-open_ai = { workspace = true, features = ["schemars"] }
-ordered-float.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
-picker.workspace = true
 project.workspace = true
+prompt_library.workspace = true
 proto.workspace = true
-regex.workspace = true
-release_channel.workspace = true
 rope.workspace = true
-rpc.workspace = true
 schemars.workspace = true
 search.workspace = true
 semantic_index.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 settings.workspace = true
 similar.workspace = true
-smallvec.workspace = true
 smol.workspace = true
-strum.workspace = true
+streaming_diff.workspace = true
+telemetry.workspace = true
 telemetry_events.workspace = true
 terminal.workspace = true
 terminal_view.workspace = true
 text.workspace = true
 theme.workspace = true
-toml.workspace = true
 ui.workspace = true
 util.workspace = true
-uuid.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 

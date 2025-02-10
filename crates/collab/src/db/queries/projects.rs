@@ -333,6 +333,9 @@ impl Database {
                         scan_id: ActiveValue::set(update.scan_id as i64),
                         branch: ActiveValue::set(repository.branch.clone()),
                         is_deleted: ActiveValue::set(false),
+                        current_merge_conflicts: ActiveValue::Set(Some(
+                            serde_json::to_string(&repository.current_merge_conflicts).unwrap(),
+                        )),
                     },
                 ))
                 .on_conflict(
@@ -360,6 +363,8 @@ impl Database {
                         update.updated_repositories.iter().flat_map(
                             |repository: &proto::RepositoryEntry| {
                                 repository.updated_statuses.iter().map(|status_entry| {
+                                    let (repo_path, status_kind, first_status, second_status) =
+                                        proto_status_to_db(status_entry.clone());
                                     worktree_repository_statuses::ActiveModel {
                                         project_id: ActiveValue::set(project_id),
                                         worktree_id: ActiveValue::set(worktree_id),
@@ -368,8 +373,11 @@ impl Database {
                                         ),
                                         scan_id: ActiveValue::set(update.scan_id as i64),
                                         is_deleted: ActiveValue::set(false),
-                                        repo_path: ActiveValue::set(status_entry.repo_path.clone()),
-                                        status: ActiveValue::set(status_entry.status as i64),
+                                        repo_path: ActiveValue::set(repo_path),
+                                        status: ActiveValue::set(0),
+                                        status_kind: ActiveValue::set(status_kind),
+                                        first_status: ActiveValue::set(first_status),
+                                        second_status: ActiveValue::set(second_status),
                                     }
                                 })
                             },
@@ -384,7 +392,9 @@ impl Database {
                         ])
                         .update_columns([
                             worktree_repository_statuses::Column::ScanId,
-                            worktree_repository_statuses::Column::Status,
+                            worktree_repository_statuses::Column::StatusKind,
+                            worktree_repository_statuses::Column::FirstStatus,
+                            worktree_repository_statuses::Column::SecondStatus,
                         ])
                         .to_owned(),
                     )
@@ -759,11 +769,15 @@ impl Database {
                     let mut updated_statuses = Vec::new();
                     while let Some(status_entry) = repository_statuses.next().await {
                         let status_entry: worktree_repository_statuses::Model = status_entry?;
-                        updated_statuses.push(proto::StatusEntry {
-                            repo_path: status_entry.repo_path,
-                            status: status_entry.status as i32,
-                        });
+                        updated_statuses.push(db_status_to_proto(status_entry)?);
                     }
+
+                    let current_merge_conflicts = db_repository_entry
+                        .current_merge_conflicts
+                        .as_ref()
+                        .map(|conflicts| serde_json::from_str(&conflicts))
+                        .transpose()?
+                        .unwrap_or_default();
 
                     worktree.repository_entries.insert(
                         db_repository_entry.work_directory_id as u64,
@@ -772,6 +786,7 @@ impl Database {
                             branch: db_repository_entry.branch,
                             updated_statuses,
                             removed_statuses: Vec::new(),
+                            current_merge_conflicts,
                         },
                     );
                 }

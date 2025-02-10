@@ -1,6 +1,6 @@
 use std::{
     cmp::Ordering,
-    ops::{Add, AddAssign, Sub},
+    ops::{Add, AddAssign, Range, Sub},
 };
 
 /// A zero-indexed point in a text buffer consisting of a row and column.
@@ -18,6 +18,16 @@ impl Point {
 
     pub fn new(row: u32, column: u32) -> Self {
         Point { row, column }
+    }
+
+    pub fn row_range(range: Range<u32>) -> Range<Self> {
+        Point {
+            row: range.start,
+            column: 0,
+        }..Point {
+            row: range.end,
+            column: 0,
+        }
     }
 
     pub fn zero() -> Self {

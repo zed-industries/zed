@@ -1,89 +1,44 @@
 use ::settings::Settings;
-use git::repository::GitFileStatus;
-use gpui::{actions, AppContext, Context, Global, Hsla, Model};
-use settings::GitPanelSettings;
-use ui::{Color, Icon, IconName, IntoElement, SharedString};
+use git::status::FileStatus;
+use git_panel_settings::GitPanelSettings;
+use gpui::App;
+use project_diff::ProjectDiff;
+use ui::{ActiveTheme, Color, Icon, IconName, IntoElement};
 
+pub mod branch_picker;
 pub mod git_panel;
-mod settings;
+mod git_panel_settings;
+pub mod project_diff;
+pub mod repository_selector;
 
-actions!(
-    git_ui,
-    [
-        StageAll,
-        UnstageAll,
-        RevertAll,
-        CommitStagedChanges,
-        CommitAllChanges,
-        ClearMessage
-    ]
-);
-
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);
-    let git_state = cx.new_model(|_cx| GitState::new());
-    cx.set_global(GlobalGitState(git_state));
+    branch_picker::init(cx);
+    cx.observe_new(ProjectDiff::register).detach();
 }
-
-struct GlobalGitState(Model<GitState>);
-
-impl Global for GlobalGitState {}
-
-pub struct GitState {
-    commit_message: Option<SharedString>,
-}
-
-impl GitState {
-    pub fn new() -> Self {
-        GitState {
-            commit_message: None,
-        }
-    }
-
-    pub fn set_message(&mut self, message: Option<SharedString>) {
-        self.commit_message = message;
-    }
-
-    pub fn clear_message(&mut self) {
-        self.commit_message = None;
-    }
-
-    pub fn get_global(cx: &mut AppContext) -> Model<GitState> {
-        cx.global::<GlobalGitState>().0.clone()
-    }
-}
-
-const ADDED_COLOR: Hsla = Hsla {
-    h: 142. / 360.,
-    s: 0.68,
-    l: 0.45,
-    a: 1.0,
-};
-const MODIFIED_COLOR: Hsla = Hsla {
-    h: 48. / 360.,
-    s: 0.76,
-    l: 0.47,
-    a: 1.0,
-};
-const REMOVED_COLOR: Hsla = Hsla {
-    h: 355. / 360.,
-    s: 0.65,
-    l: 0.65,
-    a: 1.0,
-};
 
 // TODO: Add updated status colors to theme
-pub fn git_status_icon(status: GitFileStatus) -> impl IntoElement {
-    match status {
-        GitFileStatus::Added | GitFileStatus::Untracked => {
-            Icon::new(IconName::SquarePlus).color(Color::Custom(ADDED_COLOR))
-        }
-        GitFileStatus::Modified => {
-            Icon::new(IconName::SquareDot).color(Color::Custom(MODIFIED_COLOR))
-        }
-        GitFileStatus::Conflict => Icon::new(IconName::Warning).color(Color::Custom(REMOVED_COLOR)),
-        GitFileStatus::Deleted => {
-            Icon::new(IconName::SquareMinus).color(Color::Custom(REMOVED_COLOR))
-        }
-    }
+pub fn git_status_icon(status: FileStatus, cx: &App) -> impl IntoElement {
+    let (icon_name, color) = if status.is_conflicted() {
+        (
+            IconName::Warning,
+            cx.theme().colors().version_control_conflict,
+        )
+    } else if status.is_deleted() {
+        (
+            IconName::SquareMinus,
+            cx.theme().colors().version_control_deleted,
+        )
+    } else if status.is_modified() {
+        (
+            IconName::SquareDot,
+            cx.theme().colors().version_control_modified,
+        )
+    } else {
+        (
+            IconName::SquarePlus,
+            cx.theme().colors().version_control_added,
+        )
+    };
+    Icon::new(icon_name).color(Color::Custom(color))
 }

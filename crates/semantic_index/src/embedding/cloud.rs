@@ -1,5 +1,5 @@
 use crate::{Embedding, EmbeddingProvider, TextToEmbed};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use client::{proto, Client};
 use collections::HashMap;
 use futures::{future::BoxFuture, FutureExt};

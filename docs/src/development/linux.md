@@ -126,10 +126,6 @@ When this zed instance is exited, terminal output will include a command to run 
 
 ## Troubleshooting
 
-### Can't compile Zed
-
-Before reporting the issue, make sure that you have the latest rustc version with `rustup update`.
-
 ### Cargo errors claiming that a dependency is using unstable features
 
 Try `cargo clean` and `cargo build`.

@@ -8,9 +8,9 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet, VecDeque};
-use gpui::{AppContext, Context as _, Model, Task};
+use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, LanguageToolchainStore, Location};
 use settings::{parse_json_with_comments, SettingsLocation};
@@ -18,7 +18,7 @@ use task::{
     ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables, VariableName,
 };
 use text::{Point, ToPoint};
-use util::{post_inc, NumericPrefixWithSuffix, ResultExt as _};
+use util::{paths::PathExt as _, post_inc, NumericPrefixWithSuffix, ResultExt as _};
 use worktree::WorktreeId;
 
 use crate::worktree_store::WorktreeStore;
@@ -53,7 +53,7 @@ pub enum TaskSourceKind {
         abs_path: PathBuf,
     },
     /// Languages-specific tasks coming from extensions.
-    Language { name: Arc<str> },
+    Language { name: SharedString },
 }
 
 impl TaskSourceKind {
@@ -76,8 +76,8 @@ impl TaskSourceKind {
 }
 
 impl Inventory {
-    pub fn new(cx: &mut AppContext) -> Model<Self> {
-        cx.new_model(|_| Self::default())
+    pub fn new(cx: &mut App) -> Entity<Self> {
+        cx.new(|_| Self::default())
     }
 
     /// Pulls its task sources relevant to the worktree and the language given,
@@ -88,10 +88,10 @@ impl Inventory {
         file: Option<Arc<dyn File>>,
         language: Option<Arc<Language>>,
         worktree: Option<WorktreeId>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
-            name: language.name().0,
+            name: language.name().into(),
         });
         let global_tasks = self.global_templates_from_settings();
         let language_tasks = language
@@ -115,7 +115,7 @@ impl Inventory {
         worktree: Option<WorktreeId>,
         location: Option<Location>,
         task_context: &TaskContext,
-        cx: &AppContext,
+        cx: &App,
     ) -> (
         Vec<(TaskSourceKind, ResolvedTask)>,
         Vec<(TaskSourceKind, ResolvedTask)>,
@@ -124,7 +124,7 @@ impl Inventory {
             .as_ref()
             .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
-            name: language.name().0,
+            name: language.name().into(),
         });
         let file = location
             .as_ref()
@@ -371,7 +371,7 @@ fn task_variables_preference(task: &ResolvedTask) -> Reverse<usize> {
 
 #[cfg(test)]
 mod test_inventory {
-    use gpui::{Model, TestAppContext};
+    use gpui::{Entity, TestAppContext};
     use itertools::Itertools;
     use task::TaskContext;
     use worktree::WorktreeId;
@@ -381,7 +381,7 @@ mod test_inventory {
     use super::TaskSourceKind;
 
     pub(super) fn task_template_names(
-        inventory: &Model<Inventory>,
+        inventory: &Entity<Inventory>,
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<String> {
@@ -396,7 +396,7 @@ mod test_inventory {
     }
 
     pub(super) fn register_task_used(
-        inventory: &Model<Inventory>,
+        inventory: &Entity<Inventory>,
         task_name: &str,
         cx: &mut TestAppContext,
     ) {
@@ -416,7 +416,7 @@ mod test_inventory {
     }
 
     pub(super) async fn list_tasks(
-        inventory: &Model<Inventory>,
+        inventory: &Entity<Inventory>,
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<(TaskSourceKind, String)> {
@@ -438,11 +438,11 @@ mod test_inventory {
 /// A context provided that tries to provide values for all non-custom [`VariableName`] variants for a currently opened file.
 /// Applied as a base for every custom [`ContextProvider`] unless explicitly oped out.
 pub struct BasicContextProvider {
-    worktree_store: Model<WorktreeStore>,
+    worktree_store: Entity<WorktreeStore>,
 }
 
 impl BasicContextProvider {
-    pub fn new(worktree_store: Model<WorktreeStore>) -> Self {
+    pub fn new(worktree_store: Entity<WorktreeStore>) -> Self {
         Self { worktree_store }
     }
 }
@@ -453,7 +453,7 @@ impl ContextProvider for BasicContextProvider {
         location: &Location,
         _: Option<HashMap<String, String>>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<Result<TaskVariables>> {
         let buffer = location.buffer.read(cx);
         let buffer_snapshot = buffer.snapshot();
@@ -470,7 +470,7 @@ impl ContextProvider for BasicContextProvider {
         let current_file = buffer
             .file()
             .and_then(|file| file.as_local())
-            .map(|file| file.abs_path(cx).to_string_lossy().to_string());
+            .map(|file| file.abs_path(cx).to_sanitized_string());
         let Point { row, column } = location.range.start.to_point(&buffer_snapshot);
         let row = row + 1;
         let column = column + 1;
@@ -489,7 +489,7 @@ impl ContextProvider for BasicContextProvider {
         if !selected_text.trim().is_empty() {
             task_variables.insert(VariableName::SelectedText, selected_text);
         }
-        let worktree_abs_path =
+        let worktree_root_dir =
             buffer
                 .file()
                 .map(|file| file.worktree_id(cx))
@@ -497,19 +497,19 @@ impl ContextProvider for BasicContextProvider {
                     self.worktree_store
                         .read(cx)
                         .worktree_for_id(worktree_id, cx)
-                        .map(|worktree| worktree.read(cx).abs_path())
+                        .map(|worktree| worktree.read(cx).root_dir())
                 });
-        if let Some(worktree_path) = worktree_abs_path {
+        if let Some(Some(worktree_path)) = worktree_root_dir {
             task_variables.insert(
                 VariableName::WorktreeRoot,
-                worktree_path.to_string_lossy().to_string(),
+                worktree_path.to_sanitized_string(),
             );
             if let Some(full_path) = current_file.as_ref() {
                 let relative_path = pathdiff::diff_paths(full_path, worktree_path);
                 if let Some(relative_path) = relative_path {
                     task_variables.insert(
                         VariableName::RelativeFile,
-                        relative_path.to_string_lossy().into_owned(),
+                        relative_path.to_sanitized_string(),
                     );
                 }
             }
@@ -553,7 +553,7 @@ impl ContextProvider for ContextProviderWithTasks {
     fn associated_tasks(
         &self,
         _: Option<Arc<dyn language::File>>,
-        _: &AppContext,
+        _: &App,
     ) -> Option<TaskTemplates> {
         Some(self.templates.clone())
     }
@@ -859,7 +859,7 @@ mod tests {
     }
 
     async fn resolved_task_names(
-        inventory: &Model<Inventory>,
+        inventory: &Entity<Inventory>,
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<String> {
@@ -888,7 +888,7 @@ mod tests {
     }
 
     async fn list_tasks_sorted_by_last_used(
-        inventory: &Model<Inventory>,
+        inventory: &Entity<Inventory>,
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<(TaskSourceKind, String)> {

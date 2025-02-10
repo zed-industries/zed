@@ -195,6 +195,20 @@ impl TextSystem {
         Ok(result * font_size)
     }
 
+    /// Returns the width of an `em`.
+    ///
+    /// Uses the width of the `m` character in the given font and size.
+    pub fn em_width(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        Ok(self.typographic_bounds(font_id, font_size, 'm')?.size.width)
+    }
+
+    /// Returns the advance width of an `em`.
+    ///
+    /// Uses the advance width of the `m` character in the given font and size.
+    pub fn em_advance(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        Ok(self.advance(font_id, font_size, 'm')?.width)
+    }
+
     /// Get the number of font size units per 'em square',
     /// Per MDN: "an abstract square whose height is the intended distance between
     /// lines of type in the same type size"
@@ -374,12 +388,15 @@ impl WindowTextSystem {
         font_size: Pixels,
         runs: &[TextRun],
         wrap_width: Option<Pixels>,
+        line_clamp: Option<usize>,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
         let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
 
         let mut lines = SmallVec::new();
         let mut line_start = 0;
+        let mut max_wrap_lines = line_clamp.unwrap_or(usize::MAX);
+        let mut wrapped_lines = 0;
 
         let mut process_line = |line_text: SharedString| {
             let line_end = line_start + line_text.len();
@@ -430,9 +447,14 @@ impl WindowTextSystem {
                 run_start += run_len_within_line;
             }
 
-            let layout = self
-                .line_layout_cache
-                .layout_wrapped_line(&line_text, font_size, &font_runs, wrap_width);
+            let layout = self.line_layout_cache.layout_wrapped_line(
+                &line_text,
+                font_size,
+                &font_runs,
+                wrap_width,
+                Some(max_wrap_lines - wrapped_lines),
+            );
+            wrapped_lines += layout.wrap_boundaries.len();
 
             lines.push(WrappedLine {
                 layout,
