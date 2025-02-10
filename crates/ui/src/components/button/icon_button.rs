@@ -22,6 +22,7 @@ pub struct IconButton {
     icon_size: IconSize,
     icon_color: Color,
     selected_icon: Option<IconName>,
+    selected_icon_color: Option<Color>,
     indicator: Option<Indicator>,
     indicator_border_color: Option<Hsla>,
     alpha: Option<f32>,
@@ -36,6 +37,7 @@ impl IconButton {
             icon_size: IconSize::default(),
             icon_color: Color::Default,
             selected_icon: None,
+            selected_icon_color: None,
             indicator: None,
             indicator_border_color: None,
             alpha: None,
@@ -66,6 +68,12 @@ impl IconButton {
 
     pub fn selected_icon(mut self, icon: impl Into<Option<IconName>>) -> Self {
         self.selected_icon = icon.into();
+        self
+    }
+
+    /// Sets the icon color used when the button is in a selected state.
+    pub fn selected_icon_color(mut self, color: impl Into<Option<Color>>) -> Self {
+        self.selected_icon_color = color.into();
         self
     }
 
@@ -181,6 +189,7 @@ impl RenderOnce for IconButton {
                     .disabled(is_disabled)
                     .toggle_state(is_selected)
                     .selected_icon(self.selected_icon)
+                    .selected_icon_color(self.selected_icon_color)
                     .when_some(selected_style, |this, style| this.selected_style(style))
                     .when_some(self.indicator, |this, indicator| {
                         this.indicator(indicator)
