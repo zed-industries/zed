@@ -351,8 +351,8 @@ fn paint_line(
                 }
 
                 let max_glyph_bounds = Bounds {
-                    origin: glyph_origin + window.element_origin(),
-                    size: max_glyph_size,
+                    origin: glyph_origin * window.element_scale() + window.element_origin(),
+                    size: max_glyph_size * px(window.element_scale()),
                 };
 
                 let content_mask = window.content_mask();

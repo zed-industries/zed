@@ -1964,7 +1964,7 @@ impl Window {
     ) -> R {
         self.invalidator.debug_assert_paint_or_prepaint();
         if let Some(mut mask) = mask {
-            mask.bounds.origin += self.element_origin;
+            mask.bounds = self.to_absolute_bounds(mask.bounds);
             mask = mask.intersect(&self.content_mask());
             self.content_mask_stack.push(mask);
             let result = f(self);
@@ -2000,8 +2000,9 @@ impl Window {
     }
 
     fn to_absolute_bounds(&self, mut bounds: Bounds<Pixels>) -> Bounds<Pixels> {
-        bounds.origin += self.element_origin();
+        bounds.origin *= self.element_scale();
         bounds.size *= self.element_scale();
+        bounds.origin += self.element_origin();
         bounds
     }
 
@@ -2362,7 +2363,7 @@ impl Window {
         let color: Background = color.into();
         path.color = color.opacity(opacity);
         self.next_frame.scene.insert_primitive(
-            path.offset(self.element_origin)
+            path.offset(self.element_origin / self.element_scale())
                 .scale(scale_factor * self.element_scale()),
         );
     }
@@ -2454,7 +2455,7 @@ impl Window {
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
         let glyph_origin =
-            (origin + self.element_origin).scale(scale_factor * self.element_scale());
+            (origin * self.element_scale() + self.element_origin).scale(scale_factor);
         let subpixel_variant = Point {
             x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
             y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
@@ -2514,7 +2515,7 @@ impl Window {
 
         let scale_factor = self.scale_factor();
         let glyph_origin =
-            (origin + self.element_origin).scale(scale_factor * self.element_scale());
+            (origin * self.element_scale() + self.element_origin).scale(scale_factor);
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
@@ -2707,12 +2708,16 @@ impl Window {
 
         cx.layout_id_buffer.clear();
         cx.layout_id_buffer.extend(children);
+
+        let scale = self.element_scale() * style.scale;
         let rem_size = self.rem_size();
 
-        self.layout_engine
-            .as_mut()
-            .unwrap()
-            .request_layout(style, rem_size, &cx.layout_id_buffer)
+        self.layout_engine.as_mut().unwrap().request_layout(
+            style,
+            scale,
+            rem_size,
+            &cx.layout_id_buffer,
+        )
     }
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
@@ -2729,15 +2734,36 @@ impl Window {
     >(
         &mut self,
         style: Style,
-        measure: F,
+        mut measure: F,
     ) -> LayoutId {
         self.invalidator.debug_assert_prepaint();
 
+        let scale = self.element_scale() * style.scale;
         let rem_size = self.rem_size();
+
         self.layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(style, rem_size, measure)
+            .request_measured_layout(
+                style,
+                scale,
+                rem_size,
+                move |mut known_size, mut available_space, window, cx| {
+                    // Unscale size inputs to measure function to ensure normal layout behavior
+                    known_size = known_size.map(|size| size.map(|size| size / scale));
+                    available_space = available_space.map(|space| match space {
+                        AvailableSpace::Definite(pixels) => {
+                            AvailableSpace::Definite(pixels / scale)
+                        }
+                        x => x,
+                    });
+
+                    // Measure and rescale output size for layout
+                    window.with_element_scale(scale, |window| {
+                        measure(known_size, available_space, window, cx).map(|size| size * scale)
+                    })
+                },
+            )
     }
 
     /// Compute the layout for the given id within the given available space.

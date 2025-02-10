@@ -334,8 +334,9 @@ impl<E: Element> Drawable<E> {
                     debug_assert_eq!(global_id.as_ref().unwrap().0, window.element_id_stack);
                 }
 
-                let bounds = window.layout_bounds(layout_id);
+                let mut bounds = window.layout_bounds(layout_id);
                 let scale = window.layout_scale(layout_id);
+                bounds.size *= 1.0 / scale;
                 window.element_layout_id = Some(layout_id);
 
                 let node_id = window.next_frame.dispatch_tree.push_node();

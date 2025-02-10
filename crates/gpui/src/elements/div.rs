@@ -1203,11 +1203,13 @@ impl Element for Div {
             self.interactivity
                 .request_layout(global_id, window, cx, |style, window, cx| {
                     window.with_text_style(style.text_style().cloned(), |window| {
-                        child_layout_ids = self
-                            .children
-                            .iter_mut()
-                            .map(|child| child.request_layout(window, cx))
-                            .collect::<SmallVec<_>>();
+                        window.with_element_scale(style.scale, |window| {
+                            child_layout_ids = self
+                                .children
+                                .iter_mut()
+                                .map(|child| child.request_layout(window, cx))
+                                .collect::<SmallVec<_>>();
+                        });
                         window.request_layout(style, child_layout_ids.iter().copied(), cx)
                     })
                 });
