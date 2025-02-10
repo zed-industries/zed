@@ -29,11 +29,19 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Option<Str
     if edits.is_empty() {
         None
     } else {
-        let mut text = text.to_string();
-        for (range, replacement) in edits.into_iter().rev() {
-            text.replace_range(range, &replacement);
+        let mut new_text = text.to_string();
+        for (range, replacement) in edits.iter().rev() {
+            new_text.replace_range(range.clone(), replacement);
         }
-        Some(text)
+        if new_text == text {
+            log::error!(
+                "Edits computed for configuration migration do not cause a change: {:?}",
+                edits
+            );
+            None
+        } else {
+            Some(new_text)
+        }
     }
 }
 
