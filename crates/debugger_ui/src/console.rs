@@ -65,7 +65,7 @@ impl Console {
             editor.set_use_autoclose(false);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_show_inline_completions(Some(false), window, cx);
+            editor.set_show_edit_predictions(Some(false), window, cx);
             editor
         });
 

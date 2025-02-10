@@ -104,7 +104,7 @@ impl Render for QuickActionBar {
             let git_blame_inline_enabled = editor.git_blame_inline_enabled();
             let show_git_blame_gutter = editor.show_git_blame_gutter();
             let auto_signature_help_enabled = editor.auto_signature_help_enabled(cx);
-            let show_inline_completions = editor.should_show_inline_completions(cx);
+            let show_edit_predictions = editor.edit_predictions_enabled();
             let inline_completion_enabled = editor.inline_completions_enabled(cx);
 
             (
@@ -114,7 +114,7 @@ impl Render for QuickActionBar {
                 git_blame_inline_enabled,
                 show_git_blame_gutter,
                 auto_signature_help_enabled,
-                show_inline_completions,
+                show_edit_predictions,
                 inline_completion_enabled,
             )
         };

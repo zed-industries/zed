@@ -3671,6 +3671,18 @@ impl Window {
         dispatch_tree.bindings_for_action(action, &context_stack)
     }
 
+    /// Returns the key bindings for the given action in the given context.
+    pub fn bindings_for_action_in_context(
+        &self,
+        action: &dyn Action,
+        context: KeyContext,
+    ) -> Vec<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        dispatch_tree.bindings_for_action(action, &[context])
+    }
+
+    /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
+
     /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
     pub fn listener_for<V: Render, E>(
         &self,

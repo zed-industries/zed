@@ -291,6 +291,31 @@ impl Render for InlineCompletionButton {
                     .when(enabled && !show_editor_predictions, |this| {
                         this.indicator(Indicator::dot().color(Color::Muted))
                             .indicator_border_color(Some(cx.theme().colors().status_bar_background))
+                    })
+                    .when(!self.popover_menu_handle.is_deployed(), |element| {
+                        element.tooltip(move |window, cx| {
+                            if enabled {
+                                if show_editor_predictions {
+                                    Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
+                                } else {
+                                    Tooltip::with_meta(
+                                        "Edit Prediction",
+                                        Some(&ToggleMenu),
+                                        "Hidden For This File",
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            } else {
+                                Tooltip::with_meta(
+                                    "Edit Prediction",
+                                    Some(&ToggleMenu),
+                                    "Disabled For This File",
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
                     });
 
                 let this = cx.entity().clone();
@@ -586,7 +611,7 @@ impl InlineCompletionButton {
                 .unwrap_or(true),
             )
         };
-        self.editor_show_predictions = editor.should_show_inline_completions(cx);
+        self.editor_show_predictions = editor.edit_predictions_enabled();
         self.edit_prediction_provider = editor.edit_prediction_provider();
         self.language = language.cloned();
         self.file = file;

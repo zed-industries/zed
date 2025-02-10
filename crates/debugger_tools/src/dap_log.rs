@@ -560,7 +560,7 @@ impl DapLogView {
             editor.set_text(log_contents, window, cx);
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
             editor.set_read_only(true);
-            editor.set_show_inline_completions(Some(false), window, cx);
+            editor.set_show_edit_predictions(Some(false), window, cx);
             editor
         });
         let editor_subscription = cx.subscribe(
