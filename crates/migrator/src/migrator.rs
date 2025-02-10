@@ -1,6 +1,7 @@
 use collections::HashMap;
 use convert_case::{Case, Casing};
 use std::{cmp::Reverse, ops::Range, sync::LazyLock};
+use streaming_iterator::StreamingIterator;
 use tree_sitter::{Query, QueryMatch};
 
 fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Option<String> {
@@ -11,10 +12,10 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Option<Str
     let syntax_tree = parser.parse(&text, None).unwrap();
 
     let mut cursor = tree_sitter::QueryCursor::new();
-    let matches = cursor.matches(query, syntax_tree.root_node(), text.as_bytes());
+    let mut matches = cursor.matches(query, syntax_tree.root_node(), text.as_bytes());
 
     let mut edits = vec![];
-    for mat in matches {
+    while let Some(mat) = matches.next() {
         if let Some((_, callback)) = patterns.get(mat.pattern_index) {
             edits.extend(callback(&text, &mat, query));
         }
@@ -28,11 +29,19 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Option<Str
     if edits.is_empty() {
         None
     } else {
-        let mut text = text.to_string();
-        for (range, replacement) in edits.into_iter().rev() {
-            text.replace_range(range, &replacement);
+        let mut new_text = text.to_string();
+        for (range, replacement) in edits.iter().rev() {
+            new_text.replace_range(range.clone(), replacement);
         }
-        Some(text)
+        if new_text == text {
+            log::error!(
+                "Edits computed for configuration migration do not cause a change: {:?}",
+                edits
+            );
+            None
+        } else {
+            Some(new_text)
+        }
     }
 }
 

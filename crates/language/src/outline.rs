@@ -146,7 +146,9 @@ impl<T> Outline<T> {
                 }
             } else {
                 let mut name_ranges = outline_match.name_ranges.iter();
-                let mut name_range = name_ranges.next().unwrap();
+                let Some(mut name_range) = name_ranges.next() else {
+                    continue;
+                };
                 let mut preceding_ranges_len = 0;
                 for position in &mut string_match.positions {
                     while *position >= preceding_ranges_len + name_range.len() {
@@ -194,6 +196,40 @@ impl<T> Outline<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn test_entries_with_no_names(cx: &mut TestAppContext) {
+        let outline = Outline::new(vec![
+            OutlineItem {
+                depth: 0,
+                range: Point::new(0, 0)..Point::new(5, 0),
+                text: "class Foo".to_string(),
+                highlight_ranges: vec![],
+                name_ranges: vec![6..9],
+                body_range: None,
+                annotation_range: None,
+            },
+            OutlineItem {
+                depth: 0,
+                range: Point::new(2, 0)..Point::new(2, 7),
+                text: "private".to_string(),
+                highlight_ranges: vec![],
+                name_ranges: vec![],
+                body_range: None,
+                annotation_range: None,
+            },
+        ]);
+        assert_eq!(
+            outline
+                .search(" ", cx.executor())
+                .await
+                .into_iter()
+                .map(|mat| mat.string)
+                .collect::<Vec<String>>(),
+            vec!["class Foo".to_string()]
+        );
+    }
 
     #[test]
     fn test_find_most_similar_with_low_similarity() {

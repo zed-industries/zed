@@ -671,17 +671,16 @@ impl Render for ContextMenu {
                                                         .when_some(
                                                             *toggle,
                                                             |list_item, (position, toggled)| {
-                                                                let contents = if toggled {
-                                                                    v_flex().flex_none().child(
+                                                                let contents =
+                                                                    div().flex_none().child(
                                                                         Icon::new(IconName::Check)
                                                                             .color(Color::Accent)
                                                                             .size(*icon_size)
                                                                     )
-                                                                } else {
-                                                                    v_flex().flex_none().size(
-                                                                        IconSize::default().rems(),
-                                                                    )
-                                                                };
+                                                                    .when(!toggled, |contents|
+                                                                        contents.invisible()
+                                                                    );
+
                                                                 match position {
                                                                     IconPosition::Start => {
                                                                         list_item

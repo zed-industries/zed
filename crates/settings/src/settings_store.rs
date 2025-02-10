@@ -17,6 +17,7 @@ use std::{
     str::{self, FromStr},
     sync::{Arc, LazyLock},
 };
+use streaming_iterator::StreamingIterator;
 use tree_sitter::Query;
 use util::RangeExt;
 
@@ -1262,8 +1263,8 @@ fn replace_value_in_json_text(
     let mut last_value_range = 0..0;
     let mut first_key_start = None;
     let mut existing_value_range = 0..text.len();
-    let matches = cursor.matches(&PAIR_QUERY, syntax_tree.root_node(), text.as_bytes());
-    for mat in matches {
+    let mut matches = cursor.matches(&PAIR_QUERY, syntax_tree.root_node(), text.as_bytes());
+    while let Some(mat) = matches.next() {
         if mat.captures.len() != 2 {
             continue;
         }
