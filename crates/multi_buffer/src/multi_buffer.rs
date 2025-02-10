@@ -2201,14 +2201,12 @@ impl MultiBuffer {
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
     ) {
-        eprintln!("sync");
         self.sync(cx);
 
         let diff = diff.read(cx);
         let buffer_id = diff.buffer_id;
         let buffers = self.buffers.borrow();
         let Some(buffer_state) = buffers.get(&buffer_id) else {
-            eprintln!("exit");
             return;
         };
 
@@ -2228,9 +2226,7 @@ impl MultiBuffer {
             .diffs
             .get(&buffer_id)
             .map_or(true, |old_diff| !new_diff.base_texts_eq(old_diff));
-        dbg!(base_text_changed);
 
-        eprintln!("insert");
         snapshot.diffs.insert(buffer_id, new_diff);
 
         let mut excerpt_edits = Vec::new();

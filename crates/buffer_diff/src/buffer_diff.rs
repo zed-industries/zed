@@ -375,8 +375,7 @@ fn compute_hunks(
         // A common case in Zed is that the empty buffer is represented as just a newline,
         // but if we just compute a naive diff you get a "preserved" line in the middle,
         // which is a bit odd.
-        if dbg!(&buffer_text) == "\n" && dbg!(&diff_base).ends_with("\n") && diff_base.len() > 1 {
-            eprintln!("hit the case");
+        if buffer_text == "\n" && diff_base.ends_with("\n") && diff_base.len() > 1 {
             tree.push(
                 InternalDiffHunk {
                     buffer_range: buffer.anchor_before(0)..buffer.anchor_before(0),
