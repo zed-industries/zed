@@ -1,8 +1,4 @@
 #define RootLicenseFileName FileExists(RepoDir + '\LICENSE-GPL.rtf') ? 'LICENSE-GPL.rtf' : 'LICENSE-GPL.txt'
-#define LocalizedLanguageFile(Language = "") \
-    DirExists(RepoDir + "\licenses") && Language != "" \
-      ? ('; LicenseFile: "' + RepoDir + '\licenses\LICENSE-' + Language + '.rtf"') \
-      : '; LicenseFile: "' + RepoDir + '\' + RootLicenseFileName + '"'
 
 [Setup]
 AppId={#AppId}
