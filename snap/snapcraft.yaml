@@ -1,0 +1,70 @@
+name: zed-editor
+title: Zed
+base: core24
+version: '0.149.5'
+summary: Code at the speed of thought
+description: |
+  Zed is a high-performance, multiplayer code editor from the creators of Atom and Tree-sitter. It's also open source.
+
+grade: stable
+confinement: classic
+icon: crates/zed/resources/app-icon.png
+website: https://zed.dev/
+souce-code: https://github.com/zed-industries/zed
+issues: https://github.com/zed-industries/zed/issues
+contact: 
+  - https://zed.dev/docs/feedback-and-support
+  - https://zed.dev/faq
+  - https://zed.dev/docs/getting-started
+
+parts:
+  zed:
+    plugin: rust
+    source: https://github.com/zed-industries/zed.git
+    source-tag: 'v$SNAPCRAFT_PROJECT_VERSION'
+    source-depth: 1
+    build-environment:
+      - CC: clang
+      - ZED_UPDATE_EXPLANATION: "Updates are handled by Snap."
+      - RELEASE_VERSION: "$SNAPCRAFT_PROJECT_VERSION"
+    build-packages:
+      - clang
+      - cmake
+      - libasound2-dev
+      - libssl-dev
+      - libvulkan-dev
+      - libxcb1-dev
+      - libxkbcommon-dev
+      - libxkbcommon-x11-dev
+      - libzstd-dev
+      - mold
+    build-attributes:
+      - enable-patchelf
+
+  deps:
+    plugin: nil
+    stage-packages:
+      - libasound2t64
+      - libssl3t64
+      - libvulkan1
+      - libwayland-client0
+      - libwayland-egl1
+      - libwayland-cursor0
+      - libxcb1
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - libzstd1
+      - sqlite3
+    build-attributes:
+      - enable-patchelf
+    prime:
+      - -etc
+      - -usr/share/doc
+      - -usr/share/lintian
+      - -usr/share/man
+
+
+apps:
+  zed-editor:
+    command: zed
+    common-id: dev.zed.Zed
