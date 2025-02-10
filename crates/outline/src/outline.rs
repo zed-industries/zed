@@ -370,6 +370,7 @@ mod tests {
     use language::{Language, LanguageConfig, LanguageMatcher};
     use project::{FakeFs, Project};
     use serde_json::json;
+    use util::path;
     use workspace::{AppState, Workspace};
 
     #[gpui::test]
