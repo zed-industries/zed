@@ -3700,11 +3700,14 @@ impl EditorElement {
                 // todo! az clean up
 
                 if requires_modifier {
-                    if !editor.edit_prediction_preview.is_active_settled() {
+                    let cursor_position =
+                        target.to_display_point(&editor_snapshot.display_snapshot);
+
+                    if !editor.edit_prediction_preview.is_active_settled()
+                        || !visible_row_range.contains(&cursor_position.row())
+                    {
                         return None;
                     }
-
-                    let target = target.clone();
 
                     // todo! az wire up for linux
                     let mut element = div()
@@ -3717,8 +3720,6 @@ impl EditorElement {
 
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
 
-                    let cursor_position =
-                        target.to_display_point(&editor_snapshot.display_snapshot);
                     let cursor_row_layout = &line_layouts
                         [cursor_position.row().minus(visible_row_range.start) as usize];
                     let cursor_column = cursor_position.column() as usize;

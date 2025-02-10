@@ -506,7 +506,10 @@ pub enum EditPredictionPreview {
     /// Modifier is not pressed
     Inactive,
     /// Modifier pressed, animating to active
-    Started(Range<Instant>),
+    Started {
+        animation: Range<Instant>,
+        scroll_position: Option<gpui::Point<f32>>,
+    },
     /// Modifier released, animating from active
     Cancelled(Range<Instant>),
 }
@@ -517,10 +520,12 @@ impl EditPredictionPreview {
         completion: &InlineCompletion,
         snapshot: &EditorSnapshot,
         cursor: DisplayPoint,
-    ) {
-        if !matches!(self, Self::Started { .. }) {
-            *self = Self::start_now(completion, snapshot, cursor);
+    ) -> bool {
+        if matches!(self, Self::Started { .. }) {
+            return false;
         }
+        *self = Self::start_now(completion, snapshot, cursor);
+        true
     }
 
     fn restart(
@@ -529,7 +534,8 @@ impl EditPredictionPreview {
         snapshot: &EditorSnapshot,
         cursor: DisplayPoint,
     ) {
-        if matches!(self, Self::Started(_)) {
+        // todo! autoscroll
+        if matches!(self, Self::Started { .. }) {
             // todo! az check current isn't same
             *self = Self::start_now(completion, snapshot, cursor);
         }
@@ -542,12 +548,18 @@ impl EditPredictionPreview {
     ) -> Self {
         let now = Instant::now();
         match completion {
-            InlineCompletion::Edit { .. } => Self::Started(now..now),
+            InlineCompletion::Edit { .. } => Self::Started {
+                animation: now..now,
+                scroll_position: None,
+            },
             InlineCompletion::Move { target, .. } => {
                 let duration =
                     Self::animation_duration(snapshot, cursor, *target).unwrap_or(Duration::ZERO);
 
-                Self::Started(now..now + duration)
+                Self::Started {
+                    animation: now..now + duration,
+                    scroll_position: Some(snapshot.scroll_position()),
+                }
             }
         }
     }
@@ -563,19 +575,35 @@ impl EditPredictionPreview {
         let column_diff = target_cursor.column().abs_diff(current_cursor.column());
         let distance = ((row_diff.pow(2) + column_diff.pow(2)) as f32).sqrt();
 
-        // todo! az make this non-linear
-        let duration = distance * 8.;
-        let duration = Duration::from_millis(duration as u64);
+        let duration = Duration::from_millis((distance * 6.) as u64);
 
         Some(duration)
     }
 
-    fn cancel(&mut self) {
-        if let Self::Started(animation) = self {
+    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+        if let Self::Started {
+            animation,
+            scroll_position,
+        } = self
+        {
             let now = Instant::now();
             let duration = animation.end - animation.start;
 
+            let scroll_position = *scroll_position;
             *self = Self::Cancelled(now..now + duration);
+
+            if let Some(scroll_position) = scroll_position {
+                cx.spawn_in(window, |editor, mut cx| async move {
+                    smol::Timer::after(duration + Duration::from_millis(30)).await;
+
+                    editor
+                        .update_in(&mut cx, |editor, window, cx| {
+                            editor.set_scroll_position(scroll_position, window, cx)
+                        })
+                        .log_err();
+                })
+                .detach();
+            }
         }
     }
 
@@ -583,8 +611,17 @@ impl EditPredictionPreview {
     fn is_active(&self) -> bool {
         match self {
             Self::Inactive => false,
-            Self::Started(_) => true,
+            Self::Started { .. } => true,
             Self::Cancelled(animation) => animation.end > Instant::now(),
+        }
+    }
+
+    // todo! consider renaming this
+    fn is_started(&self) -> bool {
+        match self {
+            Self::Inactive => false,
+            Self::Started { .. } => true,
+            Self::Cancelled(_) => false,
         }
     }
 
@@ -592,7 +629,7 @@ impl EditPredictionPreview {
     fn is_active_settled(&self) -> bool {
         match self {
             Self::Inactive => false,
-            Self::Started(animation) => animation.end < Instant::now(),
+            Self::Started { animation, .. } => animation.end < Instant::now(),
             Self::Cancelled(_) => false,
         }
     }
@@ -607,10 +644,9 @@ impl EditPredictionPreview {
         target: Anchor,
         cursor: Option<DisplayPoint>,
     ) -> Option<EditPredictionMoveState> {
-        // todo! handle out of viewport
         let (animation, forwards) = match self {
             Self::Inactive => return None,
-            Self::Started(animation) => (animation, true),
+            Self::Started { animation, .. } => (animation, true),
             Self::Cancelled(animation) => (animation, false),
         };
 
@@ -647,7 +683,16 @@ impl EditPredictionPreview {
         }
 
         let duration = animation.end - animation.start;
-        let delta = gpui::ease_in_out(
+
+        fn ease_out(t: f32) -> f32 {
+            if t >= 1.0 {
+                1.0
+            } else {
+                1.0 - (-10.0 * t).exp2()
+            }
+        }
+
+        let delta = ease_out(
             (animation.start.elapsed().as_secs_f32() / duration.as_secs_f32()).clamp(0., 1.),
         );
 
@@ -5282,14 +5327,16 @@ impl Editor {
                     .head()
                     .to_display_point(&position_map.snapshot);
 
-                self.edit_prediction_preview.start(
+                if self.edit_prediction_preview.start(
                     &completion.completion,
                     &position_map.snapshot,
                     newest_head,
-                );
+                ) {
+                    self.request_autoscroll(Autoscroll::fit(), cx);
+                }
             }
         } else {
-            self.edit_prediction_preview.cancel();
+            self.edit_prediction_preview.cancel(window, cx);
         }
 
         // TODO az this would cause a restart
