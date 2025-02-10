@@ -456,14 +456,18 @@ impl InlineCompletionButton {
             if data_collection.is_supported() {
                 let provider = provider.clone();
                 let enabled = data_collection.is_enabled();
+                let is_open_source = data_collection.is_project_open_source();
+                let is_collecting = data_collection.is_enabled();
 
                 menu = menu.item(
                     ContextMenuEntry::new("Share Training Data")
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
+                        .icon_color(if is_open_source && is_collecting {
+                            Color::Success
+                        } else {
+                            Color::Accent
+                        })
                         .documentation_aside(move |cx| {
-                            let is_open_source = data_collection.is_project_open_source();
-                            let is_collecting = data_collection.is_enabled();
-
                             let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                 (true, true) => (
                                     "This project is open-source, and we're capturing data.",
