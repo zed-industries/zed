@@ -53,6 +53,7 @@ settings.workspace = true
 similar.workspace = true
 smallvec.workspace = true
 smol.workspace = true
+streaming-iterator.workspace = true
 strsim.workspace = true
 sum_tree.workspace = true
 task.workspace = true
