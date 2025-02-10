@@ -63,15 +63,23 @@ impl ContextServer {
 
     pub async fn start(self: Arc<Self>, cx: &AsyncApp) -> Result<()> {
         log::info!("starting context server {}", self.id);
-        let Some(command) = &self.config.command else {
-            bail!("no command specified for server {}", self.id);
-        };
         let client = Client::new(
             client::ContextServerId(self.id.clone()),
-            client::ModelContextServerBinary {
-                executable: Path::new(&command.path).to_path_buf(),
-                args: command.args.clone(),
-                env: command.env.clone(),
+            match &*self.config {
+                ServerConfig::Stdio {
+                    command: Some(command),
+                    settings: _,
+                } => client::ModelContextServerBinary {
+                    executable: Path::new(&command.path).to_path_buf(),
+                    args: command.args.clone(),
+                    env: command.env.clone(),
+                },
+                ServerConfig::Sse { endpoint: _ } => {
+                    bail!("Remote server configuration is not yet supported")
+                }
+                _ => {
+                    bail!("Invalid configuration")
+                }
             },
             cx.clone(),
         )?;
@@ -233,11 +241,18 @@ impl ContextServerManager {
         for (id, factory) in
             registry.read_with(&cx, |registry, _| registry.context_server_factories())?
         {
-            let config = desired_servers.entry(id).or_default();
-            if config.command.is_none() {
-                if let Some(extension_command) = factory(project.clone(), &cx).await.log_err() {
-                    config.command = Some(extension_command);
+            let config = desired_servers.entry(id.clone()).or_default();
+            match config {
+                ServerConfig::Stdio { command, .. } => {
+                    if command.is_none() {
+                        if let Some(extension_command) =
+                            factory(project.clone(), &cx).await.log_err()
+                        {
+                            *command = Some(extension_command);
+                        }
+                    }
                 }
+                ServerConfig::Sse { .. } => {}
             }
         }
 

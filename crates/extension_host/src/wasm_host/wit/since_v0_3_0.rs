@@ -7,7 +7,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
-use context_server_settings::ContextServerSettings;
+use context_server_settings::{ContextServerSettings, ServerConfig};
 use extension::{
     ExtensionLanguageServerProxy, KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate,
 };
@@ -664,14 +664,21 @@ impl ExtensionImports for WasmState {
                             })
                             .cloned()
                             .unwrap_or_default();
-                        Ok(serde_json::to_string(&settings::ContextServerSettings {
-                            command: settings.command.map(|command| settings::CommandSettings {
-                                path: Some(command.path),
-                                arguments: Some(command.args),
-                                env: command.env.map(|env| env.into_iter().collect()),
-                            }),
-                            settings: settings.settings,
-                        })?)
+                        match settings {
+                            ServerConfig::Stdio { command, settings } => {
+                                Ok(serde_json::to_string(&settings::ContextServerSettings {
+                                    command: command.map(|command| settings::CommandSettings {
+                                        path: Some(command.path),
+                                        arguments: Some(command.args),
+                                        env: command.env.map(|env| env.into_iter().collect()),
+                                    }),
+                                    settings,
+                                })?)
+                            }
+                            ServerConfig::Sse { .. } => {
+                                bail!("SSE server configuration is not supported")
+                            }
+                        }
                     }
                     _ => {
                         bail!("Unknown settings category: {}", category);
