@@ -222,50 +222,23 @@ struct BufferState {
 struct DiffState {
     diff: Entity<BufferDiff>,
     _subscription: gpui::Subscription,
-    _secondary_subscription: Option<gpui::Subscription>,
 }
 
 impl DiffState {
     fn new(diff: Entity<BufferDiff>, cx: &mut Context<MultiBuffer>) -> Self {
-        let secondary_diff = diff.read_with(cx, |diff, _| diff.secondary_diff());
         DiffState {
             _subscription: cx.subscribe(&diff, |this, diff, event, cx| match event {
                 BufferDiffEvent::DiffChanged { changed_range } => {
-                    this.buffer_diff_changed(diff, changed_range.clone(), cx)
+                    let changed_range = if let Some(changed_range) = changed_range {
+                        changed_range.clone()
+                    } else if diff.read(cx).base_text().is_none() && this.all_diff_hunks_expanded {
+                        text::Anchor::MIN..text::Anchor::MAX
+                    } else {
+                        return;
+                    };
+                    this.buffer_diff_changed(diff, changed_range, cx)
                 }
                 BufferDiffEvent::LanguageChanged => this.buffer_diff_language_changed(diff, cx),
-            }),
-            _secondary_subscription: secondary_diff.map(|secondary_diff| {
-                let diff = diff.clone();
-                cx.subscribe(&secondary_diff, move |this, _, event, cx| match event {
-                    BufferDiffEvent::DiffChanged { changed_range } => {
-                        let Some(buffer) = this.buffer(diff.read(cx).buffer_id) else {
-                            return;
-                        };
-                        let buffer = buffer.read(cx).text_snapshot();
-                        let start = diff
-                            .read(cx)
-                            .hunks_intersecting_range(changed_range.clone(), &buffer, cx)
-                            .next()
-                            .map(|hunk| hunk.buffer_range.start);
-                        let end = diff
-                            .read(cx)
-                            .hunks_intersecting_range_rev(changed_range.clone(), &buffer)
-                            .next()
-                            .map(|hunk| hunk.buffer_range.end);
-                        let changed_range = if let Some((start, end)) = start.zip(end) {
-                            start..end
-                        } else if diff.read(cx).base_text().is_none()
-                            && this.all_diff_hunks_expanded
-                        {
-                            text::Anchor::MIN..text::Anchor::MAX
-                        } else {
-                            return;
-                        };
-                        this.buffer_diff_changed(diff.clone(), changed_range, cx)
-                    }
-                    BufferDiffEvent::LanguageChanged => {}
-                })
             }),
             diff,
         }

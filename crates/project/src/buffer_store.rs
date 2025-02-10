@@ -6,7 +6,7 @@ use crate::{
 };
 use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
 use anyhow::{anyhow, bail, Context as _, Result};
-use buffer_diff::BufferDiff;
+use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::Client;
 use collections::{hash_map, HashMap, HashSet};
 use fs::Fs;
@@ -204,8 +204,9 @@ impl BufferDiffState {
             _ => false,
         };
         self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
+            let mut unstaged_changed_range = None;
             if let Some(unstaged_diff) = &unstaged_diff {
-                BufferDiff::update_diff(
+                unstaged_changed_range = BufferDiff::update_diff(
                     unstaged_diff.clone(),
                     buffer.clone(),
                     index,
@@ -216,26 +217,59 @@ impl BufferDiffState {
                     &mut cx,
                 )
                 .await?;
+
+                unstaged_diff.update(&mut cx, |_, cx| {
+                    if let Some(changed_range) = unstaged_changed_range.clone() {
+                        cx.emit(BufferDiffEvent::DiffChanged {
+                            changed_range: Some(changed_range),
+                        })
+                    }
+                })?;
             }
 
             if let Some(uncommitted_diff) = &uncommitted_diff {
-                if let (Some(unstaged_diff), true) = (&unstaged_diff, index_matches_head) {
-                    uncommitted_diff.update(&mut cx, |uncommitted_diff, cx| {
-                        uncommitted_diff.update_diff_from(&buffer, unstaged_diff, cx);
-                    })?;
-                } else {
-                    BufferDiff::update_diff(
-                        uncommitted_diff.clone(),
-                        buffer,
-                        head,
-                        head_changed,
-                        language_changed,
-                        language.clone(),
-                        language_registry.clone(),
-                        &mut cx,
-                    )
-                    .await?
-                }
+                let uncommitted_changed_range =
+                    if let (Some(unstaged_diff), true) = (&unstaged_diff, index_matches_head) {
+                        uncommitted_diff.update(&mut cx, |uncommitted_diff, cx| {
+                            uncommitted_diff.update_diff_from(&buffer, unstaged_diff, cx)
+                        })?
+                    } else {
+                        BufferDiff::update_diff(
+                            uncommitted_diff.clone(),
+                            buffer.clone(),
+                            head,
+                            head_changed,
+                            language_changed,
+                            language.clone(),
+                            language_registry.clone(),
+                            &mut cx,
+                        )
+                        .await?
+                    };
+
+                uncommitted_diff.update(&mut cx, |uncommitted_diff, cx| {
+                    if language_changed {
+                        cx.emit(BufferDiffEvent::LanguageChanged);
+                    }
+                    let changed_range = match (unstaged_changed_range, uncommitted_changed_range) {
+                        (None, None) => None,
+                        (Some(unstaged_range), None) => {
+                            uncommitted_diff.range_to_hunk_range(unstaged_range, &buffer, cx)
+                        }
+                        (None, Some(uncommitted_range)) => Some(uncommitted_range),
+                        (Some(unstaged_range), Some(uncommitted_range)) => maybe!({
+                            let expanded_range = uncommitted_diff.range_to_hunk_range(
+                                unstaged_range,
+                                &buffer,
+                                cx,
+                            )?;
+                            let start = expanded_range.start.min(&uncommitted_range.start, &buffer);
+                            let end = expanded_range.end.max(&uncommitted_range.end, &buffer);
+                            Some(start..end)
+                        }),
+                    };
+                    cx.emit(BufferDiffEvent::DiffChanged { changed_range });
+                })?;
             }
 
             if let Some(this) = this.upgrade() {

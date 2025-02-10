@@ -370,8 +370,6 @@ fn compute_hunks(
         )
         .log_err();
 
-        eprintln!("one level up");
-
         // A common case in Zed is that the empty buffer is represented as just a newline,
         // but if we just compute a naive diff you get a "preserved" line in the middle,
         // which is a bit odd.
@@ -474,7 +472,9 @@ impl std::fmt::Debug for BufferDiff {
 }
 
 pub enum BufferDiffEvent {
-    DiffChanged { changed_range: Range<text::Anchor> },
+    DiffChanged {
+        changed_range: Option<Range<text::Anchor>>,
+    },
     LanguageChanged,
 }
 
@@ -582,6 +582,25 @@ impl BufferDiff {
         Some(self.secondary_diff.as_ref()?.clone())
     }
 
+    pub fn range_to_hunk_range(
+        &self,
+        range: Range<Anchor>,
+        buffer: &text::BufferSnapshot,
+        cx: &App,
+    ) -> Option<Range<Anchor>> {
+        let start = self
+            .hunks_intersecting_range(range.clone(), &buffer, cx)
+            .next()?
+            .buffer_range
+            .start;
+        let end = self
+            .hunks_intersecting_range_rev(range.clone(), &buffer)
+            .next()?
+            .buffer_range
+            .end;
+        Some(start..end)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn update_diff(
         this: Entity<BufferDiff>,
@@ -592,7 +611,7 @@ impl BufferDiff {
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut AsyncApp,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Option<Range<Anchor>>> {
         let snapshot = if base_text_changed || language_changed {
             cx.update(|cx| {
                 Self::build(
@@ -616,12 +635,7 @@ impl BufferDiff {
             .await
         };
 
-        this.update(cx, |this, cx| {
-            this.set_state(snapshot, &buffer, cx);
-            if language_changed {
-                cx.emit(BufferDiffEvent::LanguageChanged);
-            }
-        })
+        this.update(cx, |this, _| this.set_state(snapshot, &buffer))
     }
 
     pub fn update_diff_from(
@@ -629,17 +643,16 @@ impl BufferDiff {
         buffer: &text::BufferSnapshot,
         other: &Entity<Self>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<Range<Anchor>> {
         let other = other.read(cx).inner.clone();
-        self.set_state(other, buffer, cx);
+        self.set_state(other, buffer)
     }
 
     fn set_state(
         &mut self,
         inner: BufferDiffInner,
         buffer: &text::BufferSnapshot,
-        cx: &mut Context<Self>,
-    ) {
+    ) -> Option<Range<Anchor>> {
         let changed_range = match (self.inner.base_text.as_ref(), inner.base_text.as_ref()) {
             (None, None) => None,
             (Some(old), Some(new)) if old.remote_id() == new.remote_id() => {
@@ -647,10 +660,8 @@ impl BufferDiff {
             }
             _ => Some(text::Anchor::MIN..text::Anchor::MAX),
         };
-        if let Some(changed_range) = changed_range {
-            cx.emit(BufferDiffEvent::DiffChanged { changed_range });
-        }
         self.inner = inner;
+        changed_range
     }
 
     pub fn base_text(&self) -> Option<&language::BufferSnapshot> {
@@ -730,8 +741,8 @@ impl BufferDiff {
             let Some(this) = this.upgrade() else {
                 return;
             };
-            this.update(&mut cx, |this, cx| {
-                this.set_state(snapshot, &buffer, cx);
+            this.update(&mut cx, |this, _| {
+                this.set_state(snapshot, &buffer);
             })
             .log_err();
             drop(complete_on_drop)
@@ -790,7 +801,7 @@ impl BufferDiff {
             cx,
         );
         let snapshot = cx.background_executor().block(snapshot);
-        self.set_state(snapshot, &buffer, cx);
+        self.set_state(snapshot, &buffer);
     }
 }
 
