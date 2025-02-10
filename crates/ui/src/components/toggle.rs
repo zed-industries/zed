@@ -433,6 +433,7 @@ impl RenderOnce for Switch {
         h_flex()
             .id(self.id)
             .gap(DynamicSpacing::Base06.rems(cx))
+            .cursor_pointer()
             .child(switch)
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
