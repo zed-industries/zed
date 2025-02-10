@@ -2,7 +2,6 @@ use crate::{motion::Motion, object::Object, Vim};
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
-    movement,
     scroll::Autoscroll,
     Bias, DisplayPoint,
 };

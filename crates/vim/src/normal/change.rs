@@ -6,7 +6,7 @@ use crate::{
 };
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
-    movement::{self, TextLayoutDetails},
+    movement::TextLayoutDetails,
     scroll::Autoscroll,
     Bias, DisplayPoint,
 };

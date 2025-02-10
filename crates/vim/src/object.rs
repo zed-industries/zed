@@ -429,8 +429,7 @@ impl Object {
                                     {
                                         if prev_ch == '{' {
                                             // Preserve the final newline
-                                            let mut end_pos =
-                                                selection.end.to_offset(map, Bias::Left);
+                                            let end_pos = selection.end.to_offset(map, Bias::Left);
                                             for (ch, offset) in map.reverse_buffer_chars_at(end_pos)
                                             {
                                                 if ch == '\n' {
