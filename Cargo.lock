@@ -16824,13 +16824,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_php"
-version = "0.2.4"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
 name = "zed_proto"
 version = "0.2.1"
 dependencies = [

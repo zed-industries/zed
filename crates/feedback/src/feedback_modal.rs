@@ -191,7 +191,7 @@ impl FeedbackModal {
             );
             editor.set_show_gutter(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_show_inline_completions(Some(false), window, cx);
+            editor.set_show_edit_predictions(Some(false), window, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor.set_use_modal_editing(false);
             editor.set_soft_wrap();

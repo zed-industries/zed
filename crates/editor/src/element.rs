@@ -34,12 +34,12 @@ use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
     relative, size, svg, transparent_black, Action, AnyElement, App, AvailableSpace, Axis, Bounds,
     ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase,
-    Edges, Element, ElementInputHandler, Entity, FocusHandle, Focusable as _, FontId,
-    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, KeyBindingContextPredicate,
-    Keystroke, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
-    SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription, TextRun,
-    TextStyleRefinement, WeakEntity, Window,
+    Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
+    Hsla, InteractiveElement, IntoElement, KeyBindingContextPredicate, Keystroke, Length,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
+    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement,
+    WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -3088,10 +3088,9 @@ impl EditorElement {
 
         {
             let editor = self.editor.read(cx);
-            if editor.inline_completion_visible_in_cursor_popover(
-                editor.has_active_inline_completion(),
-                cx,
-            ) {
+            if editor
+                .edit_prediction_visible_in_cursor_popover(editor.has_active_inline_completion())
+            {
                 height_above_menu +=
                     editor.edit_prediction_cursor_popover_height() + POPOVER_Y_PADDING;
                 edit_prediction_popover_visible = true;
@@ -3168,10 +3167,8 @@ impl EditorElement {
                 );
 
                 let edit_prediction = if edit_prediction_popover_visible {
-                    let accept_binding =
-                        AcceptEditPredictionBinding::resolve(self.editor.focus_handle(cx), window);
-
                     self.editor.update(cx, move |editor, cx| {
+                        let accept_binding = editor.accept_edit_prediction_keybind(window, cx);
                         let mut element = editor.render_edit_prediction_cursor_popover(
                             min_width,
                             max_width,
@@ -3557,7 +3554,7 @@ impl EditorElement {
         let editor = self.editor.read(cx);
         let active_inline_completion = editor.active_inline_completion.as_ref()?;
 
-        if editor.inline_completion_visible_in_cursor_popover(true, cx) {
+        if editor.edit_prediction_visible_in_cursor_popover(true) {
             return None;
         }
 
@@ -3570,7 +3567,7 @@ impl EditorElement {
                         "Jump to Edit",
                         Some(IconName::ArrowUp),
                         previewing,
-                        self.editor.focus_handle(cx),
+                        editor,
                         window,
                         cx,
                     )?;
@@ -3583,7 +3580,7 @@ impl EditorElement {
                         "Jump to Edit",
                         Some(IconName::ArrowDown),
                         previewing,
-                        self.editor.focus_handle(cx),
+                        editor,
                         window,
                         cx,
                     )?;
@@ -3599,7 +3596,7 @@ impl EditorElement {
                         "Jump to Edit",
                         None,
                         previewing,
-                        self.editor.focus_handle(cx),
+                        editor,
                         window,
                         cx,
                     )?;
@@ -3658,26 +3655,23 @@ impl EditorElement {
                             target_display_point.row(),
                             editor_snapshot.line_len(target_display_point.row()),
                         );
-                        let (previewing_inline_completion, origin) =
-                            self.editor.update(cx, |editor, _cx| {
-                                Some((
+                        let (mut element, origin) = self.editor.update(cx, |editor, cx| {
+                            Some((
+                                inline_completion_accept_indicator(
+                                    "Accept",
+                                    None,
                                     editor.previewing_inline_completion,
-                                    editor.display_to_pixel_point(
-                                        target_line_end,
-                                        editor_snapshot,
-                                        window,
-                                    )?,
-                                ))
-                            })?;
-
-                        let mut element = inline_completion_accept_indicator(
-                            "Accept",
-                            None,
-                            previewing_inline_completion,
-                            self.editor.focus_handle(cx),
-                            window,
-                            cx,
-                        )?;
+                                    editor,
+                                    window,
+                                    cx,
+                                )?,
+                                editor.display_to_pixel_point(
+                                    target_line_end,
+                                    editor_snapshot,
+                                    window,
+                                )?,
+                            ))
+                        })?;
 
                         element.prepaint_as_root(
                             text_bounds.origin + origin + point(PADDING_X, px(0.)),
@@ -5676,11 +5670,11 @@ fn inline_completion_accept_indicator(
     label: impl Into<SharedString>,
     icon: Option<IconName>,
     previewing: bool,
-    editor_focus_handle: FocusHandle,
-    window: &Window,
+    editor: &Editor,
+    window: &mut Window,
     cx: &App,
 ) -> Option<AnyElement> {
-    let accept_binding = AcceptEditPredictionBinding::resolve(editor_focus_handle, window);
+    let accept_binding = editor.accept_edit_prediction_keybind(window, cx);
     let accept_keystroke = accept_binding.keystroke()?;
 
     let accept_key = h_flex()
@@ -5729,18 +5723,9 @@ fn inline_completion_accept_indicator(
     )
 }
 
-pub struct AcceptEditPredictionBinding(Option<gpui::KeyBinding>);
+pub struct AcceptEditPredictionBinding(pub(crate) Option<gpui::KeyBinding>);
 
 impl AcceptEditPredictionBinding {
-    pub fn resolve(editor_focus_handle: FocusHandle, window: &Window) -> Self {
-        AcceptEditPredictionBinding(
-            window
-                .bindings_for_action_in(&AcceptEditPrediction, &editor_focus_handle)
-                .into_iter()
-                .next(),
-        )
-    }
-
     pub fn keystroke(&self) -> Option<&Keystroke> {
         if let Some(binding) = self.0.as_ref() {
             match &binding.keystrokes() {

@@ -1345,7 +1345,7 @@ impl InlineAssistant {
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
                     editor.set_show_scrollbars(false, cx);
                     editor.set_read_only(true);
-                    editor.set_show_inline_completions(Some(false), window, cx);
+                    editor.set_show_edit_predictions(Some(false), window, cx);
                     editor.highlight_rows::<DeletedLines>(
                         Anchor::min()..Anchor::max(),
                         cx.theme().status().deleted_background,
