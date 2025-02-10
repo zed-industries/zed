@@ -681,7 +681,7 @@ impl Render for ContextMenu {
                                                                     div().flex_none().child(
                                                                         Icon::new(IconName::Check)
                                                                             .size(*icon_size)
-                                                                    ).opacity(0.)
+                                                                    ).invisible()
                                                                 };
                                                                 match position {
                                                                     IconPosition::Start => {
