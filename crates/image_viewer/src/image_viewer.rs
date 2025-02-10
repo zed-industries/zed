@@ -1,5 +1,6 @@
 mod image_info;
 mod image_viewer_settings;
+pub mod zoom_controls;
 
 use std::path::PathBuf;
 
@@ -71,6 +72,38 @@ impl ImageView {
             }
             ImageItemEvent::ReloadNeeded => {}
         }
+    }
+
+    pub fn update_zoom(&mut self, new_zoom: f32, center: Point<Pixels>, cx: &mut Context<Self>) {
+        let content_size = self.content_size(cx);
+        let scaled_width = content_size.width.0 * new_zoom;
+        let scaled_height = content_size.height.0 * new_zoom;
+
+        self.pan_offset = Point {
+            x: center.x - px(scaled_width),
+            y: center.y - px(scaled_height),
+        };
+        self.zoom_level = new_zoom;
+        cx.refresh_windows();
+    }
+
+    pub fn reset_view(&mut self, window_size: Size<Pixels>, cx: &mut Context<Self>) {
+        let center = Point::new(window_size.width, window_size.height);
+        self.zoom_level = 1.0;
+        self.pan_offset = center;
+        cx.refresh_windows();
+    }
+
+    fn content_size(&self, cx: &mut Context<Self>) -> Size<Pixels> {
+        self.image_item
+            .read(cx)
+            .image_metadata
+            .as_ref()
+            .map(|metadata| Size {
+                width: px(metadata.width as f32),
+                height: px(metadata.height as f32),
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -293,6 +326,7 @@ impl Render for ImageView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let image = self.image_item.read(cx).image.clone();
         let metadata = self.image_item.read(cx).image_metadata.as_ref();
+        let bounds = window.bounds();
 
         let (rendered_width, rendered_height) = if let Some(meta) = metadata {
             (
@@ -304,21 +338,9 @@ impl Render for ImageView {
         };
 
         if self.initial_layout.is_none() {
-            if let Some(meta) = self.image_item.read(cx).image_metadata.as_ref() {
-                let container_size = window.bounds().size;
-                let image_width = px(meta.width as f32);
-                let image_height = px(meta.height as f32);
-
-                let scale_width = container_size.width / image_width;
-                let scale_height = container_size.height / image_height;
-                let initial_zoom = scale_width.min(scale_height).min(px(1.0).into());
-
-                self.pan_offset = Point {
-                    x: (container_size.width - (image_width * initial_zoom)) / 2.0,
-                    y: (container_size.height - (image_height * initial_zoom)) / 2.0,
-                };
-                self.zoom_level = initial_zoom;
-                self.initial_layout = Some(container_size);
+            if let Some(_) = self.image_item.read(cx).image_metadata.as_ref() {
+                self.reset_view(bounds.size, cx);
+                self.initial_layout = Some(window.bounds().size);
             }
         }
 
@@ -414,7 +436,7 @@ impl Render for ImageView {
             )
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this: &mut ImageView, event: &MouseUpEvent, _, cx| {
+                cx.listener(|this: &mut ImageView, _: &MouseUpEvent, _, cx| {
                     this.is_panning = false;
                     this.last_mouse_position = None;
                     cx.refresh_windows();
@@ -431,9 +453,8 @@ impl Render for ImageView {
                     let old_zoom = this.zoom_level;
                     let new_zoom = (old_zoom * (1.0 + delta * sensitivity)).clamp(0.1, 10.0);
 
-                    if let Some(meta) = this.image_item.read(cx).image_metadata.as_ref() {
+                    if let Some(_) = this.image_item.read(cx).image_metadata.as_ref() {
                         let mouse_pos = event.position;
-
                         let image_x = (mouse_pos.x - this.pan_offset.x) / old_zoom;
                         let image_y = (mouse_pos.y - this.pan_offset.y) / old_zoom;
 
