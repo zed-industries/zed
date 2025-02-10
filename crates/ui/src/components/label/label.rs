@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use gpui::{App, StyleRefinement, Window};
+use gpui::{AnyElement, App, StyleRefinement, Window};
 
 use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
 
@@ -32,7 +32,7 @@ use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
 ///
 /// let my_label = Label::new("Deleted").strikethrough(true);
 /// ```
-#[derive(IntoElement)]
+#[derive(IntoElement, IntoComponent)]
 pub struct Label {
     base: LabelLike,
     label: SharedString,
@@ -172,10 +172,65 @@ impl LabelCommon for Label {
         self.base = self.base.single_line();
         self
     }
+
+    fn buffer_font(mut self, cx: &App) -> Self {
+        self.base = self.base.buffer_font(cx);
+        self
+    }
 }
 
 impl RenderOnce for Label {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         self.base.child(self.label)
+    }
+}
+
+impl ComponentPreview for Label {
+    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Sizes",
+                    vec![
+                        single_example("Default", Label::new("Default Label").into_any_element()),
+                        single_example("Small", Label::new("Small Label").size(LabelSize::Small).into_any_element()),
+                        single_example("Large", Label::new("Large Label").size(LabelSize::Large).into_any_element()),
+                    ],
+                ),
+                example_group_with_title(
+                    "Colors",
+                    vec![
+                        single_example("Default", Label::new("Default Color").into_any_element()),
+                        single_example("Accent", Label::new("Accent Color").color(Color::Accent).into_any_element()),
+                        single_example("Error", Label::new("Error Color").color(Color::Error).into_any_element()),
+                    ],
+                ),
+                example_group_with_title(
+                    "Styles",
+                    vec![
+                        single_example("Default", Label::new("Default Style").into_any_element()),
+                        single_example("Bold", Label::new("Bold Style").weight(gpui::FontWeight::BOLD).into_any_element()),
+                        single_example("Italic", Label::new("Italic Style").italic(true).into_any_element()),
+                        single_example("Strikethrough", Label::new("Strikethrough Style").strikethrough(true).into_any_element()),
+                        single_example("Underline", Label::new("Underline Style").underline(true).into_any_element()),
+                    ],
+                ),
+                example_group_with_title(
+                    "Line Height Styles",
+                    vec![
+                        single_example("Default", Label::new("Default Line Height").into_any_element()),
+                        single_example("UI Label", Label::new("UI Label Line Height").line_height_style(LineHeightStyle::UiLabel).into_any_element()),
+                    ],
+                ),
+                example_group_with_title(
+                    "Special Cases",
+                    vec![
+                        single_example("Single Line", Label::new("Single\nLine\nText").single_line().into_any_element()),
+                        single_example("Text Ellipsis", Label::new("This is a very long text that should be truncated with an ellipsis").text_ellipsis().into_any_element()),
+                    ],
+                ),
+            ])
+            .into_any_element()
     }
 }

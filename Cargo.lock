@@ -2943,6 +2943,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "component"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "gpui",
+ "linkme",
+ "once_cell",
+ "parking_lot",
+ "theme",
+]
+
+[[package]]
+name = "component_preview"
+version = "0.1.0"
+dependencies = [
+ "component",
+ "gpui",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5330,6 +5352,7 @@ dependencies = [
  "editor",
  "feature_flags",
  "futures 0.3.31",
+ "fuzzy",
  "git",
  "gpui",
  "language",
@@ -5349,6 +5372,7 @@ dependencies = [
  "util",
  "windows 0.58.0",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -7184,7 +7208,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -7276,6 +7300,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dfa36d52c581e9ec783a7ce2a5e0143da6237be5811a0b3153fedfdbe9f780"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "linkme"
+version = "0.3.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "566336154b9e58a4f055f6dd4cbab62c7dc0826ce3c0a04e63b2d2ecd784cdae"
+dependencies = [
+ "linkme-impl",
+]
+
+[[package]]
+name = "linkme-impl"
+version = "0.3.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edbe595006d355eaf9ae11db92707d4338cd2384d16866131cc1afdbdd35d8d9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.90",
 ]
 
 [[package]]
@@ -8691,9 +8735,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.20.2"
+version = "1.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1261fe7e33c73b354eab43b1273a57c8f967d0391e80353e51f764ac02cf6775"
+checksum = "945462a4b81e43c4e3ba96bd7b49d834c6f61198356aa858733bc4acf3cbe62e"
 
 [[package]]
 name = "oo7"
@@ -9000,7 +9044,10 @@ dependencies = [
 name = "panel"
 version = "0.1.0"
 dependencies = [
+ "editor",
  "gpui",
+ "settings",
+ "theme",
  "ui",
  "workspace",
 ]
@@ -14318,8 +14365,10 @@ name = "ui"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "component",
  "gpui",
  "itertools 0.14.0",
+ "linkme",
  "menu",
  "serde",
  "settings",
@@ -14347,6 +14396,7 @@ name = "ui_macros"
 version = "0.1.0"
 dependencies = [
  "convert_case 0.7.1",
+ "linkme",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -14615,22 +14665,6 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
-
-[[package]]
-name = "vcs_menu"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "fuzzy",
- "git",
- "gpui",
- "picker",
- "project",
- "ui",
- "util",
- "workspace",
- "zed_actions",
-]
 
 [[package]]
 name = "version-compare"
@@ -16134,6 +16168,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "component",
  "db",
  "derive_more",
  "env_logger 0.11.6",
@@ -16568,6 +16603,7 @@ dependencies = [
  "collections",
  "command_palette",
  "command_palette_hooks",
+ "component_preview",
  "copilot",
  "db",
  "diagnostics",
@@ -16657,7 +16693,6 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
- "vcs_menu",
  "vim",
  "vim_mode_setting",
  "welcome",
@@ -16766,12 +16801,13 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.2.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ea4d8ead1e1158e5ebdd6735df25973781da70de5c8008e3a13595865ca4f31"
+checksum = "614669bead4741b2fc352ae1967318be16949cf46f59013e548c6dbfdfc01252"
 dependencies = [
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]

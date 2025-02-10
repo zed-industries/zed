@@ -1,25 +1,47 @@
 use anyhow::{anyhow, Context as _, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
+
 use git::repository::Branch;
 use gpui::{
-    rems, AnyElement, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, WeakEntity, Window,
+    rems, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
+    Task, WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::ProjectPath;
-use std::{ops::Not, sync::Arc};
+use std::sync::Arc;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
-use zed_actions::branches::OpenRecent;
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
-        workspace.register_action(BranchList::open);
+        workspace.register_action(open);
     })
     .detach();
+}
+
+pub fn open(
+    _: &mut Workspace,
+    _: &zed_actions::git::Branch,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let this = cx.entity().clone();
+    cx.spawn_in(window, |_, mut cx| async move {
+        // Modal branch picker has a longer trailoff than a popover one.
+        let delegate = BranchListDelegate::new(this.clone(), 70, &cx).await?;
+
+        this.update_in(&mut cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                BranchList::new(delegate, 34., window, cx)
+            })
+        })?;
+
+        Ok(())
+    })
+    .detach_and_prompt_err("Failed to read branches", window, cx, |_, _, _| None)
 }
 
 pub struct BranchList {
@@ -29,29 +51,7 @@ pub struct BranchList {
 }
 
 impl BranchList {
-    pub fn open(
-        _: &mut Workspace,
-        _: &OpenRecent,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        let this = cx.entity().clone();
-        cx.spawn_in(window, |_, mut cx| async move {
-            // Modal branch picker has a longer trailoff than a popover one.
-            let delegate = BranchListDelegate::new(this.clone(), 70, &cx).await?;
-
-            this.update_in(&mut cx, |workspace, window, cx| {
-                workspace.toggle_modal(window, cx, |window, cx| {
-                    BranchList::new(delegate, 34., window, cx)
-                })
-            })?;
-
-            Ok(())
-        })
-        .detach_and_prompt_err("Failed to read branches", window, cx, |_, _, _| None)
-    }
-
-    fn new(
+    pub fn new(
         delegate: BranchListDelegate,
         rem_width: f32,
         window: &mut Window,
@@ -91,6 +91,7 @@ impl Render for BranchList {
 #[derive(Debug, Clone)]
 enum BranchEntry {
     Branch(StringMatch),
+    History(String),
     NewBranch { name: String },
 }
 
@@ -98,6 +99,7 @@ impl BranchEntry {
     fn name(&self) -> &str {
         match self {
             Self::Branch(branch) => &branch.string,
+            Self::History(branch) => &branch,
             Self::NewBranch { name } => &name,
         }
     }
@@ -114,7 +116,7 @@ pub struct BranchListDelegate {
 }
 
 impl BranchListDelegate {
-    async fn new(
+    pub async fn new(
         workspace: Entity<Workspace>,
         branch_name_trailoff_after: usize,
         cx: &AsyncApp,
@@ -141,7 +143,7 @@ impl BranchListDelegate {
         })
     }
 
-    fn branch_count(&self) -> usize {
+    pub fn branch_count(&self) -> usize {
         self.matches
             .iter()
             .filter(|item| matches!(item, BranchEntry::Branch(_)))
@@ -207,16 +209,10 @@ impl PickerDelegate for BranchListDelegate {
             let Some(candidates) = candidates.log_err() else {
                 return;
             };
-            let matches = if query.is_empty() {
+            let matches: Vec<BranchEntry> = if query.is_empty() {
                 candidates
                     .into_iter()
-                    .enumerate()
-                    .map(|(index, candidate)| StringMatch {
-                        candidate_id: index,
-                        string: candidate.string,
-                        positions: Vec::new(),
-                        score: 0.0,
-                    })
+                    .map(|candidate| BranchEntry::History(candidate.string))
                     .collect()
             } else {
                 fuzzy::match_strings(
@@ -228,11 +224,15 @@ impl PickerDelegate for BranchListDelegate {
                     cx.background_executor().clone(),
                 )
                 .await
+                .iter()
+                .cloned()
+                .map(BranchEntry::Branch)
+                .collect()
             };
             picker
                 .update(&mut cx, |picker, _| {
                     let delegate = &mut picker.delegate;
-                    delegate.matches = matches.into_iter().map(BranchEntry::Branch).collect();
+                    delegate.matches = matches;
                     if delegate.matches.is_empty() {
                         if !query.is_empty() {
                             delegate.matches.push(BranchEntry::NewBranch {
@@ -268,6 +268,7 @@ impl PickerDelegate for BranchListDelegate {
                     let project = workspace.read(cx).project().read(cx);
                     let branch_to_checkout = match branch {
                         BranchEntry::Branch(branch) => branch.string,
+                        BranchEntry::History(string) => string,
                         BranchEntry::NewBranch { name: branch_name } => branch_name,
                     };
                     let worktree = project
@@ -311,7 +312,14 @@ impl PickerDelegate for BranchListDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .map(|parent| match hit {
+                .when(matches!(hit, BranchEntry::History(_)), |el| {
+                    el.end_slot(
+                        Icon::new(IconName::HistoryRerun)
+                            .color(Color::Muted)
+                            .size(IconSize::Small),
+                    )
+                })
+                .map(|el| match hit {
                     BranchEntry::Branch(branch) => {
                         let highlights: Vec<_> = branch
                             .positions
@@ -320,40 +328,13 @@ impl PickerDelegate for BranchListDelegate {
                             .copied()
                             .collect();
 
-                        parent.child(HighlightedLabel::new(shortened_branch_name, highlights))
+                        el.child(HighlightedLabel::new(shortened_branch_name, highlights))
                     }
+                    BranchEntry::History(_) => el.child(Label::new(shortened_branch_name)),
                     BranchEntry::NewBranch { name } => {
-                        parent.child(Label::new(format!("Create branch '{name}'")))
+                        el.child(Label::new(format!("Create branch '{name}'")))
                     }
                 }),
         )
-    }
-
-    fn render_header(
-        &self,
-        _window: &mut Window,
-        _: &mut Context<Picker<Self>>,
-    ) -> Option<AnyElement> {
-        let label = if self.last_query.is_empty() {
-            Label::new("Recent Branches")
-                .size(LabelSize::Small)
-                .mt_1()
-                .ml_3()
-                .into_any_element()
-        } else {
-            let match_label = self.matches.is_empty().not().then(|| {
-                let suffix = if self.branch_count() == 1 { "" } else { "es" };
-                Label::new(format!("{} match{}", self.branch_count(), suffix))
-                    .color(Color::Muted)
-                    .size(LabelSize::Small)
-            });
-            h_flex()
-                .px_3()
-                .justify_between()
-                .child(Label::new("Branches").size(LabelSize::Small))
-                .children(match_label)
-                .into_any_element()
-        };
-        Some(v_flex().mt_1().child(label).into_any_element())
     }
 }

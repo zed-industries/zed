@@ -588,24 +588,24 @@ impl KeymapFile {
         let Some(new_text) = migrate_keymap(&old_text) else {
             return Ok(());
         };
-        let initial_path = paths::keymap_file().as_path();
-        if fs.is_file(initial_path).await {
-            let backup_path = paths::home_dir().join(".zed_keymap_backup");
-            fs.atomic_write(backup_path, old_text)
+        let keymap_path = paths::keymap_file().as_path();
+        if fs.is_file(keymap_path).await {
+            fs.atomic_write(paths::keymap_backup_file().to_path_buf(), old_text)
                 .await
                 .with_context(|| {
                     "Failed to create settings backup in home directory".to_string()
                 })?;
-            let resolved_path = fs.canonicalize(initial_path).await.with_context(|| {
-                format!("Failed to canonicalize keymap path {:?}", initial_path)
-            })?;
+            let resolved_path = fs
+                .canonicalize(keymap_path)
+                .await
+                .with_context(|| format!("Failed to canonicalize keymap path {:?}", keymap_path))?;
             fs.atomic_write(resolved_path.clone(), new_text)
                 .await
                 .with_context(|| format!("Failed to write keymap to file {:?}", resolved_path))?;
         } else {
-            fs.atomic_write(initial_path.to_path_buf(), new_text)
+            fs.atomic_write(keymap_path.to_path_buf(), new_text)
                 .await
-                .with_context(|| format!("Failed to write keymap to file {:?}", initial_path))?;
+                .with_context(|| format!("Failed to write keymap to file {:?}", keymap_path))?;
         }
 
         Ok(())

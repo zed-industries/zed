@@ -148,6 +148,7 @@ actions!(
         Open,
         OpenFiles,
         OpenInTerminal,
+        OpenComponentPreview,
         ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
@@ -378,6 +379,7 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     init_settings(cx);
+    component::init();
     theme_preview::init(cx);
 
     cx.on_action(Workspace::close_global);
@@ -4440,10 +4442,12 @@ impl Workspace {
         if let Some(focus_on) = focus_on {
             focus_on.update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
         } else {
-            self.panes
-                .last()
-                .unwrap()
-                .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
+            if self.active_pane() == pane {
+                self.panes
+                    .last()
+                    .unwrap()
+                    .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
+            }
         }
         if self.last_active_center_pane == Some(pane.downgrade()) {
             self.last_active_center_pane = None;
