@@ -190,6 +190,7 @@ pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 
+pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
 pub(crate) const EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT: &str =
     "edit_prediction_requires_modifier";
 
@@ -1488,13 +1489,13 @@ impl Editor {
         this
     }
 
-    pub fn mouse_menu_is_focused(&self, window: &mut Window, cx: &mut App) -> bool {
+    pub fn mouse_menu_is_focused(&self, window: &Window, cx: &App) -> bool {
         self.mouse_context_menu
             .as_ref()
             .is_some_and(|menu| menu.context_menu.focus_handle(cx).is_focused(window))
     }
 
-    fn key_context(&self, window: &mut Window, cx: &mut Context<Self>) -> KeyContext {
+    fn key_context(&self, window: &Window, cx: &App) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
         let mode = match self.mode {
@@ -1547,7 +1548,7 @@ impl Editor {
 
         if self.has_active_inline_completion() {
             key_context.add("copilot_suggestion");
-            key_context.add("edit_prediction");
+            key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
 
             if showing_completions || self.edit_prediction_requires_modifier() {
                 key_context.add(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT);
@@ -1559,6 +1560,22 @@ impl Editor {
         }
 
         key_context
+    }
+
+    pub fn accept_edit_prediction_keybind(
+        &self,
+        window: &Window,
+        cx: &App,
+    ) -> AcceptEditPredictionBinding {
+        let mut context = self.key_context(window, cx);
+        context.add(EDIT_PREDICTION_KEY_CONTEXT);
+
+        AcceptEditPredictionBinding(
+            window
+                .bindings_for_action_in_context(&AcceptEditPrediction, context)
+                .into_iter()
+                .next(),
+        )
     }
 
     pub fn new_file(
@@ -5128,8 +5145,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if self.show_edit_predictions_in_menu() {
-            let accept_binding =
-                AcceptEditPredictionBinding::resolve(self.focus_handle(cx), window);
+            let accept_binding = self.accept_edit_prediction_keybind(window, cx);
             if let Some(accept_keystroke) = accept_binding.keystroke() {
                 let was_previewing_inline_completion = self.previewing_inline_completion;
                 self.previewing_inline_completion = modifiers == accept_keystroke.modifiers
@@ -14408,7 +14424,8 @@ impl Editor {
         });
         supports
     }
-    pub fn is_focused(&self, window: &mut Window) -> bool {
+
+    pub fn is_focused(&self, window: &Window) -> bool {
         self.focus_handle.is_focused(window)
     }
 
