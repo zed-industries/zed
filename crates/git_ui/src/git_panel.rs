@@ -176,23 +176,21 @@ pub struct GitPanel {
 }
 
 fn commit_message_editor(
-    commit_message_buffer: Option<Entity<Buffer>>,
+    commit_message_buffer: Entity<Buffer>,
+    project: Entity<Project>,
     window: &mut Window,
     cx: &mut Context<'_, Editor>,
 ) -> Editor {
-    let mut commit_editor = if let Some(commit_message_buffer) = commit_message_buffer {
-        let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
-        Editor::new(
-            EditorMode::AutoHeight { max_lines: 6 },
-            buffer,
-            None,
-            false,
-            window,
-            cx,
-        )
-    } else {
-        Editor::auto_height(6, window, cx)
-    };
+    let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
+    let mut commit_editor = Editor::new(
+        EditorMode::AutoHeight { max_lines: 6 },
+        buffer,
+        None,
+        false,
+        window,
+        cx,
+    );
+    commit_editor.set_collaboration_hub(Box::new(project));
     commit_editor.set_use_autoclose(false);
     commit_editor.set_show_gutter(false, cx);
     commit_editor.set_show_wrap_guides(false, cx);
@@ -205,7 +203,6 @@ impl GitPanel {
     pub fn new(
         workspace: &mut Workspace,
         window: &mut Window,
-        commit_message_buffer: Option<Entity<Buffer>>,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         let fs = workspace.app_state().fs.clone();
@@ -222,8 +219,11 @@ impl GitPanel {
             })
             .detach();
 
+            // just to let us render a placeholder editor.
+            // Once the active git repo is set, this buffer will be replaced.
+            let temporary_buffer = cx.new(|cx| Buffer::local("", cx));
             let commit_editor =
-                cx.new(|cx| commit_message_editor(commit_message_buffer, window, cx));
+                cx.new(|cx| commit_message_editor(temporary_buffer, project.clone(), window, cx));
             commit_editor.update(cx, |editor, cx| {
                 editor.clear(window, cx);
             });
@@ -773,21 +773,35 @@ impl GitPanel {
             })
             .collect::<HashSet<_>>();
 
-        let new_co_authors = room
-            .read(cx)
-            .remote_participants()
-            .values()
-            .filter(|participant| participant.can_write())
-            .map(|participant| participant.user.as_ref())
-            .filter_map(|user| {
-                let email = user.email.as_deref()?;
-                let name = user.name.as_deref().unwrap_or(&user.github_login);
-                Some(format!("{CO_AUTHOR_PREFIX}{name} <{email}>"))
-            })
-            .filter(|co_author| {
-                !existing_co_authors.contains(co_author.to_ascii_lowercase().as_str())
-            })
-            .collect::<Vec<_>>();
+        let project = self.project.read(cx);
+        let room = room.read(cx);
+        let mut new_co_authors = Vec::new();
+
+        for (peer_id, collaborator) in project.collaborators() {
+            if collaborator.is_host {
+                continue;
+            }
+
+            let Some(participant) = room.remote_participant_for_peer_id(*peer_id) else {
+                continue;
+            };
+            if participant.can_write() && participant.user.email.is_some() {
+                let email = participant.user.email.clone().unwrap();
+
+                if !existing_co_authors.contains(&email.as_ref()) {
+                    new_co_authors.push((participant.user.github_login.clone(), email))
+                }
+            }
+        }
+        if !project.is_local() && !project.is_read_only(cx) {
+            if let Some(user) = room.local_participant_user(cx) {
+                if let Some(email) = user.email.clone() {
+                    if !existing_co_authors.contains(&email.as_ref()) {
+                        new_co_authors.push((user.github_login.clone(), email.clone()))
+                    }
+                }
+            }
+        }
         if new_co_authors.is_empty() {
             return;
         }
@@ -798,9 +812,13 @@ impl GitPanel {
             if !ends_with_co_authors {
                 edit.push('\n');
             }
-            for co_author in new_co_authors {
+            for (name, email) in new_co_authors {
                 edit.push('\n');
-                edit.push_str(&co_author);
+                edit.push_str(CO_AUTHOR_PREFIX);
+                edit.push_str(&name);
+                edit.push_str(" <");
+                edit.push_str(&email);
+                edit.push('>');
             }
 
             editor.edit(Some((editor_end..editor_end, edit)), cx);
@@ -857,8 +875,9 @@ impl GitPanel {
                     .as_ref()
                     != Some(&buffer)
                 {
-                    git_panel.commit_editor =
-                        cx.new(|cx| commit_message_editor(Some(buffer), window, cx));
+                    git_panel.commit_editor = cx.new(|cx| {
+                        commit_message_editor(buffer, git_panel.project.clone(), window, cx)
+                    });
                 }
             })
         })
