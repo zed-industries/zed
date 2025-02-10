@@ -4424,7 +4424,6 @@ async fn test_formatting_buffer(
         .await
         .unwrap();
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
-    let lsp_store_b = project_b.update(cx_b, |p, _| p.lsp_store());
 
     let buffer_b = project_b
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
