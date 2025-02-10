@@ -53,7 +53,6 @@ pub struct InlineCompletionButton {
     file: Option<Arc<dyn File>>,
     edit_prediction_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
     fs: Arc<dyn Fs>,
-    workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
@@ -328,7 +327,6 @@ impl Render for InlineCompletionButton {
 
 impl InlineCompletionButton {
     pub fn new(
-        workspace: WeakEntity<Workspace>,
         fs: Arc<dyn Fs>,
         user_store: Entity<UserStore>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -350,7 +348,6 @@ impl InlineCompletionButton {
             file: None,
             edit_prediction_provider: None,
             popover_menu_handle,
-            workspace,
             fs,
             user_store,
         }
