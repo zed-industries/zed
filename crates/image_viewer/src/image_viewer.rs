@@ -8,10 +8,10 @@ use anyhow::Context as _;
 use editor::items::entry_git_aware_label_color;
 use file_icons::FileIcons;
 use gpui::{
-    canvas, div, fill, img, opaque_grey, point, size, AnyElement, App, Bounds, Context, Entity,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, ParentElement, Point, Render,
-    ScrollDelta, ScrollWheelEvent, Size, Styled, Task, WeakEntity, Window,
+    canvas, div, fill, img, opaque_grey, point, size, AnyElement, App, Bounds, Context,
+    CursorStyle, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, ParentElement, Point,
+    Render, ScrollDelta, ScrollWheelEvent, Size, Styled, Task, WeakEntity, Window,
 };
 use persistence::IMAGE_VIEWER;
 use project::{image_store::ImageItemEvent, ImageItem, Project, ProjectPath};
@@ -483,7 +483,8 @@ impl Render for ImageView {
                         .left(self.pan_offset.x)
                         .top(self.pan_offset.y)
                         .w(rendered_width)
-                        .h(rendered_height),
+                        .h(rendered_height)
+                        .cursor(CursorStyle::ClosedHand),
                 ),
             )
     }
