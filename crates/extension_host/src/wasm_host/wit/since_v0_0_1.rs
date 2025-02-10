@@ -4,7 +4,7 @@ use crate::wasm_host::WasmState;
 use anyhow::Result;
 use async_trait::async_trait;
 use extension::{ExtensionLanguageServerProxy, WorktreeDelegate};
-use language::LanguageServerBinaryStatus;
+use language::BinaryStatus;
 use semantic_version::SemanticVersion;
 use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
@@ -135,17 +135,11 @@ impl ExtensionImports for WasmState {
         status: LanguageServerInstallationStatus,
     ) -> wasmtime::Result<()> {
         let status = match status {
-            LanguageServerInstallationStatus::CheckingForUpdate => {
-                LanguageServerBinaryStatus::CheckingForUpdate
-            }
-            LanguageServerInstallationStatus::Downloading => {
-                LanguageServerBinaryStatus::Downloading
-            }
+            LanguageServerInstallationStatus::CheckingForUpdate => BinaryStatus::CheckingForUpdate,
+            LanguageServerInstallationStatus::Downloading => BinaryStatus::Downloading,
             LanguageServerInstallationStatus::Cached
-            | LanguageServerInstallationStatus::Downloaded => LanguageServerBinaryStatus::None,
-            LanguageServerInstallationStatus::Failed(error) => {
-                LanguageServerBinaryStatus::Failed { error }
-            }
+            | LanguageServerInstallationStatus::Downloaded => BinaryStatus::None,
+            LanguageServerInstallationStatus::Failed(error) => BinaryStatus::Failed { error },
         };
 
         self.host

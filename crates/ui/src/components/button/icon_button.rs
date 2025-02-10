@@ -69,6 +69,14 @@ impl IconButton {
         self
     }
 
+    pub fn on_right_click(
+        mut self,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.base = self.base.on_right_click(handler);
+        self
+    }
+
     pub fn indicator(mut self, indicator: Indicator) -> Self {
         self.indicator = Some(indicator);
         self
@@ -76,6 +84,7 @@ impl IconButton {
 
     pub fn indicator_border_color(mut self, color: Option<Hsla>) -> Self {
         self.indicator_border_color = color;
+
         self
     }
 }

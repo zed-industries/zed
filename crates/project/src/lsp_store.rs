@@ -1,5 +1,6 @@
 use crate::{
     buffer_store::{BufferStore, BufferStoreEvent},
+    dap_store::DapStore,
     deserialize_code_actions,
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -35,9 +36,9 @@ use language::{
     },
     markdown, point_to_lsp, prepare_completion_documentation,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel,
-    CompletionDocumentation, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language,
-    LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LanguageToolchainStore, LocalFile,
+    range_from_lsp, range_to_lsp, Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter,
+    CodeLabel, CompletionDocumentation, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
+    File as _, Language, LanguageName, LanguageRegistry, LanguageToolchainStore, LocalFile,
     LspAdapter, LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
     Transaction, Unclipped,
 };
@@ -147,6 +148,7 @@ pub struct LocalLspStore {
         HashMap<LanguageServerId, HashMap<String, Vec<FileSystemWatcher>>>,
     supplementary_language_servers:
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
+    dap_store: Entity<DapStore>,
     prettier_store: Entity<PrettierStore>,
     current_lsp_settings: HashMap<LanguageServerName, LspSettings>,
     next_diagnostic_group_id: usize,
@@ -361,7 +363,7 @@ impl LocalLspStore {
                         let log = stderr_capture.lock().take().unwrap_or_default();
                         delegate.update_status(
                             adapter.name(),
-                            LanguageServerBinaryStatus::Failed {
+                            BinaryStatus::Failed {
                                 error: format!("{err}\n-- stderr--\n{}", log),
                             },
                         );
@@ -501,7 +503,7 @@ impl LocalLspStore {
                 )
                 .await;
 
-            delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
+            delegate.update_status(adapter.name.clone(), BinaryStatus::None);
 
             let mut binary = binary_result?;
             if let Some(arguments) = settings.and_then(|b| b.arguments) {
@@ -2963,6 +2965,7 @@ impl LspStore {
     pub fn new_local(
         buffer_store: Entity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
+        dap_store: Entity<DapStore>,
         prettier_store: Entity<PrettierStore>,
         toolchain_store: Entity<ToolchainStore>,
         environment: Entity<ProjectEnvironment>,
@@ -3006,6 +3009,7 @@ impl LspStore {
                 buffers_being_formatted: Default::default(),
                 buffer_snapshots: Default::default(),
                 prettier_store,
+                dap_store,
                 environment,
                 http_client,
                 fs,
@@ -3244,6 +3248,10 @@ impl LspStore {
         self.detect_language_for_buffer(buffer, cx);
         if let Some(local) = self.as_local_mut() {
             local.initialize_buffer(buffer, cx);
+
+            local.dap_store.update(cx, |store, cx| {
+                store.sync_open_breakpoints_to_closed_breakpoints(buffer, cx);
+            });
         }
 
         Ok(())
@@ -8628,11 +8636,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         ))
     }
 
-    fn update_status(
-        &self,
-        server_name: LanguageServerName,
-        status: language::LanguageServerBinaryStatus,
-    ) {
+    fn update_status(&self, server_name: LanguageServerName, status: language::BinaryStatus) {
         self.language_registry
             .update_lsp_status(server_name, status);
     }
