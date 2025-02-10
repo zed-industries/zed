@@ -171,7 +171,6 @@ members = [
     "extensions/haskell",
     "extensions/html",
     "extensions/lua",
-    "extensions/php",
     "extensions/perplexity",
     "extensions/proto",
     "extensions/purescript",
