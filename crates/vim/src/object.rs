@@ -417,10 +417,11 @@ impl Object {
     }
 }
 
-/// Adjusts a selection range to preserve indentation after an opening brace.
+/// Returns a range without the final newline char.
 ///
 /// If the selection spans multiple lines and is preceded by an opening brace (`{`),
-/// this function will extend the selection to include the indented newline.
+/// this function will trim the selection to exclude the final newline
+/// in order to preserve a properly indented line.
 fn preserve_indented_newline(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) {
     let (start_point, end_point) = (selection.start.to_point(map), selection.end.to_point(map));
 
