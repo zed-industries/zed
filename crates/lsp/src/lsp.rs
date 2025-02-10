@@ -4,7 +4,7 @@ pub use lsp_types::request::*;
 pub use lsp_types::*;
 
 use anyhow::{anyhow, Context as _, Result};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
 use gpui::{App, AsyncApp, BackgroundExecutor, SharedString, Task};
 use notification::DidChangeWorkspaceFolders;
@@ -100,7 +100,6 @@ pub struct LanguageServer {
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     server: Arc<Mutex<Option<Child>>>,
     workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
-    registered_buffers: Arc<Mutex<HashSet<Url>>>,
 }
 
 /// Identifies a running language server.
@@ -488,7 +487,6 @@ impl LanguageServer {
             output_done_rx: Mutex::new(Some(output_done_rx)),
             server: Arc::new(Mutex::new(server)),
             workspace_folders: Default::default(),
-            registered_buffers: Default::default(),
         }
     }
 
@@ -1285,10 +1283,6 @@ impl LanguageServer {
         self.workspace_folders.lock()
     }
 
-    pub fn is_buffer_registered(&self, uri: &Url) -> bool {
-        self.registered_buffers.lock().contains(uri)
-    }
-
     pub fn register_buffer(
         &self,
         uri: Url,
@@ -1296,24 +1290,17 @@ impl LanguageServer {
         version: i32,
         initial_text: String,
     ) {
-        let is_not_registered_yet = self.registered_buffers.lock().insert(uri.clone());
-
-        if is_not_registered_yet {
-            self.notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
-                text_document: TextDocumentItem::new(uri, language_id, version, initial_text),
-            })
-            .log_err();
-        }
+        self.notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(uri, language_id, version, initial_text),
+        })
+        .log_err();
     }
 
-    pub fn unregister_buffer(&self, uri: &Url) {
-        let was_removed = self.registered_buffers.lock().remove(uri);
-        if was_removed {
-            self.notify::<notification::DidCloseTextDocument>(&DidCloseTextDocumentParams {
-                text_document: TextDocumentIdentifier::new(uri.clone()),
-            })
-            .log_err();
-        }
+    pub fn unregister_buffer(&self, uri: Url) {
+        self.notify::<notification::DidCloseTextDocument>(&DidCloseTextDocumentParams {
+            text_document: TextDocumentIdentifier::new(uri),
+        })
+        .log_err();
     }
 }
 

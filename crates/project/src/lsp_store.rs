@@ -1023,17 +1023,6 @@ impl LocalLspStore {
             Vec::new()
         }
     }
-    fn is_buffer_registered_for_any_server(
-        &self,
-        file_url: &Url,
-        buffer: &Entity<Buffer>,
-        cx: &mut App,
-    ) -> bool {
-        buffer.update(cx, |buffer, cx| {
-            self.language_servers_for_buffer(buffer, cx)
-                .any(|(_, server)| server.is_buffer_registered(&file_url))
-        })
-    }
 
     fn language_servers_for_buffer<'a>(
         &'a self,
@@ -2017,21 +2006,24 @@ impl LocalLspStore {
             };
 
             for server in servers {
-                server.register_buffer(
-                    uri.clone(),
-                    adapter.language_id(&language.name()),
-                    0,
-                    initial_snapshot.text(),
-                );
-
                 let snapshot = LspBufferSnapshot {
                     version: 0,
                     snapshot: initial_snapshot.clone(),
                 };
-                self.buffer_snapshots
+                let old_snapshots = self
+                    .buffer_snapshots
                     .entry(buffer_id)
                     .or_default()
                     .insert(server.server_id(), vec![snapshot]);
+
+                if old_snapshots.is_none() {
+                    server.register_buffer(
+                        uri.clone(),
+                        adapter.language_id(&language.name()),
+                        0,
+                        initial_snapshot.text(),
+                    );
+                }
             }
         }
     }
@@ -2064,9 +2056,13 @@ impl LocalLspStore {
         file_url: &lsp::Url,
         cx: &mut App,
     ) {
-        self.buffer_snapshots.remove(&buffer.remote_id());
-        for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
-            language_server.unregister_buffer(&file_url);
+        let servers = self.buffer_snapshots.remove(&buffer.remote_id());
+        if let Some(servers_with_registration) = servers {
+            for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
+                if servers_with_registration.contains_key(&language_server.server_id()) {
+                    language_server.unregister_buffer(file_url.clone());
+                }
+            }
         }
     }
 
@@ -3327,9 +3323,10 @@ impl LspStore {
         Ok(())
     }
 
-    pub fn register_buffer_with_language_servers(
+    pub(crate) fn register_buffer_with_language_servers(
         &mut self,
         buffer: &Entity<Buffer>,
+        peer_id: Option<proto::PeerId>,
         cx: &mut Context<Self>,
     ) -> OpenLspBufferHandle {
         let handle = buffer.clone();
@@ -3396,18 +3393,11 @@ impl LspStore {
                                             if let Some(file_url) =
                                                 lsp::Url::from_file_path(&f.abs_path(cx)).log_err()
                                             {
-                                                let is_registered_for_any_server = local
-                                                    .is_buffer_registered_for_any_server(
-                                                        &file_url, &buffer, cx,
+                                                buffer.update(cx, |buffer, cx| {
+                                                    local.unregister_buffer_from_language_servers(
+                                                        &buffer, &file_url, cx,
                                                     );
-                                                if is_registered_for_any_server {
-                                                    buffer.update(cx, |buffer, cx| {
-                                                        local.unregister_buffer_from_language_servers(
-                                                            &buffer, &file_url, cx,
-                                                        );
-                                                    })
-
-                                                }
+                                                })
                                             }
                                         }
                                     }
@@ -3490,14 +3480,9 @@ impl LspStore {
                 File::from_dyn(buffer_file.as_ref()).map(|file| file.abs_path(cx))
             {
                 if let Some(file_url) = lsp::Url::from_file_path(&abs_path).log_err() {
-                    let is_registered_for_any_server =
-                        local_store.is_buffer_registered_for_any_server(&file_url, &buffer, cx);
-                    if is_registered_for_any_server {
-                        buffer.update(cx, |buffer, cx| {
-                            local_store
-                                .unregister_buffer_from_language_servers(buffer, &file_url, cx);
-                        });
-                    }
+                    buffer.update(cx, |buffer, cx| {
+                        local_store.unregister_buffer_from_language_servers(buffer, &file_url, cx);
+                    });
                 }
             }
         }
@@ -6028,7 +6013,7 @@ impl LspStore {
                 anyhow::bail!("buffer is not open");
             };
 
-            let handle = this.register_buffer_with_language_servers(&buffer, cx);
+            let handle = this.register_buffer_with_language_servers(&buffer, Some(peer_id), cx);
             this.buffer_store().update(cx, |buffer_store, _| {
                 buffer_store.register_shared_lsp_handle(peer_id, buffer_id, handle);
             });
@@ -7695,6 +7680,12 @@ impl LspStore {
                     .entry(buffer.remote_id())
                     .or_default()
                     .entry(server_id)
+                    .and_modify(|_| {
+                        assert!(
+                            false,
+                            "There should not be an existing snapshot for a newly inserted buffer"
+                        )
+                    })
                     .or_insert_with(|| {
                         vec![LspBufferSnapshot {
                             version: 0,

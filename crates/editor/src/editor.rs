@@ -131,7 +131,7 @@ use project::{
     lsp_store::{FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
-    LspStore, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
+    PrepareRenameResponse, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
 };
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
@@ -1452,9 +1452,8 @@ impl Editor {
 
             if let Some(buffer) = buffer.read(cx).as_singleton() {
                 if let Some(project) = this.project.as_ref() {
-                    let lsp_store = project.read(cx).lsp_store();
-                    let handle = lsp_store.update(cx, |lsp_store, cx| {
-                        lsp_store.register_buffer_with_language_servers(&buffer, cx)
+                    let handle = project.update(cx, |project, cx| {
+                        project.register_buffer_with_language_servers(&buffer, cx)
                     });
                     this.registered_buffers
                         .insert(buffer.read(cx).remote_id(), handle);
@@ -1796,16 +1795,14 @@ impl Editor {
 
     fn register_buffers_with_language_servers(&mut self, cx: &mut Context<Self>) {
         let buffers = self.buffer.read(cx).all_buffers();
-        let Some(lsp_store) = self.lsp_store(cx) else {
+        let Some(project) = self.project.as_ref() else {
             return;
         };
-        lsp_store.update(cx, |lsp_store, cx| {
+        project.update(cx, |project, cx| {
             for buffer in buffers {
                 self.registered_buffers
                     .entry(buffer.read(cx).remote_id())
-                    .or_insert_with(|| {
-                        lsp_store.register_buffer_with_language_servers(&buffer, cx)
-                    });
+                    .or_insert_with(|| project.register_buffer_with_language_servers(&buffer, cx));
             }
         })
     }
@@ -2023,14 +2020,14 @@ impl Editor {
             };
             if let Some(buffer_id) = new_cursor_position.buffer_id {
                 if !self.registered_buffers.contains_key(&buffer_id) {
-                    if let Some(lsp_store) = self.lsp_store(cx) {
-                        lsp_store.update(cx, |lsp_store, cx| {
+                    if let Some(project) = self.project.as_ref() {
+                        project.update(cx, |project, cx| {
                             let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
                                 return;
                             };
                             self.registered_buffers.insert(
                                 buffer_id,
-                                lsp_store.register_buffer_with_language_servers(&buffer, cx),
+                                project.register_buffer_with_language_servers(&buffer, cx),
                             );
                         })
                     }
@@ -13705,12 +13702,6 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn lsp_store(&self, cx: &App) -> Option<Entity<LspStore>> {
-        self.project
-            .as_ref()
-            .map(|project| project.read(cx).lsp_store())
-    }
-
     fn on_buffer_changed(&mut self, _: Entity<MultiBuffer>, cx: &mut Context<Self>) {
         cx.notify();
     }
@@ -13737,11 +13728,11 @@ impl Editor {
                 if let Some(buffer) = buffer_edited {
                     let buffer_id = buffer.read(cx).remote_id();
                     if !self.registered_buffers.contains_key(&buffer_id) {
-                        if let Some(lsp_store) = self.lsp_store(cx) {
-                            lsp_store.update(cx, |lsp_store, cx| {
+                        if let Some(project) = self.project.as_ref() {
+                            project.update(cx, |project, cx| {
                                 self.registered_buffers.insert(
                                     buffer_id,
-                                    lsp_store.register_buffer_with_language_servers(&buffer, cx),
+                                    project.register_buffer_with_language_servers(&buffer, cx),
                                 );
                             })
                         }

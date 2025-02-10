@@ -67,7 +67,7 @@ use lsp::{
     LanguageServerId, LanguageServerName, MessageActionItem,
 };
 use lsp_command::*;
-use lsp_store::LspFormatTarget;
+use lsp_store::{LspFormatTarget, OpenLspBufferHandle};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
@@ -1965,6 +1965,16 @@ impl Project {
                 lsp_store.register_buffer_with_language_servers(&buffer, cx)
             })?;
             Ok((buffer, handle))
+        })
+    }
+
+    pub fn register_buffer_with_language_servers(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> OpenLspBufferHandle {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.register_buffer_with_language_servers(&buffer, self.client.peer_id(), cx)
         })
     }
 
