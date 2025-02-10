@@ -25,9 +25,7 @@ use futures::{
     AsyncWriteExt, Future, FutureExt, StreamExt,
 };
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
-use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, PromptLevel, Task, WeakEntity,
-};
+use gpui::{App, AsyncApp, Context, Entity, EventEmitter, PromptLevel, Task, WeakEntity};
 use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
@@ -109,7 +107,7 @@ pub enum LspFormatTarget {
 
 // proto::RegisterBufferWithLanguageServer {}
 
-pub type OpenLspBufferHandle = Entity<Entity<Buffer>>;
+pub type OpenLspBufferHandle = Entity<Buffer>;
 
 // Currently, formatting operations are represented differently depending on
 // whether they come from a language server or an external command.
@@ -2040,7 +2038,7 @@ impl LocalLspStore {
 
     pub(crate) fn unregister_old_buffer_from_language_servers(
         &mut self,
-        buffer: &Entity<Buffer>,
+        buffer: &Buffer,
         old_file: &File,
         cx: &mut App,
     ) {
@@ -2056,21 +2054,20 @@ impl LocalLspStore {
             );
             return;
         };
+
         self.unregister_buffer_from_language_servers(buffer, &file_url, cx);
     }
 
     pub(crate) fn unregister_buffer_from_language_servers(
         &mut self,
-        buffer: &Entity<Buffer>,
+        buffer: &Buffer,
         file_url: &lsp::Url,
         cx: &mut App,
     ) {
-        buffer.update(cx, |buffer, cx| {
-            self.buffer_snapshots.remove(&buffer.remote_id());
-            for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
-                language_server.unregister_buffer(&file_url);
-            }
-        });
+        self.buffer_snapshots.remove(&buffer.remote_id());
+        for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
+            language_server.unregister_buffer(&file_url);
+        }
     }
 
     fn buffer_snapshot_for_lsp_version(
@@ -3197,7 +3194,9 @@ impl LspStore {
                     if let Some(old_file) = File::from_dyn(old_file.as_ref()) {
                         local.reset_buffer(buffer, old_file, cx);
 
-                        local.unregister_old_buffer_from_language_servers(buffer, old_file, cx);
+                        buffer.update(cx, |buffer, cx| {
+                            local.unregister_old_buffer_from_language_servers(buffer, old_file, cx);
+                        });
                     }
                 }
 
@@ -3333,7 +3332,7 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> OpenLspBufferHandle {
-        let handle = cx.new(|_| buffer.clone());
+        let handle = buffer.clone();
 
         if let Some(local) = self.as_local_mut() {
             let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
@@ -3347,8 +3346,8 @@ impl LspStore {
 
             cx.observe_release(&handle, move |this, buffer, cx| {
                 let local = this.as_local_mut().unwrap();
-                if let Some(file) = File::from_dyn(buffer.read(cx).file()).cloned() {
-                    local.unregister_old_buffer_from_language_servers(&buffer, &file, cx);
+                if let Some(file) = File::from_dyn(buffer.file()).cloned() {
+                    local.unregister_old_buffer_from_language_servers(buffer, &file, cx);
                 }
             })
             .detach();
@@ -3402,9 +3401,12 @@ impl LspStore {
                                                         &file_url, &buffer, cx,
                                                     );
                                                 if is_registered_for_any_server {
-                                                    local.unregister_buffer_from_language_servers(
-                                                        &buffer, &file_url, cx,
-                                                    );
+                                                    buffer.update(cx, |buffer, cx| {
+                                                        local.unregister_buffer_from_language_servers(
+                                                            &buffer, &file_url, cx,
+                                                        );
+                                                    })
+
                                                 }
                                             }
                                         }
@@ -3491,7 +3493,10 @@ impl LspStore {
                     let is_registered_for_any_server =
                         local_store.is_buffer_registered_for_any_server(&file_url, &buffer, cx);
                     if is_registered_for_any_server {
-                        local_store.unregister_buffer_from_language_servers(buffer, &file_url, cx);
+                        buffer.update(cx, |buffer, cx| {
+                            local_store
+                                .unregister_buffer_from_language_servers(buffer, &file_url, cx);
+                        });
                     }
                 }
             }
