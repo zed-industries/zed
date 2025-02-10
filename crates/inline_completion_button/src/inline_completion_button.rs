@@ -36,9 +36,8 @@ use workspace::{
     Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
-use zeta::RateCompletionModal;
+use zeta::RateCompletions;
 
-actions!(zeta, [RateCompletions]);
 actions!(edit_prediction, [ToggleMenu]);
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
@@ -553,19 +552,7 @@ impl InlineCompletionButton {
         ContextMenu::build(window, cx, |menu, _window, cx| {
             self.build_language_settings_menu(menu, cx).when(
                 cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>(),
-                |this| {
-                    this.entry(
-                        "Rate Completions",
-                        Some(RateCompletions.boxed_clone()),
-                        move |window, cx| {
-                            workspace
-                                .update(cx, |workspace, cx| {
-                                    RateCompletionModal::toggle(workspace, window, cx)
-                                })
-                                .ok();
-                        },
-                    )
-                },
+                |this| this.action("Rate Completions", RateCompletions.boxed_clone()),
             )
         })
     }
