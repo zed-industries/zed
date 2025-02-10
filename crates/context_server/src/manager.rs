@@ -63,22 +63,25 @@ impl ContextServer {
 
     pub async fn start(self: Arc<Self>, cx: &AsyncApp) -> Result<()> {
         log::info!("starting context server {}", self.id);
+
         let client = Client::new(
             client::ContextServerId(self.id.clone()),
             match &*self.config {
                 ServerConfig::Stdio {
                     command: Some(command),
                     settings: _,
-                } => client::ModelContextServerBinary {
+                } => client::ModelContextServer::Binary(client::ModelContextServerBinary {
                     executable: Path::new(&command.path).to_path_buf(),
                     args: command.args.clone(),
                     env: command.env.clone(),
-                },
-                ServerConfig::Sse { endpoint: _ } => {
-                    bail!("Remote server configuration is not yet supported")
+                }),
+                ServerConfig::Sse { endpoint } => {
+                    client::ModelContextServer::Endpoint(client::ModelContextServerEndpoint {
+                        endpoint: endpoint.parse()?,
+                    })
                 }
                 _ => {
-                    bail!("Invalid configuration")
+                    bail!("invalid context server configuration")
                 }
             },
             cx.clone(),

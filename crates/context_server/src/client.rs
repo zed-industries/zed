@@ -16,9 +16,10 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use url::Url;
 use util::TryFutureExt;
 
-use crate::transport::{StdioTransport, Transport};
+use crate::transport::{SseTransport, StdioTransport, Transport};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -128,10 +129,21 @@ struct Error {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub enum ModelContextServer {
+    Binary(ModelContextServerBinary),
+    Endpoint(ModelContextServerEndpoint),
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct ModelContextServerBinary {
     pub executable: PathBuf,
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModelContextServerEndpoint {
+    pub endpoint: Url,
 }
 
 impl Client {
@@ -142,22 +154,43 @@ impl Client {
     /// It takes a server ID, binary information, and an async app context as input.
     pub fn new(
         server_id: ContextServerId,
-        binary: ModelContextServerBinary,
+        binary: ModelContextServer,
         cx: AsyncApp,
     ) -> Result<Self> {
-        log::info!(
-            "starting context server (executable={:?}, args={:?})",
-            binary.executable,
-            &binary.args
-        );
+        let (server_name, transport): (String, Arc<dyn Transport>) = match binary {
+            ModelContextServer::Binary(binary) => {
+                log::info!(
+                    "starting local context server (executable={:?}, args={:?})",
+                    binary.executable,
+                    &binary.args
+                );
 
-        let server_name = binary
-            .executable
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_else(String::new);
+                let server_name = binary
+                    .executable
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(String::new);
 
-        let transport = Arc::new(StdioTransport::new(binary, &cx)?);
+                (server_name, Arc::new(StdioTransport::new(binary, &cx)?))
+            }
+            ModelContextServer::Endpoint(endpoint) => {
+                log::info!(
+                    "starting remote context server (endpoint={:?})",
+                    endpoint.endpoint,
+                );
+
+                let server_name = endpoint
+                    .endpoint
+                    .host()
+                    .map(|name| name.to_string())
+                    .unwrap_or_else(String::new);
+
+                (
+                    server_name,
+                    Arc::new(SseTransport::new(endpoint.endpoint, &cx)?),
+                )
+            }
+        };
 
         let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
