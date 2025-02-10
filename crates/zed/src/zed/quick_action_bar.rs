@@ -168,15 +168,13 @@ impl Render for QuickActionBar {
             let focus = editor.focus_handle(cx);
 
             PopoverMenu::new("editor-selections-dropdown")
-                .trigger(
+                .trigger_with_tooltip(
                     IconButton::new("toggle_editor_selections_icon", IconName::CursorIBeam)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
-                        .toggle_state(self.toggle_selections_handle.is_deployed())
-                        .when(!self.toggle_selections_handle.is_deployed(), |this| {
-                            this.tooltip(Tooltip::text("Selection Controls"))
-                        }),
+                        .toggle_state(self.toggle_selections_handle.is_deployed()),
+                    Tooltip::text("Selection Controls"),
                 )
                 .with_handle(self.toggle_selections_handle.clone())
                 .anchor(Corner::TopRight)
@@ -213,38 +211,84 @@ impl Render for QuickActionBar {
                 })
         });
 
+        let editor_focus_handle = editor.focus_handle(cx);
         let editor = editor.downgrade();
         let editor_settings_dropdown = {
             let vim_mode_enabled = VimModeSetting::get_global(cx).0;
 
             PopoverMenu::new("editor-settings")
-                .trigger(
+                .trigger_with_tooltip(
                     IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
-                        .toggle_state(self.toggle_settings_handle.is_deployed())
-                        .when(!self.toggle_settings_handle.is_deployed(), |this| {
-                            this.tooltip(Tooltip::text("Editor Controls"))
-                        }),
+                        .toggle_state(self.toggle_settings_handle.is_deployed()),
+                    Tooltip::text("Editor Controls"),
                 )
                 .anchor(Corner::TopRight)
                 .with_handle(self.toggle_settings_handle.clone())
                 .menu(move |window, cx| {
-                    let menu = ContextMenu::build(window, cx, |mut menu, _, _| {
-                        if supports_inlay_hints {
+                    let menu = ContextMenu::build(window, cx, {
+                        let focus_handle = editor_focus_handle.clone();
+                        |mut menu, _, _| {
+                            menu = menu.context(focus_handle);
+
+                            if supports_inlay_hints {
+                                menu = menu.toggleable_entry(
+                                    "Inlay Hints",
+                                    inlay_hints_enabled,
+                                    IconPosition::Start,
+                                    Some(editor::actions::ToggleInlayHints.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_inlay_hints(
+                                                        &editor::actions::ToggleInlayHints,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    },
+                                );
+                            }
+
                             menu = menu.toggleable_entry(
-                                "Inlay Hints",
-                                inlay_hints_enabled,
+                                "Selection Menu",
+                                selection_menu_enabled,
                                 IconPosition::Start,
-                                Some(editor::actions::ToggleInlayHints.boxed_clone()),
+                                Some(editor::actions::ToggleSelectionMenu.boxed_clone()),
                                 {
                                     let editor = editor.clone();
                                     move |window, cx| {
                                         editor
                                             .update(cx, |editor, cx| {
-                                                editor.toggle_inlay_hints(
-                                                    &editor::actions::ToggleInlayHints,
+                                                editor.toggle_selection_menu(
+                                                    &editor::actions::ToggleSelectionMenu,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
+                                            .ok();
+                                    }
+                                },
+                            );
+
+                            menu = menu.toggleable_entry(
+                                "Auto Signature Help",
+                                auto_signature_help_enabled,
+                                IconPosition::Start,
+                                Some(editor::actions::ToggleAutoSignatureHelp.boxed_clone()),
+                                {
+                                    let editor = editor.clone();
+                                    move |window, cx| {
+                                        editor
+                                            .update(cx, |editor, cx| {
+                                                editor.toggle_auto_signature_help_menu(
+                                                    &editor::actions::ToggleAutoSignatureHelp,
                                                     window,
                                                     cx,
                                                 );
@@ -253,138 +297,96 @@ impl Render for QuickActionBar {
                                     }
                                 },
                             );
+
+                            let mut inline_completion_entry = ContextMenuEntry::new("Edit Predictions")
+                                .toggleable(IconPosition::Start, inline_completion_enabled && show_inline_completions)
+                                .disabled(!inline_completion_enabled)
+                                .action(Some(
+                                    editor::actions::ToggleEditPrediction.boxed_clone(),
+                                )).handler({
+                                    let editor = editor.clone();
+                                    move |window, cx| {
+                                        editor
+                                            .update(cx, |editor, cx| {
+                                                editor.toggle_inline_completions(
+                                                    &editor::actions::ToggleEditPrediction,
+                                                    window,
+                                                    cx,
+                                                );
+                                            })
+                                            .ok();
+                                    }
+                                });
+                            if !inline_completion_enabled {
+                                inline_completion_entry = inline_completion_entry.documentation_aside(|_| {
+                                    Label::new("You can't toggle edit predictions for this file as it is within the excluded files list.").into_any_element()
+                                });
+                            }
+
+                            menu = menu.item(inline_completion_entry);
+
+                            menu = menu.separator();
+
+                            menu = menu.toggleable_entry(
+                                "Inline Git Blame",
+                                git_blame_inline_enabled,
+                                IconPosition::Start,
+                                Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
+                                {
+                                    let editor = editor.clone();
+                                    move |window, cx| {
+                                        editor
+                                            .update(cx, |editor, cx| {
+                                                editor.toggle_git_blame_inline(
+                                                    &editor::actions::ToggleGitBlameInline,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
+                                            .ok();
+                                    }
+                                },
+                            );
+
+                            menu = menu.toggleable_entry(
+                                "Column Git Blame",
+                                show_git_blame_gutter,
+                                IconPosition::Start,
+                                Some(editor::actions::ToggleGitBlame.boxed_clone()),
+                                {
+                                    let editor = editor.clone();
+                                    move |window, cx| {
+                                        editor
+                                            .update(cx, |editor, cx| {
+                                                editor.toggle_git_blame(
+                                                    &editor::actions::ToggleGitBlame,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
+                                            .ok();
+                                    }
+                                },
+                            );
+
+                            menu = menu.separator();
+
+                            menu = menu.toggleable_entry(
+                                "Vim Mode",
+                                vim_mode_enabled,
+                                IconPosition::Start,
+                                None,
+                                {
+                                    move |window, cx| {
+                                        let new_value = !vim_mode_enabled;
+                                        VimModeSetting::override_global(VimModeSetting(new_value), cx);
+                                        window.refresh();
+                                    }
+                                },
+                            );
+
+                            menu
                         }
-
-                        menu = menu.toggleable_entry(
-                            "Selection Menu",
-                            selection_menu_enabled,
-                            IconPosition::Start,
-                            Some(editor::actions::ToggleSelectionMenu.boxed_clone()),
-                            {
-                                let editor = editor.clone();
-                                move |window, cx| {
-                                    editor
-                                        .update(cx, |editor, cx| {
-                                            editor.toggle_selection_menu(
-                                                &editor::actions::ToggleSelectionMenu,
-                                                window,
-                                                cx,
-                                            )
-                                        })
-                                        .ok();
-                                }
-                            },
-                        );
-
-                        menu = menu.toggleable_entry(
-                            "Auto Signature Help",
-                            auto_signature_help_enabled,
-                            IconPosition::Start,
-                            Some(editor::actions::ToggleAutoSignatureHelp.boxed_clone()),
-                            {
-                                let editor = editor.clone();
-                                move |window, cx| {
-                                    editor
-                                        .update(cx, |editor, cx| {
-                                            editor.toggle_auto_signature_help_menu(
-                                                &editor::actions::ToggleAutoSignatureHelp,
-                                                window,
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
-                                }
-                            },
-                        );
-
-                        let mut inline_completion_entry = ContextMenuEntry::new("Edit Predictions")
-                            .toggleable(IconPosition::Start, inline_completion_enabled && show_inline_completions)
-                            .disabled(!inline_completion_enabled)
-                            .action(Some(
-                                editor::actions::ToggleEditPrediction.boxed_clone(),
-                            )).handler({
-                                let editor = editor.clone();
-                                move |window, cx| {
-                                    editor
-                                        .update(cx, |editor, cx| {
-                                            editor.toggle_inline_completions(
-                                                &editor::actions::ToggleEditPrediction,
-                                                window,
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
-                                }
-                            });
-                        if !inline_completion_enabled {
-                            inline_completion_entry = inline_completion_entry.documentation_aside(|_| {
-                                Label::new("You can't toggle edit predictions for this file as it is within the excluded files list.").into_any_element()
-                            });
-                        }
-
-                        menu = menu.item(inline_completion_entry);
-
-                        menu = menu.separator();
-
-                        menu = menu.toggleable_entry(
-                            "Inline Git Blame",
-                            git_blame_inline_enabled,
-                            IconPosition::Start,
-                            Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
-                            {
-                                let editor = editor.clone();
-                                move |window, cx| {
-                                    editor
-                                        .update(cx, |editor, cx| {
-                                            editor.toggle_git_blame_inline(
-                                                &editor::actions::ToggleGitBlameInline,
-                                                window,
-                                                cx,
-                                            )
-                                        })
-                                        .ok();
-                                }
-                            },
-                        );
-
-                        menu = menu.toggleable_entry(
-                            "Column Git Blame",
-                            show_git_blame_gutter,
-                            IconPosition::Start,
-                            Some(editor::actions::ToggleGitBlame.boxed_clone()),
-                            {
-                                let editor = editor.clone();
-                                move |window, cx| {
-                                    editor
-                                        .update(cx, |editor, cx| {
-                                            editor.toggle_git_blame(
-                                                &editor::actions::ToggleGitBlame,
-                                                window,
-                                                cx,
-                                            )
-                                        })
-                                        .ok();
-                                }
-                            },
-                        );
-
-                        menu = menu.separator();
-
-                        menu = menu.toggleable_entry(
-                            "Vim Mode",
-                            vim_mode_enabled,
-                            IconPosition::Start,
-                            None,
-                            {
-                                move |window, cx| {
-                                    let new_value = !vim_mode_enabled;
-                                    VimModeSetting::override_global(VimModeSetting(new_value), cx);
-                                    window.refresh();
-                                }
-                            },
-                        );
-
-                        menu
                     });
                     Some(menu)
                 })

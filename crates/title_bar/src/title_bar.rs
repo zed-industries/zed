@@ -530,7 +530,7 @@ impl TitleBar {
                 .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         "Recent Branches",
-                        Some(&zed_actions::branches::OpenRecent),
+                        Some(&zed_actions::git::Branch),
                         "Local branches only",
                         window,
                         cx,
@@ -538,7 +538,7 @@ impl TitleBar {
                 })
                 .on_click(move |_, window, cx| {
                     let _ = workspace.update(cx, |_this, cx| {
-                        window.dispatch_action(zed_actions::branches::OpenRecent.boxed_clone(), cx);
+                        window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
                     });
                 }),
         )
@@ -673,6 +673,10 @@ impl TitleBar {
                             "Themes…",
                             zed_actions::theme_selector::Toggle::default().boxed_clone(),
                         )
+                        .action(
+                            "Icon Themes…",
+                            zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
+                        )
                         .action("Extensions", zed_actions::Extensions.boxed_clone())
                         .separator()
                         .link(
@@ -686,7 +690,7 @@ impl TitleBar {
                     })
                     .into()
                 })
-                .trigger(
+                .trigger_with_tooltip(
                     ButtonLike::new("user-menu")
                         .child(
                             h_flex()
@@ -702,8 +706,8 @@ impl TitleBar {
                                         .color(Color::Muted),
                                 ),
                         )
-                        .style(ButtonStyle::Subtle)
-                        .tooltip(Tooltip::text("Toggle User Menu")),
+                        .style(ButtonStyle::Subtle),
+                    Tooltip::text("Toggle User Menu"),
                 )
                 .anchor(gpui::Corner::TopRight)
         } else {
@@ -715,6 +719,10 @@ impl TitleBar {
                             .action(
                                 "Themes…",
                                 zed_actions::theme_selector::Toggle::default().boxed_clone(),
+                            )
+                            .action(
+                                "Icon Themes…",
+                                zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                             )
                             .action("Extensions", zed_actions::Extensions.boxed_clone())
                             .separator()
@@ -728,10 +736,9 @@ impl TitleBar {
                     })
                     .into()
                 })
-                .trigger(
-                    IconButton::new("user-menu", IconName::ChevronDown)
-                        .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text("Toggle User Menu")),
+                .trigger_with_tooltip(
+                    IconButton::new("user-menu", IconName::ChevronDown).icon_size(IconSize::Small),
+                    Tooltip::text("Toggle User Menu"),
                 )
         }
     }

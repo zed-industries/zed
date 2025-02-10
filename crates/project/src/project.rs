@@ -1535,6 +1535,10 @@ impl Project {
         })
     }
 
+    /// Renames the project entry with given `entry_id`.
+    ///
+    /// `new_path` is a relative path to worktree root.
+    /// If root entry is renamed then its new root name is used instead.
     pub fn rename_entry(
         &mut self,
         entry_id: ProjectEntryId,
@@ -1551,12 +1555,18 @@ impl Project {
         };
 
         let worktree_id = worktree.read(cx).id();
+        let is_root_entry = self.entry_is_worktree_root(entry_id, cx);
 
         let lsp_store = self.lsp_store().downgrade();
         cx.spawn(|_, mut cx| async move {
             let (old_abs_path, new_abs_path) = {
                 let root_path = worktree.update(&mut cx, |this, _| this.abs_path())?;
-                (root_path.join(&old_path), root_path.join(&new_path))
+                let new_abs_path = if is_root_entry {
+                    root_path.parent().unwrap().join(&new_path)
+                } else {
+                    root_path.join(&new_path)
+                };
+                (root_path.join(&old_path), new_abs_path)
             };
             LspStore::will_rename_entry(
                 lsp_store.clone(),

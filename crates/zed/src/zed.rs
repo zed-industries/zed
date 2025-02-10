@@ -1217,25 +1217,29 @@ fn show_keymap_migration_notification_if_needed(
     if !KeymapFile::should_migrate_keymap(keymap_file) {
         return false;
     }
-    show_app_notification(notification_id, cx, move |cx| {
-        cx.new(move |_cx| {
-            let message = "A newer version of Zed has simplified several keymaps. Your existing keymaps may be deprecated. You can migrate them by clicking below. A backup will be created in your home directory.";
-            let button_text = "Backup and Migrate Keymap";
-            MessageNotification::new_from_builder(move |_, _| {
-                gpui::div().text_xs().child(message).into_any()
-            })
-            .primary_message(button_text)
-            .primary_on_click(move |_, cx| {
-                let fs = <dyn Fs>::global(cx);
-                cx.spawn(move |weak_notification, mut cx| async move {
-                    KeymapFile::migrate_keymap(fs).await.ok();
-                    weak_notification.update(&mut cx, |_, cx| {
+    let message = MarkdownString(format!(
+        "Keymap migration needed, as the format for some actions has changed. \
+        You can migrate your keymap by clicking below. A backup will be created at {}.",
+        MarkdownString::inline_code(&paths::keymap_backup_file().to_string_lossy())
+    ));
+    show_markdown_app_notification(
+        notification_id,
+        message,
+        "Backup and Migrate Keymap".into(),
+        move |_, cx| {
+            let fs = <dyn Fs>::global(cx);
+            cx.spawn(move |weak_notification, mut cx| async move {
+                KeymapFile::migrate_keymap(fs).await.ok();
+                weak_notification
+                    .update(&mut cx, |_, cx| {
                         cx.emit(DismissEvent);
-                    }).ok();
-                }).detach();
+                    })
+                    .ok();
             })
-        })
-    });
+            .detach();
+        },
+        cx,
+    );
     return true;
 }
 
@@ -1247,33 +1251,55 @@ fn show_settings_migration_notification_if_needed(
     if !SettingsStore::should_migrate_settings(&settings) {
         return;
     }
-    show_app_notification(notification_id, cx, move |cx| {
-        cx.new(move |_cx| {
-            let message = "A newer version of Zed has updated some settings. Your existing settings may be deprecated. You can migrate them by clicking below. A backup will be created in your home directory.";
-            let button_text = "Backup and Migrate Settings";
-            MessageNotification::new_from_builder(move |_, _| {
-                gpui::div().text_xs().child(message).into_any()
-            })
-            .primary_message(button_text)
-            .primary_on_click(move |_, cx| {
-                let fs = <dyn Fs>::global(cx);
-                cx.update_global(|store: &mut SettingsStore, _| store.migrate_settings(fs));
-                cx.emit(DismissEvent);
-            })
-        })
-    });
+    let message = MarkdownString(format!(
+        "Settings migration needed, as the format for some settings has changed. \
+            You can migrate your settings by clicking below. A backup will be created at {}.",
+        MarkdownString::inline_code(&paths::settings_backup_file().to_string_lossy())
+    ));
+    show_markdown_app_notification(
+        notification_id,
+        message,
+        "Backup and Migrate Settings".into(),
+        move |_, cx| {
+            let fs = <dyn Fs>::global(cx);
+            cx.update_global(|store: &mut SettingsStore, _| store.migrate_settings(fs));
+            cx.emit(DismissEvent);
+        },
+        cx,
+    );
 }
 
 fn show_keymap_file_load_error(
     notification_id: NotificationId,
-    markdown_error_message: MarkdownString,
+    error_message: MarkdownString,
     cx: &mut App,
 ) {
+    show_markdown_app_notification(
+        notification_id.clone(),
+        error_message,
+        "Open Keymap File".into(),
+        |window, cx| {
+            window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
+            cx.emit(DismissEvent);
+        },
+        cx,
+    )
+}
+
+fn show_markdown_app_notification<F>(
+    notification_id: NotificationId,
+    message: MarkdownString,
+    primary_button_message: SharedString,
+    primary_button_on_click: F,
+    cx: &mut App,
+) where
+    F: 'static + Send + Sync + Fn(&mut Window, &mut Context<MessageNotification>),
+{
     let parsed_markdown = cx.background_executor().spawn(async move {
         let file_location_directory = None;
         let language_registry = None;
         markdown_preview::markdown_parser::parse_markdown(
-            &markdown_error_message.0,
+            &message.0,
             file_location_directory,
             language_registry,
         )
@@ -1282,10 +1308,14 @@ fn show_keymap_file_load_error(
 
     cx.spawn(move |cx| async move {
         let parsed_markdown = Arc::new(parsed_markdown.await);
+        let primary_button_message = primary_button_message.clone();
+        let primary_button_on_click = Arc::new(primary_button_on_click);
         cx.update(|cx| {
             show_app_notification(notification_id, cx, move |cx| {
                 let workspace_handle = cx.entity().downgrade();
                 let parsed_markdown = parsed_markdown.clone();
+                let primary_button_message = primary_button_message.clone();
+                let primary_button_on_click = primary_button_on_click.clone();
                 cx.new(move |_cx| {
                     MessageNotification::new_from_builder(move |window, cx| {
                         gpui::div()
@@ -1298,11 +1328,8 @@ fn show_keymap_file_load_error(
                             ))
                             .into_any()
                     })
-                    .primary_message("Open Keymap File")
-                    .primary_on_click(|window, cx| {
-                        window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
-                        cx.emit(DismissEvent);
-                    })
+                    .primary_message(primary_button_message)
+                    .primary_on_click_arc(primary_button_on_click)
                 })
             })
         })

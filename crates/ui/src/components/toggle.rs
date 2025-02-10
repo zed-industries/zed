@@ -1,5 +1,6 @@
 use gpui::{
-    div, hsla, prelude::*, AnyView, CursorStyle, ElementId, Hsla, IntoElement, Styled, Window,
+    div, hsla, prelude::*, AnyElement, AnyView, CursorStyle, ElementId, Hsla, IntoElement, Styled,
+    Window,
 };
 use std::sync::Arc;
 
@@ -38,7 +39,8 @@ pub enum ToggleStyle {
 /// Checkboxes are used for multiple choices, not for mutually exclusive choices.
 /// Each checkbox works independently from other checkboxes in the list,
 /// therefore checking an additional box does not affect any other selections.
-#[derive(IntoElement)]
+#[derive(IntoElement, IntoComponent)]
+#[component(scope = "input")]
 pub struct Checkbox {
     id: ElementId,
     toggle_state: ToggleState,
@@ -237,7 +239,8 @@ impl RenderOnce for Checkbox {
 }
 
 /// A [`Checkbox`] that has a [`Label`].
-#[derive(IntoElement)]
+#[derive(IntoElement, IntoComponent)]
+#[component(scope = "input")]
 pub struct CheckboxWithLabel {
     id: ElementId,
     label: Label,
@@ -314,7 +317,8 @@ impl RenderOnce for CheckboxWithLabel {
 /// # Switch
 ///
 /// Switches are used to represent opposite states, such as enabled or disabled.
-#[derive(IntoElement)]
+#[derive(IntoElement, IntoComponent)]
+#[component(scope = "input")]
 pub struct Switch {
     id: ElementId,
     toggle_state: ToggleState,
@@ -446,285 +450,190 @@ impl RenderOnce for Switch {
 }
 
 impl ComponentPreview for Checkbox {
-    fn description() -> impl Into<Option<&'static str>> {
-        "A checkbox lets people choose between a pair of opposing states, like enabled and disabled, using a different appearance to indicate each state."
-    }
-
-    fn examples(_window: &mut Window, _: &mut App) -> Vec<ComponentExampleGroup<Self>> {
-        vec![
-            example_group_with_title(
-                "Default",
-                vec![
-                    single_example(
-                        "Unselected",
-                        Checkbox::new("checkbox_unselected", ToggleState::Unselected),
-                    ),
-                    single_example(
-                        "Indeterminate",
-                        Checkbox::new("checkbox_indeterminate", ToggleState::Indeterminate),
-                    ),
-                    single_example(
-                        "Selected",
-                        Checkbox::new("checkbox_selected", ToggleState::Selected),
-                    ),
-                ],
-            ),
-            example_group_with_title(
-                "Default (Filled)",
-                vec![
-                    single_example(
-                        "Unselected",
-                        Checkbox::new("checkbox_unselected", ToggleState::Unselected).fill(),
-                    ),
-                    single_example(
-                        "Indeterminate",
-                        Checkbox::new("checkbox_indeterminate", ToggleState::Indeterminate).fill(),
-                    ),
-                    single_example(
-                        "Selected",
-                        Checkbox::new("checkbox_selected", ToggleState::Selected).fill(),
-                    ),
-                ],
-            ),
-            example_group_with_title(
-                "ElevationBased",
-                vec![
-                    single_example(
-                        "Unselected",
-                        Checkbox::new("checkbox_unfilled_unselected", ToggleState::Unselected)
-                            .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
-                    ),
-                    single_example(
-                        "Indeterminate",
-                        Checkbox::new(
-                            "checkbox_unfilled_indeterminate",
-                            ToggleState::Indeterminate,
-                        )
-                        .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
-                    ),
-                    single_example(
-                        "Selected",
-                        Checkbox::new("checkbox_unfilled_selected", ToggleState::Selected)
-                            .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
-                    ),
-                ],
-            ),
-            example_group_with_title(
-                "ElevationBased (Filled)",
-                vec![
-                    single_example(
-                        "Unselected",
-                        Checkbox::new("checkbox_filled_unselected", ToggleState::Unselected)
-                            .fill()
-                            .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
-                    ),
-                    single_example(
-                        "Indeterminate",
-                        Checkbox::new("checkbox_filled_indeterminate", ToggleState::Indeterminate)
-                            .fill()
-                            .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
-                    ),
-                    single_example(
-                        "Selected",
-                        Checkbox::new("checkbox_filled_selected", ToggleState::Selected)
-                            .fill()
-                            .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
-                    ),
-                ],
-            ),
-            example_group_with_title(
-                "Custom Color",
-                vec![
-                    single_example(
-                        "Unselected",
-                        Checkbox::new("checkbox_custom_unselected", ToggleState::Unselected)
-                            .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7))),
-                    ),
-                    single_example(
-                        "Indeterminate",
-                        Checkbox::new("checkbox_custom_indeterminate", ToggleState::Indeterminate)
-                            .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7))),
-                    ),
-                    single_example(
-                        "Selected",
-                        Checkbox::new("checkbox_custom_selected", ToggleState::Selected)
-                            .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7))),
-                    ),
-                ],
-            ),
-            example_group_with_title(
-                "Custom Color (Filled)",
-                vec![
-                    single_example(
-                        "Unselected",
-                        Checkbox::new("checkbox_custom_filled_unselected", ToggleState::Unselected)
-                            .fill()
-                            .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7))),
-                    ),
-                    single_example(
-                        "Indeterminate",
-                        Checkbox::new(
-                            "checkbox_custom_filled_indeterminate",
-                            ToggleState::Indeterminate,
-                        )
-                        .fill()
-                        .style(ToggleStyle::Custom(hsla(
-                            142.0 / 360.,
-                            0.68,
-                            0.45,
-                            0.7,
-                        ))),
-                    ),
-                    single_example(
-                        "Selected",
-                        Checkbox::new("checkbox_custom_filled_selected", ToggleState::Selected)
-                            .fill()
-                            .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7))),
-                    ),
-                ],
-            ),
-            example_group_with_title(
-                "Disabled",
-                vec![
-                    single_example(
-                        "Unselected",
-                        Checkbox::new("checkbox_disabled_unselected", ToggleState::Unselected)
-                            .disabled(true),
-                    ),
-                    single_example(
-                        "Indeterminate",
-                        Checkbox::new(
-                            "checkbox_disabled_indeterminate",
-                            ToggleState::Indeterminate,
-                        )
-                        .disabled(true),
-                    ),
-                    single_example(
-                        "Selected",
-                        Checkbox::new("checkbox_disabled_selected", ToggleState::Selected)
-                            .disabled(true),
-                    ),
-                ],
-            ),
-            example_group_with_title(
-                "Disabled (Filled)",
-                vec![
-                    single_example(
-                        "Unselected",
-                        Checkbox::new(
-                            "checkbox_disabled_filled_unselected",
-                            ToggleState::Unselected,
-                        )
-                        .fill()
-                        .disabled(true),
-                    ),
-                    single_example(
-                        "Indeterminate",
-                        Checkbox::new(
-                            "checkbox_disabled_filled_indeterminate",
-                            ToggleState::Indeterminate,
-                        )
-                        .fill()
-                        .disabled(true),
-                    ),
-                    single_example(
-                        "Selected",
-                        Checkbox::new("checkbox_disabled_filled_selected", ToggleState::Selected)
-                            .fill()
-                            .disabled(true),
-                    ),
-                ],
-            ),
-        ]
+    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "States",
+                    vec![
+                        single_example(
+                            "Unselected",
+                            Checkbox::new("checkbox_unselected", ToggleState::Unselected)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Indeterminate",
+                            Checkbox::new("checkbox_indeterminate", ToggleState::Indeterminate)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Selected",
+                            Checkbox::new("checkbox_selected", ToggleState::Selected)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Styles",
+                    vec![
+                        single_example(
+                            "Default",
+                            Checkbox::new("checkbox_default", ToggleState::Selected)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Filled",
+                            Checkbox::new("checkbox_filled", ToggleState::Selected)
+                                .fill()
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "ElevationBased",
+                            Checkbox::new("checkbox_elevation", ToggleState::Selected)
+                                .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Custom Color",
+                            Checkbox::new("checkbox_custom", ToggleState::Selected)
+                                .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7)))
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Disabled",
+                    vec![
+                        single_example(
+                            "Unselected",
+                            Checkbox::new("checkbox_disabled_unselected", ToggleState::Unselected)
+                                .disabled(true)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Selected",
+                            Checkbox::new("checkbox_disabled_selected", ToggleState::Selected)
+                                .disabled(true)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "With Label",
+                    vec![single_example(
+                        "Default",
+                        Checkbox::new("checkbox_with_label", ToggleState::Selected)
+                            .label("Always save on quit")
+                            .into_any_element(),
+                    )],
+                ),
+            ])
+            .into_any_element()
     }
 }
 
 impl ComponentPreview for Switch {
-    fn description() -> impl Into<Option<&'static str>> {
-        "A switch toggles between two mutually exclusive states, typically used for enabling or disabling a setting."
-    }
-
-    fn examples(_window: &mut Window, _cx: &mut App) -> Vec<ComponentExampleGroup<Self>> {
-        vec![
-            example_group_with_title(
-                "Default",
-                vec![
-                    single_example(
-                        "Off",
-                        Switch::new("switch_off", ToggleState::Unselected).on_click(|_, _, _cx| {}),
-                    ),
-                    single_example(
-                        "On",
-                        Switch::new("switch_on", ToggleState::Selected).on_click(|_, _, _cx| {}),
-                    ),
-                ],
-            ),
-            example_group_with_title(
-                "Disabled",
-                vec![
-                    single_example(
-                        "Off",
-                        Switch::new("switch_disabled_off", ToggleState::Unselected).disabled(true),
-                    ),
-                    single_example(
-                        "On",
-                        Switch::new("switch_disabled_on", ToggleState::Selected).disabled(true),
-                    ),
-                ],
-            ),
-            example_group_with_title(
-                "Label Permutations",
-                vec![
-                    single_example(
-                        "Label",
-                        Switch::new("switch_with_label", ToggleState::Selected)
-                            .label("Always save on quit"),
-                    ),
-                    single_example(
-                        "Keybinding",
-                        Switch::new("switch_with_label", ToggleState::Selected)
-                            .key_binding(theme_preview_keybinding("cmd-shift-e")),
-                    ),
-                ],
-            ),
-        ]
+    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "States",
+                    vec![
+                        single_example(
+                            "Off",
+                            Switch::new("switch_off", ToggleState::Unselected)
+                                .on_click(|_, _, _cx| {})
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "On",
+                            Switch::new("switch_on", ToggleState::Selected)
+                                .on_click(|_, _, _cx| {})
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Disabled",
+                    vec![
+                        single_example(
+                            "Off",
+                            Switch::new("switch_disabled_off", ToggleState::Unselected)
+                                .disabled(true)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "On",
+                            Switch::new("switch_disabled_on", ToggleState::Selected)
+                                .disabled(true)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "With Label",
+                    vec![
+                        single_example(
+                            "Label",
+                            Switch::new("switch_with_label", ToggleState::Selected)
+                                .label("Always save on quit")
+                                .into_any_element(),
+                        ),
+                        // TODO: Where did theme_preview_keybinding go?
+                        // single_example(
+                        //     "Keybinding",
+                        //     Switch::new("switch_with_keybinding", ToggleState::Selected)
+                        //         .key_binding(theme_preview_keybinding("cmd-shift-e"))
+                        //         .into_any_element(),
+                        // ),
+                    ],
+                ),
+            ])
+            .into_any_element()
     }
 }
 
 impl ComponentPreview for CheckboxWithLabel {
-    fn description() -> impl Into<Option<&'static str>> {
-        "A checkbox with an associated label, allowing users to select an option while providing a descriptive text."
-    }
-
-    fn examples(_window: &mut Window, _: &mut App) -> Vec<ComponentExampleGroup<Self>> {
-        vec![example_group(vec![
-            single_example(
-                "Unselected",
-                CheckboxWithLabel::new(
-                    "checkbox_with_label_unselected",
-                    Label::new("Always save on quit"),
-                    ToggleState::Unselected,
-                    |_, _, _| {},
-                ),
-            ),
-            single_example(
-                "Indeterminate",
-                CheckboxWithLabel::new(
-                    "checkbox_with_label_indeterminate",
-                    Label::new("Always save on quit"),
-                    ToggleState::Indeterminate,
-                    |_, _, _| {},
-                ),
-            ),
-            single_example(
-                "Selected",
-                CheckboxWithLabel::new(
-                    "checkbox_with_label_selected",
-                    Label::new("Always save on quit"),
-                    ToggleState::Selected,
-                    |_, _, _| {},
-                ),
-            ),
-        ])]
+    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![example_group_with_title(
+                "States",
+                vec![
+                    single_example(
+                        "Unselected",
+                        CheckboxWithLabel::new(
+                            "checkbox_with_label_unselected",
+                            Label::new("Always save on quit"),
+                            ToggleState::Unselected,
+                            |_, _, _| {},
+                        )
+                        .into_any_element(),
+                    ),
+                    single_example(
+                        "Indeterminate",
+                        CheckboxWithLabel::new(
+                            "checkbox_with_label_indeterminate",
+                            Label::new("Always save on quit"),
+                            ToggleState::Indeterminate,
+                            |_, _, _| {},
+                        )
+                        .into_any_element(),
+                    ),
+                    single_example(
+                        "Selected",
+                        CheckboxWithLabel::new(
+                            "checkbox_with_label_selected",
+                            Label::new("Always save on quit"),
+                            ToggleState::Selected,
+                            |_, _, _| {},
+                        )
+                        .into_any_element(),
+                    ),
+                ],
+            )])
+            .into_any_element()
     }
 }

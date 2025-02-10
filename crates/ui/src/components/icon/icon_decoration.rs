@@ -1,8 +1,8 @@
 use gpui::{svg, Hsla, IntoElement, Point};
-use strum::{EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
+use strum::{EnumIter, EnumString, IntoStaticStr};
 use ui_macros::DerivePathStr;
 
-use crate::{prelude::*, traits::component_preview::ComponentPreview};
+use crate::prelude::*;
 
 const ICON_DECORATION_SIZE: Pixels = px(11.);
 
@@ -147,23 +147,5 @@ impl RenderOnce for IconDecoration {
             .right(self.position.x)
             .child(foreground)
             .child(background)
-    }
-}
-
-impl ComponentPreview for IconDecoration {
-    fn examples(_: &mut Window, cx: &mut App) -> Vec<ComponentExampleGroup<Self>> {
-        let all_kinds = IconDecorationKind::iter().collect::<Vec<_>>();
-
-        let examples = all_kinds
-            .iter()
-            .map(|kind| {
-                single_example(
-                    format!("{kind:?}"),
-                    IconDecoration::new(*kind, cx.theme().colors().surface_background, cx),
-                )
-            })
-            .collect();
-
-        vec![example_group(examples)]
     }
 }

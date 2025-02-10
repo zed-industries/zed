@@ -415,11 +415,11 @@ impl SettingsStore {
                     let new_text = cx.read_global(|store: &SettingsStore, cx| {
                         store.new_text_for_update::<T>(old_text, |content| update(content, cx))
                     })?;
-                    let initial_path = paths::settings_file().as_path();
-                    if fs.is_file(initial_path).await {
+                    let settings_path = paths::settings_file().as_path();
+                    if fs.is_file(settings_path).await {
                         let resolved_path =
-                            fs.canonicalize(initial_path).await.with_context(|| {
-                                format!("Failed to canonicalize settings path {:?}", initial_path)
+                            fs.canonicalize(settings_path).await.with_context(|| {
+                                format!("Failed to canonicalize settings path {:?}", settings_path)
                             })?;
 
                         fs.atomic_write(resolved_path.clone(), new_text)
@@ -428,10 +428,10 @@ impl SettingsStore {
                                 format!("Failed to write settings to file {:?}", resolved_path)
                             })?;
                     } else {
-                        fs.atomic_write(initial_path.to_path_buf(), new_text)
+                        fs.atomic_write(settings_path.to_path_buf(), new_text)
                             .await
                             .with_context(|| {
-                                format!("Failed to write settings to file {:?}", initial_path)
+                                format!("Failed to write settings to file {:?}", settings_path)
                             })?;
                     }
 
@@ -1011,17 +1011,16 @@ impl SettingsStore {
                     let Some(new_text) = migrate_settings(&old_text) else {
                         return anyhow::Ok(());
                     };
-                    let initial_path = paths::settings_file().as_path();
-                    if fs.is_file(initial_path).await {
-                        let backup_path = paths::home_dir().join(".zed_settings_backup");
-                        fs.atomic_write(backup_path, old_text)
+                    let settings_path = paths::settings_file().as_path();
+                    if fs.is_file(settings_path).await {
+                        fs.atomic_write(paths::settings_backup_file().to_path_buf(), old_text)
                             .await
                             .with_context(|| {
                                 "Failed to create settings backup in home directory".to_string()
                             })?;
                         let resolved_path =
-                            fs.canonicalize(initial_path).await.with_context(|| {
-                                format!("Failed to canonicalize settings path {:?}", initial_path)
+                            fs.canonicalize(settings_path).await.with_context(|| {
+                                format!("Failed to canonicalize settings path {:?}", settings_path)
                             })?;
                         fs.atomic_write(resolved_path.clone(), new_text)
                             .await
@@ -1029,10 +1028,10 @@ impl SettingsStore {
                                 format!("Failed to write settings to file {:?}", resolved_path)
                             })?;
                     } else {
-                        fs.atomic_write(initial_path.to_path_buf(), new_text)
+                        fs.atomic_write(settings_path.to_path_buf(), new_text)
                             .await
                             .with_context(|| {
-                                format!("Failed to write settings to file {:?}", initial_path)
+                                format!("Failed to write settings to file {:?}", settings_path)
                             })?;
                     }
                     anyhow::Ok(())

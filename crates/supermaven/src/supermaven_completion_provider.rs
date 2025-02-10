@@ -92,6 +92,7 @@ fn completion_from_diff(
     }
 
     InlineCompletion {
+        id: None,
         edits,
         edit_preview: None,
     }

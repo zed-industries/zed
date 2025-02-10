@@ -3,8 +3,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    anchored, deferred, div, point, prelude::FluentBuilder, px, size, AnyElement, App, Bounds,
-    Corner, DismissEvent, DispatchPhase, Element, ElementId, Entity, Focusable as _,
+    anchored, deferred, div, point, prelude::FluentBuilder, px, size, AnyElement, AnyView, App,
+    Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId, Entity, Focusable as _,
     GlobalElementId, HitboxId, InteractiveElement, IntoElement, LayoutId, Length, ManagedView,
     MouseDownEvent, ParentElement, Pixels, Point, Style, Window,
 };
@@ -171,6 +171,28 @@ impl<M: ManagedView> PopoverMenu<M> {
                 .when_some(builder, |el, builder| {
                     el.on_click(move |_event, window, cx| {
                         show_menu(&builder, &menu, on_open.clone(), window, cx)
+                    })
+                })
+                .into_any_element()
+        }));
+        self
+    }
+
+    pub fn trigger_with_tooltip<T: PopoverTrigger + ButtonCommon>(
+        mut self,
+        t: T,
+        tooltip_builder: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+    ) -> Self {
+        let on_open = self.on_open.clone();
+        self.child_builder = Some(Box::new(move |menu, builder| {
+            let open = menu.borrow().is_some();
+            t.toggle_state(open)
+                .when_some(builder, |el, builder| {
+                    el.on_click(move |_, window, cx| {
+                        show_menu(&builder, &menu, on_open.clone(), window, cx)
+                    })
+                    .when(!open, |t| {
+                        t.tooltip(move |window, cx| tooltip_builder(window, cx))
                     })
                 })
                 .into_any_element()

@@ -15,7 +15,7 @@ use gpui::{
 use language::{Buffer, LanguageRegistry};
 use rpc::{proto, AnyProtoClient};
 use settings::WorktreeId;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use text::BufferId;
 use util::{maybe, ResultExt};
@@ -299,19 +299,25 @@ impl Repository {
         (self.worktree_id, self.repository_entry.work_directory_id())
     }
 
+    pub fn branch(&self) -> Option<Arc<str>> {
+        self.repository_entry.branch()
+    }
+
     pub fn display_name(&self, project: &Project, cx: &App) -> SharedString {
         maybe!({
-            let path = self.repo_path_to_project_path(&"".into())?;
-            Some(
-                project
-                    .absolute_path(&path, cx)?
-                    .file_name()?
-                    .to_string_lossy()
-                    .to_string()
-                    .into(),
-            )
+            let project_path = self.repo_path_to_project_path(&"".into())?;
+            let worktree_name = project
+                .worktree_for_id(project_path.worktree_id, cx)?
+                .read(cx)
+                .root_name();
+
+            let mut path = PathBuf::new();
+            path = path.join(worktree_name);
+            path = path.join(project_path.path);
+            Some(path.to_string_lossy().to_string())
         })
-        .unwrap_or("".into())
+        .unwrap_or_else(|| self.repository_entry.work_directory.display_name())
+        .into()
     }
 
     pub fn activate(&self, cx: &mut Context<Self>) {

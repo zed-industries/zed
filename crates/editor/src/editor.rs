@@ -489,6 +489,7 @@ enum InlineCompletion {
 struct InlineCompletionState {
     inlay_ids: Vec<InlayId>,
     completion: InlineCompletion,
+    completion_id: Option<SharedString>,
     invalidation_range: Range<Anchor>,
 }
 
@@ -4894,7 +4895,11 @@ impl Editor {
             return;
         };
 
-        self.report_inline_completion_event(true, cx);
+        self.report_inline_completion_event(
+            active_inline_completion.completion_id.clone(),
+            true,
+            cx,
+        );
 
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
@@ -4943,7 +4948,11 @@ impl Editor {
             return;
         }
 
-        self.report_inline_completion_event(true, cx);
+        self.report_inline_completion_event(
+            active_inline_completion.completion_id.clone(),
+            true,
+            cx,
+        );
 
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
@@ -5001,7 +5010,12 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> bool {
         if should_report_inline_completion_event {
-            self.report_inline_completion_event(false, cx);
+            let completion_id = self
+                .active_inline_completion
+                .as_ref()
+                .and_then(|active_completion| active_completion.completion_id.clone());
+
+            self.report_inline_completion_event(completion_id, false, cx);
         }
 
         if let Some(provider) = self.edit_prediction_provider() {
@@ -5011,7 +5025,7 @@ impl Editor {
         self.take_active_inline_completion(cx)
     }
 
-    fn report_inline_completion_event(&self, accepted: bool, cx: &App) {
+    fn report_inline_completion_event(&self, id: Option<SharedString>, accepted: bool, cx: &App) {
         let Some(provider) = self.edit_prediction_provider() else {
             return;
         };
@@ -5036,6 +5050,7 @@ impl Editor {
         telemetry::event!(
             event_type,
             provider = provider.name(),
+            prediction_id = id,
             suggestion_accepted = accepted,
             file_extension = extension,
         );
@@ -5251,6 +5266,7 @@ impl Editor {
         self.active_inline_completion = Some(InlineCompletionState {
             inlay_ids,
             completion,
+            completion_id: inline_completion.id,
             invalidation_range,
         });
 
@@ -5550,7 +5566,7 @@ impl Editor {
                     }))
                     .child(
                         h_flex()
-                            .w_full()
+                            .flex_1()
                             .gap_2()
                             .child(Icon::new(IconName::ZedPredict))
                             .child(Label::new("Accept Terms of Service"))

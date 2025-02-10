@@ -448,6 +448,14 @@ pub mod simple_message_notification {
             self
         }
 
+        pub fn primary_on_click_arc<F>(mut self, on_click: Arc<F>) -> Self
+        where
+            F: 'static + Fn(&mut Window, &mut Context<Self>),
+        {
+            self.primary_on_click = Some(on_click);
+            self
+        }
+
         pub fn secondary_message<S>(mut self, message: S) -> Self
         where
             S: Into<SharedString>,
@@ -471,6 +479,14 @@ pub mod simple_message_notification {
             F: 'static + Fn(&mut Window, &mut Context<Self>),
         {
             self.secondary_on_click = Some(Arc::new(on_click));
+            self
+        }
+
+        pub fn secondary_on_click_arc<F>(mut self, on_click: Arc<F>) -> Self
+        where
+            F: 'static + Fn(&mut Window, &mut Context<Self>),
+        {
+            self.secondary_on_click = Some(on_click);
             self
         }
 

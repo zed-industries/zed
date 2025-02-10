@@ -105,7 +105,7 @@ impl<T: AsRef<Path>> PathExt for T {
 /// leverages Rust's type system to ensure that all paths entering Zed are always "sanitized" by removing the `\\\\?\\` prefix.
 /// On non-Windows operating systems, this struct is effectively a no-op.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SanitizedPath(Arc<Path>);
+pub struct SanitizedPath(pub Arc<Path>);
 
 impl SanitizedPath {
     pub fn starts_with(&self, prefix: &SanitizedPath) -> bool {
