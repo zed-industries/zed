@@ -14,6 +14,7 @@ use std::{
     ops::{Deref, DerefMut, Range},
     sync::Arc,
 };
+use streaming_iterator::StreamingIterator;
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
 use tree_sitter::{Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree};
@@ -1143,7 +1144,7 @@ impl<'a> SyntaxMapMatches<'a> {
 
 impl<'a> SyntaxMapCapturesLayer<'a> {
     fn advance(&mut self) {
-        self.next_capture = self.captures.next().map(|(mat, ix)| mat.captures[ix]);
+        self.next_capture = self.captures.next().map(|(mat, ix)| mat.captures[*ix]);
     }
 
     fn sort_key(&self) -> (usize, Reverse<usize>, usize) {
@@ -1280,7 +1281,8 @@ fn get_injections(
 
     for query_range in changed_ranges {
         query_cursor.set_byte_range(query_range.start.saturating_sub(1)..query_range.end + 1);
-        for mat in query_cursor.matches(&config.query, node, TextProvider(text.as_rope())) {
+        let mut matches = query_cursor.matches(&config.query, node, TextProvider(text.as_rope()));
+        while let Some(mat) = matches.next() {
             let content_ranges = mat
                 .nodes_for_capture_index(config.content_capture_ix)
                 .map(|node| node.range())
@@ -1554,7 +1556,8 @@ impl<'a> SyntaxLayer<'a> {
         query_cursor.set_byte_range(offset.saturating_sub(1)..offset.saturating_add(1));
 
         let mut smallest_match: Option<(u32, Range<usize>)> = None;
-        for mat in query_cursor.matches(&config.query, self.node(), text) {
+        let mut matches = query_cursor.matches(&config.query, self.node(), text);
+        while let Some(mat) = matches.next() {
             for capture in mat.captures {
                 let Some(override_entry) = config.values.get(&capture.index) else {
                     continue;
