@@ -55,7 +55,7 @@ use multi_buffer::{
     RowInfo, ToOffset,
 };
 use project::{
-    dap_store::{Breakpoint, BreakpointKind},
+    debugger::dap_store::{Breakpoint, BreakpointKind},
     project_settings::{GitGutterSetting, ProjectSettings},
 };
 use settings::{KeyBindingValidator, KeyBindingValidatorRegistration, Settings};

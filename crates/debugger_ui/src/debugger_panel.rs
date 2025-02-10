@@ -16,8 +16,8 @@ use gpui::{
     Focusable, Subscription, Task, WeakEntity,
 };
 use project::{
-    dap_session::DebugSessionId,
-    dap_store::{DapStore, DapStoreEvent},
+    debugger::dap_session::DebugSessionId,
+    debugger::dap_store::{DapStore, DapStoreEvent},
     terminals::TerminalKind,
 };
 use rpc::proto::{self, SetDebuggerPanelItem, UpdateDebugAdapter};
@@ -188,7 +188,7 @@ impl DebugPanel {
                                         cx,
                                     );
                                 } else {
-                                    debug_assert!("Encountered unexpected command type");
+                                    debug_assert!(false, "Encountered unexpected command type");
                                 }
                             }
                             _ => unreachable!(),
@@ -946,23 +946,21 @@ impl DebugPanel {
     fn on_dap_store_event(
         &mut self,
         _: &Entity<DapStore>,
-        event: &project::dap_store::DapStoreEvent,
+        event: &DapStoreEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
-            project::dap_store::DapStoreEvent::SetDebugPanelItem(set_debug_panel_item) => {
+            DapStoreEvent::SetDebugPanelItem(set_debug_panel_item) => {
                 self.handle_set_debug_panel_item(set_debug_panel_item, window, cx);
             }
-            project::dap_store::DapStoreEvent::UpdateDebugAdapter(debug_adapter_update) => {
+            DapStoreEvent::UpdateDebugAdapter(debug_adapter_update) => {
                 self.handle_debug_adapter_update(debug_adapter_update, window, cx);
             }
-            project::dap_store::DapStoreEvent::UpdateThreadStatus(thread_status_update) => {
+            DapStoreEvent::UpdateThreadStatus(thread_status_update) => {
                 self.handle_thread_status_update(thread_status_update, cx);
             }
-            project::dap_store::DapStoreEvent::RemoteHasInitialized => {
-                self.handle_remote_has_initialized(window, cx)
-            }
+            DapStoreEvent::RemoteHasInitialized => self.handle_remote_has_initialized(window, cx),
             _ => {}
         }
     }

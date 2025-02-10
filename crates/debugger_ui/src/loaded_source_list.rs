@@ -1,6 +1,6 @@
 use dap::client::DebugAdapterClientId;
 use gpui::{list, AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, Subscription};
-use project::dap_session::DebugSession;
+use project::debugger::dap_session::DebugSession;
 use ui::prelude::*;
 use util::maybe;
 

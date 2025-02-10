@@ -3,7 +3,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::Subscription;
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
 use picker::{Picker, PickerDelegate};
-use project::{dap_session::DebugSessionId, dap_store::DapStore};
+use project::debugger::{dap_session::DebugSessionId, dap_store::DapStore};
 use std::sync::Arc;
 use sysinfo::System;
 use ui::{prelude::*, Context, Tooltip};

@@ -1,10 +1,8 @@
 pub mod buffer_store;
 mod color_extractor;
 pub mod connection_manager;
-pub mod dap_command;
-pub mod dap_session;
-pub mod dap_store;
 pub mod debounced_delay;
+pub mod debugger;
 pub mod git;
 pub mod image_store;
 pub mod lsp_command;
@@ -31,7 +29,7 @@ pub mod search_history;
 mod yarn;
 
 use crate::{
-    dap_session::{DebugSession, DebugSessionId},
+    debugger::dap_session::{DebugSession, DebugSessionId},
     git::GitState,
 };
 use anyhow::{anyhow, Context as _, Result};
@@ -49,8 +47,10 @@ use dap::{
 };
 
 use collections::{BTreeSet, HashMap, HashSet};
-use dap_store::{Breakpoint, BreakpointEditAction, DapStore, DapStoreEvent, SerializedBreakpoint};
 use debounced_delay::DebouncedDelay;
+use debugger::dap_store::{
+    Breakpoint, BreakpointEditAction, DapStore, DapStoreEvent, SerializedBreakpoint,
+};
 pub use environment::ProjectEnvironment;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},

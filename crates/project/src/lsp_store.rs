@@ -1,6 +1,6 @@
 use crate::{
     buffer_store::{BufferStore, BufferStoreEvent},
-    dap_store::DapStore,
+    debugger::dap_store::DapStore,
     deserialize_code_actions,
     environment::ProjectEnvironment,
     lsp_command::{self, *},

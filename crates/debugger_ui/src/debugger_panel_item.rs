@@ -15,8 +15,7 @@ use editor::Editor;
 use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
-use project::dap_session::DebugSession;
-use project::dap_store::DapStore;
+use project::debugger::{dap_session::DebugSession, dap_store::DapStore};
 use rpc::proto::{self, DebuggerThreadStatus, PeerId, SetDebuggerPanelItem, UpdateDebugAdapter};
 use settings::Settings;
 use ui::{prelude::*, Indicator, Tooltip};

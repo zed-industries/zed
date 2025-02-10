@@ -1,5 +1,5 @@
 use crate::{
-    dap_store::DapStore,
+    debugger::dap_store::DapStore,
     lsp_store::OpenLspBufferHandle,
     search::SearchQuery,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},

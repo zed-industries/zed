@@ -12,7 +12,7 @@ use gpui::{AsyncApp, WeakEntity};
 use rpc::proto;
 use util::ResultExt;
 
-use crate::{dap_session::DebugSessionId, dap_store::DapStore};
+use super::{dap_session::DebugSessionId, dap_store::DapStore};
 
 pub(crate) trait DapCommand: 'static + Send + Sync + std::fmt::Debug {
     type Response: 'static + Send + std::fmt::Debug;
@@ -312,7 +312,7 @@ impl DapCommand for StepOutCommand {
                             status: proto::DebuggerThreadStatus::Running.into(),
                         };
 
-                        cx.emit(crate::dap_store::DapStoreEvent::UpdateThreadStatus(
+                        cx.emit(super::dap_store::DapStoreEvent::UpdateThreadStatus(
                             thread_message.clone(),
                         ));
 
@@ -490,7 +490,7 @@ impl DapCommand for ContinueCommand {
                             status: proto::DebuggerThreadStatus::Running.into(),
                         };
 
-                        cx.emit(crate::dap_store::DapStoreEvent::UpdateThreadStatus(
+                        cx.emit(super::dap_store::DapStoreEvent::UpdateThreadStatus(
                             thread_message.clone(),
                         ));
 

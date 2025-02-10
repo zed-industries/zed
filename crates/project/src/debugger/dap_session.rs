@@ -11,7 +11,7 @@ use std::{
 use task::DebugAdapterConfig;
 use util::ResultExt;
 
-use crate::{
+use super::{
     dap_command::{self, DapCommand},
     dap_store::DapStore,
 };

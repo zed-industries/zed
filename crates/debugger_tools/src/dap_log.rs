@@ -13,7 +13,7 @@ use gpui::{
     IntoElement, ParentElement, Render, SharedString, Styled, Subscription, WeakEntity, Window,
 };
 use project::{
-    dap_session::{DebugSession, DebugSessionId},
+    debugger::dap_session::{DebugSession, DebugSessionId},
     search::SearchQuery,
     Project,
 };

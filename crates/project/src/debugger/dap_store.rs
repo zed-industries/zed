@@ -1,13 +1,12 @@
-use crate::{
+use super::{
     dap_command::{
         ContinueCommand, DapCommand, DisconnectCommand, NextCommand, PauseCommand, RestartCommand,
         RestartStackFrameCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
         TerminateCommand, TerminateThreadsCommand, VariablesCommand,
     },
     dap_session::{DebugSession, DebugSessionId},
-    project_settings::ProjectSettings,
-    ProjectEnvironment, ProjectItem as _, ProjectPath,
 };
+use crate::{project_settings::ProjectSettings, ProjectEnvironment, ProjectItem as _, ProjectPath};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;

@@ -8,8 +8,7 @@ use gpui::{
     list, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, Subscription, Task,
     WeakEntity,
 };
-use project::dap_session::DebugSession;
-use project::dap_store::DapStore;
+use project::debugger::{dap_session::DebugSession, dap_store::DapStore};
 use project::ProjectPath;
 use rpc::proto::{DebuggerStackFrameList, UpdateDebugAdapter};
 use ui::{prelude::*, Tooltip};

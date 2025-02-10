@@ -105,7 +105,7 @@ use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange}
 use linked_editing_ranges::refresh_linked_ranges;
 use mouse_context_menu::MouseContextMenu;
 use project::{
-    dap_store::{BreakpointEditAction, DapStoreEvent},
+    debugger::dap_store::{BreakpointEditAction, DapStoreEvent},
     ProjectPath,
 };
 pub use proposed_changes_editor::{
@@ -133,7 +133,7 @@ use multi_buffer::{
 };
 use parking_lot::Mutex;
 use project::{
-    dap_store::{Breakpoint, BreakpointKind, DapStore},
+    debugger::dap_store::{Breakpoint, BreakpointKind, DapStore},
     lsp_store::{FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,

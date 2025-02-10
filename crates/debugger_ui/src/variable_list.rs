@@ -10,7 +10,7 @@ use gpui::{
     FocusHandle, Focusable, Hsla, ListOffset, ListState, MouseDownEvent, Point, Subscription, Task,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::{dap_session::DebugSession, dap_store::DapStore};
+use project::debugger::{dap_session::DebugSession, dap_store::DapStore};
 use rpc::proto::{
     self, DebuggerScopeVariableIndex, DebuggerVariableContainer, UpdateDebugAdapter,
     VariableListScopes, VariableListVariables,
