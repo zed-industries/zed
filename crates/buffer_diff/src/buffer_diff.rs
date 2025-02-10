@@ -801,7 +801,8 @@ impl BufferDiff {
             cx,
         );
         let snapshot = cx.background_executor().block(snapshot);
-        self.set_state(snapshot, &buffer);
+        let changed_range = self.set_state(snapshot, &buffer);
+        cx.emit(BufferDiffEvent::DiffChanged { changed_range });
     }
 }
 

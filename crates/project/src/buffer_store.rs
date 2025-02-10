@@ -219,6 +219,9 @@ impl BufferDiffState {
                 .await?;
 
                 unstaged_diff.update(&mut cx, |_, cx| {
+                    if language_changed {
+                        cx.emit(BufferDiffEvent::LanguageChanged);
+                    }
                     if let Some(changed_range) = unstaged_changed_range.clone() {
                         cx.emit(BufferDiffEvent::DiffChanged {
                             changed_range: Some(changed_range),
