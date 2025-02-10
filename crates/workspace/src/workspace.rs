@@ -5978,7 +5978,8 @@ pub fn open_paths(
             let all_metadatas = futures::future::join_all(all_paths)
                 .await
                 .into_iter()
-                .filter_map(|result| result.ok().flatten());
+                .filter_map(|result| result.ok().flatten())
+                .collect::<Vec<_>>();
 
             cx.update(|cx| {
                 for window in local_workspace_windows(&cx) {
@@ -5999,10 +6000,10 @@ pub fn open_paths(
                         }
                     }
                 }
-            });
+            })?;
 
             if open_options.open_new_workspace.is_none() && existing.is_none() {
-                if all_metadatas.all(|file| !file.is_dir) {
+                if all_metadatas.iter().all(|file| !file.is_dir) {
                     cx.update(|cx| {
                         if let Some(window) = cx
                             .active_window()

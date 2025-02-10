@@ -1508,7 +1508,8 @@ impl Project {
         exclude_sub_dirs: bool,
         cx: &App,
     ) -> Option<bool> {
-        let path = SanitizedPath::from(path).as_path();
+        let sanitized_path = SanitizedPath::from(path);
+        let path = sanitized_path.as_path();
         self.worktrees(cx)
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
