@@ -62,10 +62,10 @@ pub use editor_settings::{
     CurrentLineHighlight, EditorSettings, ScrollBeyondLastLine, SearchSettings, ShowScrollbar,
 };
 pub use editor_settings_controls::*;
+use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap};
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
 };
-use element::{LineWithInvisibles, PositionMap};
 use futures::{future, FutureExt};
 use fuzzy::StringMatchCandidate;
 
@@ -189,6 +189,9 @@ pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
+
+pub(crate) const EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT: &str =
+    "edit_prediction_requires_modifier";
 
 pub fn render_parsed_markdown(
     element_id: impl Into<ElementId>,
@@ -1528,7 +1531,7 @@ impl Editor {
             key_context.add("edit_prediction");
 
             if showing_completions || self.edit_prediction_requires_modifier(cx) {
-                key_context.add("edit_prediction_requires_modifier");
+                key_context.add(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT);
             }
         }
 
@@ -5092,19 +5095,38 @@ impl Editor {
         has_completion && self.edit_prediction_requires_modifier(cx)
     }
 
-    fn update_inline_completion_preview(
+    fn handle_modifiers_changed(
         &mut self,
-        modifiers: &Modifiers,
+        modifiers: Modifiers,
+        position_map: &PositionMap,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !self.show_edit_predictions_in_menu(cx) {
+            let accept_binding =
+                AcceptEditPredictionBinding::resolve(self.focus_handle(cx), window);
+            if let Some(accept_keystroke) = accept_binding.keystroke() {
+                let was_previewing_inline_completion = self.previewing_inline_completion;
+                self.previewing_inline_completion = modifiers == accept_keystroke.modifiers
+                    && accept_keystroke.modifiers.modified();
+                if self.previewing_inline_completion != was_previewing_inline_completion {
+                    self.update_visible_inline_completion(window, cx);
+                }
+            }
+        }
+
+        let mouse_position = window.mouse_position();
+        if !position_map.text_hitbox.is_hovered(window) {
             return;
         }
 
-        self.previewing_inline_completion = modifiers.alt;
-        self.update_visible_inline_completion(window, cx);
-        cx.notify();
+        self.update_hovered_link(
+            position_map.point_for_position(mouse_position),
+            &position_map.snapshot,
+            modifiers,
+            window,
+            cx,
+        )
     }
 
     fn update_visible_inline_completion(

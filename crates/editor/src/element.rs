@@ -15,13 +15,14 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
-    BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
-    DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
+    AcceptEditPrediction, BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint,
+    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk,
     GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
     InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
     RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR,
+    EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
@@ -34,11 +35,11 @@ use gpui::{
     relative, size, svg, transparent_black, Action, AnyElement, App, AvailableSpace, Axis, Bounds,
     ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase,
     Edges, Element, ElementInputHandler, Entity, FocusHandle, Focusable as _, FontId,
-    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement,
-    WeakEntity, Window,
+    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, KeyBindingContextPredicate,
+    Keystroke, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
+    SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription, TextRun,
+    TextStyleRefinement, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -54,7 +55,7 @@ use multi_buffer::{
     RowInfo, ToOffset,
 };
 use project::project_settings::{GitGutterSetting, ProjectSettings};
-use settings::Settings;
+use settings::{KeyBindingValidator, KeyBindingValidatorRegistration, Settings};
 use smallvec::{smallvec, SmallVec};
 use std::{
     any::TypeId,
@@ -74,7 +75,7 @@ use ui::{
     POPOVER_Y_PADDING,
 };
 use unicode_segmentation::UnicodeSegmentation;
-use util::{RangeExt, ResultExt};
+use util::{markdown::MarkdownString, RangeExt, ResultExt};
 use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
@@ -511,33 +512,10 @@ impl EditorElement {
                     if editor.hover_state.focused(window, cx) {
                         return;
                     }
-                    Self::modifiers_changed(editor, event, &position_map, window, cx)
+                    editor.handle_modifiers_changed(event.modifiers, &position_map, window, cx);
                 })
             }
         });
-    }
-
-    fn modifiers_changed(
-        editor: &mut Editor,
-        event: &ModifiersChangedEvent,
-        position_map: &PositionMap,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
-        editor.update_inline_completion_preview(&event.modifiers, window, cx);
-
-        let mouse_position = window.mouse_position();
-        if !position_map.text_hitbox.is_hovered(window) {
-            return;
-        }
-
-        editor.update_hovered_link(
-            position_map.point_for_position(mouse_position),
-            &position_map.snapshot,
-            event.modifiers,
-            window,
-            cx,
-        )
     }
 
     fn mouse_left_down(
@@ -3190,49 +3168,8 @@ impl EditorElement {
                 );
 
                 let edit_prediction = if edit_prediction_popover_visible {
-                    let accept_keystroke: Option<Keystroke>;
-
-                    // TODO: load modifier from keymap.
-                    // `bindings_for_action_in` returns `None` in Linux, and is intermittent on macOS
-                    #[cfg(target_os = "macos")]
-                    {
-                        // let bindings = window.bindings_for_action_in(
-                        //     &crate::AcceptEditPrediction,
-                        //     &self.editor.focus_handle(cx),
-                        // );
-
-                        // let last_binding = bindings.last();
-
-                        // accept_keystroke = if let Some(binding) = last_binding {
-                        //     match &binding.keystrokes() {
-                        //         // TODO: no need to clone once this logic works on linux.
-                        //         [keystroke] => Some(keystroke.clone()),
-                        //         _ => None,
-                        //     }
-                        // } else {
-                        //     None
-                        // };
-                        accept_keystroke = Some(Keystroke {
-                            modifiers: gpui::Modifiers {
-                                alt: true,
-                                ..Default::default()
-                            },
-                            key: "tab".to_string(),
-                            key_char: None,
-                        });
-                    }
-
-                    #[cfg(not(target_os = "macos"))]
-                    {
-                        accept_keystroke = Some(Keystroke {
-                            modifiers: gpui::Modifiers {
-                                alt: true,
-                                ..Default::default()
-                            },
-                            key: "enter".to_string(),
-                            key_char: None,
-                        });
-                    }
+                    let accept_binding =
+                        AcceptEditPredictionBinding::resolve(self.editor.focus_handle(cx), window);
 
                     self.editor.update(cx, move |editor, cx| {
                         let mut element = editor.render_edit_prediction_cursor_popover(
@@ -3240,7 +3177,7 @@ impl EditorElement {
                             max_width,
                             cursor_point,
                             style,
-                            accept_keystroke.as_ref()?,
+                            accept_binding.keystroke()?,
                             window,
                             cx,
                         )?;
@@ -5739,48 +5676,12 @@ fn inline_completion_accept_indicator(
     label: impl Into<SharedString>,
     icon: Option<IconName>,
     previewing: bool,
-    focus_handle: FocusHandle,
+    editor_focus_handle: FocusHandle,
     window: &Window,
     cx: &App,
 ) -> Option<AnyElement> {
-    let use_hardcoded_linux_bindings;
-
-    #[cfg(target_os = "macos")]
-    {
-        use_hardcoded_linux_bindings = false;
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        use_hardcoded_linux_bindings = true;
-    }
-
-    let accept_keystroke = if use_hardcoded_linux_bindings {
-        if previewing {
-            Keystroke {
-                modifiers: Default::default(),
-                key: "enter".to_string(),
-                key_char: None,
-            }
-        } else {
-            Keystroke {
-                modifiers: Default::default(),
-                key: "tab".to_string(),
-                key_char: None,
-            }
-        }
-    } else {
-        let bindings = window.bindings_for_action_in(&crate::AcceptEditPrediction, &focus_handle);
-        if let Some(keystroke) = bindings
-            .last()
-            .and_then(|binding| binding.keystrokes().first())
-        {
-            // TODO: clone unnecessary once `use_hardcoded_linux_bindings` is removed.
-            keystroke.clone()
-        } else {
-            return None;
-        }
-    };
+    let accept_binding = AcceptEditPredictionBinding::resolve(editor_focus_handle, window);
+    let accept_keystroke = accept_binding.keystroke()?;
 
     let accept_key = h_flex()
         .px_0p5()
@@ -5826,6 +5727,69 @@ fn inline_completion_accept_indicator(
             })
             .into_any(),
     )
+}
+
+pub struct AcceptEditPredictionBinding(Option<gpui::KeyBinding>);
+
+impl AcceptEditPredictionBinding {
+    pub fn resolve(editor_focus_handle: FocusHandle, window: &Window) -> Self {
+        AcceptEditPredictionBinding(
+            window
+                .bindings_for_action_in(&AcceptEditPrediction, &editor_focus_handle)
+                .into_iter()
+                .next(),
+        )
+    }
+
+    pub fn keystroke(&self) -> Option<&Keystroke> {
+        if let Some(binding) = self.0.as_ref() {
+            match &binding.keystrokes() {
+                [keystroke] => Some(keystroke),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+}
+
+struct AcceptEditPredictionsBindingValidator;
+
+inventory::submit! { KeyBindingValidatorRegistration(|| Box::new(AcceptEditPredictionsBindingValidator)) }
+
+impl KeyBindingValidator for AcceptEditPredictionsBindingValidator {
+    fn action_type_id(&self) -> TypeId {
+        TypeId::of::<AcceptEditPrediction>()
+    }
+
+    fn validate(&self, binding: &gpui::KeyBinding) -> Result<(), MarkdownString> {
+        use KeyBindingContextPredicate::*;
+
+        if binding.keystrokes().len() == 1 && binding.keystrokes()[0].modifiers.modified() {
+            return Ok(());
+        }
+        let required_predicate =
+            Not(Identifier(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT.into()).into());
+        match binding.predicate() {
+            Some(predicate) if required_predicate.is_superset(&predicate) => {
+                return Ok(());
+            }
+            _ => {}
+        }
+        Err(MarkdownString(format!(
+            "{} can only be bound to a single keystroke with modifiers, so \
+            that holding down these modifiers can be used to preview \
+            completions inline when the completions menu is open.\n\n\
+            This restriction does not apply when the context requires {}, \
+            since these bindings will not be used when the completions menu \
+            is open.",
+            MarkdownString::inline_code(AcceptEditPrediction.name()),
+            MarkdownString::inline_code(&format!(
+                "!{}",
+                EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT
+            )),
+        )))
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
