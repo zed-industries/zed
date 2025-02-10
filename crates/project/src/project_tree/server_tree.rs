@@ -426,31 +426,12 @@ impl LanguageServerTree {
         }
     }
 
-    /// Updates nodes in language server tree in place, changing the ID of initialized nodes.
-    pub(crate) fn restart_language_servers(
-        &mut self,
-        worktree_id: WorktreeId,
-        ids: BTreeSet<LanguageServerId>,
-        restart_callback: &mut dyn FnMut(LanguageServerId, LaunchDisposition) -> LanguageServerId,
-    ) {
-        maybe! {{
-                for (_, nodes) in &mut self.instances.get_mut(&worktree_id)?.roots {
-                    for (_, (node, _)) in nodes {
-                        let Some(old_server_id) = node.id.get().copied() else {
-                            continue;
-                        };
-                        if !ids.contains(&old_server_id) {
-                            continue;
-                        }
-
-                        let new_id = restart_callback(old_server_id, LaunchDisposition::from(&**node));
-
-                        *node = Arc::new(InnerTreeNode::new(node.name.clone(), node.attach, node.path.clone(), node.settings.clone()));
-                        node.id.set(new_id).expect("The id to be unset after clearing the node.");
-                    }
+    /// Remove nodes with a given ID from the tree.
+    pub(crate) fn remove_nodes(&mut self, ids: &BTreeSet<LanguageServerId>) {
+        for (_, servers) in &mut self.instances {
+            for (_, nodes) in &mut servers.roots {
+                nodes.retain(|_, (node, _)| node.id.get().map_or(true, |id| !ids.contains(&id)));
             }
-            Some(())
         }
-        };
     }
 }

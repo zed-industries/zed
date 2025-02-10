@@ -3402,7 +3402,10 @@ impl LspStore {
                                     }
                                 }
                             });
-                            this.refresh_server_tree(cx);
+                            let servers_to_drop = this.refresh_server_tree(cx);
+                            for server in servers_to_drop {
+                                this.stop_local_language_server(server, cx);
+                            }
                         })
                         .ok();
                     }
@@ -3718,7 +3721,7 @@ impl LspStore {
     fn refresh_server_tree(&mut self, cx: &mut App) -> Vec<LanguageServerId> {
         let mut to_stop = vec![];
         if let Some(local) = self.as_local_mut() {
-            local.lsp_tree.clone().update(cx, |this, cx| {
+            local.lsp_tree.clone().update(cx, |lsp_tree, cx| {
                 let mut get_adapter = {
                     let languages = local.languages.clone();
                     let environment = local.environment.clone();
@@ -3740,7 +3743,7 @@ impl LspStore {
                     }
                 };
 
-                this.on_settings_changed(
+                lsp_tree.on_settings_changed(
                     &mut get_adapter,
                     &mut |disposition, cx| {
                         let worktree = local
@@ -7343,7 +7346,7 @@ impl LspStore {
 
     pub fn restart_language_servers_for_buffers(
         &mut self,
-        buffers: impl IntoIterator<Item = Entity<Buffer>>,
+        buffers: Vec<Entity<Buffer>>,
         cx: &mut Context<Self>,
     ) {
         if let Some((client, project_id)) = self.upstream_client() {
@@ -7361,82 +7364,34 @@ impl LspStore {
             let Some(local) = self.as_local_mut() else {
                 return;
             };
-            let language_servers_for_worktrees = buffers
-                .into_iter()
-                .filter_map(|buffer| {
+            let language_servers_to_stop = buffers
+                .iter()
+                .flat_map(|buffer| {
                     buffer.update(cx, |buffer, cx| {
-                        let worktree_id = buffer.file()?.worktree_id(cx);
-                        let language_server_ids = local.language_servers_for_buffer(buffer, cx);
-                        Some((
-                            language_server_ids
-                                .filter_map(|(adapter, server)| {
-                                    let new_adapter =
-                                        local.languages.adapter_for_name(&adapter.name());
-                                    new_adapter.map(|adapter| (server.server_id(), adapter))
-                                })
-                                .collect::<BTreeMap<_, _>>(),
-                            worktree_id,
-                        ))
+                        local.language_server_ids_for_buffer(buffer, cx)
                     })
                 })
-                .fold(
-                    HashMap::default(),
-                    |mut worktree_to_ids, (server_ids, worktree_id)| {
-                        worktree_to_ids
-                            .entry(worktree_id)
-                            .or_insert_with(BTreeMap::new)
-                            .extend(server_ids);
-                        worktree_to_ids
-                    },
-                );
-
-            // Multiple worktrees might refer to the same language server;
-            // we don't want to restart them multiple times.
-            let mut restarted_language_servers = BTreeMap::new();
-            let mut servers_to_stop = BTreeSet::new();
-            local.lsp_tree.clone().update(cx, |tree, cx| {
-                for (worktree_id, adapters_to_restart) in language_servers_for_worktrees {
-                    let Some(worktree_handle) = local
-                        .worktree_store
-                        .read(cx)
-                        .worktree_for_id(worktree_id, cx)
-                    else {
-                        continue;
-                    };
-                    let delegate =
-                        LocalLspAdapterDelegate::from_local_lsp(local, &worktree_handle, cx);
-                    let servers_to_restart = adapters_to_restart.keys().copied().collect();
-                    tree.restart_language_servers(
-                        worktree_id,
-                        servers_to_restart,
-                        &mut |old_server_id, disposition| match restarted_language_servers
-                            .entry(old_server_id)
-                        {
-                            btree_map::Entry::Vacant(unfilled) => {
-                                servers_to_stop.insert(old_server_id);
-
-                                let adapter = adapters_to_restart
-                                    .get(&old_server_id)
-                                    .map(Clone::clone)
-                                    .expect("Language server adapter to be found");
-                                let new_id = local.start_language_server(
-                                    &worktree_handle,
-                                    delegate.clone(),
-                                    adapter,
-                                    disposition.settings,
-                                    cx,
-                                );
-                                unfilled.insert(new_id);
-                                new_id
-                            }
-                            btree_map::Entry::Occupied(server_id) => *server_id.get(),
-                        },
-                    );
-                }
+                .collect::<BTreeSet<_>>();
+            local.lsp_tree.update(cx, |this, cx| {
+                this.remove_nodes(&language_servers_to_stop);
             });
-            for server_id in servers_to_stop {
-                self.stop_local_language_server(server_id, cx).detach();
-            }
+            let tasks = language_servers_to_stop
+                .into_iter()
+                .map(|server| self.stop_local_language_server(server, cx))
+                .collect::<Vec<_>>();
+
+            cx.spawn(|this, mut cx| async move {
+                cx.background_executor()
+                    .spawn(futures::future::join_all(tasks))
+                    .await;
+                this.update(&mut cx, |this, cx| {
+                    for buffer in buffers {
+                        this.register_buffer_with_language_servers(&buffer, cx);
+                    }
+                })
+                .ok()
+            })
+            .detach();
         }
     }
 

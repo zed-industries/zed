@@ -2595,7 +2595,7 @@ impl Project {
 
     pub fn restart_language_servers_for_buffers(
         &mut self,
-        buffers: impl IntoIterator<Item = Entity<Buffer>>,
+        buffers: Vec<Entity<Buffer>>,
         cx: &mut Context<Self>,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
