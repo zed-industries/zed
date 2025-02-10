@@ -751,7 +751,10 @@ where
 
 impl rwh::HasWindowHandle for WaylandWindow {
     fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        let state = self.borrow();
+        let window = NonNull::new(state.surface.id().as_ptr().cast::<c_void>()).unwrap();
+        let handle = rwh::WaylandWindowHandle::new(window);
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
     }
 }
 impl rwh::HasDisplayHandle for WaylandWindow {
