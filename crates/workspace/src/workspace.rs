@@ -2330,7 +2330,7 @@ impl Workspace {
         self.active_item(cx).and_then(|item| item.project_path(cx))
     }
 
-    fn active_nearest_project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+    fn active_nearest_project_path(&self, cx: &App) -> Option<ProjectPath> {
         let p = self
             .active_pane()
             .read(cx)
