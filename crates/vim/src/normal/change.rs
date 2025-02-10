@@ -109,7 +109,6 @@ impl Vim {
                 if objects_found {
                     vim.copy_selections_content(editor, false, cx);
                     editor.insert("", window, cx);
-
                     editor.refresh_inline_completion(true, false, window, cx);
                 }
             });
