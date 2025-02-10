@@ -3,8 +3,8 @@
 # The current version of the Windows runner is 10.0.20348 which does not support DevDrive option.
 # Ref: https://learn.microsoft.com/en-us/windows/dev-drive/
 
-# Currently, total CI requires almost 45GB of space, here we are creating a 60GB drive.
-$Volume = New-VHD -Path C:/zed_dev_drive.vhdx -SizeBytes 60GB |
+# Currently, total CI requires almost 45GB of space, here we are creating a 100GB drive.
+$Volume = New-VHD -Path C:/zed_dev_drive.vhdx -SizeBytes 100GB |
                     Mount-VHD -Passthru |
                     Initialize-Disk -Passthru |
                     New-Partition -AssignDriveLetter -UseMaximumSize |
@@ -15,7 +15,7 @@ $Drive = "$($Volume.DriveLetter):"
 # Show some debug information
 Write-Output $Volume
 Write-Output "Using Dev Drive at $Drive"
-    
+
 # Move Cargo to the dev drive
 New-Item -Path "$($Drive)/.cargo/bin" -ItemType Directory -Force
 Copy-Item -Path "C:/Users/runneradmin/.cargo/*" -Destination "$($Drive)/.cargo/" -Recurse -Force

@@ -279,7 +279,8 @@ jobs:
 
       - name: Check dev drive space
         working-directory: ${{ env.ZED_WORKSPACE }}
-        run: ./script/exit-ci-if-dev-drive-is-full.ps1 55
+        # `setup-dev-driver.ps1` creates a 100GB drive, with CI taking up ~45GB of the drive.
+        run: ./script/exit-ci-if-dev-drive-is-full.ps1 95
 
       # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
       - name: Clean CI config file

@@ -162,13 +162,16 @@ impl Vim {
                 // that line, we will have expanded the start of the selection to ensure it
                 // contains a newline (so that delete works as expected). We undo that change
                 // here.
-                let is_last_line = linewise
-                    && end.row == buffer.max_row().0
-                    && buffer.max_point().column > 0
-                    && start.row < buffer.max_row().0
+                let max_point = buffer.max_point();
+                let should_adjust_start = linewise
+                    && end.row == max_point.row
+                    && max_point.column > 0
+                    && start.row < max_point.row
                     && start == Point::new(start.row, buffer.line_len(MultiBufferRow(start.row)));
+                let should_add_newline =
+                    should_adjust_start || (end == max_point && max_point.column > 0 && linewise);
 
-                if is_last_line {
+                if should_adjust_start {
                     start = Point::new(start.row + 1, 0);
                 }
 
@@ -179,7 +182,7 @@ impl Vim {
                 for chunk in buffer.text_for_range(start..end) {
                     text.push_str(chunk);
                 }
-                if is_last_line {
+                if should_add_newline {
                     text.push('\n');
                 }
                 clipboard_selections.push(ClipboardSelection {

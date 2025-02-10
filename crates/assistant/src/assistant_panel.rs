@@ -250,10 +250,10 @@ impl AssistantPanel {
                     )
                     .child(
                         PopoverMenu::new("assistant-panel-popover-menu")
-                            .trigger(
+                            .trigger_with_tooltip(
                                 IconButton::new("menu", IconName::EllipsisVertical)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Toggle Assistant Menu")),
+                                    .icon_size(IconSize::Small),
+                                Tooltip::text("Toggle Assistant Menu"),
                             )
                             .menu(move |window, cx| {
                                 let zoom_label = if _pane.read(cx).is_zoomed() {

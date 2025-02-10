@@ -24,6 +24,7 @@ mod project_tests;
 
 mod direnv;
 mod environment;
+use diff::BufferDiff;
 pub use environment::EnvironmentErrorMessage;
 use git::Repository;
 pub mod search_history;
@@ -34,7 +35,7 @@ use crate::{
     git::GitState,
 };
 use anyhow::{anyhow, Context as _, Result};
-use buffer_store::{BufferChangeSet, BufferStore, BufferStoreEvent};
+use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
     proto, Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore,
 };
@@ -1893,6 +1894,10 @@ impl Project {
         })
     }
 
+    /// Renames the project entry with given `entry_id`.
+    ///
+    /// `new_path` is a relative path to worktree root.
+    /// If root entry is renamed then its new root name is used instead.
     pub fn rename_entry(
         &mut self,
         entry_id: ProjectEntryId,
@@ -1909,12 +1914,18 @@ impl Project {
         };
 
         let worktree_id = worktree.read(cx).id();
+        let is_root_entry = self.entry_is_worktree_root(entry_id, cx);
 
         let lsp_store = self.lsp_store().downgrade();
         cx.spawn(|_, mut cx| async move {
             let (old_abs_path, new_abs_path) = {
                 let root_path = worktree.update(&mut cx, |this, _| this.abs_path())?;
-                (root_path.join(&old_path), root_path.join(&new_path))
+                let new_abs_path = if is_root_entry {
+                    root_path.parent().unwrap().join(&new_path)
+                } else {
+                    root_path.join(&new_path)
+                };
+                (root_path.join(&old_path), new_abs_path)
             };
             LspStore::will_rename_entry(
                 lsp_store.clone(),
@@ -2326,31 +2337,31 @@ impl Project {
         })
     }
 
-    pub fn open_unstaged_changes(
+    pub fn open_unstaged_diff(
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<BufferChangeSet>>> {
+    ) -> Task<Result<Entity<BufferDiff>>> {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
 
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_unstaged_changes(buffer, cx)
+            buffer_store.open_unstaged_diff(buffer, cx)
         })
     }
 
-    pub fn open_uncommitted_changes(
+    pub fn open_uncommitted_diff(
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<BufferChangeSet>>> {
+    ) -> Task<Result<Entity<BufferDiff>>> {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
 
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_uncommitted_changes(buffer, cx)
+            buffer_store.open_uncommitted_diff(buffer, cx)
         })
     }
 
@@ -2445,8 +2456,25 @@ impl Project {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
 
-        self.image_store.update(cx, |image_store, cx| {
+        let open_image_task = self.image_store.update(cx, |image_store, cx| {
             image_store.open_image(path.into(), cx)
+        });
+
+        let weak_project = cx.entity().downgrade();
+        cx.spawn(move |_, mut cx| async move {
+            let image_item = open_image_task.await?;
+            let project = weak_project
+                .upgrade()
+                .ok_or_else(|| anyhow!("Project dropped"))?;
+
+            let metadata =
+                ImageItem::load_image_metadata(image_item.clone(), project, &mut cx).await?;
+            image_item.update(&mut cx, |image_item, cx| {
+                image_item.image_metadata = Some(metadata);
+                cx.emit(ImageItemEvent::MetadataUpdated);
+            })?;
+
+            Ok(image_item)
         })
     }
 

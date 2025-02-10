@@ -89,3 +89,9 @@ impl Color {
         }
     }
 }
+
+impl From<Hsla> for Color {
+    fn from(color: Hsla) -> Self {
+        Color::Custom(color)
+    }
+}

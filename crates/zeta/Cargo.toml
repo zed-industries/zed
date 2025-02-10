@@ -37,6 +37,7 @@ language_models.workspace = true
 log.workspace = true
 menu.workspace = true
 postage.workspace = true
+project.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -257,7 +257,13 @@ impl TerminalView {
                         .action("Inline Assist", Box::new(InlineAssist::default()))
                 })
                 .separator()
-                .action("Close", Box::new(CloseActiveItem { save_intent: None }))
+                .action(
+                    "Close",
+                    Box::new(CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: true,
+                    }),
+                )
         });
 
         window.focus(&context_menu.focus_handle(cx));

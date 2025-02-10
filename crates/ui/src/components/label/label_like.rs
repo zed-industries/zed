@@ -55,6 +55,9 @@ pub trait LabelCommon {
 
     /// Sets the label to render as a single line.
     fn single_line(self) -> Self;
+
+    /// Sets the font to the buffer's
+    fn buffer_font(self, cx: &App) -> Self;
 }
 
 #[derive(IntoElement)]
@@ -157,6 +160,13 @@ impl LabelCommon for LabelLike {
 
     fn single_line(mut self) -> Self {
         self.single_line = true;
+        self
+    }
+
+    fn buffer_font(mut self, cx: &App) -> Self {
+        self.base = self
+            .base
+            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone());
         self
     }
 }

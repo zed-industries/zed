@@ -2,12 +2,15 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     Project, ProjectEntryId, ProjectItem, ProjectPath,
 };
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::oneshot, StreamExt};
 use gpui::{
-    hash, prelude::*, App, Context, Entity, EventEmitter, Img, Subscription, Task, WeakEntity,
+    hash, prelude::*, App, AsyncApp, Context, Entity, EventEmitter, Img, Subscription, Task,
+    WeakEntity,
 };
+pub use image::ImageFormat;
+use image::{ExtendedColorType, GenericImageView, ImageReader};
 use language::{DiskState, File};
 use rpc::{AnyProtoClient, ErrorExt as _};
 use std::ffi::OsStr;
@@ -32,10 +35,12 @@ impl From<NonZeroU64> for ImageId {
     }
 }
 
+#[derive(Debug)]
 pub enum ImageItemEvent {
     ReloadNeeded,
     Reloaded,
     FileHandleChanged,
+    MetadataUpdated,
 }
 
 impl EventEmitter<ImageItemEvent> for ImageItem {}
@@ -46,14 +51,106 @@ pub enum ImageStoreEvent {
 
 impl EventEmitter<ImageStoreEvent> for ImageStore {}
 
+#[derive(Debug, Clone, Copy)]
+pub struct ImageMetadata {
+    pub width: u32,
+    pub height: u32,
+    pub file_size: u64,
+    pub colors: Option<ImageColorInfo>,
+    pub format: ImageFormat,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ImageColorInfo {
+    pub channels: u8,
+    pub bits_per_channel: u8,
+}
+
+impl ImageColorInfo {
+    pub fn from_color_type(color_type: impl Into<ExtendedColorType>) -> Option<Self> {
+        let (channels, bits_per_channel) = match color_type.into() {
+            ExtendedColorType::L8 => (1, 8),
+            ExtendedColorType::L16 => (1, 16),
+            ExtendedColorType::La8 => (2, 8),
+            ExtendedColorType::La16 => (2, 16),
+            ExtendedColorType::Rgb8 => (3, 8),
+            ExtendedColorType::Rgb16 => (3, 16),
+            ExtendedColorType::Rgba8 => (4, 8),
+            ExtendedColorType::Rgba16 => (4, 16),
+            ExtendedColorType::A8 => (1, 8),
+            ExtendedColorType::Bgr8 => (3, 8),
+            ExtendedColorType::Bgra8 => (4, 8),
+            ExtendedColorType::Cmyk8 => (4, 8),
+            _ => return None,
+        };
+
+        Some(Self {
+            channels,
+            bits_per_channel,
+        })
+    }
+
+    pub const fn bits_per_pixel(&self) -> u8 {
+        self.channels * self.bits_per_channel
+    }
+}
+
 pub struct ImageItem {
     pub id: ImageId,
     pub file: Arc<dyn File>,
     pub image: Arc<gpui::Image>,
     reload_task: Option<Task<()>>,
+    pub image_metadata: Option<ImageMetadata>,
 }
 
 impl ImageItem {
+    pub async fn load_image_metadata(
+        image: Entity<ImageItem>,
+        project: Entity<Project>,
+        cx: &mut AsyncApp,
+    ) -> Result<ImageMetadata> {
+        let (fs, image_path) = cx.update(|cx| {
+            let project_path = image.read(cx).project_path(cx);
+
+            let worktree = project
+                .read(cx)
+                .worktree_for_id(project_path.worktree_id, cx)
+                .ok_or_else(|| anyhow!("worktree not found"))?;
+            let worktree_root = worktree.read(cx).abs_path();
+            let image_path = image.read(cx).path();
+            let image_path = if image_path.is_absolute() {
+                image_path.to_path_buf()
+            } else {
+                worktree_root.join(image_path)
+            };
+
+            let fs = project.read(cx).fs().clone();
+
+            anyhow::Ok((fs, image_path))
+        })??;
+
+        let image_bytes = fs.load_bytes(&image_path).await?;
+        let image_format = image::guess_format(&image_bytes)?;
+
+        let mut image_reader = ImageReader::new(std::io::Cursor::new(image_bytes));
+        image_reader.set_format(image_format);
+        let image = image_reader.decode()?;
+
+        let (width, height) = image.dimensions();
+        let file_metadata = fs
+            .metadata(image_path.as_path())
+            .await?
+            .ok_or_else(|| anyhow!("failed to load image metadata"))?;
+
+        Ok(ImageMetadata {
+            width,
+            height,
+            file_size: file_metadata.len,
+            format: image_format,
+            colors: ImageColorInfo::from_color_type(image.color()),
+        })
+    }
+
     pub fn project_path(&self, cx: &App) -> ProjectPath {
         ProjectPath {
             worktree_id: self.file.worktree_id(cx),
@@ -391,6 +488,7 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
                 id: cx.entity_id().as_non_zero_u64().into(),
                 file: file.clone(),
                 image,
+                image_metadata: None,
                 reload_task: None,
             })?;
 

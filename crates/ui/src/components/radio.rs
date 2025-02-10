@@ -4,9 +4,6 @@ use std::sync::Arc;
 
 use crate::prelude::*;
 
-/// A [`Checkbox`] that has a [`Label`].
-///
-/// [`Checkbox`]: crate::components::Checkbox
 #[derive(IntoElement)]
 pub struct RadioWithLabel {
     id: ElementId,

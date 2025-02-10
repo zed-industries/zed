@@ -19,6 +19,7 @@ use serde::Deserialize;
 use ui::Context;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum Object {
     Word { ignore_punctuation: bool },
     Subword { ignore_punctuation: bool },
@@ -44,20 +45,20 @@ pub enum Object {
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct Word {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct Subword {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct IndentObj {
     #[serde(default)]
     include_below: bool,
@@ -671,7 +672,7 @@ fn around_subword(
         is_word_end || is_subword_end
     });
 
-    Some(start..end)
+    Some(start..end).map(|range| expand_to_include_whitespace(map, range, true))
 }
 
 fn around_containing_word(
@@ -1338,13 +1339,19 @@ fn surrounding_markers(
             }
         }
 
+        let mut last_newline_end = None;
         for (ch, range) in movement::chars_before(map, closing.start) {
             if !ch.is_whitespace() {
                 break;
             }
-            if ch != '\n' {
-                closing.start = range.start
+            if ch == '\n' {
+                last_newline_end = Some(range.end);
+                break;
             }
+        }
+        // Adjust closing.start to exclude whitespace after a newline, if present
+        if let Some(end) = last_newline_end {
+            closing.start = end;
         }
     }
 
@@ -2251,6 +2258,20 @@ mod test {
 
             cx.assert_state(initial_state, *mode);
         }
+    }
+
+    #[gpui::test]
+    async fn test_anybrackets_trailing_space(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("(trailingˇ whitespace          )")
+            .await;
+        cx.simulate_shared_keystrokes("v i b").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("escape y i b").await;
+        cx.shared_clipboard()
+            .await
+            .assert_eq("trailing whitespace          ");
     }
 
     #[gpui::test]

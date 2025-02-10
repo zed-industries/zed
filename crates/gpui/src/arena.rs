@@ -116,6 +116,7 @@ impl<T: ?Sized> ArenaBox<T> {
         }
     }
 
+    #[track_caller]
     fn validate(&self) {
         assert!(
             self.valid.get(),

@@ -26,8 +26,9 @@ use crate::{
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
+use diff::DiffHunkStatus;
 use file_icons::FileIcons;
-use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
+use git::{blame::BlameEntry, Oid};
 use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
     relative, size, svg, transparent_black, Action, AnyElement, App, AvailableSpace, Axis, Bounds,
@@ -477,8 +478,8 @@ impl EditorElement {
             }
         });
         register_action(editor, window, Editor::show_signature_help);
-        register_action(editor, window, Editor::next_inline_completion);
-        register_action(editor, window, Editor::previous_inline_completion);
+        register_action(editor, window, Editor::next_edit_prediction);
+        register_action(editor, window, Editor::previous_edit_prediction);
         register_action(editor, window, Editor::show_inline_completion);
         register_action(editor, window, Editor::context_menu_first);
         register_action(editor, window, Editor::context_menu_prev);
@@ -488,7 +489,7 @@ impl EditorElement {
         register_action(editor, window, Editor::unique_lines_case_insensitive);
         register_action(editor, window, Editor::unique_lines_case_sensitive);
         register_action(editor, window, Editor::accept_partial_inline_completion);
-        register_action(editor, window, Editor::accept_inline_completion);
+        register_action(editor, window, Editor::accept_edit_prediction);
         register_action(editor, window, Editor::revert_file);
         register_action(editor, window, Editor::revert_selected_hunks);
         register_action(editor, window, Editor::apply_all_diff_hunks);
@@ -563,7 +564,7 @@ impl EditorElement {
         let mut modifiers = event.modifiers;
 
         if let Some(hovered_hunk) = hovered_hunk {
-            editor.toggle_diff_hunks_in_ranges(vec![hovered_hunk], cx);
+            editor.toggle_diff_hunks_in_ranges_narrow(vec![hovered_hunk], cx);
             cx.notify();
             return;
         } else if gutter_hitbox.is_hovered(window) {
@@ -1670,7 +1671,7 @@ impl EditorElement {
             if let Some(inline_completion) = editor.active_inline_completion.as_ref() {
                 match &inline_completion.completion {
                     InlineCompletion::Edit {
-                        display_mode: EditDisplayMode::TabAccept(_),
+                        display_mode: EditDisplayMode::TabAccept,
                         ..
                     } => padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS,
                     _ => {}
@@ -2727,6 +2728,16 @@ impl EditorElement {
                                 ),
                         )
                     })
+                    .children(
+                        self.editor
+                            .read(cx)
+                            .addons
+                            .values()
+                            .filter_map(|addon| {
+                                addon.render_buffer_header_controls(for_excerpt, window, cx)
+                            })
+                            .take(1),
+                    )
                     .child(
                         h_flex()
                             .cursor_pointer()
@@ -3193,7 +3204,10 @@ impl EditorElement {
 
         {
             let editor = self.editor.read(cx);
-            if editor.has_active_completions_menu() && editor.show_inline_completions_in_menu(cx) {
+            if editor.inline_completion_visible_in_cursor_popover(
+                editor.has_active_inline_completion(),
+                cx,
+            ) {
                 height_above_menu +=
                     editor.edit_prediction_cursor_popover_height() + POPOVER_Y_PADDING;
                 edit_prediction_popover_visible = true;
@@ -3254,7 +3268,7 @@ impl EditorElement {
                     };
                     let mut element = self
                         .render_context_menu(line_height, menu_height, y_flipped, window, cx)
-                        .unwrap();
+                        .expect("Visible context menu should always render.");
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     Some((CursorPopoverType::CodeContextMenu, element, size))
                 } else {
@@ -3277,7 +3291,7 @@ impl EditorElement {
                     #[cfg(target_os = "macos")]
                     {
                         // let bindings = window.bindings_for_action_in(
-                        //     &crate::AcceptInlineCompletion,
+                        //     &crate::AcceptEditPrediction,
                         //     &self.editor.focus_handle(cx),
                         // );
 
@@ -3319,8 +3333,6 @@ impl EditorElement {
                             min_width,
                             max_width,
                             cursor_point,
-                            start_row,
-                            &line_layouts,
                             style,
                             accept_keystroke.as_ref()?,
                             window,
@@ -3412,8 +3424,12 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let editor = self.editor.read(cx);
+        if !editor.context_menu_visible() {
+            return;
+        }
         let Some(crate::ContextMenuOrigin::GutterIndicator(gutter_row)) =
-            self.editor.read(cx).context_menu_origin()
+            editor.context_menu_origin()
         else {
             return;
         };
@@ -3441,11 +3457,9 @@ impl EditorElement {
             window,
             cx,
             move |height, _max_width_for_stable_x, y_flipped, window, cx| {
-                let Some(mut element) =
-                    self.render_context_menu(line_height, height, y_flipped, window, cx)
-                else {
-                    return vec![];
-                };
+                let mut element = self
+                    .render_context_menu(line_height, height, y_flipped, window, cx)
+                    .expect("Visible context menu should always render.");
                 let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                 vec![(CursorPopoverType::CodeContextMenu, element, size)]
             },
@@ -3697,7 +3711,12 @@ impl EditorElement {
         const PADDING_X: Pixels = Pixels(24.);
         const PADDING_Y: Pixels = Pixels(2.);
 
-        let active_inline_completion = self.editor.read(cx).active_inline_completion.as_ref()?;
+        let editor = self.editor.read(cx);
+        let active_inline_completion = editor.active_inline_completion.as_ref()?;
+
+        if editor.inline_completion_visible_in_cursor_popover(true, cx) {
+            return None;
+        }
 
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
@@ -3711,7 +3730,7 @@ impl EditorElement {
                         self.editor.focus_handle(cx),
                         window,
                         cx,
-                    );
+                    )?;
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
@@ -3724,7 +3743,7 @@ impl EditorElement {
                         self.editor.focus_handle(cx),
                         window,
                         cx,
-                    );
+                    )?;
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point(
                         (text_bounds.size.width - size.width) / 2.,
@@ -3740,7 +3759,7 @@ impl EditorElement {
                         self.editor.focus_handle(cx),
                         window,
                         cx,
-                    );
+                    )?;
 
                     let target_line_end = DisplayPoint::new(
                         target_display_point.row(),
@@ -3764,7 +3783,7 @@ impl EditorElement {
                 display_mode,
                 snapshot,
             } => {
-                if self.editor.read(cx).has_active_completions_menu() {
+                if self.editor.read(cx).has_visible_completions_menu() {
                     return None;
                 }
 
@@ -3788,8 +3807,7 @@ impl EditorElement {
                 }
 
                 match display_mode {
-                    EditDisplayMode::TabAccept(previewing) => {
-                        let previewing = *previewing;
+                    EditDisplayMode::TabAccept => {
                         let range = &edits.first()?.0;
                         let target_display_point = range.end.to_display_point(editor_snapshot);
 
@@ -3797,18 +3815,26 @@ impl EditorElement {
                             target_display_point.row(),
                             editor_snapshot.line_len(target_display_point.row()),
                         );
-                        let origin = self.editor.update(cx, |editor, _cx| {
-                            editor.display_to_pixel_point(target_line_end, editor_snapshot, window)
-                        })?;
+                        let (previewing_inline_completion, origin) =
+                            self.editor.update(cx, |editor, _cx| {
+                                Some((
+                                    editor.previewing_inline_completion,
+                                    editor.display_to_pixel_point(
+                                        target_line_end,
+                                        editor_snapshot,
+                                        window,
+                                    )?,
+                                ))
+                            })?;
 
                         let mut element = inline_completion_accept_indicator(
                             "Accept",
                             None,
-                            previewing,
+                            previewing_inline_completion,
                             self.editor.focus_handle(cx),
                             window,
                             cx,
-                        );
+                        )?;
 
                         element.prepaint_as_root(
                             text_bounds.origin + origin + point(PADDING_X, px(0.)),
@@ -5813,35 +5839,43 @@ fn inline_completion_accept_indicator(
     focus_handle: FocusHandle,
     window: &Window,
     cx: &App,
-) -> AnyElement {
-    let use_hardcoded_linux_preview_binding;
+) -> Option<AnyElement> {
+    let use_hardcoded_linux_bindings;
 
     #[cfg(target_os = "macos")]
     {
-        use_hardcoded_linux_preview_binding = false;
+        use_hardcoded_linux_bindings = false;
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        use_hardcoded_linux_preview_binding = previewing;
+        use_hardcoded_linux_bindings = true;
     }
 
-    let accept_keystroke = if use_hardcoded_linux_preview_binding {
-        Keystroke {
-            modifiers: Default::default(),
-            key: "enter".to_string(),
-            key_char: None,
+    let accept_keystroke = if use_hardcoded_linux_bindings {
+        if previewing {
+            Keystroke {
+                modifiers: Default::default(),
+                key: "enter".to_string(),
+                key_char: None,
+            }
+        } else {
+            Keystroke {
+                modifiers: Default::default(),
+                key: "tab".to_string(),
+                key_char: None,
+            }
         }
     } else {
-        let bindings = window.bindings_for_action_in(&crate::AcceptInlineCompletion, &focus_handle);
+        let bindings = window.bindings_for_action_in(&crate::AcceptEditPrediction, &focus_handle);
         if let Some(keystroke) = bindings
             .last()
             .and_then(|binding| binding.keystrokes().first())
         {
-            // TODO: clone unnecessary once `use_hardcoded_linux_preview_binding` is removed.
+            // TODO: clone unnecessary once `use_hardcoded_linux_bindings` is removed.
             keystroke.clone()
         } else {
-            return div().into_any();
+            return None;
         }
     };
 
@@ -5856,33 +5890,39 @@ fn inline_completion_accept_indicator(
                 &accept_keystroke.modifiers,
                 PlatformStyle::platform(),
                 Some(Color::Default),
+                None,
                 false,
             ))
         })
         .child(accept_keystroke.key.clone());
 
     let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
+    let accent_color = cx.theme().colors().text_accent;
+    let editor_bg_color = cx.theme().colors().editor_background;
+    let bg_color = editor_bg_color.blend(accent_color.opacity(0.2));
 
-    h_flex()
-        .py_0p5()
-        .pl_1()
-        .pr(padding_right)
-        .gap_1()
-        .bg(cx.theme().colors().text_accent.opacity(0.15))
-        .border_1()
-        .border_color(cx.theme().colors().text_accent.opacity(0.8))
-        .rounded_md()
-        .shadow_sm()
-        .child(accept_key)
-        .child(Label::new(label).size(LabelSize::Small))
-        .when_some(icon, |element, icon| {
-            element.child(
-                div()
-                    .mt(px(1.5))
-                    .child(Icon::new(icon).size(IconSize::Small)),
-            )
-        })
-        .into_any()
+    Some(
+        h_flex()
+            .py_0p5()
+            .pl_1()
+            .pr(padding_right)
+            .gap_1()
+            .bg(bg_color)
+            .border_1()
+            .border_color(cx.theme().colors().text_accent.opacity(0.8))
+            .rounded_md()
+            .shadow_sm()
+            .child(accept_key)
+            .child(Label::new(label).size(LabelSize::Small))
+            .when_some(icon, |element, icon| {
+                element.child(
+                    div()
+                        .mt(px(1.5))
+                        .child(Icon::new(icon).size(IconSize::Small)),
+                )
+            })
+            .into_any(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -8277,8 +8317,9 @@ impl HighlightedRange {
         };
 
         let top_curve_width = curve_width(first_line.start_x, first_line.end_x);
-        let mut path = gpui::Path::new(first_top_right - top_curve_width);
-        path.curve_to(first_top_right + curve_height, first_top_right);
+        let mut builder = gpui::PathBuilder::fill();
+        builder.move_to(first_top_right - top_curve_width);
+        builder.curve_to(first_top_right + curve_height, first_top_right);
 
         let mut iter = lines.iter().enumerate().peekable();
         while let Some((ix, line)) = iter.next() {
@@ -8289,42 +8330,42 @@ impl HighlightedRange {
 
                 match next_top_right.x.partial_cmp(&bottom_right.x).unwrap() {
                     Ordering::Equal => {
-                        path.line_to(bottom_right);
+                        builder.line_to(bottom_right);
                     }
                     Ordering::Less => {
                         let curve_width = curve_width(next_top_right.x, bottom_right.x);
-                        path.line_to(bottom_right - curve_height);
+                        builder.line_to(bottom_right - curve_height);
                         if self.corner_radius > Pixels::ZERO {
-                            path.curve_to(bottom_right - curve_width, bottom_right);
+                            builder.curve_to(bottom_right - curve_width, bottom_right);
                         }
-                        path.line_to(next_top_right + curve_width);
+                        builder.line_to(next_top_right + curve_width);
                         if self.corner_radius > Pixels::ZERO {
-                            path.curve_to(next_top_right + curve_height, next_top_right);
+                            builder.curve_to(next_top_right + curve_height, next_top_right);
                         }
                     }
                     Ordering::Greater => {
                         let curve_width = curve_width(bottom_right.x, next_top_right.x);
-                        path.line_to(bottom_right - curve_height);
+                        builder.line_to(bottom_right - curve_height);
                         if self.corner_radius > Pixels::ZERO {
-                            path.curve_to(bottom_right + curve_width, bottom_right);
+                            builder.curve_to(bottom_right + curve_width, bottom_right);
                         }
-                        path.line_to(next_top_right - curve_width);
+                        builder.line_to(next_top_right - curve_width);
                         if self.corner_radius > Pixels::ZERO {
-                            path.curve_to(next_top_right + curve_height, next_top_right);
+                            builder.curve_to(next_top_right + curve_height, next_top_right);
                         }
                     }
                 }
             } else {
                 let curve_width = curve_width(line.start_x, line.end_x);
-                path.line_to(bottom_right - curve_height);
+                builder.line_to(bottom_right - curve_height);
                 if self.corner_radius > Pixels::ZERO {
-                    path.curve_to(bottom_right - curve_width, bottom_right);
+                    builder.curve_to(bottom_right - curve_width, bottom_right);
                 }
 
                 let bottom_left = point(line.start_x, bottom_right.y);
-                path.line_to(bottom_left + curve_width);
+                builder.line_to(bottom_left + curve_width);
                 if self.corner_radius > Pixels::ZERO {
-                    path.curve_to(bottom_left - curve_height, bottom_left);
+                    builder.curve_to(bottom_left - curve_height, bottom_left);
                 }
             }
         }
@@ -8332,24 +8373,26 @@ impl HighlightedRange {
         if first_line.start_x > last_line.start_x {
             let curve_width = curve_width(last_line.start_x, first_line.start_x);
             let second_top_left = point(last_line.start_x, start_y + self.line_height);
-            path.line_to(second_top_left + curve_height);
+            builder.line_to(second_top_left + curve_height);
             if self.corner_radius > Pixels::ZERO {
-                path.curve_to(second_top_left + curve_width, second_top_left);
+                builder.curve_to(second_top_left + curve_width, second_top_left);
             }
             let first_bottom_left = point(first_line.start_x, second_top_left.y);
-            path.line_to(first_bottom_left - curve_width);
+            builder.line_to(first_bottom_left - curve_width);
             if self.corner_radius > Pixels::ZERO {
-                path.curve_to(first_bottom_left - curve_height, first_bottom_left);
+                builder.curve_to(first_bottom_left - curve_height, first_bottom_left);
             }
         }
 
-        path.line_to(first_top_left + curve_height);
+        builder.line_to(first_top_left + curve_height);
         if self.corner_radius > Pixels::ZERO {
-            path.curve_to(first_top_left + top_curve_width, first_top_left);
+            builder.curve_to(first_top_left + top_curve_width, first_top_left);
         }
-        path.line_to(first_top_right - top_curve_width);
+        builder.line_to(first_top_right - top_curve_width);
 
-        window.paint_path(path, self.color);
+        if let Ok(path) = builder.build() {
+            window.paint_path(path, self.color);
+        }
     }
 }
 

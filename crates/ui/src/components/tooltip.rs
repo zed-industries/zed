@@ -1,12 +1,13 @@
 #![allow(missing_docs)]
 
-use gpui::{Action, AnyView, AppContext as _, FocusHandle, IntoElement, Render};
+use gpui::{Action, AnyElement, AnyView, AppContext as _, FocusHandle, IntoElement, Render};
 use settings::Settings;
 use theme::ThemeSettings;
 
 use crate::prelude::*;
 use crate::{h_flex, v_flex, Color, KeyBinding, Label, LabelSize, StyledExt};
 
+#[derive(IntoComponent)]
 pub struct Tooltip {
     title: SharedString,
     meta: Option<SharedString>,
@@ -30,6 +31,22 @@ impl Tooltip {
                 title: title.clone(),
                 meta: None,
                 key_binding: None,
+            })
+            .into()
+        }
+    }
+
+    pub fn for_action_title(
+        title: impl Into<SharedString>,
+        action: &dyn Action,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView {
+        let title = title.into();
+        let action = action.boxed_clone();
+        move |window, cx| {
+            cx.new(|_| Self {
+                title: title.clone(),
+                meta: None,
+                key_binding: KeyBinding::for_action(action.as_ref(), window),
             })
             .into()
         }
@@ -186,5 +203,17 @@ impl Render for LinkPreview {
                     .color(Color::Muted),
             )
         })
+    }
+}
+
+impl ComponentPreview for Tooltip {
+    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+        example_group(vec![single_example(
+            "Text only",
+            Button::new("delete-example", "Delete")
+                .tooltip(Tooltip::text("This is a tooltip!"))
+                .into_any_element(),
+        )])
+        .into_any_element()
     }
 }

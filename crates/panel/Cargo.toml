@@ -9,13 +9,9 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-name = "panel"
 path = "src/panel.rs"
 
 [dependencies]
 gpui.workspace = true
 ui.workspace = true
 workspace.workspace = true
-
-[features]
-default = []
