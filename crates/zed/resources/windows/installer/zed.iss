@@ -38,10 +38,6 @@ WizardStyle=modern
 // that VS Code is ready to be shutdown, so we're good to use `force` here.
 CloseApplications=force
 
-#ifdef Sign
-SignTool=esrp
-#endif
-
 #if "user" == InstallTarget
 DefaultDirName={userpf}\{#DirName}
 PrivilegesRequired=lowest
@@ -66,9 +62,8 @@ Name: "runcode"; Description: "{cm:RunAfter,{#NameShort}}"; GroupDescription: "{
 Name: "{app}"; AfterInstall: DisableAppDirInheritance
 
 [Files]
-; Source: "D:\work\zed\target\release\zed.exe"; DestDir: "{code:GetDestDir}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "D:\work\zed\target\release\zed.exe"; DestDir: "{app}"; Flags: ignoreversion
-; Source: "tools\*"; DestDir: "{app}\tools"; Flags: ignoreversion
+Source: "C:\zjk\projects\zed\crates\zed\resources\windows\installer\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#NameLong}"; Filename: "{app}\{#ExeBasename}.exe"; AppUserModelID: "{#AppUserId}"
