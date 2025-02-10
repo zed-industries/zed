@@ -2033,7 +2033,6 @@ dependencies = [
  "git2",
  "gpui",
  "language",
- "log",
  "pretty_assertions",
  "rope",
  "serde_json",
