@@ -502,16 +502,22 @@
       "tab": "editor::ComposeCompletion"
     }
   },
+  // Bindings for accepting edit predictions
+  //
+  // alt-l is provided as an alternative to tab/alt-tab. and will be displayed in the UI. This is
+  // because alt-tab may not be available, as it is often used for window switching.
   {
     "context": "Editor && edit_prediction",
     "bindings": {
-      "alt-enter": "editor::AcceptEditPrediction"
+      "alt-tab": "editor::AcceptEditPrediction",
+      "alt-l": "editor::AcceptEditPrediction"
     }
   },
   {
     "context": "Editor && edit_prediction && !edit_prediction_requires_modifier",
     "bindings": {
-      "tab": "editor::AcceptEditPrediction"
+      "tab": "editor::AcceptEditPrediction",
+      "alt-l": "editor::AcceptEditPrediction"
     }
   },
   {
