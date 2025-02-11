@@ -6,7 +6,6 @@ mod disclosure;
 mod divider;
 mod dropdown_menu;
 mod facepile;
-mod highlighted_label;
 mod icon;
 mod image;
 mod indent_guides;
