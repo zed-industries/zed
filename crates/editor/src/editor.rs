@@ -725,6 +725,8 @@ impl EditPredictionPreview {
         line_height: Pixels,
         target: Anchor,
         cursor: Option<DisplayPoint>,
+        blink_manager: Entity<BlinkManager>,
+        cx: &mut App,
     ) -> Option<EditPredictionMoveState> {
         let delta = match self {
             Self::Inactive => return None,
@@ -751,6 +753,7 @@ impl EditPredictionPreview {
                 let now = Instant::now();
                 if animation.end < now {
                     *self = Self::Inactive;
+                    blink_manager.update(cx, BlinkManager::reset_blinking);
                     return None;
                 } else {
                     let delta = (now - animation.start).as_secs_f32()

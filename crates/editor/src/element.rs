@@ -1,5 +1,6 @@
 use crate::{
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
+    blink_manager::BlinkManager,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
@@ -1124,6 +1125,8 @@ impl EditorElement {
         let cursor_layouts = self.editor.update(cx, |editor, cx| {
             let mut cursors = Vec::new();
 
+            let blink_manager = editor.blink_manager.clone();
+
             let previewing_move =
                 if let Some((target, preview)) = editor.previewing_edit_prediction_move() {
                     cursors.extend(self.layout_edit_prediction_preview_cursor(
@@ -1137,6 +1140,7 @@ impl EditorElement {
                         preview,
                         target,
                         newest_selection_head,
+                        blink_manager,
                         window,
                         cx,
                     ));
@@ -1301,6 +1305,7 @@ impl EditorElement {
         preview: &mut EditPredictionPreview,
         target: Anchor,
         cursor: Option<DisplayPoint>,
+        blink_manager: Entity<BlinkManager>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<CursorLayout> {
@@ -1312,6 +1317,8 @@ impl EditorElement {
             line_height,
             target,
             cursor,
+            blink_manager,
+            cx,
         )?;
 
         if !state.is_animation_completed() {

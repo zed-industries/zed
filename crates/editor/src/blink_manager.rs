@@ -1,5 +1,6 @@
 use crate::EditorSettings;
 use gpui::Context;
+use gpui::Task;
 use settings::Settings;
 use settings::SettingsStore;
 use smol::Timer;
@@ -12,6 +13,7 @@ pub struct BlinkManager {
     blinking_paused: bool,
     visible: bool,
     enabled: bool,
+    blink_task: Option<Task<()>>,
 }
 
 impl BlinkManager {
@@ -29,6 +31,7 @@ impl BlinkManager {
             blinking_paused: false,
             visible: true,
             enabled: false,
+            blink_task: None,
         }
     }
 
@@ -49,6 +52,13 @@ impl BlinkManager {
         .detach();
     }
 
+    pub fn reset_blinking(&mut self, cx: &mut Context<Self>) {
+        self.visible = true;
+        self.blink_task = None;
+        self.start_blink_task(cx);
+        cx.notify();
+    }
+
     fn resume_cursor_blinking(&mut self, epoch: usize, cx: &mut Context<Self>) {
         if epoch == self.blink_epoch {
             self.blinking_paused = false;
@@ -61,17 +71,9 @@ impl BlinkManager {
             if epoch == self.blink_epoch && self.enabled && !self.blinking_paused {
                 self.visible = !self.visible;
                 cx.notify();
-
-                let epoch = self.next_blink_epoch();
-                let interval = self.blink_interval;
-                cx.spawn(|this, mut cx| async move {
-                    Timer::after(interval).await;
-                    if let Some(this) = this.upgrade() {
-                        this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx))
-                            .ok();
-                    }
-                })
-                .detach();
+                if self.blink_task.is_none() {
+                    self.start_blink_task(cx);
+                }
             }
         } else {
             self.show_cursor(cx);
@@ -104,5 +106,20 @@ impl BlinkManager {
 
     pub fn visible(&self) -> bool {
         self.visible
+    }
+
+    fn start_blink_task(&mut self, cx: &mut Context<Self>) {
+        let epoch = self.next_blink_epoch();
+        let interval = self.blink_interval;
+        self.blink_task = Some(cx.spawn(|this, mut cx| async move {
+            cx.background_executor().timer(interval).await;
+            if let Some(this) = this.upgrade() {
+                this.update(&mut cx, |this, cx| {
+                    this.blink_task = None;
+                    this.blink_cursors(epoch, cx);
+                })
+                .ok();
+            }
+        }));
     }
 }
