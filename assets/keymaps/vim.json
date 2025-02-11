@@ -694,5 +694,23 @@
       "shift-x": "git::StageAll",
       "shift-u": "git::UnstageAll"
     }
+  },
+  {
+    "context": "os == macos && edit_prediction",
+    "bindings": {
+      "alt-tab": "editor::AcceptEditPrediction"
+    }
+  },
+  {
+    "context": "os != macos && edit_prediction",
+    "bindings": {
+      "alt-enter": "editor::AcceptEditPrediction"
+    }
+  },
+  {
+    "context": "edit_prediction && !edit_prediction_requires_modifier",
+    "bindings": {
+      "tab": "editor::AcceptEditPrediction"
+    }
   }
 ]

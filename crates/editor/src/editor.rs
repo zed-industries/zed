@@ -48,7 +48,7 @@ mod signature_help;
 pub mod test;
 
 pub(crate) use actions::*;
-pub use actions::{OpenExcerpts, OpenExcerptsSplit};
+pub use actions::{AcceptEditPrediction, OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
@@ -1938,15 +1938,6 @@ impl Editor {
     ) {
         self.show_inline_completions_override = show_edit_predictions;
         self.refresh_inline_completion(false, true, window, cx);
-    }
-
-    pub fn inline_completion_start_anchor(&self) -> Option<Anchor> {
-        let active_completion = self.active_inline_completion.as_ref()?;
-        let result = match &active_completion.completion {
-            InlineCompletion::Edit { edits, .. } => edits.first()?.0.start,
-            InlineCompletion::Move { target, .. } => *target,
-        };
-        Some(result)
     }
 
     fn inline_completions_disabled_in_scope(
