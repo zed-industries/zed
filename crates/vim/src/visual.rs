@@ -377,7 +377,6 @@ impl Vim {
                                 }
                                 if !around && object.is_multiline() {
                                     object::preserve_indented_newline(map, selection);
-                                    selection.reversed = true;
                                 }
                             }
 

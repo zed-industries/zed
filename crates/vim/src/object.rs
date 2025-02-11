@@ -446,6 +446,7 @@ pub fn preserve_indented_newline(map: &DisplaySnapshot, selection: &mut Selectio
                         match ch {
                             '\n' => {
                                 selection.end = offset.to_display_point(map);
+                                selection.reversed = true;
                                 break;
                             }
                             ch if !ch.is_whitespace() => break,
