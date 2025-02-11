@@ -1,15 +1,16 @@
+use anyhow::{Context, Result};
 use collections::HashMap;
 use convert_case::{Case, Casing};
 use std::{cmp::Reverse, ops::Range, sync::LazyLock};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Query, QueryMatch};
 
-fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Option<String> {
+fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Option<String>> {
     let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_json::LANGUAGE.into())
-        .unwrap();
-    let syntax_tree = parser.parse(&text, None).unwrap();
+    parser.set_language(&tree_sitter_json::LANGUAGE.into())?;
+    let syntax_tree = parser
+        .parse(&text, None)
+        .context("failed to parse settings")?;
 
     let mut cursor = tree_sitter::QueryCursor::new();
     let mut matches = cursor.matches(query, syntax_tree.root_node(), text.as_bytes());
@@ -27,7 +28,7 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Option<Str
     });
 
     if edits.is_empty() {
-        None
+        Ok(None)
     } else {
         let mut new_text = text.to_string();
         for (range, replacement) in edits.iter().rev() {
@@ -38,28 +39,28 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Option<Str
                 "Edits computed for configuration migration do not cause a change: {:?}",
                 edits
             );
-            None
+            Ok(None)
         } else {
-            Some(new_text)
+            Ok(Some(new_text))
         }
     }
 }
 
-pub fn migrate_keymap(text: &str) -> Option<String> {
+pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
     let transformed_text = migrate(
         text,
         KEYMAP_MIGRATION_TRANSFORMATION_PATTERNS,
         &KEYMAP_MIGRATION_TRANSFORMATION_QUERY,
-    );
+    )?;
     let replacement_text = migrate(
         &transformed_text.as_ref().unwrap_or(&text.to_string()),
         KEYMAP_MIGRATION_REPLACEMENT_PATTERNS,
         &KEYMAP_MIGRATION_REPLACEMENT_QUERY,
-    );
-    replacement_text.or(transformed_text)
+    )?;
+    Ok(replacement_text.or(transformed_text))
 }
 
-pub fn migrate_settings(text: &str) -> Option<String> {
+pub fn migrate_settings(text: &str) -> Result<Option<String>> {
     migrate(
         &text,
         SETTINGS_MIGRATION_PATTERNS,
@@ -120,9 +121,9 @@ fn replace_array_with_single_string(
     mat: &QueryMatch,
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
-    let array_ix = query.capture_index_for_name("array").unwrap();
-    let action_name_ix = query.capture_index_for_name("action_name").unwrap();
-    let argument_ix = query.capture_index_for_name("argument").unwrap();
+    let array_ix = query.capture_index_for_name("array")?;
+    let action_name_ix = query.capture_index_for_name("action_name")?;
+    let argument_ix = query.capture_index_for_name("argument")?;
 
     let action_name = contents.get(
         mat.nodes_for_capture_index(action_name_ix)
@@ -284,10 +285,10 @@ fn replace_action_argument_object_with_single_value(
     mat: &QueryMatch,
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
-    let array_ix = query.capture_index_for_name("array").unwrap();
-    let action_name_ix = query.capture_index_for_name("action_name").unwrap();
-    let action_key_ix = query.capture_index_for_name("action_key").unwrap();
-    let argument_ix = query.capture_index_for_name("argument").unwrap();
+    let array_ix = query.capture_index_for_name("array")?;
+    let action_name_ix = query.capture_index_for_name("action_name")?;
+    let action_key_ix = query.capture_index_for_name("action_key")?;
+    let argument_ix = query.capture_index_for_name("argument")?;
 
     let action_name = contents.get(
         mat.nodes_for_capture_index(action_name_ix)
@@ -377,7 +378,7 @@ fn rename_string_action(
     mat: &QueryMatch,
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
-    let action_name_ix = query.capture_index_for_name("action_name").unwrap();
+    let action_name_ix = query.capture_index_for_name("action_name")?;
     let action_name_range = mat
         .nodes_for_capture_index(action_name_ix)
         .next()?
@@ -432,7 +433,7 @@ fn rename_context_key(
     mat: &QueryMatch,
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
-    let context_predicate_ix = query.capture_index_for_name("context_predicate").unwrap();
+    let context_predicate_ix = query.capture_index_for_name("context_predicate")?;
     let context_predicate_range = mat
         .nodes_for_capture_index(context_predicate_ix)
         .next()?
@@ -488,10 +489,10 @@ fn action_argument_snake_case(
     mat: &QueryMatch,
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
-    let array_ix = query.capture_index_for_name("array").unwrap();
-    let action_name_ix = query.capture_index_for_name("action_name").unwrap();
-    let argument_key_ix = query.capture_index_for_name("argument_key").unwrap();
-    let argument_value_ix = query.capture_index_for_name("argument_value").unwrap();
+    let array_ix = query.capture_index_for_name("array")?;
+    let action_name_ix = query.capture_index_for_name("action_name")?;
+    let argument_key_ix = query.capture_index_for_name("argument_key")?;
+    let argument_value_ix = query.capture_index_for_name("argument_value")?;
     let action_name = contents.get(
         mat.nodes_for_capture_index(action_name_ix)
             .next()?
@@ -626,14 +627,14 @@ fn replace_setting_nested_key(
     mat: &QueryMatch,
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
-    let parent_object_capture_ix = query.capture_index_for_name("parent_key").unwrap();
+    let parent_object_capture_ix = query.capture_index_for_name("parent_key")?;
     let parent_object_range = mat
         .nodes_for_capture_index(parent_object_capture_ix)
         .next()?
         .byte_range();
     let parent_object_name = contents.get(parent_object_range.clone())?;
 
-    let setting_name_ix = query.capture_index_for_name("setting_name").unwrap();
+    let setting_name_ix = query.capture_index_for_name("setting_name")?;
     let setting_range = mat
         .nodes_for_capture_index(setting_name_ix)
         .next()?
@@ -685,7 +686,7 @@ fn replace_setting_in_languages(
     mat: &QueryMatch,
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
-    let setting_capture_ix = query.capture_index_for_name("setting_name").unwrap();
+    let setting_capture_ix = query.capture_index_for_name("setting_name")?;
     let setting_name_range = mat
         .nodes_for_capture_index(setting_capture_ix)
         .next()?
@@ -712,12 +713,12 @@ mod tests {
     use super::*;
 
     fn assert_migrate_keymap(input: &str, output: Option<&str>) {
-        let migrated = migrate_keymap(&input);
+        let migrated = migrate_keymap(&input).unwrap();
         pretty_assertions::assert_eq!(migrated.as_deref(), output);
     }
 
     fn assert_migrate_settings(input: &str, output: Option<&str>) {
-        let migrated = migrate_settings(&input);
+        let migrated = migrate_settings(&input).unwrap();
         pretty_assertions::assert_eq!(migrated.as_deref(), output);
     }
 
