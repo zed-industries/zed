@@ -537,6 +537,12 @@
     }
   },
   {
+    "context": "vim_mode == visual",
+    "bindings": {
+      "X": "vim::Exchange"
+    }
+  },
+  {
     "context": "vim_mode == literal",
     "bindings": {
       "ctrl-@": ["vim::Literal", ["ctrl-@", "\u0000"]],
