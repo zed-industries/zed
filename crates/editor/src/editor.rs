@@ -5055,7 +5055,7 @@ impl Editor {
                 });
 
         let preview_requires_modifier = all_language_settings(file, cx).edit_predictions_mode()
-            == EditPredictionsMode::WhenHoldingModifier;
+            == EditPredictionsMode::Auto;
 
         EditPredictionSettings::Enabled {
             show_in_menu,

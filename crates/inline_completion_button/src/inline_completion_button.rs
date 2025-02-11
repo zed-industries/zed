@@ -551,9 +551,9 @@ impl InlineCompletionButton {
             );
         }
 
-        let is_eager_preview_enabled = match settings.inline_completions_preview_mode() {
-            language::InlineCompletionPreviewMode::Auto => true,
-            language::InlineCompletionPreviewMode::WhenHoldingModifier => false,
+        let is_eager_preview_enabled = match settings.edit_predictions_mode() {
+            language::EditPredictionsMode::Auto => false,
+            language::EditPredictionsMode::EagerPreview => true,
         };
         menu = menu.separator().toggleable_entry(
             "Eager Preview",
@@ -567,17 +567,17 @@ impl InlineCompletionButton {
                         fs.clone(),
                         cx,
                         move |settings, _cx| {
-                            let inline_preview = match is_eager_preview_enabled {
-                                true => language::InlineCompletionPreviewMode::WhenHoldingModifier,
-                                false => language::InlineCompletionPreviewMode::Auto,
+                            let new_mode = match is_eager_preview_enabled {
+                                true => language::EditPredictionsMode::Auto,
+                                false => language::EditPredictionsMode::EagerPreview,
                             };
 
                             if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
-                                edit_predictions.inline_preview = inline_preview;
+                                edit_predictions.mode = new_mode;
                             } else {
                                 settings.edit_predictions =
                                     Some(language_settings::EditPredictionSettingsContent {
-                                        inline_preview,
+                                        mode: new_mode,
                                         ..Default::default()
                                     });
                             }

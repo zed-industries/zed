@@ -235,7 +235,7 @@ pub struct EditPredictionSettings {
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionsMode {
-    /// If provider supports it, display inline when holding modifier key (e.g alt).
+    /// If provider supports it, display inline when holding modifier key (e.g., alt).
     /// Otherwise, eager preview is used.
     #[default]
     Auto,
@@ -1028,7 +1028,7 @@ impl settings::Settings for AllLanguageSettings {
         let mut edit_predictions_mode = default_value
             .edit_predictions
             .as_ref()
-            .map(|inline_completions| inline_completions.inline_preview)
+            .map(|edit_predictions| edit_predictions.mode)
             .ok_or_else(Self::missing_default)?;
 
         let mut completion_globs: HashSet<&String> = default_value
@@ -1062,10 +1062,10 @@ impl settings::Settings for AllLanguageSettings {
                 edit_prediction_provider = Some(provider);
             }
 
-            if let Some(inline_completions) = user_settings.edit_predictions.as_ref() {
-                edit_predictions_mode = inline_completions.inline_preview;
+            if let Some(edit_predictions) = user_settings.edit_predictions.as_ref() {
+                edit_predictions_mode = edit_predictions.mode;
 
-                if let Some(disabled_globs) = inline_completions.disabled_globs.as_ref() {
+                if let Some(disabled_globs) = edit_predictions.disabled_globs.as_ref() {
                     completion_globs.extend(disabled_globs.iter());
                 }
             }
