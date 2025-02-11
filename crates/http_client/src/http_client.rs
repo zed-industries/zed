@@ -8,13 +8,23 @@ pub use http::{self, Method, Request, Response, StatusCode, Uri};
 
 use futures::future::BoxFuture;
 use http::request::Builder;
+use rustls::ClientConfig;
+use rustls_platform_verifier::ConfigVerifierExt;
 #[cfg(feature = "test-support")]
 use std::fmt;
 use std::{
     any::type_name,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 pub use url::Url;
+
+static TLS_CONFIG: OnceLock<rustls::ClientConfig> = OnceLock::new();
+
+pub fn tls_config() -> ClientConfig {
+    TLS_CONFIG
+        .get_or_init(|| ClientConfig::with_platform_verifier())
+        .clone()
+}
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RedirectPolicy {

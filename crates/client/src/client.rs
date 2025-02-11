@@ -26,8 +26,6 @@ use postage::watch;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
-use rustls::ClientConfig;
-use rustls_platform_verifier::ConfigVerifierExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -1128,13 +1126,11 @@ impl Client {
 
             match url_scheme {
                 Https => {
-                    let client_config = ClientConfig::with_platform_verifier();
-
                     let (stream, _) =
                         async_tungstenite::async_tls::client_async_tls_with_connector(
                             request,
                             stream,
-                            Some(client_config.into()),
+                            Some(http_client::tls_config().into()),
                         )
                         .await?;
                     Ok(Connection::new(

@@ -33,7 +33,6 @@ postage.workspace = true
 rand.workspace = true
 release_channel.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
-rustls-platform-verifier.workspace = true
 rustls.workspace = true
 schemars.workspace = true
 serde.workspace = true
