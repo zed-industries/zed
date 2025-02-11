@@ -458,32 +458,32 @@ impl InlineCompletionButton {
                 };
 
                 menu = menu.item(
-                    ContextMenuEntry::new("Share Training Data")
+                    ContextMenuEntry::new("Training Data Collection")
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
                         .icon(icon_name)
                         .icon_color(icon_color)
                         .documentation_aside(move |cx| {
                             let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                 (true, true) => (
-                                    "Project identified as open-source, and you're sharing data.",
+                                    "Project identified as open source, and you're sharing data.",
                                     Color::Default,
                                     IconName::Check,
                                     Color::Success,
                                 ),
                                 (true, false) => (
-                                    "Project identified as open-source, but you're not sharing data.",
+                                    "Project identified as open source, but you're not sharing data.",
                                     Color::Muted,
                                     IconName::Close,
                                     Color::Muted,
                                 ),
                                 (false, true) => (
-                                    "Project not identified as open-source. No data captured.",
+                                    "Project not identified as open source. No data captured.",
                                     Color::Muted,
                                     IconName::Close,
                                     Color::Muted,
                                 ),
                                 (false, false) => (
-                                    "Project not identified as open-source, and setting turned off.",
+                                    "Project not identified as open source, and setting turned off.",
                                     Color::Muted,
                                     IconName::Close,
                                     Color::Muted,
@@ -493,7 +493,7 @@ impl InlineCompletionButton {
                                 .gap_2()
                                 .child(
                                     Label::new(indoc!{
-                                        "Help us improve our open model by sharing data from open-source repositories. \
+                                        "Help us improve our open dataset model by sharing data from open source repositories. \
                                         Zed must detect a license file in your repo for this setting to take effect."
                                     })
                                 )

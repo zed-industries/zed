@@ -354,7 +354,7 @@ impl Render for ZedPredictModal {
                                         "training-data-checkbox",
                                         self.data_collection_opted_in.into(),
                                     )
-                                    .label("Open-source repos: optionally share training data.")
+                                    .label("Open source repos: optionally share training data.")
                                     .fill()
                                     .on_click(cx.listener(
                                         move |this, state, _window, cx| {
@@ -391,19 +391,19 @@ impl Render for ZedPredictModal {
                                     .border_color(cx.theme().colors().border_variant)
                                     .child(
                                         div().child(
-                                            Label::new("To improve edit predictions, help fine-tune Zed's model by sharing data from the open-source projects you work on.")
+                                            Label::new("To improve edit predictions, please consider contributing to our open dataset based on your interactions within open source repositories.")
                                                 .mb_1()
                                         )
                                     )
                                     .child(info_item(
-                                        "We ask this exclusively for open-source projects.",
+                                        "We ask this exclusively for open source projects.",
                                     ))
                                     .child(info_item(
-                                        "Zed automatically detects if your project is open-source.",
+                                        "Zed automatically detects if your project is open source.",
                                     ))
                                     .child(info_item("Toggle it anytime via the status bar menu."))
                                     .child(multiline_info_item(
-                                        "If turned on, this setting is valid for all open-source project",
+                                        "If turned on, this setting is valid for all open source projects",
                                         label_item("you open in Zed.")
                                     ))
                                     .child(multiline_info_item(
