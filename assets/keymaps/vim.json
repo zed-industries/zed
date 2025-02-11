@@ -239,7 +239,9 @@
       "] d": "editor::GoToDiagnostic",
       "[ d": "editor::GoToPrevDiagnostic",
       "] c": "editor::GoToHunk",
+      "] C": "editor::GoToHunkEnd",
       "[ c": "editor::GoToPrevHunk",
+      "[ C": "editor::GoToPrevHunkEnd",
       "g c": "vim::PushToggleComments"
     }
   },

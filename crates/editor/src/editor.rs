@@ -10361,20 +10361,38 @@ impl Editor {
     fn go_to_next_hunk(&mut self, _: &GoToHunk, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest::<Point>(cx);
-        self.go_to_hunk_after_position(&snapshot, selection.head(), window, cx);
+        self.go_to_hunk_after_position(&snapshot, selection.head(), false, window, cx);
+    }
+
+    fn go_to_next_hunk_end(
+        &mut self,
+        _: &GoToHunkEnd,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.snapshot(window, cx);
+        let selection = self.selections.newest::<Point>(cx);
+        self.go_to_hunk_after_position(&snapshot, selection.head(), true, window, cx);
     }
 
     fn go_to_hunk_after_position(
         &mut self,
         snapshot: &EditorSnapshot,
         position: Point,
+        go_to_end: bool,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<MultiBufferDiffHunk> {
         let mut hunk = snapshot
             .buffer_snapshot
             .diff_hunks_in_range(position..snapshot.buffer_snapshot.max_point())
-            .find(|hunk| hunk.row_range.start.0 > position.row);
+            .find(|hunk| {
+                if !go_to_end || (hunk.row_range.start.0 >= hunk.row_range.end.0 - 1) {
+                    hunk.row_range.start.0 > position.row
+                } else {
+                    hunk.row_range.end.0 - 1 > position.row
+                }
+            });
         if hunk.is_none() {
             hunk = snapshot
                 .buffer_snapshot
@@ -10382,7 +10400,13 @@ impl Editor {
                 .find(|hunk| hunk.row_range.end.0 < position.row)
         }
         if let Some(hunk) = &hunk {
-            let destination = Point::new(hunk.row_range.start.0, 0);
+            let row = if !go_to_end || (hunk.row_range.start.0 >= hunk.row_range.end.0 - 1) {
+                hunk.row_range.start.0
+            } else {
+                hunk.row_range.end.0 - 1
+            };
+            let destination = Point::new(row, 0);
+
             self.unfold_ranges(&[destination..destination], false, false, cx);
             self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select_ranges(vec![destination..destination]);
@@ -10395,22 +10419,51 @@ impl Editor {
     fn go_to_prev_hunk(&mut self, _: &GoToPrevHunk, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest::<Point>(cx);
-        self.go_to_hunk_before_position(&snapshot, selection.head(), window, cx);
+        self.go_to_hunk_before_position(&snapshot, selection.head(), false, window, cx);
+    }
+
+    fn go_to_prev_hunk_end(
+        &mut self,
+        _: &GoToPrevHunkEnd,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.snapshot(window, cx);
+        let selection = self.selections.newest::<Point>(cx);
+        self.go_to_hunk_before_position(&snapshot, selection.head(), true, window, cx);
     }
 
     fn go_to_hunk_before_position(
         &mut self,
         snapshot: &EditorSnapshot,
         position: Point,
+        go_to_end: bool,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<MultiBufferDiffHunk> {
-        let mut hunk = snapshot.buffer_snapshot.diff_hunk_before(position);
+        let mut hunk = snapshot
+            .buffer_snapshot
+            .diff_hunks_in_range(Point::MIN..position)
+            .filter(|hunk| {
+                if !go_to_end || (hunk.row_range.start.0 >= hunk.row_range.end.0 - 1) {
+                    hunk.row_range.start.0 < position.row
+                } else {
+                    hunk.row_range.end.0 - 1 < position.row
+                }
+            })
+            .last();
+
         if hunk.is_none() {
             hunk = snapshot.buffer_snapshot.diff_hunk_before(Point::MAX);
         }
         if let Some(hunk) = &hunk {
-            let destination = Point::new(hunk.row_range.start.0, 0);
+            let row = if !go_to_end || (hunk.row_range.start.0 >= hunk.row_range.end.0 - 1) {
+                hunk.row_range.start.0
+            } else {
+                hunk.row_range.end.0 - 1
+            };
+            let destination = Point::new(row, 0);
+
             self.unfold_ranges(&[destination..destination], false, false, cx);
             self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select_ranges(vec![destination..destination]);
