@@ -587,7 +587,7 @@ pub struct Background {
     pub(crate) tag: BackgroundTag,
     pub(crate) color_space: ColorSpace,
     pub(crate) solid: Hsla,
-    pub(crate) angle: f32,
+    pub(crate) gradient_angle_or_pattern_height: f32,
     pub(crate) colors: [LinearColorStop; 2],
     /// Padding for alignment for repr(C) layout.
     pad: u32,
@@ -600,7 +600,7 @@ impl Default for Background {
             tag: BackgroundTag::Solid,
             solid: Hsla::default(),
             color_space: ColorSpace::default(),
-            angle: 0.0,
+            gradient_angle_or_pattern_height: 0.0,
             colors: [LinearColorStop::default(), LinearColorStop::default()],
             pad: 0,
         }
@@ -608,10 +608,11 @@ impl Default for Background {
 }
 
 /// Creates a hash pattern background
-pub fn pattern_slash(color: Hsla) -> Background {
+pub fn pattern_slash(color: Hsla, thickness: f32) -> Background {
     Background {
         tag: BackgroundTag::PatternSlash,
         solid: color,
+        gradient_angle_or_pattern_height: thickness,
         ..Default::default()
     }
 }
@@ -630,7 +631,7 @@ pub fn linear_gradient(
 ) -> Background {
     Background {
         tag: BackgroundTag::LinearGradient,
-        angle,
+        gradient_angle_or_pattern_height: angle,
         colors: [from.into(), to.into()],
         ..Default::default()
     }

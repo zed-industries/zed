@@ -36,9 +36,8 @@ use workspace::{
     Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
-use zeta::RateCompletionModal;
+use zeta::RateCompletions;
 
-actions!(zeta, [RateCompletions]);
 actions!(edit_prediction, [ToggleMenu]);
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
@@ -54,7 +53,6 @@ pub struct InlineCompletionButton {
     file: Option<Arc<dyn File>>,
     edit_prediction_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
     fs: Arc<dyn Fs>,
-    workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
@@ -354,7 +352,6 @@ impl Render for InlineCompletionButton {
 
 impl InlineCompletionButton {
     pub fn new(
-        workspace: WeakEntity<Workspace>,
         fs: Arc<dyn Fs>,
         user_store: Entity<UserStore>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -376,7 +373,6 @@ impl InlineCompletionButton {
             file: None,
             edit_prediction_provider: None,
             popover_menu_handle,
-            workspace,
             fs,
             user_store,
         }
@@ -456,17 +452,56 @@ impl InlineCompletionButton {
             if data_collection.is_supported() {
                 let provider = provider.clone();
                 let enabled = data_collection.is_enabled();
+                let is_open_source = data_collection.is_project_open_source();
+                let is_collecting = data_collection.is_enabled();
 
                 menu = menu.item(
-                    // TODO: We want to add something later that communicates whether
-                    // the current project is open-source.
                     ContextMenuEntry::new("Share Training Data")
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
-                        .documentation_aside(|_| {
-                            Label::new(indoc!{"
-                                Help us improve our open model by sharing data from open source repositories. \
-                                Zed must detect a license file in your repo for this setting to take effect.\
-                            "}).into_any_element()
+                        .icon_color(if is_open_source && is_collecting {
+                            Color::Success
+                        } else {
+                            Color::Accent
+                        })
+                        .documentation_aside(move |cx| {
+                            let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
+                                (true, true) => (
+                                    "Project identified as open-source, and you're sharing data.",
+                                    Color::Default,
+                                    IconName::Check,
+                                    Color::Success,
+                                ),
+                                (true, false) => (
+                                    "Project identified as open-source, but you're not sharing data.",
+                                    Color::Muted,
+                                    IconName::XCircle,
+                                    Color::Muted,
+                                ),
+                                (false, _) => (
+                                    "Project not identified as open-source. No data captured.",
+                                    Color::Muted,
+                                    IconName::XCircle,
+                                    Color::Muted,
+                                ),
+                            };
+                            v_flex()
+                                .gap_2()
+                                .child(
+                                    Label::new(indoc!{
+                                        "Help us improve our open model by sharing data from open source repositories. \
+                                        Zed must detect a license file in your repo for this setting to take effect."
+                                    })
+                                )
+                                .child(
+                                    h_flex()
+                                        .pt_2()
+                                        .gap_1p5()
+                                        .border_t_1()
+                                        .border_color(cx.theme().colors().border_variant)
+                                        .child(Icon::new(icon_name).size(IconSize::XSmall).color(icon_color))
+                                        .child(div().child(Label::new(msg).size(LabelSize::Small).color(label_color)))
+                                )
+                                .into_any_element()
                         })
                         .handler(move |_, cx| {
                             provider.toggle_data_collection(cx);
@@ -483,7 +518,7 @@ impl InlineCompletionButton {
                                 );
                             }
                         })
-                )
+                );
             }
         }
 
@@ -574,23 +609,10 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        let workspace = self.workspace.clone();
         ContextMenu::build(window, cx, |menu, _window, cx| {
             self.build_language_settings_menu(menu, cx).when(
                 cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>(),
-                |this| {
-                    this.entry(
-                        "Rate Completions",
-                        Some(RateCompletions.boxed_clone()),
-                        move |window, cx| {
-                            workspace
-                                .update(cx, |workspace, cx| {
-                                    RateCompletionModal::toggle(workspace, window, cx)
-                                })
-                                .ok();
-                        },
-                    )
-                },
+                |this| this.action("Rate Completions", RateCompletions.boxed_clone()),
             )
         })
     }

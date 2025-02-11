@@ -4,7 +4,7 @@ use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
 use futures::{channel::mpsc, future::LocalBoxFuture, FutureExt, StreamExt};
 use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
-use migrator::migrate_settings;
+
 use paths::{local_settings_file_relative_path, EDITORCONFIG_NAME};
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -390,7 +390,7 @@ impl SettingsStore {
         self.set_user_settings(&new_text, cx).unwrap();
     }
 
-    async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
+    pub async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
         match fs.load(paths::settings_file()).await {
             result @ Ok(_) => result,
             Err(err) => {
@@ -995,51 +995,6 @@ impl SettingsStore {
 
         properties.use_fallbacks();
         Some(properties)
-    }
-
-    pub fn should_migrate_settings(settings: &serde_json::Value) -> bool {
-        let Ok(old_text) = serde_json::to_string(settings) else {
-            return false;
-        };
-        migrate_settings(&old_text).is_some()
-    }
-
-    pub fn migrate_settings(&self, fs: Arc<dyn Fs>) {
-        self.setting_file_updates_tx
-            .unbounded_send(Box::new(move |_: AsyncApp| {
-                async move {
-                    let old_text = Self::load_settings(&fs).await?;
-                    let Some(new_text) = migrate_settings(&old_text) else {
-                        return anyhow::Ok(());
-                    };
-                    let settings_path = paths::settings_file().as_path();
-                    if fs.is_file(settings_path).await {
-                        fs.atomic_write(paths::settings_backup_file().to_path_buf(), old_text)
-                            .await
-                            .with_context(|| {
-                                "Failed to create settings backup in home directory".to_string()
-                            })?;
-                        let resolved_path =
-                            fs.canonicalize(settings_path).await.with_context(|| {
-                                format!("Failed to canonicalize settings path {:?}", settings_path)
-                            })?;
-                        fs.atomic_write(resolved_path.clone(), new_text)
-                            .await
-                            .with_context(|| {
-                                format!("Failed to write settings to file {:?}", resolved_path)
-                            })?;
-                    } else {
-                        fs.atomic_write(settings_path.to_path_buf(), new_text)
-                            .await
-                            .with_context(|| {
-                                format!("Failed to write settings to file {:?}", settings_path)
-                            })?;
-                    }
-                    anyhow::Ok(())
-                }
-                .boxed_local()
-            }))
-            .ok();
     }
 }
 

@@ -9,7 +9,6 @@ use workspace::{ModalView, Workspace};
 actions!(
     zeta,
     [
-        RateCompletions,
         ThumbsUpActiveCompletion,
         ThumbsDownActiveCompletion,
         NextEdit,

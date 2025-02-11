@@ -34,7 +34,7 @@ members = [
     "crates/db",
     "crates/deepseek",
     "crates/diagnostics",
-    "crates/diff",
+    "crates/buffer_diff",
     "crates/docs_preprocessor",
     "crates/editor",
     "crates/evals",
@@ -235,7 +235,7 @@ copilot = { path = "crates/copilot" }
 db = { path = "crates/db" }
 deepseek = { path = "crates/deepseek" }
 diagnostics = { path = "crates/diagnostics" }
-diff = { path = "crates/diff" }
+buffer_diff = { path = "crates/buffer_diff" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }

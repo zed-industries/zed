@@ -524,7 +524,7 @@ impl Render for ContextMenu {
                         .occlude()
                         .elevation_2(cx)
                         .p_2()
-                        .max_w_80()
+                        .max_w_96()
                         .child(aside(cx)),
                 )
             })
@@ -600,6 +600,8 @@ impl Render for ContextMenu {
                                             let menu = cx.entity().downgrade();
                                             let icon_color = if *disabled {
                                                 Color::Muted
+                                            } else if toggle.is_some() {
+                                                icon_color.unwrap_or(Color::Accent)
                                             } else {
                                                 icon_color.unwrap_or(Color::Default)
                                             };
@@ -674,7 +676,7 @@ impl Render for ContextMenu {
                                                                 let contents =
                                                                     div().flex_none().child(
                                                                         Icon::new(IconName::Check)
-                                                                            .color(Color::Accent)
+                                                                            .color(icon_color)
                                                                             .size(*icon_size)
                                                                     )
                                                                     .when(!toggled, |contents|
