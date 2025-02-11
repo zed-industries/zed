@@ -281,6 +281,7 @@ impl RenderOnce for Label {
 mod label_preview {
     use crate::prelude::*;
 
+    // View this component preview using `workspace: open component-preview`
     impl ComponentPreview for Label {
         fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
             v_flex()
