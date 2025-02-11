@@ -1225,7 +1225,7 @@ impl GitPanel {
         let branch = active_repository.read(cx).branch()?;
         let commit = branch.most_recent_commit.as_ref()?;
 
-        let branch_selector = Button::new("branch-selector", branch.name.clone())
+        let _branch_selector = Button::new("branch-selector", branch.name.clone())
             .color(Color::Muted)
             .style(ButtonStyle::Subtle)
             .icon(IconName::GitBranch)
@@ -1242,7 +1242,7 @@ impl GitPanel {
             }))
             .style(ButtonStyle::Transparent);
 
-        let timestamp = Label::new(time_format::format_local_timestamp(
+        let _timestamp = Label::new(time_format::format_local_timestamp(
             OffsetDateTime::from_unix_timestamp(commit.commit_timestamp).log_err()?,
             OffsetDateTime::now_utc(),
             time_format::TimestampFormat::Relative,
@@ -1250,15 +1250,50 @@ impl GitPanel {
         .size(LabelSize::Small)
         .color(Color::Muted);
 
-        let commit_msg = Label::new(util::truncate_and_trailoff(&commit.subject, 80));
-
-        let undo_button = Button::new("undo button", "uncommit");
+        // TODO: Show commit message in a popover if truncated
+        let commit_msg = commit
+            .subject
+            .lines()
+            .next()
+            .unwrap_or(&commit.subject)
+            .to_string();
 
         Some(
-            v_flex()
-                .child(branch_selector)
-                .child(timestamp)
-                .child(h_flex().child(commit_msg).child(undo_button)),
+            h_flex()
+                .items_center()
+                .py_1p5()
+                .px(px(8.))
+                .bg(cx.theme().colors().background)
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .gap_1p5()
+                .child(
+                    div()
+                        .flex_grow()
+                        .overflow_hidden()
+                        .max_w(relative(0.6))
+                        .h_full()
+                        .child(
+                            Label::new(commit_msg)
+                                .size(LabelSize::Small)
+                                .text_ellipsis(),
+                        ),
+                )
+                .child(div().flex_1())
+                .child(
+                    panel_filled_button("Undo")
+                        .icon(IconName::Undo)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .icon_position(IconPosition::Start),
+                )
+                .child(
+                    panel_filled_button("Push")
+                        .icon(IconName::ArrowUp)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .icon_position(IconPosition::Start), // .disabled(true),
+                ),
         )
     }
 
@@ -1747,8 +1782,8 @@ impl Render for GitPanel {
             } else {
                 self.render_empty_state(cx).into_any_element()
             })
-            .child(self.render_commit_editor(window, cx))
             .children(self.render_previous_commit(cx))
+            .child(self.render_commit_editor(window, cx))
     }
 }
 
