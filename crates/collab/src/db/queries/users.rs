@@ -133,26 +133,23 @@ impl Database {
         initial_channel_id: Option<ChannelId>,
         tx: &DatabaseTransaction,
     ) -> Result<User> {
-        if let Some(user_by_github_user_id) = user::Entity::find()
-            .filter(user::Column::GithubUserId.eq(github_user_id))
-            .one(tx)
+        if let Some(existing_user) = self
+            .get_user_by_github_user_id_or_github_login(github_user_id, github_login, tx)
             .await?
         {
-            let mut user_by_github_user_id = user_by_github_user_id.into_active_model();
-            user_by_github_user_id.github_login = ActiveValue::set(github_login.into());
-            user_by_github_user_id.github_user_created_at =
-                ActiveValue::set(Some(github_user_created_at));
-            Ok(user_by_github_user_id.update(tx).await?)
-        } else if let Some(user_by_github_login) = user::Entity::find()
-            .filter(user::Column::GithubLogin.eq(github_login))
-            .one(tx)
-            .await?
-        {
-            let mut user_by_github_login = user_by_github_login.into_active_model();
-            user_by_github_login.github_user_id = ActiveValue::set(github_user_id);
-            user_by_github_login.github_user_created_at =
-                ActiveValue::set(Some(github_user_created_at));
-            Ok(user_by_github_login.update(tx).await?)
+            let mut existing_user = existing_user.into_active_model();
+            existing_user.github_login = ActiveValue::set(github_login.into());
+            existing_user.github_user_created_at = ActiveValue::set(Some(github_user_created_at));
+
+            if let Some(github_email) = github_email {
+                existing_user.email_address = ActiveValue::set(Some(github_email.into()));
+            }
+
+            if let Some(github_name) = github_name {
+                existing_user.name = ActiveValue::set(Some(github_name.into()));
+            }
+
+            Ok(existing_user.update(tx).await?)
         } else {
             let user = user::Entity::insert(user::ActiveModel {
                 email_address: ActiveValue::set(github_email.map(|email| email.into())),
@@ -181,6 +178,34 @@ impl Database {
             }
             Ok(user)
         }
+    }
+
+    /// Tries to retrieve a user, first by their GitHub user ID, and then by their GitHub login.
+    ///
+    /// Returns `None` if a user is not found with this GitHub user ID or GitHub login.
+    pub async fn get_user_by_github_user_id_or_github_login(
+        &self,
+        github_user_id: i32,
+        github_login: &str,
+        tx: &DatabaseTransaction,
+    ) -> Result<Option<User>> {
+        if let Some(user_by_github_user_id) = user::Entity::find()
+            .filter(user::Column::GithubUserId.eq(github_user_id))
+            .one(tx)
+            .await?
+        {
+            return Ok(Some(user_by_github_user_id));
+        }
+
+        if let Some(user_by_github_login) = user::Entity::find()
+            .filter(user::Column::GithubLogin.eq(github_login))
+            .one(tx)
+            .await?
+        {
+            return Ok(Some(user_by_github_login));
+        }
+
+        Ok(None)
     }
 
     /// get_all_users returns the next page of users. To get more call again with

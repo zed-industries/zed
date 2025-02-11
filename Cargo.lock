@@ -7878,6 +7878,7 @@ dependencies = [
 name = "migrator"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "collections",
  "convert_case 0.7.1",
  "log",
