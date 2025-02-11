@@ -29,7 +29,8 @@ use gpui::{
     WindowOptions,
 };
 use image_viewer::ImageInfo;
-use migrate::{migrate_keymap_in_memory, migrate_settings_in_memory, MigratorBanner};
+use migrate::MigratorBanner;
+use migrator::{migrate_keymap, migrate_settings};
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
@@ -1106,11 +1107,11 @@ pub fn handle_settings_file_changes(
     cx: &mut App,
     settings_changed: impl Fn(Option<anyhow::Error>, &mut App) + 'static,
 ) {
-    let user_settings_content = migrate_settings_in_memory(
-        cx.background_executor()
-            .block(user_settings_file_rx.next())
-            .unwrap(),
-    );
+    let content = cx
+        .background_executor()
+        .block(user_settings_file_rx.next())
+        .unwrap();
+    let user_settings_content = migrate_settings(&content).unwrap_or(content);
     SettingsStore::update_global(cx, |store, cx| {
         let result = store.set_user_settings(&user_settings_content, cx);
         if let Err(err) = &result {
@@ -1119,10 +1120,16 @@ pub fn handle_settings_file_changes(
         settings_changed(result.err(), cx);
     });
     cx.spawn(move |cx| async move {
-        while let Some(user_settings_content) = user_settings_file_rx.next().await {
+        while let Some(content) = user_settings_file_rx.next().await {
+            let user_settings_content = if let Some(migrated_content) = migrate_settings(&content) {
+                migrated_content
+                // if not shown, show the banner
+            } else {
+                content
+                // if show, remove the banner
+            };
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
-                let result =
-                    store.set_user_settings(&migrate_settings_in_memory(user_settings_content), cx);
+                let result = store.set_user_settings(&user_settings_content, cx);
                 if let Err(err) = &result {
                     log::error!("Failed to load user settings: {err}");
                 }
@@ -1183,7 +1190,13 @@ pub fn handle_keymap_file_changes(
                 _ = keyboard_layout_rx.next() => {},
                 content = user_keymap_file_rx.next() => {
                     if let Some(content) = content {
-                        user_keymap_content = migrate_keymap_in_memory(content);
+                        if let Some(migrated_content) = migrate_keymap(&content) {
+                            user_keymap_content = migrated_content;
+                            // show notification if doesnt exists
+                        } else {
+                            user_keymap_content = content;
+                            // remove notifiction if exists
+                        }
                     }
                 }
             };
