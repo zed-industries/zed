@@ -10582,13 +10582,17 @@ impl Editor {
             }
         }
 
-        let mut active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
+        let active_group_id = self
+            .active_diagnostics
+            .as_ref()
+            .map(|active_group| active_group.group_id);
+        let active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
             active_diagnostics
                 .primary_range
                 .to_offset(&buffer)
                 .to_inclusive()
         });
-        let mut search_start = if let Some(active_primary_range) = active_primary_range.as_ref() {
+        let search_start = if let Some(active_primary_range) = active_primary_range.as_ref() {
             if active_primary_range.contains(&selection.head()) {
                 *active_primary_range.start()
             } else {
@@ -10597,83 +10601,91 @@ impl Editor {
         } else {
             selection.head()
         };
+
         let snapshot = self.snapshot(window, cx);
-        loop {
-            let mut diagnostics;
-            if direction == Direction::Prev {
-                diagnostics = buffer
-                    .diagnostics_in_range::<usize>(0..search_start)
-                    .collect::<Vec<_>>();
-                diagnostics.reverse();
-            } else {
-                diagnostics = buffer
-                    .diagnostics_in_range::<usize>(search_start..buffer.len())
-                    .collect::<Vec<_>>();
-            };
-            let group = diagnostics
-                .into_iter()
-                .filter(|diagnostic| !snapshot.intersects_fold(diagnostic.range.start))
-                // relies on diagnostics_in_range to return diagnostics with the same starting range to
-                // be sorted in a stable way
-                // skip until we are at current active diagnostic, if it exists
-                .skip_while(|entry| {
-                    let is_in_range = match direction {
-                        Direction::Prev => entry.range.end > search_start,
-                        Direction::Next => entry.range.start < search_start,
-                    };
-                    is_in_range
-                        && self
-                            .active_diagnostics
-                            .as_ref()
-                            .is_some_and(|a| a.group_id != entry.diagnostic.group_id)
-                })
-                .find_map(|entry| {
-                    if entry.diagnostic.is_primary
-                        && entry.diagnostic.severity <= DiagnosticSeverity::WARNING
-                        && entry.range.start != entry.range.end
-                        // if we match with the active diagnostic, skip it
-                        && Some(entry.diagnostic.group_id)
-                            != self.active_diagnostics.as_ref().map(|d| d.group_id)
-                    {
-                        Some((entry.range, entry.diagnostic.group_id))
+        let primary_diagnostics_before = buffer
+            .diagnostics_in_range::<usize>(0..search_start)
+            .filter(|entry| entry.diagnostic.is_primary)
+            .filter(|entry| entry.range.start != entry.range.end)
+            .filter(|entry| entry.diagnostic.severity <= DiagnosticSeverity::WARNING)
+            .filter(|entry| !snapshot.intersects_fold(entry.range.start))
+            .collect::<Vec<_>>();
+        let last_same_group_diagnostic_before = active_group_id.and_then(|active_group_id| {
+            primary_diagnostics_before
+                .iter()
+                .position(|entry| entry.diagnostic.group_id == active_group_id)
+        });
+
+        let primary_diagnostics_after = buffer
+            .diagnostics_in_range::<usize>(search_start..buffer.len())
+            .filter(|entry| entry.diagnostic.is_primary)
+            .filter(|entry| entry.range.start != entry.range.end)
+            .filter(|entry| entry.diagnostic.severity <= DiagnosticSeverity::WARNING)
+            .filter(|diagnostic| !snapshot.intersects_fold(diagnostic.range.start))
+            .collect::<Vec<_>>();
+        let last_same_group_diagnostic_after = active_group_id.and_then(|active_group_id| {
+            primary_diagnostics_after
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(i, entry)| {
+                    if entry.diagnostic.group_id == active_group_id {
+                        Some(i)
                     } else {
                         None
                     }
-                });
+                })
+        });
 
-            if let Some((primary_range, group_id)) = group {
-                let Some(buffer_id) = buffer.anchor_after(primary_range.start).buffer_id else {
-                    return;
-                };
-                self.activate_diagnostics(buffer_id, group_id, window, cx);
-                if self.active_diagnostics.is_some() {
-                    self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                        s.select(vec![Selection {
-                            id: selection.id,
-                            start: primary_range.start,
-                            end: primary_range.start,
-                            reversed: false,
-                            goal: SelectionGoal::None,
-                        }]);
-                    });
-                    self.refresh_inline_completion(false, true, window, cx);
-                }
-                break;
-            } else {
-                // Cycle around to the start of the buffer, potentially moving back to the start of
-                // the currently active diagnostic.
-                active_primary_range.take();
-                if direction == Direction::Prev {
-                    if search_start == buffer.len() {
-                        break;
-                    } else {
-                        search_start = buffer.len();
-                    }
-                } else if search_start == 0 {
-                    break;
-                } else {
-                    search_start = 0;
-                }
+        let next_primary_diagnostic = match direction {
+            Direction::Prev => primary_diagnostics_before
+                .iter()
+                .take(last_same_group_diagnostic_before.unwrap_or(usize::MAX))
+                .rev()
+                .next(),
+            Direction::Next => primary_diagnostics_after
+                .iter()
+                .skip(
+                    last_same_group_diagnostic_after
+                        .map(|index| index + 1)
+                        .unwrap_or(0),
+                )
+                .next(),
+        };
+
+        // Cycle around to the start of the buffer, potentially moving back to the start of
+        // the currently active diagnostic.
+        let cycle_around = || match direction {
+            Direction::Prev => primary_diagnostics_after
+                .iter()
+                .rev()
+                .chain(primary_diagnostics_before.iter().rev())
+                .next(),
+            Direction::Next => primary_diagnostics_before
+                .iter()
+                .chain(primary_diagnostics_after.iter())
+                .next(),
+        };
+
+        if let Some((primary_range, group_id)) = next_primary_diagnostic
+            .or_else(cycle_around)
+            .map(|entry| (&entry.range, entry.diagnostic.group_id))
+        {
+            let Some(buffer_id) = buffer.anchor_after(primary_range.start).buffer_id else {
+                return;
+            };
+            self.activate_diagnostics(buffer_id, group_id, window, cx);
+            if self.active_diagnostics.is_some() {
+                self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    s.select(vec![Selection {
+                        id: selection.id,
+                        start: primary_range.start,
+                        end: primary_range.start,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    }]);
+                });
+                self.refresh_inline_completion(false, true, window, cx);
             }
         }
     }
