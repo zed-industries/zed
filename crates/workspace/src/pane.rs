@@ -1454,14 +1454,9 @@ impl Pane {
     }
 
     // Usually when you close an item that has unsaved changes, we prompt you to
-    // save it. That said, in the case of a multibuffer that only has unsaved
-    // changes in buffers that are still open elsewhere, we can let you close it
-    // without fear of losing data.
+    // save it. That said, if you still have the buffer open in a different pane
+    // we can close this one without fear of losing data.
     pub fn skip_save_on_close(item: &dyn ItemHandle, workspace: &Workspace, cx: &App) -> bool {
-        if item.is_singleton(cx) {
-            return false;
-        }
-
         let mut dirty_project_item_ids = Vec::new();
         item.for_each_project_item(cx, &mut |project_item_id, project_item| {
             if project_item.is_dirty() {
@@ -1474,6 +1469,9 @@ impl Pane {
 
         for open_item in workspace.items(cx) {
             if open_item.item_id() == item.item_id() {
+                continue;
+            }
+            if !open_item.is_singleton(cx) {
                 continue;
             }
             let other_project_item_ids = open_item.project_item_model_ids(cx);
@@ -1494,13 +1492,15 @@ impl Pane {
         /// Quantity of item paths displayed in prompt prior to cutoff..
         const FILE_NAMES_CUTOFF_POINT: usize = 10;
         let mut file_names: Vec<_> = items
-            .filter_map(|item| {
-                item.project_path(cx).and_then(|project_path| {
-                    project_path
-                        .path
-                        .file_name()
-                        .and_then(|name| name.to_str().map(ToOwned::to_owned))
-                })
+            .map(|item| {
+                item.project_path(cx)
+                    .and_then(|project_path| {
+                        project_path
+                            .path
+                            .file_name()
+                            .and_then(|name| name.to_str().map(ToOwned::to_owned))
+                    })
+                    .unwrap_or_else(|| "untitled".to_string())
             })
             .take(FILE_NAMES_CUTOFF_POINT)
             .collect();
@@ -1543,12 +1543,16 @@ impl Pane {
         }
 
         let active_item_id = self.active_item().map(|item| item.item_id());
+        dbg!(&active_item_id);
 
         items_to_close.sort_by_key(|item| {
+            let path = item.project_path(cx);
             // Put the currently active item at the end, because if the currently active item is not closed last
             // closing the currently active item will cause the focus to switch to another item
             // This will cause Zed to expand the content of the currently active item
-            active_item_id == Some(item.item_id())
+            //
+            // Beyond that sort in order of project path, with untitled files and multibuffers coming last.
+            (active_item_id == Some(item.item_id()), path.is_none(), path)
         });
 
         let workspace = self.workspace.clone();
@@ -1568,9 +1572,10 @@ impl Pane {
                         cx,
                     )
                 })?;
-                match answer.await {
+                match dbg!(answer.await) {
                     Ok(0) => save_intent = SaveIntent::SaveAll,
                     Ok(1) => save_intent = SaveIntent::Skip,
+                    Ok(2) => return Ok(()),
                     _ => {}
                 }
             }
@@ -1584,6 +1589,7 @@ impl Pane {
                         }
                     })?;
                 }
+                dbg!(&item_to_close.item_id(), should_save, save_intent);
 
                 if should_save {
                     if !Self::save_item(
@@ -1595,12 +1601,14 @@ impl Pane {
                     )
                     .await?
                     {
+                        dbg!("oops");
                         break;
                     }
                 }
 
                 // Remove the item from the pane.
                 pane.update_in(&mut cx, |pane, window, cx| {
+                    dbg!("removing...");
                     pane.remove_item(item_to_close.item_id(), false, true, window, cx);
                 })
                 .ok();
@@ -1859,7 +1867,7 @@ impl Pane {
                         cx,
                     )
                 })?;
-                match answer.await {
+                match dbg!(answer.await) {
                     Ok(0) => {
                         pane.update_in(cx, |_, window, cx| {
                             item.save(should_format, project, window, cx)
@@ -1923,6 +1931,7 @@ impl Pane {
                             _ => return Ok(false), // Cancel
                         }
                     } else {
+                        dbg!("oops");
                         return Ok(false);
                     }
                 }
@@ -1938,6 +1947,7 @@ impl Pane {
                 .await?;
             } else if can_save_as {
                 let abs_path = pane.update_in(cx, |pane, window, cx| {
+                    pane.activate_item(item_ix, true, true, window, cx);
                     pane.workspace.update(cx, |workspace, cx| {
                         workspace.prompt_for_new_path(window, cx)
                     })
@@ -1962,7 +1972,7 @@ impl Pane {
                 item: item.downgrade_item(),
                 save_intent,
             });
-            true
+            dbg!(true)
         })
     }
 
@@ -4333,6 +4343,7 @@ mod tests {
     async fn test_close_all_items(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
+        dbg!();
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
@@ -4344,6 +4355,7 @@ mod tests {
         add_labeled_item(&pane, "C", false, cx);
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
+        dbg!();
         pane.update_in(cx, |pane, window, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
             pane.pin_tab_at(ix, window, cx);
@@ -4361,6 +4373,7 @@ mod tests {
         .unwrap();
         assert_item_labels(&pane, ["A*"], cx);
 
+        dbg!();
         pane.update_in(cx, |pane, window, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
             pane.unpin_tab_at(ix, window, cx);
@@ -4377,6 +4390,7 @@ mod tests {
         .await
         .unwrap();
 
+        dbg!();
         assert_item_labels(&pane, [], cx);
 
         add_labeled_item(&pane, "A", true, cx).update(cx, |item, cx| {
@@ -4393,6 +4407,7 @@ mod tests {
         });
         assert_item_labels(&pane, ["A^", "B^", "C*^"], cx);
 
+        dbg!();
         let save = pane
             .update_in(cx, |pane, window, cx| {
                 pane.close_all_items(
@@ -4406,11 +4421,15 @@ mod tests {
             })
             .unwrap();
 
+        dbg!();
         cx.executor().run_until_parked();
-        cx.simulate_prompt_answer(2);
+        cx.simulate_prompt_answer("Save all");
+        dbg!();
         save.await.unwrap();
+        dbg!();
         assert_item_labels(&pane, [], cx);
 
+        dbg!();
         add_labeled_item(&pane, "A", true, cx);
         add_labeled_item(&pane, "B", true, cx);
         add_labeled_item(&pane, "C", true, cx);
@@ -4428,9 +4447,12 @@ mod tests {
             })
             .unwrap();
 
+        dbg!();
         cx.executor().run_until_parked();
-        cx.simulate_prompt_answer(2);
+        cx.simulate_prompt_answer("Discard all");
+        dbg!();
         save.await.unwrap();
+        dbg!();
         assert_item_labels(&pane, [], cx);
     }
 

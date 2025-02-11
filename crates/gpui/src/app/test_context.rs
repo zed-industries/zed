@@ -286,8 +286,9 @@ impl TestAppContext {
     }
 
     /// Simulates clicking a button in an platform-level alert dialog.
-    pub fn simulate_prompt_answer(&self, button_ix: usize) {
-        self.test_platform.simulate_prompt_answer(button_ix);
+    #[track_caller]
+    pub fn simulate_prompt_answer(&self, button: &str) {
+        self.test_platform.simulate_prompt_answer(button);
     }
 
     /// Returns true if there's an alert dialog open.

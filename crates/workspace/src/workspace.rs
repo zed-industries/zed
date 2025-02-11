@@ -2031,6 +2031,7 @@ impl Workspace {
                     match answer.await.log_err() {
                         Some(0) => save_intent = SaveIntent::SaveAll,
                         Some(1) => save_intent = SaveIntent::Skip,
+                        Some(2) => return Ok(false),
                         _ => {}
                     }
                 }
@@ -6939,9 +6940,7 @@ mod tests {
             w.prepare_to_close(CloseIntent::CloseWindow, window, cx)
         });
         cx.executor().run_until_parked();
-        cx.simulate_prompt_answer(2); // cancel save all
-        cx.executor().run_until_parked();
-        cx.simulate_prompt_answer(2); // cancel save all
+        cx.simulate_prompt_answer("Cancel"); // cancel save all
         cx.executor().run_until_parked();
         assert!(!cx.has_pending_prompt());
         assert!(!task.await.unwrap());
@@ -7040,16 +7039,8 @@ mod tests {
         cx.executor().run_until_parked();
 
         assert!(cx.has_pending_prompt());
-        // Ignore "Save all" prompt
-        cx.simulate_prompt_answer(2);
-        cx.executor().run_until_parked();
-        // There's a prompt to save item 1.
-        pane.update(cx, |pane, _| {
-            assert_eq!(pane.items_len(), 4);
-            assert_eq!(pane.active_item().unwrap().item_id(), item1.item_id());
-        });
-        // Confirm saving item 1.
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Save all");
+
         cx.executor().run_until_parked();
 
         // Item 1 is saved. There's a prompt to save item 3.
@@ -7063,7 +7054,7 @@ mod tests {
         assert!(cx.has_pending_prompt());
 
         // Cancel saving item 3.
-        cx.simulate_prompt_answer(1);
+        cx.simulate_prompt_answer("Discard");
         cx.executor().run_until_parked();
 
         // Item 3 is reloaded. There's a prompt to save item 4.
@@ -7074,11 +7065,6 @@ mod tests {
             assert_eq!(pane.items_len(), 2);
             assert_eq!(pane.active_item().unwrap().item_id(), item4.item_id());
         });
-        assert!(cx.has_pending_prompt());
-
-        // Confirm saving item 4.
-        cx.simulate_prompt_answer(0);
-        cx.executor().run_until_parked();
 
         // There's a prompt for a path for item 4.
         cx.simulate_new_path_selection(|_| Some(Default::default()));
@@ -7167,7 +7153,7 @@ mod tests {
 
         cx.focus(&left_pane);
 
-        // When closing all of the items in the left pane, we should be prompted twice:
+        // When closing all of the items in the right pane, we should be prompted twice:
         // once for project entry 0, and once for project entry 2. Project entries 1,
         // 3, and 4 are all still open in the other paten. After those two
         // prompts, the task should complete.
@@ -7179,7 +7165,7 @@ mod tests {
         cx.executor().run_until_parked();
 
         // Discard "Save all" prompt
-        cx.simulate_prompt_answer(2);
+        cx.simulate_prompt_answer("2");
 
         cx.executor().run_until_parked();
         left_pane.update(cx, |pane, cx| {
@@ -7188,7 +7174,7 @@ mod tests {
                 &[ProjectEntryId::from_proto(0)]
             );
         });
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("0");
 
         cx.executor().run_until_parked();
         left_pane.update(cx, |pane, cx| {
@@ -7197,7 +7183,7 @@ mod tests {
                 &[ProjectEntryId::from_proto(2)]
             );
         });
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("0");
 
         cx.executor().run_until_parked();
         close.await.unwrap();
@@ -8179,7 +8165,7 @@ mod tests {
             cx.has_pending_prompt(),
             "Dirty multi buffer should prompt a save dialog"
         );
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("0");
         cx.background_executor.run_until_parked();
         close_multi_buffer_task
             .await
