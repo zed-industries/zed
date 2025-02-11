@@ -5513,7 +5513,6 @@ impl Editor {
             ));
 
         self.stale_inline_completion_in_menu = None;
-        // todo! az pass only display snaphot?
         let editor_snapshot = self.snapshot(window, cx);
         if self.edit_prediction_preview.restart(
             &completion,

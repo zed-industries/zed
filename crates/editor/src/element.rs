@@ -3697,8 +3697,6 @@ impl EditorElement {
 
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
-                // todo! az clean up
-
                 if requires_modifier {
                     let cursor_position =
                         target.to_display_point(&editor_snapshot.display_snapshot);
