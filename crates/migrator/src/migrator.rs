@@ -582,7 +582,7 @@ fn replace_setting_name(
     mat: &QueryMatch,
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
-    let setting_capture_ix = query.capture_index_for_name("name").unwrap();
+    let setting_capture_ix = query.capture_index_for_name("name")?;
     let setting_name_range = mat
         .nodes_for_capture_index(setting_capture_ix)
         .next()?
