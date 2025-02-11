@@ -509,6 +509,7 @@ pub enum EditPredictionPreview {
     Started {
         animation: Range<Instant>,
         scroll_position: Option<gpui::Point<f32>>,
+        target_point: Option<DisplayPoint>,
     },
     /// Modifier released, animating from active
     Cancelled(Range<Instant>),
@@ -524,7 +525,7 @@ impl EditPredictionPreview {
         if matches!(self, Self::Started { .. }) {
             return false;
         }
-        *self = Self::start_now(completion, snapshot, cursor);
+        (*self, _) = Self::start_now(completion, snapshot, cursor);
         true
     }
 
@@ -535,9 +536,15 @@ impl EditPredictionPreview {
         cursor: DisplayPoint,
     ) {
         // todo! autoscroll
-        if matches!(self, Self::Started { .. }) {
-            // todo! az check current isn't same
-            *self = Self::start_now(completion, snapshot, cursor);
+        if let Self::Started {
+            target_point: current_target_point,
+            ..
+        } = self
+        {
+            let (new_preview, new_target_point) = Self::start_now(completion, snapshot, cursor);
+            if new_target_point != *current_target_point {
+                *self = new_preview;
+            }
         }
     }
 
@@ -545,45 +552,41 @@ impl EditPredictionPreview {
         completion: &InlineCompletion,
         snapshot: &EditorSnapshot,
         cursor: DisplayPoint,
-    ) -> Self {
+    ) -> (Self, Option<DisplayPoint>) {
         let now = Instant::now();
         match completion {
-            InlineCompletion::Edit { .. } => Self::Started {
-                animation: now..now,
-                scroll_position: None,
-            },
-            InlineCompletion::Move { target, .. } => {
-                let duration =
-                    Self::animation_duration(snapshot, cursor, *target).unwrap_or(Duration::ZERO);
-
+            InlineCompletion::Edit { .. } => (
                 Self::Started {
-                    animation: now..now + duration,
-                    scroll_position: Some(snapshot.scroll_position()),
-                }
+                    target_point: None,
+                    animation: now..now,
+                    scroll_position: None,
+                },
+                None,
+            ),
+            InlineCompletion::Move { target, .. } => {
+                let target_point = target.to_display_point(&snapshot.display_snapshot);
+                let row_diff = target_point.row().0.abs_diff(cursor.row().0);
+                let column_diff = target_point.column().abs_diff(cursor.column());
+                let distance = ((row_diff.pow(2) + column_diff.pow(2)) as f32).sqrt();
+                let duration = Duration::from_millis((distance * 20.) as u64);
+
+                (
+                    Self::Started {
+                        animation: now..now + duration,
+                        scroll_position: Some(snapshot.scroll_position()),
+                        target_point: Some(target_point),
+                    },
+                    Some(target_point),
+                )
             }
         }
-    }
-
-    fn animation_duration(
-        snapshot: &EditorSnapshot,
-        current_cursor: DisplayPoint,
-        target: Anchor,
-    ) -> Option<Duration> {
-        let target_cursor = target.to_display_point(&snapshot.display_snapshot);
-
-        let row_diff = target_cursor.row().0.abs_diff(current_cursor.row().0);
-        let column_diff = target_cursor.column().abs_diff(current_cursor.column());
-        let distance = ((row_diff.pow(2) + column_diff.pow(2)) as f32).sqrt();
-
-        let duration = Duration::from_millis((distance * 6.) as u64);
-
-        Some(duration)
     }
 
     fn cancel(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
         if let Self::Started {
             animation,
             scroll_position,
+            ..
         } = self
         {
             let now = Instant::now();
@@ -595,6 +598,7 @@ impl EditPredictionPreview {
             if let Some(scroll_position) = scroll_position {
                 cx.spawn_in(window, |editor, mut cx| async move {
                     smol::Timer::after(duration + Duration::from_millis(30)).await;
+                    // todo! az check if is same?
 
                     editor
                         .update_in(&mut cx, |editor, window, cx| {
