@@ -3558,7 +3558,7 @@ impl EditorElement {
             return None;
         }
 
-        // Adjust text origin for horizontal scrolling
+        // Adjust text origin for horizontal scrolling (in some cases here)
         let start_point =
             text_bounds.origin - gpui::Point::new(scroll_pixel_position.x, Pixels(0.0));
 
@@ -3582,7 +3582,7 @@ impl EditorElement {
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
 
-                    element.prepaint_at(start_point + offset, window, cx);
+                    element.prepaint_at(text_bounds.origin + offset, window, cx);
                     Some(element)
                 } else if (target_display_point.row().as_f32() + 1.) > scroll_bottom {
                     let mut element = inline_completion_accept_indicator(
@@ -3598,7 +3598,7 @@ impl EditorElement {
                         text_bounds.size.height - size.height - PADDING_Y,
                     );
 
-                    element.prepaint_at(start_point + offset, window, cx);
+                    element.prepaint_at(text_bounds.origin + offset, window, cx);
                     Some(element)
                 } else {
                     let mut element = inline_completion_accept_indicator(
