@@ -4,6 +4,68 @@ use settings::Settings;
 use smallvec::SmallVec;
 use theme::ThemeSettings;
 
+/// Sets the size of a label
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
+pub enum LabelSize {
+    /// The default size of a label.
+    #[default]
+    Default,
+    /// The large size of a label.
+    Large,
+    /// The small size of a label.
+    Small,
+    /// The extra small size of a label.
+    XSmall,
+}
+
+/// Sets the line height of a label
+#[derive(Default, PartialEq, Copy, Clone)]
+pub enum LineHeightStyle {
+    /// The default line height style of a label,
+    /// set by either the UI's default line height,
+    /// or the developer's default buffer line height.
+    #[default]
+    TextLabel,
+    /// Sets the line height to 1.
+    UiLabel,
+}
+
+/// A common set of traits all labels must implement.
+pub trait LabelCommon {
+    /// Sets the size of the label using a [`LabelSize`].
+    fn size(self, size: LabelSize) -> Self;
+
+    /// Sets the font weight of the label.
+    fn weight(self, weight: FontWeight) -> Self;
+
+    /// Sets the line height style of the label using a [`LineHeightStyle`].
+    fn line_height_style(self, line_height_style: LineHeightStyle) -> Self;
+
+    /// Sets the color of the label using a [`Color`].
+    fn color(self, color: Color) -> Self;
+
+    /// Sets the strikethrough property of the label.
+    fn strikethrough(self) -> Self;
+
+    /// Sets the italic property of the label.
+    fn italic(self) -> Self;
+
+    /// Sets the underline property of the label
+    fn underline(self) -> Self;
+
+    /// Sets the alpha property of the label, overwriting the alpha value of the color.
+    fn alpha(self, alpha: f32) -> Self;
+
+    /// Truncates overflowing text with an ellipsis (`…`) if needed.
+    fn text_ellipsis(self) -> Self;
+
+    /// Sets the label to render as a single line.
+    fn single_line(self) -> Self;
+
+    /// Sets the font to the buffer's
+    fn buffer_font(self, cx: &App) -> Self;
+}
+
 /// A label-like element that can be used to create a custom label when
 /// prebuilt labels are not sufficient. Use this sparingly, as it is
 /// unconstrained and may make the UI feel less consistent.
