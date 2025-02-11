@@ -1,9 +1,10 @@
 use crate::{
-    motion::{self},
+    motion::{self, Motion},
+    object::Object,
     state::Mode,
     Vim,
 };
-use editor::{display_map::ToDisplayPoint, Bias, Editor, ToPoint};
+use editor::{display_map::ToDisplayPoint, Anchor, Bias, Editor, EditorSnapshot, ToPoint};
 use gpui::{actions, Context, Window};
 use language::Point;
 use std::ops::Range;
@@ -26,6 +27,8 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.undo_replace(count, window, cx)
     });
 }
+
+struct VimExchange;
 
 impl Vim {
     pub(crate) fn multi_replace(
@@ -132,34 +135,40 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        todo!();
-        // self.stop_recording(cx);
-        // let selected_register = self.selected_register.take();
-        // self.update_editor(window, cx, |_, editor, window, cx| {
-        //     editor.transact(window, cx, |editor, window, cx| {
-        //         editor.set_clip_at_line_ends(false, cx);
-        //         editor.change_selections(None, window, cx, |s| {
-        //             s.move_with(|map, selection| {
-        //                 object.expand_selection(map, selection, around);
-        //             });
-        //         });
+        self.stop_recording(cx);
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            editor.set_clip_at_line_ends(false, cx);
+            let mut selection = editor.selections.newest_display(cx);
+            let snapshot = editor.snapshot(window, cx);
+            object.expand_selection(&snapshot, &mut selection, around);
+            let start = snapshot
+                .buffer_snapshot
+                .anchor_before(selection.start.to_point(&snapshot));
+            let end = snapshot
+                .buffer_snapshot
+                .anchor_before(selection.end.to_point(&snapshot));
+            let new_range = start..end;
+            vim.exchange_impl(new_range, editor, &snapshot, window, cx);
+            editor.set_clip_at_line_ends(true, cx);
+        });
+    }
 
-        //         let Some(Register { text, .. }) = Vim::update_globals(cx, |globals, cx| {
-        //             globals.read_register(selected_register, Some(editor), cx)
-        //         })
-        //         .filter(|reg| !reg.text.is_empty()) else {
-        //             return;
-        //         };
-        //         editor.insert(&text, window, cx);
-        //         editor.set_clip_at_line_ends(true, cx);
-        //         editor.change_selections(None, window, cx, |s| {
-        //             s.move_with(|map, selection| {
-        //                 selection.start = map.clip_point(selection.start, Bias::Left);
-        //                 selection.end = selection.start
-        //             })
-        //         })
-        //     });
-        // });
+    pub fn exchange_visual(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.stop_recording(cx);
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            let selection = editor.selections.newest_anchor();
+            let new_range = selection.start..selection.end;
+            let snapshot = editor.snapshot(window, cx);
+            vim.exchange_impl(new_range, editor, &snapshot, window, cx);
+        });
+        self.switch_mode(Mode::Normal, false, window, cx);
+    }
+
+    pub fn clear_exchange(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.stop_recording(cx);
+        self.update_editor(window, cx, |_, editor, _, cx| {
+            editor.clear_highlights::<VimExchange>(cx);
+        });
     }
 
     pub fn exchange_motion(
@@ -170,45 +179,58 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        let selected_register = self.selected_register.take();
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            editor.set_clip_at_line_ends(false, cx);
             let text_layout_details = editor.text_layout_details(window);
-            let selection = editor.selections.newest_display(cx);
-            motion.expand_selection(map, selection, times, false, &text_layout_details);
-            let range = selection.start.to_anchor(&map)..selection.end.to_anchor(&map);
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-
-            editor.transact(window, cx, |editor, window, cx| {
-                editor.set_clip_at_line_ends(false, cx);
-                if let Some(ranges) = editor.background_highlights::<VimExchange>() {
-                    editor.clear_highlights::<VimExchange>(cx);
-                    let previous_text = snapshot.text_for_range(ranges[0]);
-                    let new_text = snapshot.text_for_range(range);
-
-                    editor.edit([(ranges[0], new_text), (range, previous_text)], cx);
-                } else {
-                    let ranges = [];
-                    editor.highlight_background::<VimExchange>(
-                        &ranges,
-                        |theme| theme.editor_document_highlight_read_background,
-                        cx,
-                    );
-                }
-                // editor.change_selections(None, window, cx, |s| {
-                //     s.move_with(|map, selection| {
-                //         motion.expand_selection(map, selection, times, false, &text_layout_details);
-                //     });
-                // });
-
-                editor.set_clip_at_line_ends(true, cx);
-                // editor.change_selections(None, window, cx, |s| {
-                //     s.move_with(|map, selection| {
-                //         selection.start = map.clip_point(selection.start, Bias::Left);
-                //         selection.end = selection.start
-                //     })
-                // })
-            });
+            let mut selection = editor.selections.newest_display(cx);
+            let snapshot = editor.snapshot(window, cx);
+            motion.expand_selection(
+                &snapshot,
+                &mut selection,
+                times,
+                false,
+                &text_layout_details,
+            );
+            let start = snapshot
+                .buffer_snapshot
+                .anchor_before(selection.start.to_point(&snapshot));
+            let end = snapshot
+                .buffer_snapshot
+                .anchor_before(selection.end.to_point(&snapshot));
+            let new_range = start..end;
+            vim.exchange_impl(new_range, editor, &snapshot, window, cx);
+            editor.set_clip_at_line_ends(true, cx);
         });
+    }
+
+    pub fn exchange_impl(
+        &self,
+        new_range: Range<Anchor>,
+        editor: &mut Editor,
+        snapshot: &EditorSnapshot,
+        _window: &Window,
+        cx: &mut Context<Editor>,
+    ) {
+        if let Some((_, ranges)) = editor.clear_background_highlights::<VimExchange>(cx) {
+            let previous_range = ranges[0].clone();
+            let previous_text: String = snapshot
+                .buffer_snapshot
+                .text_for_range(previous_range.clone())
+                .collect();
+            let new_text: String = snapshot
+                .buffer_snapshot
+                .text_for_range(new_range.clone())
+                .collect();
+
+            editor.edit([(previous_range, new_text), (new_range, previous_text)], cx);
+        } else {
+            let ranges = [new_range];
+            editor.highlight_background::<VimExchange>(
+                &ranges,
+                |theme| theme.editor_document_highlight_read_background,
+                cx,
+            );
+        }
     }
 }
 

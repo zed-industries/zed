@@ -13719,12 +13719,6 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn background_highlights<T: 'static>(&mut self) -> Option<&Range<Anchor>> {
-        self.background_highlights
-            .get(&TypeId::of::<T>())
-            .map(|(_, ranges)| &ranges)
-    }
-
     pub fn clear_background_highlights<T: 'static>(
         &mut self,
         cx: &mut Context<Self>,

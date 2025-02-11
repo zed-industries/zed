@@ -500,7 +500,7 @@ impl Operator {
             Operator::ShellCommand => "sh",
             Operator::Rewrap => "gq",
             Operator::ReplaceWithRegister => "gr",
-            Operator::Exchange => "gx",
+            Operator::Exchange => "cx",
             Operator::Outdent => "<",
             Operator::Uppercase => "gU",
             Operator::Lowercase => "gu",
