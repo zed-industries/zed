@@ -52,6 +52,7 @@ pub use actions::{AcceptEditPrediction, OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
+use buffer_diff::DiffHunkSecondaryStatus;
 use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -12598,10 +12599,10 @@ impl Editor {
 
     fn diff_hunks_in_ranges<'a>(
         &'a self,
-        ranges: Vec<Range<Anchor>>,
+        ranges: &'a [Range<Anchor>],
         buffer: &'a MultiBufferSnapshot,
     ) -> impl 'a + Iterator<Item = MultiBufferDiffHunk> {
-        ranges.into_iter().flat_map(move |range| {
+        ranges.iter().flat_map(move |range| {
             let end_excerpt_id = range.end.excerpt_id;
             let range = range.to_point(buffer);
             let mut peek_end = range.end;
@@ -12614,7 +12615,29 @@ impl Editor {
         })
     }
 
-    pub fn stage_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut Context<Self>) {
+    pub fn has_stageable_diff_hunks_in_ranges(
+        &self,
+        ranges: &[Range<Anchor>],
+        snapshot: &MultiBufferSnapshot,
+    ) -> bool {
+        let mut hunks = self.diff_hunks_in_ranges(ranges, &snapshot);
+        hunks.any(|hunk| hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk)
+    }
+
+    pub fn stage_or_unstage_diff_hunks(
+        &mut self,
+        ranges: &[Range<Anchor>],
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        if self.has_stageable_diff_hunks_in_ranges(ranges, &snapshot) {
+            self.stage_diff_hunks(ranges, cx)
+        } else {
+            self.unstage_diff_hunks(ranges, cx)
+        }
+    }
+
+    pub fn stage_diff_hunks(&mut self, ranges: &[Range<Anchor>], cx: &mut Context<Self>) {
         let Some(project) = &self.project else {
             return;
         };
@@ -12622,7 +12645,7 @@ impl Editor {
         let snapshot = self.buffer.read(cx).snapshot(cx);
 
         let chunk_by = self
-            .diff_hunks_in_ranges(ranges, &snapshot)
+            .diff_hunks_in_ranges(&ranges, &snapshot)
             .chunk_by(|hunk| hunk.buffer_id);
         for (buffer_id, hunks) in &chunk_by {
             let Some(buffer) = project.buffer_for_id(buffer_id, cx) else {
@@ -12669,7 +12692,7 @@ impl Editor {
         }
     }
 
-    pub fn unstage_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut Context<Self>) {
+    pub fn unstage_diff_hunks(&mut self, ranges: &[Range<Anchor>], cx: &mut Context<Self>) {
         let Some(project) = &self.project else {
             return;
         };
@@ -12737,8 +12760,13 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ranges = self.selections.disjoint.iter().map(|s| s.range()).collect();
-        self.stage_diff_hunks(ranges, cx);
+        let ranges = self
+            .selections
+            .disjoint
+            .iter()
+            .map(|s| s.range())
+            .collect::<Vec<_>>();
+        self.stage_diff_hunks(&ranges, cx);
     }
 
     pub fn expand_selected_diff_hunks(&mut self, cx: &mut Context<Self>) {
