@@ -4137,7 +4137,7 @@ impl EditorElement {
                     let y = display_row_range.start.as_f32() * line_height
                         + text_hitbox.bounds.top()
                         - scroll_pixel_position.y;
-                    let x = text_hitbox.bounds.right() - px(100.);
+                    let x = text_hitbox.bounds.right() - px(200.);
 
                     let mut element = diff_hunk_controls(
                         display_row_range.start.0,
@@ -9067,6 +9067,19 @@ fn diff_hunk_controls(
                     move |_event, _window, cx| {
                         editor.update(cx, |editor, cx| {
                             editor.stage_diff_hunks(vec![hunk_range.start..hunk_range.start], cx);
+                        });
+                    }
+                }),
+        )
+        .child(
+            IconButton::new("unstage", IconName::Snip)
+                .shape(IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, _window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.unstage_diff_hunks(vec![hunk_range.start..hunk_range.start], cx);
                         });
                     }
                 }),

@@ -12672,6 +12672,11 @@ impl Editor {
             .diff_hunks_in_ranges(ranges, &snapshot)
             .chunk_by(|hunk| hunk.buffer_id);
         for (buffer_id, hunks) in &chunk_by {
+            let Some(buffer) = project.buffer_for_id(buffer_id, cx) else {
+                log::debug!("no buffer for buffer id");
+                continue;
+            };
+            let buffer = buffer.read(cx).snapshot();
             let Some((git_repo, path)) = project.git_repo_and_path_for_buffer_id(buffer_id, cx)
             else {
                 log::debug!("no git repo for buffer id");
@@ -12696,7 +12701,9 @@ impl Editor {
             log::debug!("original: {:?}", index_base.to_string());
             for hunk in hunks {
                 let mut replacement_text = String::new();
-                let Some(index_byte_range) = hunk.secondary_diff_base_byte_range.clone() else {
+                let Some(index_byte_range) = secondary_diff
+                    .buffer_range_to_unchanged_diff_base_range(hunk.buffer_range.clone(), &buffer)
+                else {
                     log::debug!("not an unstageable hunk");
                     continue;
                 };

@@ -5,6 +5,7 @@ use language::{Language, LanguageRegistry};
 use rope::Rope;
 use std::{cmp, future::Future, iter, ops::Range, sync::Arc};
 use sum_tree::SumTree;
+use text::ToOffset as _;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point};
 use util::ResultExt;
 
@@ -166,6 +167,47 @@ impl BufferDiffSnapshot {
                 new_id == old_id || (new_empty && old_empty)
             }
         }
+    }
+
+    pub fn buffer_range_to_unchanged_diff_base_range(
+        &self,
+        buffer_range: Range<Anchor>,
+        buffer: &text::BufferSnapshot,
+    ) -> Option<Range<usize>> {
+        let mut hunks = self.inner.hunks.iter();
+        let mut start = 0;
+        let mut pos = buffer.anchor_before(0);
+        while let Some(hunk) = hunks.next() {
+            assert!(buffer_range.start.cmp(&pos, buffer).is_ge());
+            assert!(hunk.buffer_range.start.cmp(&pos, buffer).is_ge());
+            if hunk
+                .buffer_range
+                .start
+                .cmp(&buffer_range.end, buffer)
+                .is_ge()
+            {
+                // target buffer range is contained in the unchanged stretch leading up to this next hunk,
+                // so do a final adjustment based on that
+                start += buffer_range.start.to_offset(buffer) - pos.to_offset(buffer);
+                let end = start + buffer_range.end.to_offset(buffer)
+                    - buffer_range.start.to_offset(buffer);
+                return Some(start..end);
+            }
+
+            // if the target buffer range intersects this hunk at all, no dice
+            if buffer_range
+                .start
+                .cmp(&hunk.buffer_range.end, buffer)
+                .is_lt()
+            {
+                break;
+            }
+
+            start += hunk.buffer_range.start.to_offset(buffer) - pos.to_offset(buffer);
+            start += hunk.diff_base_byte_range.end - hunk.diff_base_byte_range.start;
+            pos = hunk.buffer_range.end;
+        }
+        None
     }
 }
 
