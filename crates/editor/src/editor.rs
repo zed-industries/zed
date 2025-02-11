@@ -528,11 +528,12 @@ pub enum EditPredictionPreview {
     /// Modifier pressed, animating to active
     MovingTo {
         animation: Range<Instant>,
-        scroll_position: Option<gpui::Point<f32>>,
+        scroll_position_at_start: Option<gpui::Point<f32>>,
         target_point: DisplayPoint,
     },
     Arrived {
-        scroll_position: Option<gpui::Point<f32>>,
+        scroll_position_at_start: Option<gpui::Point<f32>>,
+        scroll_position_at_arrival: Option<gpui::Point<f32>>,
         target_point: Option<DisplayPoint>,
     },
     /// Modifier released, animating from active
@@ -600,7 +601,8 @@ impl EditPredictionPreview {
             InlineCompletion::Edit { .. } => (
                 Self::Arrived {
                     target_point: None,
-                    scroll_position: None,
+                    scroll_position_at_start: None,
+                    scroll_position_at_arrival: None,
                 },
                 None,
             ),
@@ -611,7 +613,7 @@ impl EditPredictionPreview {
                 (
                     Self::MovingTo {
                         animation: now..now + duration,
-                        scroll_position: Some(snapshot.scroll_position()),
+                        scroll_position_at_start: Some(snapshot.scroll_position()),
                         target_point,
                     },
                     Some(target_point),
@@ -629,60 +631,75 @@ impl EditPredictionPreview {
         Duration::from_millis((distance * SPEED) as u64)
     }
 
-    fn end(&mut self, cursor: DisplayPoint, window: &mut Window, cx: &mut Context<Editor>) -> bool {
-        match self {
+    fn end(
+        &mut self,
+        cursor: DisplayPoint,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> bool {
+        let (scroll_position, target_point) = match self {
             Self::MovingTo {
-                scroll_position,
+                scroll_position_at_start,
                 target_point,
                 ..
             }
             | Self::Arrived {
-                scroll_position,
+                scroll_position_at_start,
+                scroll_position_at_arrival: None,
                 target_point: Some(target_point),
                 ..
+            } => (*scroll_position_at_start, target_point),
+            Self::Arrived {
+                scroll_position_at_start,
+                scroll_position_at_arrival: Some(scroll_at_arrival),
+                target_point: Some(target_point),
             } => {
-                let now = Instant::now();
-                let duration = Self::animation_duration(cursor, *target_point);
-                let scroll_position = *scroll_position;
+                const TOLERANCE: f32 = 4.0;
 
-                let target_point = *target_point;
+                let diff = *scroll_at_arrival - scroll_pixel_position.map(|p| p.0);
 
-                *self = Self::MovingFrom {
-                    animation: now..now + duration,
-                    target_point,
-                };
-
-                if let Some(scroll_position) = scroll_position {
-                    cx.spawn_in(window, |editor, mut cx| async move {
-                        smol::Timer::after(duration).await;
-                        editor
-                            .update_in(&mut cx, |editor, window, cx| {
-                                let Self::MovingFrom {
-                                    target_point: current_target_point,
-                                    ..
-                                } = editor.edit_prediction_preview
-                                else {
-                                    return;
-                                };
-
-                                if current_target_point == target_point {
-                                    editor.set_scroll_position(scroll_position, window, cx)
-                                }
-                            })
-                            .log_err();
-                    })
-                    .detach();
+                if diff.x.abs() < TOLERANCE && diff.y.abs() < TOLERANCE {
+                    (*scroll_position_at_start, target_point)
+                } else {
+                    (None, target_point)
                 }
-                true
             }
             Self::Arrived {
                 target_point: None, ..
             } => {
                 *self = Self::Inactive;
-                true
+                return true;
             }
-            Self::MovingFrom { .. } | Self::Inactive => false,
+            Self::MovingFrom { .. } | Self::Inactive => return false,
+        };
+
+        let now = Instant::now();
+        let duration = Self::animation_duration(cursor, *target_point);
+        let target_point = *target_point;
+
+        *self = Self::MovingFrom {
+            animation: now..now + duration,
+            target_point,
+        };
+
+        if let Some(scroll_position) = scroll_position {
+            cx.spawn_in(window, |editor, mut cx| async move {
+                smol::Timer::after(duration).await;
+                editor
+                    .update_in(&mut cx, |editor, window, cx| {
+                        if let Self::MovingFrom { .. } | Self::Inactive =
+                            editor.edit_prediction_preview
+                        {
+                            editor.set_scroll_position(scroll_position, window, cx)
+                        }
+                    })
+                    .log_err();
+            })
+            .detach();
         }
+
+        true
     }
 
     /// Whether the preview is active or we are animating to or from it.
@@ -713,13 +730,14 @@ impl EditPredictionPreview {
             Self::Arrived { .. } => 1.,
             Self::MovingTo {
                 animation,
-                scroll_position,
+                scroll_position_at_start: original_scroll_position,
                 target_point,
             } => {
                 let now = Instant::now();
                 if animation.end < now {
                     *self = Self::Arrived {
-                        scroll_position: *scroll_position,
+                        scroll_position_at_start: *original_scroll_position,
+                        scroll_position_at_arrival: Some(scroll_pixel_position.map(|p| p.0)),
                         target_point: Some(*target_point),
                     };
                     1.0
@@ -5457,6 +5475,7 @@ impl Editor {
                 .newest_anchor()
                 .head()
                 .to_display_point(&position_map.snapshot),
+            position_map.scroll_pixel_position,
             window,
             cx,
         ) {
