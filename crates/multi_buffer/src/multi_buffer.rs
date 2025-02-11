@@ -6130,6 +6130,22 @@ where
         self.cached_region.clone()
     }
 
+    fn is_at_start_of_excerpt(&mut self) -> bool {
+        if self.diff_transforms.start().1 > *self.excerpts.start() {
+            return false;
+        } else if self.diff_transforms.start().1 < *self.excerpts.start() {
+            return true;
+        }
+
+        self.diff_transforms.prev(&());
+        let prev_transform = self.diff_transforms.item();
+        self.diff_transforms.next(&());
+
+        prev_transform.map_or(true, |next_transform| {
+            matches!(next_transform, DiffTransform::BufferContent { .. })
+        })
+    }
+
     fn is_at_end_of_excerpt(&mut self) -> bool {
         if self.diff_transforms.end(&()).1 < self.excerpts.end(&()) {
             return false;
@@ -7038,13 +7054,13 @@ impl<'a> Iterator for MultiBufferRows<'a> {
         let buffer_point = region.buffer_range.start + overshoot;
         let expand_info = if self.is_singleton {
             None
-        } else if self.point.row == region.range.start.row {
+        } else if self.point.row == region.range.start.row && self.cursor.is_at_start_of_excerpt() {
             Some(ExpandInfo {
                 direction: ExpandExcerptDirection::Up,
                 enabled: buffer_point.row > 0,
                 excerpt_id: region.excerpt.id,
             })
-        } else if self.point.row + 1 == region.range.end.row {
+        } else if self.point.row + 1 == region.range.end.row && self.cursor.is_at_end_of_excerpt() {
             Some(ExpandInfo {
                 direction: ExpandExcerptDirection::Down,
                 enabled: buffer_point.row + 1 < region.buffer.max_point().row,
@@ -7060,7 +7076,6 @@ impl<'a> Iterator for MultiBufferRows<'a> {
             diff_status: region
                 .diff_hunk_status
                 .filter(|_| self.point < region.range.end),
-            expand_direction: expand_direction.map(|dir| (region.excerpt.id, dir)),
             expand_info,
         });
         self.point += Point::new(1, 0);

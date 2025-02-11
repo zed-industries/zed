@@ -15,13 +15,14 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
-    BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
-    DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, ExpandExcerptsUp, FocusedBlock,
-    GoToHunk, GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
-    InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
-    RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    AcceptEditPrediction, BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint,
+    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode,
+    EditPredictionPreview, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
+    ExpandExcerpts, ExpandExcerptsUp, FocusedBlock, GoToHunk, GoToPrevHunk, GutterDimensions,
+    HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlineCompletion, JumpData, LineDown,
+    LineUp, OpenExcerpts, PageDown, PageUp, Point, RevertSelectedHunks, RowExt, RowRangeExt,
+    SelectPhase, Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold,
+    CURSORS_VISIBLE_FOR, EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus};
@@ -30,15 +31,15 @@ use collections::{BTreeMap, HashMap, HashSet};
 use file_icons::FileIcons;
 use git::{blame::BlameEntry, Oid};
 use gpui::{
-    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
-    relative, size, transparent_black, Action, AnyElement, App, AvailableSpace, Axis, Bounds,
-    ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase,
-    Edges, Element, ElementInputHandler, Entity, FocusHandle, Focusable as _, FontId,
-    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement,
-    WeakEntity, Window,
+    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash,
+    point, px, quad, relative, size, transparent_black, Action, AnyElement, App, AvailableSpace,
+    Axis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
+    DispatchPhase, Edges, Element, ElementInputHandler, Entity, FocusHandle, Focusable as _,
+    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement,
+    KeyBindingContextPredicate, Keystroke, Length, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
+    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
+    Subscription, TextRun, TextStyleRefinement, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -1550,7 +1551,7 @@ impl EditorElement {
 
     fn prepaint_expand_toggles(
         &self,
-        expand_toggles: &mut [Option<(AnyElement, bool)>],
+        expand_toggles: &mut [Option<(AnyElement, gpui::Point<Pixels>)>],
         line_height: Pixels,
         gutter_dimensions: &GutterDimensions,
         scroll_pixel_position: gpui::Point<Pixels>,
@@ -1559,29 +1560,10 @@ impl EditorElement {
         cx: &mut App,
     ) {
         for (ix, expand_toggle) in expand_toggles.iter_mut().enumerate() {
-            if let Some((expand_toggle, is_wide)) = expand_toggle {
-                let available_space = size(
-                    AvailableSpace::MinContent,
-                    AvailableSpace::Definite(line_height * 0.55),
-                );
-                let crease_toggle_size = expand_toggle.layout_as_root(available_space, window, cx);
-
-                let position = point(
-                    px(0.0),
-                    ix as f32 * line_height - (scroll_pixel_position.y % line_height),
-                );
-                let x_offset = if *is_wide {
-                    px(0.)
-                } else {
-                    px(0.)
-                    // ((gutter_dimensions.fold_area_width() - crease_toggle_size.width) / 2.)
-                    //     .max(px(0.))
-                };
-
-                let centering_offset =
-                    point(x_offset, (line_height - crease_toggle_size.height) / 2.);
-                let origin = gutter_hitbox.origin + position + centering_offset;
-                expand_toggle.prepaint_as_root(origin, available_space, window, cx);
+            if let Some((expand_toggle, origin)) = expand_toggle {
+                let available_space = size(AvailableSpace::MinContent, AvailableSpace::MinContent);
+                expand_toggle.layout_as_root(available_space, window, cx);
+                expand_toggle.prepaint_as_root(*origin, available_space, window, cx);
             }
         }
     }
@@ -2078,24 +2060,54 @@ impl EditorElement {
         buffer_rows: &[RowInfo],
         window: &mut Window,
         cx: &mut App,
-    ) -> (Vec<ExcerptLine>, Vec<Option<(AnyElement, bool)>>) // TODO: Return a pixel offset instead of is_wide
-    {
+    ) -> (
+        Vec<ExcerptLine>,
+        Vec<Option<(AnyElement, gpui::Point<Pixels>)>>,
+    ) {
         let mut lines = Vec::new();
 
         // get the font size a as a whole number
-        let editor_font_size = self.style.text.font_size.to_pixels(window.rem_size());
+        let editor_font_size = self.style.text.font_size.to_pixels(window.rem_size()) * 1.2;
 
         let mut icon_size = editor_font_size.round();
 
         // Ensure icon size will be odd, so the center line won't be blurry
         if icon_size.0.round() % 2.0 == 0.0 {
             // todo: + or -?
-            icon_size -= px(1.0);
+            icon_size += px(1.0);
         };
+
+        //                      button size (18px)
+        // | <----------> | <---------------------------------> |
+        //   leftmargin         <----------------------->
+        //                         icon size (font_size)
+        //                      <-------->|<->|<-------->
+        //                      7/15th     1/15
+
+        let mut line_scale = icon_size / 15.0;
+        let mut line_width = line_scale.round().max(px(1.));
+        let mut line_color = cx
+            .theme()
+            .colors()
+            .editor_line_number
+            .opacity(line_scale / line_width);
+        let button_h_padding = (icon_size - px(1.0)) / 2.0;
+        let left_margin = px(0.);
 
         let mut start_line = None;
         let line_y_spacing = 8.0;
-        let line_x = gutter_hitbox.origin.x + icon_size - px(3.5);
+        let line_x = (gutter_hitbox.origin.x
+            + left_margin
+            + button_h_padding
+            + (icon_size - line_scale) / 2.)
+            .round();
+        dbg!(
+            line_x - gutter_hitbox.origin.x,
+            line_width,
+            line_scale,
+            icon_size,
+            button_h_padding
+        );
         let start_y = gutter_hitbox.origin.y + px(line_y_spacing);
         let scroll_top = scroll_position.y * line_height;
 
@@ -2128,10 +2140,10 @@ impl EditorElement {
                             start_y + line_height * (start_line.unwrap_or(0)) + icon_size
                                 - (scroll_top % line_height),
                         );
-                        let bounds = Bounds::new(origin, Size::new(px(1.), length));
+                        let bounds = Bounds::new(origin, Size::new(line_width, length));
                         lines.push(ExcerptLine {
                             bounds,
-                            color: cx.theme().colors().editor_line_number,
+                            color: line_color,
                         });
                         start_line = None;
                     }
@@ -2154,21 +2166,37 @@ impl EditorElement {
                     ExpandExcerptDirection::UpAndDown => "Expand excerpt up and down",
                 };
 
-                Some((
-                    IconButton::new(("expand", ix), icon_name)
-                        .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
-                        .icon_size(IconSize::Custom(editor_font_size))
-                        .size(ButtonSize::Compact)
-                        .style(ButtonStyle::Transparent)
-                        .on_click(move |_, _, cx| {
-                            editor.update(cx, |editor, cx| {
-                                editor.expand_excerpt(excerpt_id, direction, cx);
-                            });
-                        })
-                        .tooltip(Tooltip::text(tooltip_label))
-                        .into_any_element(),
-                    is_wide,
-                ))
+                if !enabled {
+                    return None;
+                }
+
+                let mut toggle = IconButton::new(("expand", ix), icon_name)
+                    .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
+                    .icon_size(IconSize::Custom(
+                        self.style.text.font_size.to_rems(window.rem_size()),
+                    ))
+                    .width((icon_size + button_h_padding * 2).into())
+                    // .size(ButtonSize::Compact)
+                    .style(ButtonStyle::Transparent)
+                    .on_click(move |_, _, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.expand_excerpt(excerpt_id, direction, cx);
+                        });
+                    })
+                    .tooltip(Tooltip::text(tooltip_label))
+                    .into_any_element();
+
+                let position = point(px(0.), ix as f32 * line_height - (scroll_top % line_height));
+                // let x_offset = if *is_wide {
+                //     px(0.)
+                // } else {
+                //     px(0.)
+                //     // ((gutter_dimensions.fold_area_width() - crease_toggle_size.width) / 2.)
+                //     //     .max(px(0.))
+                // };
+                let origin = gutter_hitbox.origin + position;
+
+                Some((toggle, origin))
             })
             .collect();
 
@@ -2179,10 +2207,10 @@ impl EditorElement {
             );
             let length = gutter_hitbox.bottom() - origin.y;
 
-            let bounds = Bounds::new(origin, Size::new(px(1.), length));
+            let bounds = Bounds::new(origin, Size::new(line_width, length));
             lines.push(ExcerptLine {
                 bounds,
-                color: cx.theme().colors().editor_line_number,
+                color: line_color,
             })
         }
 
@@ -7086,7 +7114,7 @@ impl Element for EditorElement {
                     );
 
                     let (excerpt_lines, mut expand_toggles) =
-                        window.with_element_namespace("crease_toggles", |window| {
+                        window.with_element_namespace("expand_toggles", |window| {
                             self.layout_excerpt_gutter(
                                 &gutter_hitbox,
                                 line_height,
@@ -7885,7 +7913,7 @@ pub struct EditorLayout {
     code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
     crease_toggles: Vec<Option<AnyElement>>,
-    expand_toggles: Vec<Option<(AnyElement, bool)>>,
+    expand_toggles: Vec<Option<(AnyElement, gpui::Point<Pixels>)>>,
     excerpt_lines: Vec<ExcerptLine>,
     diff_hunk_controls: Vec<AnyElement>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
