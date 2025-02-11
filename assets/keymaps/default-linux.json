@@ -505,7 +505,6 @@
   {
     "context": "Editor && edit_prediction",
     "bindings": {
-      // Changing the modifier currently breaks accepting while you also an LSP completions menu open
       "alt-enter": "editor::AcceptEditPrediction"
     }
   },

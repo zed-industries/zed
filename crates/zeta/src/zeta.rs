@@ -1024,7 +1024,7 @@ impl LicenseDetectionWatcher {
     }
 
     /// Answers false until we find out it's open source
-    pub fn is_open_source(&self) -> bool {
+    pub fn is_project_open_source(&self) -> bool {
         *self.is_open_source_rx.borrow()
     }
 }
@@ -1227,7 +1227,6 @@ impl ProviderDataCollection {
             let zeta = zeta.read(cx);
             let choice = zeta.data_collection_choice.clone();
 
-            // Unwrap safety: there should be a watcher for each worktree
             let license_detection_watcher = zeta
                 .license_detection_watchers
                 .get(&file.worktree_id(cx))
@@ -1249,20 +1248,20 @@ impl ProviderDataCollection {
         }
     }
 
-    pub fn user_data_collection_choice(&self, cx: &App) -> bool {
-        self.choice
-            .as_ref()
-            .map_or(false, |choice| choice.read(cx).is_enabled())
+    pub fn can_collect_data(&self, cx: &App) -> bool {
+        self.is_data_collection_enabled(cx) && self.is_project_open_source()
     }
 
-    pub fn can_collect_data(&self, cx: &App) -> bool {
+    pub fn is_data_collection_enabled(&self, cx: &App) -> bool {
         self.choice
             .as_ref()
             .is_some_and(|choice| choice.read(cx).is_enabled())
-            && self
-                .license_detection_watcher
-                .as_ref()
-                .is_some_and(|watcher| watcher.is_open_source())
+    }
+
+    fn is_project_open_source(&self) -> bool {
+        self.license_detection_watcher
+            .as_ref()
+            .is_some_and(|watcher| watcher.is_project_open_source())
     }
 
     pub fn toggle(&mut self, cx: &mut App) {
@@ -1326,13 +1325,16 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
     }
 
     fn data_collection_state(&self, cx: &App) -> DataCollectionState {
-        if self
-            .provider_data_collection
-            .user_data_collection_choice(cx)
-        {
-            DataCollectionState::Enabled
+        let is_project_open_source = self.provider_data_collection.is_project_open_source();
+
+        if self.provider_data_collection.is_data_collection_enabled(cx) {
+            DataCollectionState::Enabled {
+                is_project_open_source,
+            }
         } else {
-            DataCollectionState::Disabled
+            DataCollectionState::Disabled {
+                is_project_open_source,
+            }
         }
     }
 

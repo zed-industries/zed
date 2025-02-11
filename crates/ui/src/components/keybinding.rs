@@ -15,7 +15,7 @@ pub struct KeyBinding {
 
     /// The [`PlatformStyle`] to use when displaying this keybinding.
     platform_style: PlatformStyle,
-    size: Option<Pixels>,
+    size: Option<AbsoluteLength>,
 }
 
 impl KeyBinding {
@@ -59,8 +59,8 @@ impl KeyBinding {
     }
 
     /// Sets the size for this [`KeyBinding`].
-    pub fn size(mut self, size: Pixels) -> Self {
-        self.size = Some(size);
+    pub fn size(mut self, size: impl Into<AbsoluteLength>) -> Self {
+        self.size = Some(size.into());
         self
     }
 }
@@ -105,7 +105,7 @@ pub fn render_key(
     keystroke: &Keystroke,
     platform_style: PlatformStyle,
     color: Option<Color>,
-    size: Option<Pixels>,
+    size: Option<AbsoluteLength>,
 ) -> AnyElement {
     let key_icon = icon_for_key(keystroke, platform_style);
     match key_icon {
@@ -144,7 +144,7 @@ pub fn render_modifiers(
     modifiers: &Modifiers,
     platform_style: PlatformStyle,
     color: Option<Color>,
-    size: Option<Pixels>,
+    size: Option<AbsoluteLength>,
     standalone: bool,
 ) -> impl Iterator<Item = AnyElement> {
     enum KeyOrIcon {
@@ -224,14 +224,13 @@ pub fn render_modifiers(
 pub struct Key {
     key: SharedString,
     color: Option<Color>,
-    size: Option<Pixels>,
+    size: Option<AbsoluteLength>,
 }
 
 impl RenderOnce for Key {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let single_char = self.key.len() == 1;
-        let size = self.size.unwrap_or(px(14.));
-        let size_f32: f32 = size.into();
+        let size = self.size.unwrap_or(px(14.).into());
 
         div()
             .py_0()
@@ -242,7 +241,7 @@ impl RenderOnce for Key {
                     this.px_0p5()
                 }
             })
-            .h(rems_from_px(size_f32))
+            .h(size)
             .text_size(size)
             .line_height(relative(1.))
             .text_color(self.color.unwrap_or(Color::Muted).color(cx))
@@ -259,7 +258,7 @@ impl Key {
         }
     }
 
-    pub fn size(mut self, size: impl Into<Option<Pixels>>) -> Self {
+    pub fn size(mut self, size: impl Into<Option<AbsoluteLength>>) -> Self {
         self.size = size.into();
         self
     }
@@ -269,17 +268,15 @@ impl Key {
 pub struct KeyIcon {
     icon: IconName,
     color: Option<Color>,
-    size: Option<Pixels>,
+    size: Option<AbsoluteLength>,
 }
 
 impl RenderOnce for KeyIcon {
     fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let size = self
-            .size
-            .unwrap_or(IconSize::Small.rems().to_pixels(window.rem_size()));
+        let size = self.size.unwrap_or(IconSize::Small.rems().into());
 
         Icon::new(self.icon)
-            .size(IconSize::Custom(size))
+            .size(IconSize::Custom(size.to_rems(window.rem_size())))
             .color(self.color.unwrap_or(Color::Muted))
     }
 }
@@ -293,7 +290,7 @@ impl KeyIcon {
         }
     }
 
-    pub fn size(mut self, size: impl Into<Option<Pixels>>) -> Self {
+    pub fn size(mut self, size: impl Into<Option<AbsoluteLength>>) -> Self {
         self.size = size.into();
         self
     }

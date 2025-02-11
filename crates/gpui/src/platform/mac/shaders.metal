@@ -833,7 +833,8 @@ float4 fill_color(Background background,
       break;
     case 1: {
       // -90 degrees to match the CSS gradient angle.
-      float radians = (fmod(background.angle, 360.0) - 90.0) * (M_PI_F / 180.0);
+      float gradient_angle = background.gradient_angle_or_pattern_height;
+      float radians = (fmod(gradient_angle, 360.0) - 90.0) * (M_PI_F / 180.0);
       float2 direction = float2(cos(radians), sin(radians));
 
       // Expand the short side to be the same as the long side
@@ -874,19 +875,14 @@ float4 fill_color(Background background,
       break;
     }
     case 2: {
-        // This pattern is full of magic numbers to make it line up perfectly
-        // when vertically stacked. Make sure you know what you are doing
-        // if you change this!
-
-        float base_pattern_size = bounds.size.height / 5;
-        float width = base_pattern_size * 0.5;
-        float slash_spacing = .89;
-        float radians = M_PI_F / 4.0;
-        float2x2 rotation = rotate2d(radians);
+        float pattern_height = background.gradient_angle_or_pattern_height;
+        float stripe_angle = M_PI_F / 4.0;
+        float pattern_period = pattern_height * sin(stripe_angle);
+        float2x2 rotation = rotate2d(stripe_angle);
         float2 relative_position = position - float2(bounds.origin.x, bounds.origin.y);
         float2 rotated_point = rotation * relative_position;
-        float pattern = fmod(rotated_point.x / slash_spacing, base_pattern_size * 2.0);
-        float distance = min(pattern, base_pattern_size * 2.0 - pattern) - width;
+        float pattern = fmod(rotated_point.x, pattern_period);
+        float distance = min(pattern, pattern_period - pattern) - pattern_period / 4.0;
         color = solid_color;
         color.a *= saturate(0.5 - distance);
         break;

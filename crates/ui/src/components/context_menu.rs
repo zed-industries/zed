@@ -524,7 +524,7 @@ impl Render for ContextMenu {
                         .occlude()
                         .elevation_2(cx)
                         .p_2()
-                        .max_w_80()
+                        .max_w_96()
                         .child(aside(cx)),
                 )
             })
@@ -600,6 +600,8 @@ impl Render for ContextMenu {
                                             let menu = cx.entity().downgrade();
                                             let icon_color = if *disabled {
                                                 Color::Muted
+                                            } else if toggle.is_some() {
+                                                icon_color.unwrap_or(Color::Accent)
                                             } else {
                                                 icon_color.unwrap_or(Color::Default)
                                             };
@@ -671,18 +673,16 @@ impl Render for ContextMenu {
                                                         .when_some(
                                                             *toggle,
                                                             |list_item, (position, toggled)| {
-                                                                let contents = if toggled {
+                                                                let contents =
                                                                     div().flex_none().child(
                                                                         Icon::new(IconName::Check)
-                                                                            .color(Color::Accent)
+                                                                            .color(icon_color)
                                                                             .size(*icon_size)
                                                                     )
-                                                                } else {
-                                                                    div().flex_none().child(
-                                                                        Icon::new(IconName::Check)
-                                                                            .size(*icon_size)
-                                                                    ).opacity(0.)
-                                                                };
+                                                                    .when(!toggled, |contents|
+                                                                        contents.invisible()
+                                                                    );
+
                                                                 match position {
                                                                     IconPosition::Start => {
                                                                         list_item
