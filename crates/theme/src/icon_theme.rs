@@ -112,6 +112,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("scala", "icons/file_icons/scala.svg"),
     ("settings", "icons/file_icons/settings.svg"),
     ("storage", "icons/file_icons/database.svg"),
+    ("svelte", "icons/file_icons/template.svg"),
     ("swift", "icons/file_icons/swift.svg"),
     ("tcl", "icons/file_icons/tcl.svg"),
     ("template", "icons/file_icons/html.svg"),

@@ -186,7 +186,7 @@
     "sh": "terminal",
     "sql": "storage",
     "sqlite": "storage",
-    "svelte": "template",
+    "svelte": "svelte",
     "svg": "image",
     "swift": "swift",
     "tcl": "tcl",
