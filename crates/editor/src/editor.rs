@@ -5047,7 +5047,6 @@ impl Editor {
         );
 
         let show_in_menu = by_provider
-            && EditorSettings::get_global(cx).show_edit_predictions_in_menu
             && self
                 .edit_prediction_provider
                 .as_ref()
