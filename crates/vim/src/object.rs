@@ -422,7 +422,7 @@ impl Object {
 /// If the selection spans multiple lines and is preceded by an opening brace (`{`),
 /// this function will trim the selection to exclude the final newline
 /// in order to preserve a properly indented line.
-fn preserve_indented_newline(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) {
+pub fn preserve_indented_newline(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) {
     let (start_point, end_point) = (selection.start.to_point(map), selection.end.to_point(map));
 
     if start_point.row == end_point.row {
