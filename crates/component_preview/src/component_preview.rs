@@ -56,7 +56,8 @@ impl ComponentPreview {
         h_flex()
             .w_40()
             .px_1p5()
-            .py_1()
+            .py_0p5()
+            .text_sm()
             .child(component.name().clone())
     }
 
@@ -71,11 +72,12 @@ impl ComponentPreview {
 
         let description = component.description();
 
-        v_group()
+        v_flex()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
             .w_full()
-            .gap_4()
-            .p_8()
-            .rounded_md()
+            .gap_3()
+            .p_6()
             .child(
                 v_flex()
                     .gap_1()
@@ -110,7 +112,7 @@ impl ComponentPreview {
             .size_full()
             .overflow_y_scroll()
             .p_4()
-            .gap_2()
+            .gap_4()
             .children(
                 components()
                     .all_previews_sorted()

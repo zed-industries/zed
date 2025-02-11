@@ -8,7 +8,6 @@ mod disclosure;
 mod icon;
 mod icon_button;
 mod keybinding;
-mod label;
 mod list;
 mod list_header;
 mod list_item;
