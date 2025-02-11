@@ -5457,19 +5457,27 @@ impl Editor {
         };
 
         if &accept_keystroke.modifiers == modifiers {
-            if let Some(completion) = self.active_inline_completion.as_ref() {
-                if self.edit_prediction_preview.start(
-                    &completion.completion,
-                    &position_map.snapshot,
-                    self.selections
-                        .newest_anchor()
-                        .head()
-                        .to_display_point(&position_map.snapshot),
-                ) {
-                    self.request_autoscroll(Autoscroll::fit(), cx);
-                    self.update_visible_inline_completion(window, cx);
-                    cx.notify();
-                }
+            let Some(completion) = self.active_inline_completion.as_ref() else {
+                return;
+            };
+
+            if !self.edit_prediction_requires_modifier() && !self.has_visible_completions_menu() {
+                return;
+            }
+
+            let transitioned = self.edit_prediction_preview.start(
+                &completion.completion,
+                &position_map.snapshot,
+                self.selections
+                    .newest_anchor()
+                    .head()
+                    .to_display_point(&position_map.snapshot),
+            );
+
+            if transitioned {
+                self.request_autoscroll(Autoscroll::fit(), cx);
+                self.update_visible_inline_completion(window, cx);
+                cx.notify();
             }
         } else if self.edit_prediction_preview.end(
             self.selections
@@ -13112,6 +13120,31 @@ impl Editor {
         if let Some(path) = self.target_file_path(cx) {
             if let Some(path) = path.to_str() {
                 cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
+            }
+        }
+    }
+
+    pub fn copy_file_name_without_extension(
+        &mut self,
+        _: &CopyFileNameWithoutExtension,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(file) = self.target_file(cx) {
+            if let Some(file_stem) = file.path().file_stem() {
+                if let Some(name) = file_stem.to_str() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
+                }
+            }
+        }
+    }
+
+    pub fn copy_file_name(&mut self, _: &CopyFileName, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(file) = self.target_file(cx) {
+            if let Some(file_name) = file.path().file_name() {
+                if let Some(name) = file_name.to_str() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
+                }
             }
         }
     }

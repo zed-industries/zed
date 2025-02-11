@@ -7121,7 +7121,7 @@ impl<'a> Iterator for ReversedMultiBufferChunks<'a> {
             self.offset -= 1;
             Some("\n")
         } else {
-            let chunk = self.current_chunks.as_mut().unwrap().next().unwrap();
+            let chunk = self.current_chunks.as_mut().unwrap().next()?;
             self.offset -= chunk.len();
             Some(chunk)
         }
