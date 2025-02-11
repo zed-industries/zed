@@ -1760,6 +1760,17 @@ mod test {
             Mode::Normal,
         );
         cx.simulate_keystrokes("v i {");
+        cx.assert_state(
+            indoc! {
+                "ˇfunc empty(a string) bool {
+                   «if a == \"\" {
+                      return true
+                   }
+                   return false»
+                }"
+            },
+            Mode::Visual,
+        );
 
         cx.set_state(
             indoc! {
@@ -1773,6 +1784,17 @@ mod test {
             Mode::Normal,
         );
         cx.simulate_keystrokes("v i {");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                     if a == \"\" {
+                         «ˇreturn true»
+                     }
+                     return false
+                }"
+            },
+            Mode::Visual,
+        );
 
         cx.set_state(
             indoc! {
@@ -1786,6 +1808,41 @@ mod test {
             Mode::Normal,
         );
         cx.simulate_keystrokes("v i {");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                     if a == \"\" {
+                         «ˇreturn true»
+                     }
+                     return false
+                }"
+            },
+            Mode::Visual,
+        );
+
+        cx.set_state(
+            indoc! {
+                "func empty(a string) bool {
+                     if a == \"\" {
+                         return true
+                     }
+                     return false
+                ˇ}"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v i {");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                     «ˇif a == \"\" {
+                         return true
+                     }
+                     return false»
+                }"
+            },
+            Mode::Visual,
+        );
     }
 
     #[gpui::test]
