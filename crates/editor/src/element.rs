@@ -3631,6 +3631,16 @@ impl EditorElement {
             return None;
         }
 
+        // Adjust text origin for horizontal scrolling (in some cases here)
+        let start_point =
+            text_bounds.origin - gpui::Point::new(scroll_pixel_position.x, Pixels(0.0));
+
+        // Clamp left offset after extreme scrollings
+        let clamp_start = |point: gpui::Point<Pixels>| gpui::Point {
+            x: point.x.max(text_bounds.origin.x),
+            y: point.y,
+        };
+
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
                 if editor.edit_prediction_requires_modifier() {
@@ -3687,6 +3697,7 @@ impl EditorElement {
                     )?;
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
+
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
                     Some(element)
                 } else if (target_display_point.row().as_f32() + 1.) > scroll_bottom {
@@ -3702,6 +3713,7 @@ impl EditorElement {
                         (text_bounds.size.width - size.width) / 2.,
                         text_bounds.size.height - size.height - PADDING_Y,
                     );
+
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
                     Some(element)
                 } else {
@@ -3712,7 +3724,6 @@ impl EditorElement {
                         window,
                         cx,
                     )?;
-
                     let target_line_end = DisplayPoint::new(
                         target_display_point.row(),
                         editor_snapshot.line_len(target_display_point.row()),
@@ -3720,8 +3731,9 @@ impl EditorElement {
                     let origin = self.editor.update(cx, |editor, _cx| {
                         editor.display_to_pixel_point(target_line_end, editor_snapshot, window)
                     })?;
+
                     element.prepaint_as_root(
-                        text_bounds.origin + origin + point(PADDING_X, px(0.)),
+                        clamp_start(start_point + origin + point(PADDING_X, px(0.))),
                         AvailableSpace::min_size(),
                         window,
                         cx,
@@ -3781,12 +3793,11 @@ impl EditorElement {
                         })?;
 
                         element.prepaint_as_root(
-                            text_bounds.origin + origin + point(PADDING_X, px(0.)),
+                            clamp_start(start_point + origin + point(PADDING_X, px(0.))),
                             AvailableSpace::min_size(),
                             window,
                             cx,
                         );
-
                         return Some(element);
                     }
                     EditDisplayMode::Inline => return None,
