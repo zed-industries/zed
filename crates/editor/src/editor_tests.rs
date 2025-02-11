@@ -5363,6 +5363,21 @@ async fn test_select_previous_with_single_caret(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_select_previous_empty_buffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("aˇ");
+
+    cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
+        .unwrap();
+    cx.assert_editor_state("«aˇ»");
+    cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
+        .unwrap();
+    cx.assert_editor_state("«aˇ»");
+}
+
+#[gpui::test]
 async fn test_select_previous_with_multiple_carets(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
