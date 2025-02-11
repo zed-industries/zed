@@ -31,7 +31,7 @@
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
       "f11": "zed::ToggleFullScreen",
-      "ctrl-alt-z": "zeta::RateCompletions",
+      "ctrl-alt-z": "edit_prediction::RateCompletions",
       "ctrl-shift-i": "edit_prediction::ToggleMenu"
     }
   },
