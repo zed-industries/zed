@@ -1657,9 +1657,7 @@ impl GitPanel {
                                 if !parent_str.is_empty() {
                                     this.child(
                                         self.entry_label(format!("{}/", parent_str), path_color)
-                                            .when(status.is_deleted(), |this| {
-                                                this.strikethrough(true)
-                                            }),
+                                            .when(status.is_deleted(), |this| this.strikethrough()),
                                     )
                                 } else {
                                     this
@@ -1667,7 +1665,7 @@ impl GitPanel {
                             })
                             .child(
                                 self.entry_label(display_name.clone(), label_color)
-                                    .when(status.is_deleted(), |this| this.strikethrough(true)),
+                                    .when(status.is_deleted(), |this| this.strikethrough()),
                             ),
                     ),
             )

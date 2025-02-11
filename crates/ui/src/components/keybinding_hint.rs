@@ -205,6 +205,7 @@ impl RenderOnce for KeybindingHint {
     }
 }
 
+// View this component preview using `workspace: open component-preview`
 impl ComponentPreview for KeybindingHint {
     fn preview(window: &mut Window, _cx: &App) -> AnyElement {
         let enter_fallback = gpui::KeyBinding::new("enter", menu::Confirm, None);
