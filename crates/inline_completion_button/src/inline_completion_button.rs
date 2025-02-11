@@ -406,7 +406,7 @@ impl InlineCompletionButton {
 
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
             menu = menu.toggleable_entry(
-                "This File",
+                "This Buffer",
                 self.editor_show_predictions,
                 IconPosition::Start,
                 Some(Box::new(ToggleEditPrediction)),
@@ -451,15 +451,17 @@ impl InlineCompletionButton {
                 let enabled = data_collection.is_enabled();
                 let is_open_source = data_collection.is_project_open_source();
                 let is_collecting = data_collection.is_enabled();
+                let (icon_name, icon_color) = if is_open_source && is_collecting {
+                    (IconName::Check, Color::Success)
+                } else {
+                    (IconName::Check, Color::Accent)
+                };
 
                 menu = menu.item(
                     ContextMenuEntry::new("Share Training Data")
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
-                        .icon_color(if is_open_source && is_collecting {
-                            Color::Success
-                        } else {
-                            Color::Accent
-                        })
+                        .icon(icon_name)
+                        .icon_color(icon_color)
                         .documentation_aside(move |cx| {
                             let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                 (true, true) => (
@@ -471,13 +473,19 @@ impl InlineCompletionButton {
                                 (true, false) => (
                                     "Project identified as open-source, but you're not sharing data.",
                                     Color::Muted,
-                                    IconName::XCircle,
+                                    IconName::Close,
                                     Color::Muted,
                                 ),
-                                (false, _) => (
+                                (false, true) => (
                                     "Project not identified as open-source. No data captured.",
                                     Color::Muted,
-                                    IconName::XCircle,
+                                    IconName::Close,
+                                    Color::Muted,
+                                ),
+                                (false, false) => (
+                                    "Project not identified as open-source, and setting turned off.",
+                                    Color::Muted,
+                                    IconName::Close,
                                     Color::Muted,
                                 ),
                             };
@@ -485,7 +493,7 @@ impl InlineCompletionButton {
                                 .gap_2()
                                 .child(
                                     Label::new(indoc!{
-                                        "Help us improve our open model by sharing data from open source repositories. \
+                                        "Help us improve our open model by sharing data from open-source repositories. \
                                         Zed must detect a license file in your repo for this setting to take effect."
                                     })
                                 )
@@ -516,6 +524,16 @@ impl InlineCompletionButton {
                             }
                         })
                 );
+
+                if is_collecting && !is_open_source {
+                    menu = menu.item(
+                        ContextMenuEntry::new("No data captured.")
+                            .disabled(true)
+                            .icon(IconName::Close)
+                            .icon_color(Color::Error)
+                            .icon_size(IconSize::Small),
+                    );
+                }
             }
         }
 
@@ -555,7 +573,7 @@ impl InlineCompletionButton {
             language::InlineCompletionPreviewMode::Auto => true,
             language::InlineCompletionPreviewMode::WhenHoldingModifier => false,
         };
-        menu = menu.separator().toggleable_entry(
+        menu = menu.separator().header("Modes").toggleable_entry(
             "Eager Preview",
             is_eager_preview_enabled,
             IconPosition::Start,
