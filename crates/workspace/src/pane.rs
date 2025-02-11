@@ -1453,6 +1453,39 @@ impl Pane {
             .for_each(|&index| self._remove_item(index, false, false, None, window, cx));
     }
 
+    // Usually when you close an item that has unsaved changes, we prompt you to
+    // save it. That said, in the case of a multibuffer that only has unsaved
+    // changes in buffers that are still open elsewhere, we can let you close it
+    // without fear of losing data.
+    pub fn skip_save_on_close(item: &dyn ItemHandle, workspace: &Workspace, cx: &App) -> bool {
+        if item.is_singleton(cx) {
+            return false;
+        }
+
+        let mut dirty_project_item_ids = Vec::new();
+        item.for_each_project_item(cx, &mut |project_item_id, project_item| {
+            if project_item.is_dirty() {
+                dirty_project_item_ids.push(project_item_id);
+            }
+        });
+        if dirty_project_item_ids.is_empty() {
+            return true;
+        }
+
+        for open_item in workspace.items(cx) {
+            if open_item.item_id() == item.item_id() {
+                continue;
+            }
+            let other_project_item_ids = open_item.project_item_model_ids(cx);
+            dirty_project_item_ids.retain(|id| !other_project_item_ids.contains(id));
+        }
+        if dirty_project_item_ids.is_empty() {
+            return true;
+        }
+
+        false
+    }
+
     pub(super) fn file_names_for_prompt(
         items: &mut dyn Iterator<Item = &Box<dyn ItemHandle>>,
         all_dirty_items: usize,
@@ -1499,13 +1532,11 @@ impl Pane {
     ) -> Task<Result<()>> {
         // Find the items to close.
         let mut items_to_close = Vec::new();
-        let mut item_ids_to_close = HashSet::default();
         let mut dirty_items = Vec::new();
         for item in &self.items {
             if should_close(item.item_id()) {
                 items_to_close.push(item.boxed_clone());
-                item_ids_to_close.insert(item.item_id());
-                if item.is_dirty(cx) {
+                if item.is_dirty(cx) && item.is_singleton(cx) {
                     dirty_items.push(item.boxed_clone());
                 }
             }
@@ -1517,15 +1548,16 @@ impl Pane {
             // Put the currently active item at the end, because if the currently active item is not closed last
             // closing the currently active item will cause the focus to switch to another item
             // This will cause Zed to expand the content of the currently active item
-            active_item_id.filter(|&id| id == item.item_id()).is_some()
-              // If a buffer is open both in a singleton editor and in a multibuffer, make sure
-              // to focus the singleton buffer when prompting to save that buffer, as opposed
-              // to focusing the multibuffer, because this gives the user a more clear idea
-              // of what content they would be saving.
-              || !item.is_singleton(cx)
+            active_item_id == Some(item.item_id())
         });
 
         let workspace = self.workspace.clone();
+        let Some(project) = workspace
+            .update(cx, |workspace, _| workspace.project().clone())
+            .ok()
+        else {
+            return Task::ready(Ok(()));
+        };
         cx.spawn_in(window, |pane, mut cx| async move {
             if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
                 let answer = pane.update_in(&mut cx, |_, window, cx| {
@@ -1545,55 +1577,19 @@ impl Pane {
                     _ => {}
                 }
             }
-            let mut saved_project_items_ids = HashSet::default();
+
             for item_to_close in items_to_close {
-                // Find the item's current index and its set of dirty project item models. Avoid
-                // storing these in advance, in case they have changed since this task
-                // was started.
-                let mut dirty_project_item_ids = Vec::new();
-                let Some(_) = pane.update(&mut cx, |pane, cx| {
-                    item_to_close.for_each_project_item(
-                        cx,
-                        &mut |project_item_id, project_item| {
-                            if project_item.is_dirty() {
-                                dirty_project_item_ids.push(project_item_id);
-                            }
-                        },
-                    );
-                    pane.index_for_item(&*item_to_close)
-                })?
-                else {
-                    continue;
-                };
-
-                // Check if this view has any project items that are not open anywhere else
-                // in the workspace, AND that the user has not already been prompted to save.
-                // If there are any such project entries, prompt the user to save this item.
-                let project = workspace.update(&mut cx, |workspace, cx| {
-                    for open_item in workspace.items(cx) {
-                        let open_item_id = open_item.item_id();
-                        if !item_ids_to_close.contains(&open_item_id) {
-                            let other_project_item_ids = open_item.project_item_model_ids(cx);
-                            dirty_project_item_ids
-                                .retain(|id| !other_project_item_ids.contains(id));
+                let mut should_save = true;
+                if save_intent == SaveIntent::Close {
+                    workspace.update(&mut cx, |workspace, cx| {
+                        if Self::skip_save_on_close(item_to_close.as_ref(), &workspace, cx) {
+                            should_save = false;
                         }
-                    }
-                    workspace.project().clone()
-                })?;
-                let should_save = dirty_project_item_ids
-                    .iter()
-                    .any(|id| saved_project_items_ids.insert(*id))
-                    // Always propose to save singleton files without any project paths: those cannot be saved via multibuffer, as require a file path selection modal.
-                    || cx
-                        .update(|_window, cx| {
-                            item_to_close.can_save(cx) && item_to_close.is_dirty(cx)
-                                && item_to_close.is_singleton(cx)
-                                && item_to_close.project_path(cx).is_none()
-                        })
-                        .unwrap_or(false);
+                    })?;
+                }
 
-                if should_save
-                    && !Self::save_item(
+                if should_save {
+                    if !Self::save_item(
                         project.clone(),
                         &pane,
                         &*item_to_close,
@@ -1601,8 +1597,9 @@ impl Pane {
                         &mut cx,
                     )
                     .await?
-                {
-                    break;
+                    {
+                        break;
+                    }
                 }
 
                 // Remove the item from the pane.
