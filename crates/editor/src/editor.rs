@@ -5457,29 +5457,49 @@ impl Editor {
         };
 
         if &accept_keystroke.modifiers == modifiers {
-            let Some(completion) = self.active_inline_completion.as_ref() else {
-                return;
-            };
+            self.enter_edit_prediction_preview(&position_map, window, cx);
+        } else {
+            self.leave_edit_prediction_preview(&position_map, window, cx);
+        }
+    }
 
-            if !self.edit_prediction_requires_modifier() && !self.has_visible_completions_menu() {
-                return;
-            }
+    fn enter_edit_prediction_preview(
+        &mut self,
+        position_map: &PositionMap,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(completion) = self.active_inline_completion.as_ref() else {
+            return;
+        };
 
-            let transitioned = self.edit_prediction_preview.start(
-                &completion.completion,
-                &position_map.snapshot,
-                self.selections
-                    .newest_anchor()
-                    .head()
-                    .to_display_point(&position_map.snapshot),
-            );
+        if !self.edit_prediction_requires_modifier() && !self.has_visible_completions_menu() {
+            return;
+        }
 
-            if transitioned {
-                self.request_autoscroll(Autoscroll::fit(), cx);
-                self.update_visible_inline_completion(window, cx);
-                cx.notify();
-            }
-        } else if self.edit_prediction_preview.end(
+        let transitioned = self.edit_prediction_preview.start(
+            &completion.completion,
+            &position_map.snapshot,
+            self.selections
+                .newest_anchor()
+                .head()
+                .to_display_point(&position_map.snapshot),
+        );
+
+        if transitioned {
+            self.request_autoscroll(Autoscroll::fit(), cx);
+            self.update_visible_inline_completion(window, cx);
+            cx.notify();
+        }
+    }
+
+    fn leave_edit_prediction_preview(
+        &mut self,
+        position_map: &PositionMap,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.edit_prediction_preview.end(
             self.selections
                 .newest_anchor()
                 .head()
@@ -6249,8 +6269,18 @@ impl Editor {
     ) -> Option<CodeContextMenu> {
         cx.notify();
         self.completion_tasks.clear();
+
         let context_menu = self.context_menu.borrow_mut().take();
         self.stale_inline_completion_in_menu.take();
+
+        if !self.edit_prediction_requires_modifier()
+            && matches!(context_menu, Some(CodeContextMenu::Completions(_)))
+        {
+            if let Some(position_map) = &self.last_position_map {
+                self.leave_edit_prediction_preview(&position_map.clone(), window, cx);
+            }
+        }
+
         self.update_visible_inline_completion(window, cx);
         context_menu
     }
