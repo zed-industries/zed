@@ -623,7 +623,7 @@ impl EditPredictionPreview {
     }
 
     fn animation_duration(a: DisplayPoint, b: DisplayPoint) -> Duration {
-        const SPEED: f32 = 6.0;
+        const SPEED: f32 = 8.0;
 
         let row_diff = b.row().0.abs_diff(a.row().0);
         let column_diff = b.column().abs_diff(a.column());
