@@ -470,19 +470,19 @@ impl InlineCompletionButton {
                         .documentation_aside(move |cx| {
                             let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                 (true, true) => (
-                                    "This project is open-source, and we're capturing data.",
+                                    "Project identified as open-source, and you're sharing data.",
                                     Color::Default,
                                     IconName::Check,
                                     Color::Success,
                                 ),
                                 (true, false) => (
-                                    "This project is open-source, but you're not sharing data.",
+                                    "Project identified as open-source, but you're not sharing data.",
                                     Color::Muted,
                                     IconName::XCircle,
                                     Color::Muted,
                                 ),
                                 (false, _) => (
-                                    "This project is not open-source. No data captured.",
+                                    "Project not identified as open-source. No data captured.",
                                     Color::Muted,
                                     IconName::XCircle,
                                     Color::Muted,
