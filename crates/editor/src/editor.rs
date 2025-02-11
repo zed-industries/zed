@@ -5457,19 +5457,27 @@ impl Editor {
         };
 
         if &accept_keystroke.modifiers == modifiers {
-            if let Some(completion) = self.active_inline_completion.as_ref() {
-                if self.edit_prediction_preview.start(
-                    &completion.completion,
-                    &position_map.snapshot,
-                    self.selections
-                        .newest_anchor()
-                        .head()
-                        .to_display_point(&position_map.snapshot),
-                ) {
-                    self.request_autoscroll(Autoscroll::fit(), cx);
-                    self.update_visible_inline_completion(window, cx);
-                    cx.notify();
-                }
+            let Some(completion) = self.active_inline_completion.as_ref() else {
+                return;
+            };
+
+            if !self.edit_prediction_requires_modifier() && !self.has_visible_completions_menu() {
+                return;
+            }
+
+            let transitioned = self.edit_prediction_preview.start(
+                &completion.completion,
+                &position_map.snapshot,
+                self.selections
+                    .newest_anchor()
+                    .head()
+                    .to_display_point(&position_map.snapshot),
+            );
+
+            if transitioned {
+                self.request_autoscroll(Autoscroll::fit(), cx);
+                self.update_visible_inline_completion(window, cx);
+                cx.notify();
             }
         } else if self.edit_prediction_preview.end(
             self.selections
