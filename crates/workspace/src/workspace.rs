@@ -2044,21 +2044,10 @@ impl Workspace {
                 let (singleton, project_entry_ids) =
                     cx.update(|_, cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
                 if singleton || !project_entry_ids.is_empty() {
-                    if let Some(ix) =
-                        pane.update(&mut cx, |pane, _| pane.index_for_item(item.as_ref()))?
-                    {
-                        if !Pane::save_item(
-                            project.clone(),
-                            &pane,
-                            ix,
-                            &*item,
-                            save_intent,
-                            &mut cx,
-                        )
+                    if !Pane::save_item(project.clone(), &pane, &*item, save_intent, &mut cx)
                         .await?
-                        {
-                            return Ok(false);
-                        }
+                    {
+                        return Ok(false);
                     }
                 }
             }
@@ -2327,13 +2316,12 @@ impl Workspace {
     ) -> Task<Result<()>> {
         let project = self.project.clone();
         let pane = self.active_pane();
-        let item_ix = pane.read(cx).active_item_index();
         let item = pane.read(cx).active_item();
         let pane = pane.downgrade();
 
         window.spawn(cx, |mut cx| async move {
             if let Some(item) = item {
-                Pane::save_item(project, &pane, item_ix, item.as_ref(), save_intent, &mut cx)
+                Pane::save_item(project, &pane, item.as_ref(), save_intent, &mut cx)
                     .await
                     .map(|_| ())
             } else {

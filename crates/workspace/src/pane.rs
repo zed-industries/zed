@@ -1551,7 +1551,7 @@ impl Pane {
                 // storing these in advance, in case they have changed since this task
                 // was started.
                 let mut dirty_project_item_ids = Vec::new();
-                let Some(item_ix) = pane.update(&mut cx, |pane, cx| {
+                let Some(_) = pane.update(&mut cx, |pane, cx| {
                     item_to_close.for_each_project_item(
                         cx,
                         &mut |project_item_id, project_item| {
@@ -1596,7 +1596,6 @@ impl Pane {
                     && !Self::save_item(
                         project.clone(),
                         &pane,
-                        item_ix,
                         &*item_to_close,
                         save_intent,
                         &mut cx,
@@ -1777,7 +1776,6 @@ impl Pane {
     pub async fn save_item(
         project: Entity<Project>,
         pane: &WeakEntity<Pane>,
-        item_ix: usize,
         item: &dyn ItemHandle,
         save_intent: SaveIntent,
         cx: &mut AsyncWindowContext,
@@ -1791,6 +1789,13 @@ impl Pane {
         if save_intent == SaveIntent::Skip {
             return Ok(true);
         }
+        let Some(item_ix) = pane
+            .update(cx, |pane, _| pane.index_for_item(item))
+            .ok()
+            .flatten()
+        else {
+            return Ok(true);
+        };
 
         let (mut has_conflict, mut is_dirty, mut can_save, is_singleton, has_deleted_file) = cx
             .update(|_window, cx| {
