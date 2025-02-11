@@ -110,6 +110,7 @@ pub enum Operator {
     ReplayRegister,
     ToggleComments,
     ReplaceWithRegister,
+    Exchange,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -499,6 +500,7 @@ impl Operator {
             Operator::ShellCommand => "sh",
             Operator::Rewrap => "gq",
             Operator::ReplaceWithRegister => "gr",
+            Operator::Exchange => "gx",
             Operator::Outdent => "<",
             Operator::Uppercase => "gU",
             Operator::Lowercase => "gu",
@@ -552,6 +554,7 @@ impl Operator {
             | Operator::Lowercase
             | Operator::Uppercase
             | Operator::ReplaceWithRegister
+            | Operator::Exchange
             | Operator::Object { .. }
             | Operator::ChangeSurrounds { target: None }
             | Operator::OppositeCase

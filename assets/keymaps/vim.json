@@ -111,7 +111,7 @@
       "g shift-d": "editor::GoToDeclaration",
       "g y": "editor::GoToTypeDefinition",
       "g shift-i": "editor::GoToImplementation",
-      "g x": "editor::OpenUrl",
+      "g x": "vim::PushExchange",
       "g f": "editor::OpenSelectedFilename",
       "g n": "vim::SelectNextMatch",
       "g shift-n": "vim::SelectPreviousMatch",

@@ -138,6 +138,7 @@ actions!(
         ResizePaneDown,
         PushChange,
         PushDelete,
+        PushExchange,
         PushYank,
         PushReplace,
         PushDeleteSurrounds,
@@ -636,6 +637,10 @@ impl Vim {
                     vim.push_operator(Operator::ReplaceWithRegister, window, cx)
                 },
             );
+
+            Vim::action(editor, cx, |vim, _: &PushExchange, window, cx| {
+                vim.push_operator(Operator::Exchange, window, cx)
+            });
 
             Vim::action(editor, cx, |vim, _: &PushToggleComments, window, cx| {
                 vim.push_operator(Operator::ToggleComments, window, cx)

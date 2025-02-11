@@ -124,6 +124,92 @@ impl Vim {
             });
         });
     }
+
+    pub fn exchange_object(
+        &mut self,
+        object: Object,
+        around: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        todo!();
+        // self.stop_recording(cx);
+        // let selected_register = self.selected_register.take();
+        // self.update_editor(window, cx, |_, editor, window, cx| {
+        //     editor.transact(window, cx, |editor, window, cx| {
+        //         editor.set_clip_at_line_ends(false, cx);
+        //         editor.change_selections(None, window, cx, |s| {
+        //             s.move_with(|map, selection| {
+        //                 object.expand_selection(map, selection, around);
+        //             });
+        //         });
+
+        //         let Some(Register { text, .. }) = Vim::update_globals(cx, |globals, cx| {
+        //             globals.read_register(selected_register, Some(editor), cx)
+        //         })
+        //         .filter(|reg| !reg.text.is_empty()) else {
+        //             return;
+        //         };
+        //         editor.insert(&text, window, cx);
+        //         editor.set_clip_at_line_ends(true, cx);
+        //         editor.change_selections(None, window, cx, |s| {
+        //             s.move_with(|map, selection| {
+        //                 selection.start = map.clip_point(selection.start, Bias::Left);
+        //                 selection.end = selection.start
+        //             })
+        //         })
+        //     });
+        // });
+    }
+
+    pub fn exchange_motion(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.stop_recording(cx);
+        let selected_register = self.selected_register.take();
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            let text_layout_details = editor.text_layout_details(window);
+            let selection = editor.selections.newest_display(cx);
+            motion.expand_selection(map, selection, times, false, &text_layout_details);
+            let range = selection.start.to_anchor(&map)..selection.end.to_anchor(&map);
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, cx);
+                if let Some(ranges) = editor.background_highlights::<VimExchange>() {
+                    editor.clear_highlights::<VimExchange>(cx);
+                    let previous_text = snapshot.text_for_range(ranges[0]);
+                    let new_text = snapshot.text_for_range(range);
+
+                    editor.edit([(ranges[0], new_text), (range, previous_text)], cx);
+                } else {
+                    let ranges = [];
+                    editor.highlight_background::<VimExchange>(
+                        &ranges,
+                        |theme| theme.editor_document_highlight_read_background,
+                        cx,
+                    );
+                }
+                // editor.change_selections(None, window, cx, |s| {
+                //     s.move_with(|map, selection| {
+                //         motion.expand_selection(map, selection, times, false, &text_layout_details);
+                //     });
+                // });
+
+                editor.set_clip_at_line_ends(true, cx);
+                // editor.change_selections(None, window, cx, |s| {
+                //     s.move_with(|map, selection| {
+                //         selection.start = map.clip_point(selection.start, Bias::Left);
+                //         selection.end = selection.start
+                //     })
+                // })
+            });
+        });
+    }
 }
 
 #[cfg(test)]
