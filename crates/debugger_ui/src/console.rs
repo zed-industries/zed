@@ -385,8 +385,9 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
             .read(cx)
             .dap_store
             .read(cx)
-            .capabilities_by_id(&console.read(cx).client_id)
-            .supports_completions_request
+            .capabilities_by_id(&console.read(cx).client_id, cx)
+            .map(|caps| caps.supports_completions_request)
+            .flatten()
             .unwrap_or_default();
 
         if support_completions {

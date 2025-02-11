@@ -991,12 +991,14 @@ impl VariableList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let support_set_variable = self
+        let Some(caps) = self
             .dap_store
             .read(cx)
-            .capabilities_by_id(&self.client_id)
-            .supports_set_variable
-            .unwrap_or_default();
+            .capabilities_by_id(&self.client_id, cx)
+        else {
+            return;
+        };
+        let support_set_variable = caps.supports_set_variable.unwrap_or_default();
 
         let this = cx.entity();
 
@@ -1016,8 +1018,9 @@ impl VariableList {
                 window.handler_for(&this.clone(), move |this, _window, cx| {
                     this.dap_store.update(cx, |dap_store, cx| {
                         if dap_store
-                            .capabilities_by_id(&this.client_id)
-                            .supports_clipboard_context
+                            .capabilities_by_id(&this.client_id, cx)
+                            .map(|caps| caps.supports_clipboard_context)
+                            .flatten()
                             .unwrap_or_default()
                         {
                             let task = dap_store.evaluate(

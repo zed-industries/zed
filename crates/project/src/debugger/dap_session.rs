@@ -1,5 +1,5 @@
 use collections::{BTreeMap, HashMap};
-use dap::{Module, Source};
+use dap::{Capabilities, Module, Source};
 use futures::{future::Shared, FutureExt};
 use gpui::{AppContext, Context, Entity, Task, WeakEntity};
 use std::{
@@ -68,6 +68,7 @@ struct Thread {
 
 pub struct DebugAdapterClientState {
     dap_store: WeakEntity<DapStore>,
+    pub(super) capabilities: Capabilities,
     client_id: DebugAdapterClientId,
     modules: Vec<dap::Module>,
     loaded_sources: Vec<dap::Source>,
@@ -245,7 +246,7 @@ impl DebugAdapterClientState {
 pub struct DebugSession {
     id: DebugSessionId,
     mode: DebugSessionMode,
-    states: HashMap<DebugAdapterClientId, Entity<DebugAdapterClientState>>,
+    pub(super) states: HashMap<DebugAdapterClientId, Entity<DebugAdapterClientState>>,
     ignore_breakpoints: bool,
 }
 
@@ -392,6 +393,7 @@ impl DebugSession {
                 loaded_sources: Vec::default(),
                 _threads: BTreeMap::default(),
                 requests: HashMap::default(),
+                capabilities: Default::default(),
             });
 
             self.states.insert(client_id, state);

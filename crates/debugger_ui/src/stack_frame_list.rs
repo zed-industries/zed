@@ -337,8 +337,9 @@ impl StackFrameList {
         let supports_frame_restart = self
             .dap_store
             .read(cx)
-            .capabilities_by_id(&self.client_id)
-            .supports_restart_frame
+            .capabilities_by_id(&self.client_id, cx)
+            .map(|caps| caps.supports_restart_frame)
+            .flatten()
             .unwrap_or_default();
 
         let origin = stack_frame

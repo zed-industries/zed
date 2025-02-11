@@ -258,7 +258,8 @@ impl DebugPanel {
                                     (
                                         true,
                                         item.update(cx, |this, cx| this.capabilities(cx))
-                                            .supports_step_back
+                                            .map(|caps| caps.supports_step_back)
+                                            .flatten()
                                             .unwrap_or(false),
                                     )
                                 })

@@ -431,14 +431,16 @@ impl DebugPanelItem {
         cx.notify();
 
         if let Some((downstream_client, project_id)) = self.dap_store.read(cx).downstream_client() {
-            let message = proto_conversions::capabilities_to_proto(
-                &self.dap_store.read(cx).capabilities_by_id(client_id),
-                *project_id,
-                self.session.read(cx).id().to_proto(),
-                self.client_id.to_proto(),
-            );
+            if let Some(caps) = self.dap_store.read(cx).capabilities_by_id(client_id, cx) {
+                let message = proto_conversions::capabilities_to_proto(
+                    &caps,
+                    *project_id,
+                    self.session.read(cx).id().to_proto(),
+                    self.client_id.to_proto(),
+                );
 
-            downstream_client.send(message).log_err();
+                downstream_client.send(message).log_err();
+            }
         }
     }
 
@@ -524,8 +526,10 @@ impl DebugPanelItem {
         self.session.read(cx).ignore_breakpoints()
     }
 
-    pub fn capabilities(&self, cx: &mut Context<Self>) -> Capabilities {
-        self.dap_store.read(cx).capabilities_by_id(&self.client_id)
+    pub fn capabilities(&self, cx: &mut Context<Self>) -> Option<Capabilities> {
+        self.dap_store
+            .read(cx)
+            .capabilities_by_id(&self.client_id, cx)
     }
 
     fn clear_highlights(&self, cx: &mut Context<Self>) {
@@ -903,19 +907,26 @@ impl Render for DebugPanelItem {
                                     )
                                 }
                             })
-                            .when(capabilities.supports_step_back.unwrap_or(false), |this| {
-                                this.child(
-                                    IconButton::new("debug-step-back", IconName::DebugStepBack)
-                                        .icon_size(IconSize::Small)
-                                        .on_click(cx.listener(|this, _, _window, cx| {
-                                            this.step_back(cx);
-                                        }))
-                                        .disabled(thread_status != ThreadStatus::Stopped)
-                                        .tooltip(move |window, cx| {
-                                            Tooltip::text("Step back")(window, cx)
-                                        }),
-                                )
-                            })
+                            .when(
+                                capabilities
+                                    .as_ref()
+                                    .map(|caps| caps.supports_step_back)
+                                    .flatten()
+                                    .unwrap_or(false),
+                                |this| {
+                                    this.child(
+                                        IconButton::new("debug-step-back", IconName::DebugStepBack)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.step_back(cx);
+                                            }))
+                                            .disabled(thread_status != ThreadStatus::Stopped)
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text("Step back")(window, cx)
+                                            }),
+                                    )
+                                },
+                            )
                             .child(
                                 IconButton::new("debug-step-over", IconName::DebugStepOver)
                                     .icon_size(IconSize::Small)
@@ -956,7 +967,11 @@ impl Render for DebugPanelItem {
                                         this.restart_client(cx);
                                     }))
                                     .disabled(
-                                        !capabilities.supports_restart_request.unwrap_or_default(),
+                                        !capabilities
+                                            .as_ref()
+                                            .map(|caps| caps.supports_restart_request)
+                                            .flatten()
+                                            .unwrap_or_default(),
                                     )
                                     .tooltip(move |window, cx| {
                                         Tooltip::text("Restart")(window, cx)
@@ -1036,7 +1051,11 @@ impl Render for DebugPanelItem {
                                 cx,
                             ))
                             .when(
-                                capabilities.supports_modules_request.unwrap_or_default(),
+                                capabilities
+                                    .as_ref()
+                                    .map(|caps| caps.supports_modules_request)
+                                    .flatten()
+                                    .unwrap_or_default(),
                                 |this| {
                                     this.child(self.render_entry_button(
                                         &SharedString::from("Modules"),
@@ -1047,7 +1066,9 @@ impl Render for DebugPanelItem {
                             )
                             .when(
                                 capabilities
-                                    .supports_loaded_sources_request
+                                    .as_ref()
+                                    .map(|caps| caps.supports_loaded_sources_request)
+                                    .flatten()
                                     .unwrap_or_default(),
                                 |this| {
                                     this.child(self.render_entry_button(
