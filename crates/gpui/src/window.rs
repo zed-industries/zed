@@ -1980,7 +1980,7 @@ impl Window {
         origin: Point<Pixels>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let old_origin = self.element_origin;
+        let old_origin = self.element_origin();
         self.element_origin = origin;
         let result = f(self);
         self.element_origin = old_origin;
@@ -2363,7 +2363,7 @@ impl Window {
         let color: Background = color.into();
         path.color = color.opacity(opacity);
         self.next_frame.scene.insert_primitive(
-            path.offset(self.element_origin / self.element_scale())
+            path.offset(self.element_origin() / self.element_scale())
                 .scale(scale_factor * self.element_scale()),
         );
     }
@@ -2455,7 +2455,7 @@ impl Window {
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
         let glyph_origin =
-            (origin * self.element_scale() + self.element_origin).scale(scale_factor);
+            (origin * self.element_scale() + self.element_origin()).scale(scale_factor);
         let subpixel_variant = Point {
             x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
             y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
@@ -2515,7 +2515,7 @@ impl Window {
 
         let scale_factor = self.scale_factor();
         let glyph_origin =
-            (origin * self.element_scale() + self.element_origin).scale(scale_factor);
+            (origin * self.element_scale() + self.element_origin()).scale(scale_factor);
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
@@ -2797,9 +2797,9 @@ impl Window {
             .map(Into::into);
 
         if Some(layout_id) != self.element_layout_id {
-            bounds.origin += self.element_origin;
+            bounds.origin += self.element_origin();
         } else {
-            bounds.origin = self.element_origin;
+            bounds.origin = self.element_origin();
         }
 
         bounds
@@ -2835,8 +2835,8 @@ impl Window {
         };
         self.next_frame.hitboxes.push(Hitbox {
             bounds: Bounds {
-                origin: bounds.origin + self.element_origin,
-                size: bounds.size,
+                origin: bounds.origin * self.element_scale() + self.element_origin(),
+                size: bounds.size * px(self.element_scale()),
             },
             ..hitbox.clone()
         });
@@ -2926,12 +2926,13 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        let origin = self.element_origin;
+        let origin = self.element_origin();
+        let scale = self.element_scale();
         self.next_frame.mouse_listeners.push(Some(Box::new(
             move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
                 if let Some(event) = event.downcast_ref::<Event>() {
                     window.with_element_origin(origin, |window| {
-                        let event = event.clone().with_local_coordinates(origin);
+                        let event = event.clone().with_local_coordinates(origin, scale);
                         handler(&event, phase, window, cx)
                     })
                 }
@@ -2953,7 +2954,7 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        let origin = self.element_origin;
+        let origin = self.element_origin();
         self.next_frame.dispatch_tree.on_key_event(Rc::new(
             move |event: &dyn Any, phase, window: &mut Window, cx: &mut App| {
                 if let Some(event) = event.downcast_ref::<Event>() {
@@ -2975,7 +2976,7 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        let origin = self.element_origin;
+        let origin = self.element_origin();
         self.next_frame.dispatch_tree.on_modifiers_changed(Rc::new(
             move |event: &ModifiersChangedEvent, window: &mut Window, cx: &mut App| {
                 window.with_element_origin(origin, |window| listener(event, window, cx))
@@ -2993,7 +2994,7 @@ impl Window {
         mut listener: impl FnMut(&mut Window, &mut App) + 'static,
     ) -> Subscription {
         let focus_id = handle.id;
-        let origin = self.element_origin;
+        let origin = self.element_origin();
         let (subscription, activate) =
             self.new_focus_listener(Box::new(move |event, window, cx| {
                 if event.is_focus_in(focus_id) {
@@ -3016,7 +3017,7 @@ impl Window {
         mut listener: impl FnMut(FocusOutEvent, &mut Window, &mut App) + 'static,
     ) -> Subscription {
         let focus_id = handle.id;
-        let origin = self.element_origin;
+        let origin = self.element_origin();
         let (subscription, activate) =
             self.new_focus_listener(Box::new(move |event, window, cx| {
                 if let Some(blurred_id) = event.previous_focus_path.last().copied() {
@@ -3809,7 +3810,7 @@ impl Window {
         action_type: TypeId,
         listener: impl Fn(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static,
     ) {
-        let origin = self.element_origin;
+        let origin = self.element_origin();
         self.next_frame.dispatch_tree.on_action(
             action_type,
             Rc::new(move |action, phase, window, cx| {

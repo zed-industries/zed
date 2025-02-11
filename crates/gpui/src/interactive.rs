@@ -17,7 +17,7 @@ pub trait KeyEvent: InputEvent {}
 /// A mouse event from the platform.
 pub trait MouseEvent: InputEvent + Clone {
     /// Converts `absolute_position` to local coordinates and assigns it to `position`
-    fn with_local_coordinates(self, origin: Point<Pixels>) -> Self;
+    fn with_local_coordinates(self, origin: Point<Pixels>, scale: f32) -> Self;
 }
 
 /// The key down event equivalent for the platform.
@@ -118,8 +118,8 @@ impl InputEvent for MouseDownEvent {
     }
 }
 impl MouseEvent for MouseDownEvent {
-    fn with_local_coordinates(mut self, origin: Point<Pixels>) -> Self {
-        self.position = self.absolute_position - origin;
+    fn with_local_coordinates(mut self, origin: Point<Pixels>, scale: f32) -> Self {
+        self.position = (self.absolute_position - origin) / scale;
         self
     }
 }
@@ -150,8 +150,8 @@ impl InputEvent for MouseUpEvent {
     }
 }
 impl MouseEvent for MouseUpEvent {
-    fn with_local_coordinates(mut self, origin: Point<Pixels>) -> Self {
-        self.position = self.absolute_position - origin;
+    fn with_local_coordinates(mut self, origin: Point<Pixels>, scale: f32) -> Self {
+        self.position = (self.absolute_position - origin) / scale;
         self
     }
 }
@@ -254,8 +254,8 @@ impl InputEvent for MouseMoveEvent {
     }
 }
 impl MouseEvent for MouseMoveEvent {
-    fn with_local_coordinates(mut self, origin: Point<Pixels>) -> Self {
-        self.position = self.absolute_position - origin;
+    fn with_local_coordinates(mut self, origin: Point<Pixels>, scale: f32) -> Self {
+        self.position = (self.absolute_position - origin) / scale;
         self
     }
 }
@@ -293,8 +293,8 @@ impl InputEvent for ScrollWheelEvent {
     }
 }
 impl MouseEvent for ScrollWheelEvent {
-    fn with_local_coordinates(mut self, origin: Point<Pixels>) -> Self {
-        self.position = self.absolute_position - origin;
+    fn with_local_coordinates(mut self, origin: Point<Pixels>, scale: f32) -> Self {
+        self.position = (self.absolute_position - origin) / scale;
         self
     }
 }
@@ -400,7 +400,7 @@ impl InputEvent for MouseExitEvent {
     }
 }
 impl MouseEvent for MouseExitEvent {
-    fn with_local_coordinates(self, _origin: Point<Pixels>) -> Self {
+    fn with_local_coordinates(self, _origin: Point<Pixels>, _scale: f32) -> Self {
         // TODO: convert to local coordinates
         self
     }
@@ -463,8 +463,8 @@ impl InputEvent for FileDropEvent {
     }
 }
 impl MouseEvent for FileDropEvent {
-    fn with_local_coordinates(self, _origin: Point<Pixels>) -> Self {
-        // TODO: convert to local coordinates
+    fn with_local_coordinates(self, _origin: Point<Pixels>, _scale: f32) -> Self {
+        // TODO: convert to local coordinates?
         self
     }
 }
