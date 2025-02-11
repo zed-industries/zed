@@ -2,8 +2,9 @@
 
 pub use gpui::prelude::*;
 pub use gpui::{
-    div, px, relative, rems, AbsoluteLength, App, Context, DefiniteLength, Div, Element, ElementId,
-    InteractiveElement, ParentElement, Pixels, Rems, RenderOnce, SharedString, Styled, Window,
+    div, px, relative, rems, AbsoluteLength, AnyElement, App, Context, DefiniteLength, Div,
+    Element, ElementId, InteractiveElement, ParentElement, Pixels, Rems, RenderOnce, SharedString,
+    Styled, Window,
 };
 
 pub use component::{example_group, example_group_with_title, single_example, ComponentPreview};
@@ -18,9 +19,12 @@ pub use crate::traits::toggleable::*;
 pub use crate::traits::visible_on_hover::*;
 pub use crate::DynamicSpacing;
 pub use crate::{h_flex, h_group, v_flex, v_group};
+pub use crate::{
+    label, label_lg, label_muted, label_sm, label_xs, Label, LabelCommon, LabelSize,
+    LineHeightStyle,
+};
 pub use crate::{Button, ButtonSize, ButtonStyle, IconButton, SelectableButton};
 pub use crate::{ButtonCommon, Color};
 pub use crate::{Headline, HeadlineSize};
 pub use crate::{Icon, IconName, IconPosition, IconSize};
-pub use crate::{Label, LabelCommon, LabelSize, LineHeightStyle};
 pub use theme::ActiveTheme;

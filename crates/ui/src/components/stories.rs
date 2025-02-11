@@ -23,7 +23,6 @@ pub use disclosure::*;
 pub use icon::*;
 pub use icon_button::*;
 pub use keybinding::*;
-pub use label::*;
 pub use list::*;
 pub use list_header::*;
 pub use list_item::*;
