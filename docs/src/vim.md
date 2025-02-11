@@ -412,7 +412,7 @@ The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for qui
     "context": "vim_mode == normal || vim_mode == visual",
     "bindings": {
       "s": ["vim::PushSneak", {}],
-      "S": ["vim::PushSneakBackward", {}]
+      "shift-s": ["vim::PushSneakBackward", {}]
     }
   }
 ]

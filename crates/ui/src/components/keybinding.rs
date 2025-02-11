@@ -89,19 +89,18 @@ impl KeyBinding {
     fn render_key(&self, keystroke: &Keystroke, color: Option<Color>) -> AnyElement {
         let key_icon = icon_for_key(keystroke, self.platform_style);
         match key_icon {
-            Some(icon) => KeyIcon::new(icon, color).into_any_element(),
+            Some(icon) => KeyIcon::new(icon, color).size(self.size).into_any_element(),
             None => {
-                if self.vim_mode {
+                let key = if self.vim_mode {
                     if keystroke.modifiers.shift && keystroke.key.len() == 1 {
-                        Key::new(&keystroke.key.to_ascii_uppercase(), color).into_any_element()
+                        keystroke.key.to_ascii_uppercase().to_string()
                     } else {
-                        Key::new(&keystroke.key, color).into_any_element()
+                        keystroke.key.to_string()
                     }
                 } else {
-                    Key::new(capitalize(&keystroke.key), color)
-                        .size(self.size)
-                        .into_any_element()
-                }
+                    capitalize(&keystroke.key)
+                };
+                Key::new(&key, color).size(self.size).into_any_element()
             }
         }
     }
@@ -138,21 +137,6 @@ impl RenderOnce for KeyBinding {
                     ))
                     .map(|el| el.child(self.render_key(&keystroke, None)))
             }))
-    }
-}
-
-pub fn render_key(
-    keystroke: &Keystroke,
-    platform_style: PlatformStyle,
-    color: Option<Color>,
-    size: Option<AbsoluteLength>,
-) -> AnyElement {
-    let key_icon = icon_for_key(keystroke, platform_style);
-    match key_icon {
-        Some(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
-        None => Key::new(capitalize(&keystroke.key), color)
-            .size(size)
-            .into_any_element(),
     }
 }
 
