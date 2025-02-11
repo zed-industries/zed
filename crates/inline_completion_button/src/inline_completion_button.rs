@@ -36,9 +36,8 @@ use workspace::{
     Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
-use zeta::RateCompletionModal;
+use zeta::RateCompletions;
 
-actions!(zeta, [RateCompletions]);
 actions!(edit_prediction, [ToggleMenu]);
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
@@ -54,7 +53,6 @@ pub struct InlineCompletionButton {
     file: Option<Arc<dyn File>>,
     edit_prediction_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
     fs: Arc<dyn Fs>,
-    workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
@@ -354,7 +352,6 @@ impl Render for InlineCompletionButton {
 
 impl InlineCompletionButton {
     pub fn new(
-        workspace: WeakEntity<Workspace>,
         fs: Arc<dyn Fs>,
         user_store: Entity<UserStore>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -376,7 +373,6 @@ impl InlineCompletionButton {
             file: None,
             edit_prediction_provider: None,
             popover_menu_handle,
-            workspace,
             fs,
             user_store,
         }
@@ -613,23 +609,10 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        let workspace = self.workspace.clone();
         ContextMenu::build(window, cx, |menu, _window, cx| {
             self.build_language_settings_menu(menu, cx).when(
                 cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>(),
-                |this| {
-                    this.entry(
-                        "Rate Completions",
-                        Some(RateCompletions.boxed_clone()),
-                        move |window, cx| {
-                            workspace
-                                .update(cx, |workspace, cx| {
-                                    RateCompletionModal::toggle(workspace, window, cx)
-                                })
-                                .ok();
-                        },
-                    )
-                },
+                |this| this.action("Rate Completions", RateCompletions.boxed_clone()),
             )
         })
     }

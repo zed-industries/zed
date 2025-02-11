@@ -113,6 +113,7 @@ impl Editor {
             target_bottom = target_top + 1.;
         } else {
             let selections = self.selections.all::<Point>(cx);
+
             target_top = selections
                 .first()
                 .unwrap()
@@ -143,6 +144,29 @@ impl Editor {
                     .as_f32();
                 target_top = newest_selection_top;
                 target_bottom = newest_selection_top + 1.;
+            }
+
+            if self.edit_prediction_preview.is_active() {
+                if let Some(completion) = self.active_inline_completion.as_ref() {
+                    match completion.completion {
+                        crate::InlineCompletion::Edit { .. } => {}
+                        crate::InlineCompletion::Move { target, .. } => {
+                            let target_row = target.to_display_point(&display_map).row().as_f32();
+
+                            if target_row < target_top {
+                                target_top = target_row;
+                            } else if target_row >= target_bottom {
+                                target_bottom = target_row + 1.;
+                            }
+
+                            let selections_fit = target_bottom - target_top <= visible_lines;
+                            if !selections_fit {
+                                target_top = target_row;
+                                target_bottom = target_row + 1.;
+                            }
+                        }
+                    }
+                }
             }
         }
 

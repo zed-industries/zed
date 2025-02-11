@@ -422,7 +422,7 @@ impl Object {
 /// If the selection spans multiple lines and is preceded by an opening brace (`{`),
 /// this function will trim the selection to exclude the final newline
 /// in order to preserve a properly indented line.
-fn preserve_indented_newline(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) {
+pub fn preserve_indented_newline(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) {
     let (start_point, end_point) = (selection.start.to_point(map), selection.end.to_point(map));
 
     if start_point.row == end_point.row {
@@ -446,6 +446,7 @@ fn preserve_indented_newline(map: &DisplaySnapshot, selection: &mut Selection<Di
                         match ch {
                             '\n' => {
                                 selection.end = offset.to_display_point(map);
+                                selection.reversed = true;
                                 break;
                             }
                             ch if !ch.is_whitespace() => break,
@@ -1759,6 +1760,17 @@ mod test {
             Mode::Normal,
         );
         cx.simulate_keystrokes("v i {");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                   «ˇif a == \"\" {
+                      return true
+                   }
+                   return false»
+                }"
+            },
+            Mode::Visual,
+        );
 
         cx.set_state(
             indoc! {
@@ -1772,6 +1784,17 @@ mod test {
             Mode::Normal,
         );
         cx.simulate_keystrokes("v i {");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                     if a == \"\" {
+                         «ˇreturn true»
+                     }
+                     return false
+                }"
+            },
+            Mode::Visual,
+        );
 
         cx.set_state(
             indoc! {
@@ -1785,6 +1808,41 @@ mod test {
             Mode::Normal,
         );
         cx.simulate_keystrokes("v i {");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                     if a == \"\" {
+                         «ˇreturn true»
+                     }
+                     return false
+                }"
+            },
+            Mode::Visual,
+        );
+
+        cx.set_state(
+            indoc! {
+                "func empty(a string) bool {
+                     if a == \"\" {
+                         return true
+                     }
+                     return false
+                ˇ}"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v i {");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                     «ˇif a == \"\" {
+                         return true
+                     }
+                     return false»
+                }"
+            },
+            Mode::Visual,
+        );
     }
 
     #[gpui::test]
