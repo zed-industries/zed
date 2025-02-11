@@ -23,7 +23,10 @@ use language::{
     },
     Buffer, BufferEvent, Capability, DiskState, File as _, Language, LanguageRegistry, Operation,
 };
-use rpc::{proto, AnyProtoClient, ErrorExt as _, TypedEnvelope};
+use rpc::{
+    proto::{self, ToProto},
+    AnyProtoClient, ErrorExt as _, TypedEnvelope,
+};
 use serde::Deserialize;
 use smol::channel::Receiver;
 use std::{
@@ -580,13 +583,12 @@ impl RemoteBufferStore {
         let worktree_id = worktree.read(cx).id().to_proto();
         let project_id = self.project_id;
         let client = self.upstream_client.clone();
-        let path_string = path.clone().to_string_lossy().to_string();
         cx.spawn(move |this, mut cx| async move {
             let response = client
                 .request(proto::OpenBufferByPath {
                     project_id,
                     worktree_id,
-                    path: path_string,
+                    path: path.to_proto(),
                 })
                 .await?;
             let buffer_id = BufferId::new(response.buffer_id)?;

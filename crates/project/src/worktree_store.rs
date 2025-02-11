@@ -15,7 +15,7 @@ use futures::{
 use gpui::{App, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity};
 use postage::oneshot;
 use rpc::{
-    proto::{self, SSH_PROJECT_ID},
+    proto::{self, FromProto, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, ErrorExt, TypedEnvelope,
 };
 use smol::{
@@ -268,10 +268,11 @@ impl WorktreeStore {
         cx.spawn(|this, mut cx| async move {
             let this = this.upgrade().context("Dropped worktree store")?;
 
+            let path = Path::new(abs_path.as_str());
             let response = client
                 .request(proto::AddWorktree {
                     project_id: SSH_PROJECT_ID,
-                    path: abs_path.clone(),
+                    path: path.to_proto(),
                     visible,
                 })
                 .await?;
@@ -282,10 +283,11 @@ impl WorktreeStore {
                 return Ok(existing_worktree);
             }
 
-            let root_name = PathBuf::from(&response.canonicalized_path)
+            let root_path_buf = PathBuf::from_proto(response.canonicalized_path.clone());
+            let root_name = root_path_buf
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or(response.canonicalized_path.to_string());
+                .unwrap_or(root_path_buf.to_string_lossy().to_string());
 
             let worktree = cx.update(|cx| {
                 Worktree::remote(
@@ -596,7 +598,7 @@ impl WorktreeStore {
                     id: worktree.id().to_proto(),
                     root_name: worktree.root_name().into(),
                     visible: worktree.is_visible(),
-                    abs_path: worktree.abs_path().to_string_lossy().into(),
+                    abs_path: worktree.abs_path().to_proto(),
                 }
             })
             .collect()
@@ -923,7 +925,7 @@ impl WorktreeStore {
                     project_id: remote_worktree.project_id(),
                     repository: Some(proto::ProjectPath {
                         worktree_id: project_path.worktree_id.to_proto(),
-                        path: project_path.path.to_string_lossy().to_string(), // Root path
+                        path: project_path.path.to_proto(), // Root path
                     }),
                 });
 
@@ -994,7 +996,7 @@ impl WorktreeStore {
                     project_id: remote_worktree.project_id(),
                     repository: Some(proto::ProjectPath {
                         worktree_id: repository.worktree_id.to_proto(),
-                        path: repository.path.to_string_lossy().to_string(), // Root path
+                        path: repository.path.to_proto(), // Root path
                     }),
                     branch_name: new_branch,
                 });
@@ -1116,7 +1118,7 @@ impl WorktreeStore {
             .context("Invalid GitBranches call")?;
         let project_path = ProjectPath {
             worktree_id: WorktreeId::from_proto(project_path.worktree_id),
-            path: Path::new(&project_path.path).into(),
+            path: Arc::<Path>::from_proto(project_path.path),
         };
 
         let branches = this
@@ -1147,7 +1149,7 @@ impl WorktreeStore {
             .context("Invalid GitBranches call")?;
         let project_path = ProjectPath {
             worktree_id: WorktreeId::from_proto(project_path.worktree_id),
-            path: Path::new(&project_path.path).into(),
+            path: Arc::<Path>::from_proto(project_path.path),
         };
         let new_branch = update_branch.payload.branch_name;
 
