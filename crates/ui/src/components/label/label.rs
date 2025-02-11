@@ -1,31 +1,6 @@
 use crate::{prelude::*, LabelLike};
 use gpui::StyleRefinement;
 
-/// Convenience function, returns a default [`Label`]
-pub fn label(label: impl Into<String>) -> Label {
-    Label::new(label.into())
-}
-
-/// Convenience function, returns a [`Label`] with [`Color::Muted`] applied.
-pub fn label_muted(label: impl Into<String>) -> Label {
-    Label::new(label.into()).color(Color::Muted)
-}
-
-/// Convenience function, returns a [`Label`] with [`LabelSize::Small`] applied.
-pub fn label_sm(label: impl Into<String>) -> Label {
-    Label::new(label.into()).size(LabelSize::Small)
-}
-
-/// Convenience function, returns a [`Label`] with [`LabelSize::XSmall`] applied.
-pub fn label_xs(label: impl Into<String>) -> Label {
-    Label::new(label.into()).size(LabelSize::XSmall)
-}
-
-/// Convenience function, returns a [`Label`] with [`LabelSize::Large`] applied.
-pub fn label_lg(label: impl Into<String>) -> Label {
-    Label::new(label.into()).size(LabelSize::Large)
-}
-
 /// A struct representing a label element in the UI.
 ///
 /// The `Label` struct stores the label text and common properties for a label element.
@@ -77,6 +52,9 @@ impl Label {
         }
     }
 }
+
+// nate: If we are going to do this, we might as well just
+// impl Styled for Label and not constrain styles
 
 // Style methods.
 impl Label {

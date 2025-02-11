@@ -128,7 +128,7 @@ impl Item for ImageView {
             .file_name(cx)
             .to_string_lossy()
             .to_string();
-        label(title)
+        Label::new(title)
             .single_line()
             .color(label_color)
             .when(params.preview, |this| this.italic())

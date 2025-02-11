@@ -51,7 +51,8 @@ impl ComponentPreview {
                     .map(|component| self.render_sidebar_entry(&component, _cx)),
             )
             .child(
-                label_muted("These will be clickable once the layout is moved to a gpui::List.")
+                Label::new("These will be clickable once the layout is moved to a gpui::List.")
+                    .color(Color::Muted)
                     .size(LabelSize::XSmall)
                     .italic(),
             )

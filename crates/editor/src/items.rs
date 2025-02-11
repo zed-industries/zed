@@ -677,7 +677,7 @@ impl Item for Editor {
         h_flex()
             .gap_2()
             .child(
-                label(self.title(cx).to_string())
+                Label::new(self.title(cx).to_string())
                     .color(label_color)
                     .when(params.preview, |this| this.italic())
                     .when(was_deleted, |this| this.strikethrough()),
