@@ -1552,10 +1552,7 @@ impl Pane {
         });
 
         let workspace = self.workspace.clone();
-        let Some(project) = workspace
-            .update(cx, |workspace, _| workspace.project().clone())
-            .ok()
-        else {
+        let Some(project) = self.project.upgrade() else {
             return Task::ready(Ok(()));
         };
         cx.spawn_in(window, |pane, mut cx| async move {
