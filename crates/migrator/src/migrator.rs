@@ -72,7 +72,7 @@ type MigrationPatterns = &'static [(
     fn(&str, &QueryMatch, &Query) -> Option<(Range<usize>, String)>,
 )];
 
-static KEYMAP_MIGRATION_TRANSFORMATION_PATTERNS: MigrationPatterns = &[
+const KEYMAP_MIGRATION_TRANSFORMATION_PATTERNS: MigrationPatterns = &[
     (ACTION_ARRAY_PATTERN, replace_array_with_single_string),
     (
         ACTION_ARGUMENT_OBJECT_PATTERN,
@@ -142,50 +142,109 @@ fn replace_array_with_single_string(
     Some((range_to_replace, replacement_as_string))
 }
 
-#[rustfmt::skip]
 static TRANSFORM_ARRAY: LazyLock<HashMap<(&str, &str), &str>> = LazyLock::new(|| {
     HashMap::from_iter([
         // activate
-        (("workspace::ActivatePaneInDirection", "Up"), "workspace::ActivatePaneUp"),
-        (("workspace::ActivatePaneInDirection", "Down"), "workspace::ActivatePaneDown"),
-        (("workspace::ActivatePaneInDirection", "Left"), "workspace::ActivatePaneLeft"),
-        (("workspace::ActivatePaneInDirection", "Right"), "workspace::ActivatePaneRight"),
+        (
+            ("workspace::ActivatePaneInDirection", "Up"),
+            "workspace::ActivatePaneUp",
+        ),
+        (
+            ("workspace::ActivatePaneInDirection", "Down"),
+            "workspace::ActivatePaneDown",
+        ),
+        (
+            ("workspace::ActivatePaneInDirection", "Left"),
+            "workspace::ActivatePaneLeft",
+        ),
+        (
+            ("workspace::ActivatePaneInDirection", "Right"),
+            "workspace::ActivatePaneRight",
+        ),
         // swap
-        (("workspace::SwapPaneInDirection", "Up"), "workspace::SwapPaneUp"),
-        (("workspace::SwapPaneInDirection", "Down"), "workspace::SwapPaneDown"),
-        (("workspace::SwapPaneInDirection", "Left"), "workspace::SwapPaneLeft"),
-        (("workspace::SwapPaneInDirection", "Right"), "workspace::SwapPaneRight"),
+        (
+            ("workspace::SwapPaneInDirection", "Up"),
+            "workspace::SwapPaneUp",
+        ),
+        (
+            ("workspace::SwapPaneInDirection", "Down"),
+            "workspace::SwapPaneDown",
+        ),
+        (
+            ("workspace::SwapPaneInDirection", "Left"),
+            "workspace::SwapPaneLeft",
+        ),
+        (
+            ("workspace::SwapPaneInDirection", "Right"),
+            "workspace::SwapPaneRight",
+        ),
         // menu
-        (("app_menu::NavigateApplicationMenuInDirection", "Left"), "app_menu::ActivateMenuLeft"),
-        (("app_menu::NavigateApplicationMenuInDirection", "Right"), "app_menu::ActivateMenuRight"),
+        (
+            ("app_menu::NavigateApplicationMenuInDirection", "Left"),
+            "app_menu::ActivateMenuLeft",
+        ),
+        (
+            ("app_menu::NavigateApplicationMenuInDirection", "Right"),
+            "app_menu::ActivateMenuRight",
+        ),
         // vim push
         (("vim::PushOperator", "Change"), "vim::PushChange"),
         (("vim::PushOperator", "Delete"), "vim::PushDelete"),
         (("vim::PushOperator", "Yank"), "vim::PushYank"),
         (("vim::PushOperator", "Replace"), "vim::PushReplace"),
-        (("vim::PushOperator", "DeleteSurrounds"), "vim::PushDeleteSurrounds"),
+        (
+            ("vim::PushOperator", "DeleteSurrounds"),
+            "vim::PushDeleteSurrounds",
+        ),
         (("vim::PushOperator", "Mark"), "vim::PushMark"),
         (("vim::PushOperator", "Indent"), "vim::PushIndent"),
         (("vim::PushOperator", "Outdent"), "vim::PushOutdent"),
         (("vim::PushOperator", "AutoIndent"), "vim::PushAutoIndent"),
         (("vim::PushOperator", "Rewrap"), "vim::PushRewrap"),
-        (("vim::PushOperator", "ShellCommand"), "vim::PushShellCommand"),
+        (
+            ("vim::PushOperator", "ShellCommand"),
+            "vim::PushShellCommand",
+        ),
         (("vim::PushOperator", "Lowercase"), "vim::PushLowercase"),
         (("vim::PushOperator", "Uppercase"), "vim::PushUppercase"),
-        (("vim::PushOperator", "OppositeCase"), "vim::PushOppositeCase"),
+        (
+            ("vim::PushOperator", "OppositeCase"),
+            "vim::PushOppositeCase",
+        ),
         (("vim::PushOperator", "Register"), "vim::PushRegister"),
-        (("vim::PushOperator", "RecordRegister"), "vim::PushRecordRegister"),
-        (("vim::PushOperator", "ReplayRegister"), "vim::PushReplayRegister"),
-        (("vim::PushOperator", "ReplaceWithRegister"), "vim::PushReplaceWithRegister"),
-        (("vim::PushOperator", "ToggleComments"), "vim::PushToggleComments"),
+        (
+            ("vim::PushOperator", "RecordRegister"),
+            "vim::PushRecordRegister",
+        ),
+        (
+            ("vim::PushOperator", "ReplayRegister"),
+            "vim::PushReplayRegister",
+        ),
+        (
+            ("vim::PushOperator", "ReplaceWithRegister"),
+            "vim::PushReplaceWithRegister",
+        ),
+        (
+            ("vim::PushOperator", "ToggleComments"),
+            "vim::PushToggleComments",
+        ),
         // vim switch
         (("vim::SwitchMode", "Normal"), "vim::SwitchToNormalMode"),
         (("vim::SwitchMode", "Insert"), "vim::SwitchToInsertMode"),
         (("vim::SwitchMode", "Replace"), "vim::SwitchToReplaceMode"),
         (("vim::SwitchMode", "Visual"), "vim::SwitchToVisualMode"),
-        (("vim::SwitchMode", "VisualLine"), "vim::SwitchToVisualLineMode"),
-        (("vim::SwitchMode", "VisualBlock"), "vim::SwitchToVisualBlockMode"),
-        (("vim::SwitchMode", "HelixNormal"), "vim::SwitchToHelixNormalMode"),
+        (
+            ("vim::SwitchMode", "VisualLine"),
+            "vim::SwitchToVisualLineMode",
+        ),
+        (
+            ("vim::SwitchMode", "VisualBlock"),
+            "vim::SwitchToVisualBlockMode",
+        ),
+        (
+            ("vim::SwitchMode", "HelixNormal"),
+            "vim::SwitchToHelixNormalMode",
+        ),
         // vim resize
         (("vim::ResizePane", "Widen"), "vim::ResizePaneRight"),
         (("vim::ResizePane", "Narrow"), "vim::ResizePaneLeft"),
@@ -253,7 +312,7 @@ fn replace_action_argument_object_with_single_value(
     Some((range_to_replace, replacement))
 }
 
-// "ctrl-k ctrl-1": [ "editor::PushOperator", { "Object": {} } ] -> [ "editor::vim::PushObject", {} ]
+/// "ctrl-k ctrl-1": [ "editor::PushOperator", { "Object": {} } ] -> [ "editor::vim::PushObject", {} ]
 static UNWRAP_OBJECTS: LazyLock<HashMap<&str, HashMap<&str, &str>>> = LazyLock::new(|| {
     HashMap::from_iter([
         (
@@ -278,7 +337,7 @@ static UNWRAP_OBJECTS: LazyLock<HashMap<&str, HashMap<&str, &str>>> = LazyLock::
     ])
 });
 
-static KEYMAP_MIGRATION_REPLACEMENT_PATTERNS: MigrationPatterns = &[(
+const KEYMAP_MIGRATION_REPLACEMENT_PATTERNS: MigrationPatterns = &[(
     ACTION_ARGUMENT_SNAKE_CASE_PATTERN,
     action_argument_snake_case,
 )];
@@ -328,17 +387,31 @@ fn rename_string_action(
     Some((action_name_range, new_action_name.to_string()))
 }
 
-// "ctrl-k ctrl-1": "inline_completion::ToggleMenu" -> "edit_prediction::ToggleMenu"
-#[rustfmt::skip]
+/// "ctrl-k ctrl-1": "inline_completion::ToggleMenu" -> "edit_prediction::ToggleMenu"
 static STRING_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
     HashMap::from_iter([
-        ("inline_completion::ToggleMenu", "edit_prediction::ToggleMenu"),
+        (
+            "inline_completion::ToggleMenu",
+            "edit_prediction::ToggleMenu",
+        ),
         ("editor::NextInlineCompletion", "editor::NextEditPrediction"),
-        ("editor::PreviousInlineCompletion", "editor::PreviousEditPrediction"),
-        ("editor::AcceptPartialInlineCompletion", "editor::AcceptPartialEditPrediction"),
+        (
+            "editor::PreviousInlineCompletion",
+            "editor::PreviousEditPrediction",
+        ),
+        (
+            "editor::AcceptPartialInlineCompletion",
+            "editor::AcceptPartialEditPrediction",
+        ),
         ("editor::ShowInlineCompletion", "editor::ShowEditPrediction"),
-        ("editor::AcceptInlineCompletion", "editor::AcceptEditPrediction"),
-        ("editor::ToggleInlineCompletions", "editor::ToggleEditPrediction"),
+        (
+            "editor::AcceptInlineCompletion",
+            "editor::AcceptEditPrediction",
+        ),
+        (
+            "editor::ToggleInlineCompletions",
+            "editor::ToggleEditPrediction",
+        ),
     ])
 });
 
@@ -463,7 +536,7 @@ fn action_argument_snake_case(
     Some((range_to_replace, replacement))
 }
 
-// "context": "Editor && inline_completion && !showing_completions" -> "Editor && edit_prediction && !showing_completions"
+/// "context": "Editor && inline_completion && !showing_completions" -> "Editor && edit_prediction && !showing_completions"
 pub static CONTEXT_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
     HashMap::from_iter([
         ("inline_completion", "edit_prediction"),
@@ -474,7 +547,7 @@ pub static CONTEXT_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
     ])
 });
 
-static SETTINGS_MIGRATION_PATTERNS: MigrationPatterns = &[
+const SETTINGS_MIGRATION_PATTERNS: MigrationPatterns = &[
     (SETTINGS_STRING_REPLACE_QUERY, replace_setting_name),
     (SETTINGS_REPLACE_NESTED_KEY, replace_setting_nested_key),
     (
@@ -494,7 +567,7 @@ static SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
     .unwrap()
 });
 
-static SETTINGS_STRING_REPLACE_QUERY: &str = r#"(document
+const SETTINGS_STRING_REPLACE_QUERY: &str = r#"(document
     (object
         (pair
             key: (string (string_content) @name)
@@ -518,17 +591,23 @@ fn replace_setting_name(
     Some((setting_name_range, new_setting_name.to_string()))
 }
 
-#[rustfmt::skip]
-pub static SETTINGS_STRING_REPLACE: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
-    HashMap::from_iter([
-        ("show_inline_completions_in_menu", "show_edit_predictions_in_menu"),
-        ("show_inline_completions", "show_edit_predictions"),
-        ("inline_completions_disabled_in", "edit_predictions_disabled_in"),
-        ("inline_completions", "edit_predictions")
-    ])
-});
+pub static SETTINGS_STRING_REPLACE: LazyLock<HashMap<&'static str, &'static str>> =
+    LazyLock::new(|| {
+        HashMap::from_iter([
+            (
+                "show_inline_completions_in_menu",
+                "show_edit_predictions_in_menu",
+            ),
+            ("show_inline_completions", "show_edit_predictions"),
+            (
+                "inline_completions_disabled_in",
+                "edit_predictions_disabled_in",
+            ),
+            ("inline_completions", "edit_predictions"),
+        ])
+    });
 
-static SETTINGS_REPLACE_NESTED_KEY: &str = r#"
+const SETTINGS_REPLACE_NESTED_KEY: &str = r#"
 (object
   (pair
     key: (string (string_content) @parent_key)
@@ -568,9 +647,11 @@ fn replace_setting_nested_key(
     Some((setting_range, new_setting_name.to_string()))
 }
 
-// "features": {
-//   "inline_completion_provider": "copilot"
-// },
+/// ```json
+/// "features": {
+///   "inline_completion_provider": "copilot"
+/// },
+/// ```
 pub static SETTINGS_NESTED_STRING_REPLACE: LazyLock<
     HashMap<&'static str, HashMap<&'static str, &'static str>>,
 > = LazyLock::new(|| {
@@ -580,7 +661,7 @@ pub static SETTINGS_NESTED_STRING_REPLACE: LazyLock<
     )])
 });
 
-static SETTINGS_REPLACE_IN_LANGUAGES_QUERY: &str = r#"
+const SETTINGS_REPLACE_IN_LANGUAGES_QUERY: &str = r#"
 (object
   (pair
     key: (string (string_content) @languages)
@@ -615,15 +696,16 @@ fn replace_setting_in_languages(
     Some((setting_name_range, new_setting_name.to_string()))
 }
 
-#[rustfmt::skip]
-static LANGUAGE_SETTINGS_REPLACE: LazyLock<
-    HashMap<&'static str, &'static str>,
-> = LazyLock::new(|| {
-    HashMap::from_iter([
-        ("show_inline_completions", "show_edit_predictions"),
-        ("inline_completions_disabled_in", "edit_predictions_disabled_in"),
-    ])
-});
+static LANGUAGE_SETTINGS_REPLACE: LazyLock<HashMap<&'static str, &'static str>> =
+    LazyLock::new(|| {
+        HashMap::from_iter([
+            ("show_inline_completions", "show_edit_predictions"),
+            (
+                "inline_completions_disabled_in",
+                "edit_predictions_disabled_in",
+            ),
+        ])
+    });
 
 #[cfg(test)]
 mod tests {
