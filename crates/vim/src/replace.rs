@@ -213,16 +213,42 @@ impl Vim {
     ) {
         if let Some((_, ranges)) = editor.clear_background_highlights::<VimExchange>(cx) {
             let previous_range = ranges[0].clone();
-            let previous_text: String = snapshot
-                .buffer_snapshot
-                .text_for_range(previous_range.clone())
-                .collect();
-            let new_text: String = snapshot
-                .buffer_snapshot
-                .text_for_range(new_range.clone())
-                .collect();
 
-            editor.edit([(previous_range, new_text), (new_range, previous_text)], cx);
+            // ranges are separate
+            if previous_range.end < new_range.start || new_range.end < previous_range.start {
+                let previous_text: String = snapshot
+                    .buffer_snapshot
+                    .text_for_range(previous_range.clone())
+                    .collect();
+                let new_text: String = snapshot
+                    .buffer_snapshot
+                    .text_for_range(new_range.clone())
+                    .collect();
+
+                editor.edit([(previous_range, new_text), (new_range, previous_text)], cx);
+                return;
+            }
+
+            // there is complete overlap, replace the large with the smaller
+            if (previous_range.start <= new_range.start && previous_range.end >= new_range.end)
+                || (new_range.start <= previous_range.start && new_range.end >= previous_range.end)
+            {
+                let smaller = if previous_range.len() < new_range.len() {
+                    previous_range
+                } else {
+                    new_range
+                };
+                let new_text = snapshot
+                    .buffer_snapshot
+                    .text_for_range(smaller.clone())
+                    .collect();
+                editor.edit([(smaller, new_text)], cx);
+                return;
+            }
+
+            // there is partial overlap, clear exchange and abort
+            self.clear_exchange(window, cx);
+            return;
         } else {
             let ranges = [new_range];
             editor.highlight_background::<VimExchange>(
