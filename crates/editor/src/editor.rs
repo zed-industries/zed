@@ -520,294 +520,13 @@ pub enum MenuInlineCompletionsPolicy {
     ByProvider,
 }
 
-// TODO az do we need this?
-#[derive(Clone)]
 pub enum EditPredictionPreview {
     /// Modifier is not pressed
     Inactive,
-    /// Modifier pressed, animating to active
-    MovingTo {
-        animation: Range<Instant>,
-        scroll_position_at_start: Option<gpui::Point<f32>>,
-        target_point: DisplayPoint,
+    /// Modifier pressed
+    Active {
+        previous_scroll_position: Option<ScrollAnchor>,
     },
-    Arrived {
-        scroll_position_at_start: Option<gpui::Point<f32>>,
-        scroll_position_at_arrival: Option<gpui::Point<f32>>,
-        target_point: Option<DisplayPoint>,
-    },
-    /// Modifier released, animating from active
-    MovingFrom {
-        animation: Range<Instant>,
-        target_point: DisplayPoint,
-    },
-}
-
-impl EditPredictionPreview {
-    fn start(
-        &mut self,
-        completion: &InlineCompletion,
-        snapshot: &EditorSnapshot,
-        cursor: DisplayPoint,
-    ) -> bool {
-        if matches!(self, Self::MovingTo { .. } | Self::Arrived { .. }) {
-            return false;
-        }
-        (*self, _) = Self::start_now(completion, snapshot, cursor);
-        true
-    }
-
-    fn restart(
-        &mut self,
-        completion: &InlineCompletion,
-        snapshot: &EditorSnapshot,
-        cursor: DisplayPoint,
-    ) -> bool {
-        match self {
-            Self::Inactive => false,
-            Self::MovingTo { target_point, .. }
-            | Self::Arrived {
-                target_point: Some(target_point),
-                ..
-            } => {
-                let (new_preview, new_target_point) = Self::start_now(completion, snapshot, cursor);
-
-                if new_target_point != Some(*target_point) {
-                    *self = new_preview;
-                    return true;
-                }
-
-                false
-            }
-            Self::Arrived {
-                target_point: None, ..
-            } => {
-                let (new_preview, _) = Self::start_now(completion, snapshot, cursor);
-
-                *self = new_preview;
-                true
-            }
-            Self::MovingFrom { .. } => false,
-        }
-    }
-
-    fn start_now(
-        completion: &InlineCompletion,
-        snapshot: &EditorSnapshot,
-        cursor: DisplayPoint,
-    ) -> (Self, Option<DisplayPoint>) {
-        let now = Instant::now();
-        match completion {
-            InlineCompletion::Edit { .. } => (
-                Self::Arrived {
-                    target_point: None,
-                    scroll_position_at_start: None,
-                    scroll_position_at_arrival: None,
-                },
-                None,
-            ),
-            InlineCompletion::Move { target, .. } => {
-                let target_point = target.to_display_point(&snapshot.display_snapshot);
-                let duration = Self::animation_duration(cursor, target_point);
-
-                (
-                    Self::MovingTo {
-                        animation: now..now + duration,
-                        scroll_position_at_start: Some(snapshot.scroll_position()),
-                        target_point,
-                    },
-                    Some(target_point),
-                )
-            }
-        }
-    }
-
-    fn animation_duration(a: DisplayPoint, b: DisplayPoint) -> Duration {
-        const SPEED: f32 = 8.0;
-
-        let row_diff = b.row().0.abs_diff(a.row().0);
-        let column_diff = b.column().abs_diff(a.column());
-        let distance = ((row_diff.pow(2) + column_diff.pow(2)) as f32).sqrt();
-        Duration::from_millis((distance * SPEED) as u64)
-    }
-
-    fn end(
-        &mut self,
-        cursor: DisplayPoint,
-        scroll_pixel_position: gpui::Point<Pixels>,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) -> bool {
-        let (scroll_position, target_point) = match self {
-            Self::MovingTo {
-                scroll_position_at_start,
-                target_point,
-                ..
-            }
-            | Self::Arrived {
-                scroll_position_at_start,
-                scroll_position_at_arrival: None,
-                target_point: Some(target_point),
-                ..
-            } => (*scroll_position_at_start, target_point),
-            Self::Arrived {
-                scroll_position_at_start,
-                scroll_position_at_arrival: Some(scroll_at_arrival),
-                target_point: Some(target_point),
-            } => {
-                const TOLERANCE: f32 = 4.0;
-
-                let diff = *scroll_at_arrival - scroll_pixel_position.map(|p| p.0);
-
-                if diff.x.abs() < TOLERANCE && diff.y.abs() < TOLERANCE {
-                    (*scroll_position_at_start, target_point)
-                } else {
-                    (None, target_point)
-                }
-            }
-            Self::Arrived {
-                target_point: None, ..
-            } => {
-                *self = Self::Inactive;
-                return true;
-            }
-            Self::MovingFrom { .. } | Self::Inactive => return false,
-        };
-
-        let now = Instant::now();
-        let duration = Self::animation_duration(cursor, *target_point);
-        let target_point = *target_point;
-
-        *self = Self::MovingFrom {
-            animation: now..now + duration,
-            target_point,
-        };
-
-        if let Some(scroll_position) = scroll_position {
-            cx.spawn_in(window, |editor, mut cx| async move {
-                smol::Timer::after(duration).await;
-                editor
-                    .update_in(&mut cx, |editor, window, cx| {
-                        if let Self::MovingFrom { .. } | Self::Inactive =
-                            editor.edit_prediction_preview
-                        {
-                            editor.set_scroll_position(scroll_position, window, cx)
-                        }
-                    })
-                    .log_err();
-            })
-            .detach();
-        }
-
-        true
-    }
-
-    /// Whether the preview is active or we are animating to or from it.
-    fn is_active(&self) -> bool {
-        matches!(
-            self,
-            Self::MovingTo { .. } | Self::Arrived { .. } | Self::MovingFrom { .. }
-        )
-    }
-
-    /// Returns true if the preview is active, not cancelled, and the animation is settled.
-    fn is_active_settled(&self) -> bool {
-        matches!(self, Self::Arrived { .. })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn move_state(
-        &mut self,
-        snapshot: &EditorSnapshot,
-        visible_row_range: Range<DisplayRow>,
-        line_layouts: &[LineWithInvisibles],
-        scroll_pixel_position: gpui::Point<Pixels>,
-        line_height: Pixels,
-        target: Anchor,
-        cursor: Option<DisplayPoint>,
-    ) -> Option<EditPredictionMoveState> {
-        let delta = match self {
-            Self::Inactive => return None,
-            Self::Arrived { .. } => 1.,
-            Self::MovingTo {
-                animation,
-                scroll_position_at_start: original_scroll_position,
-                target_point,
-            } => {
-                let now = Instant::now();
-                if animation.end < now {
-                    *self = Self::Arrived {
-                        scroll_position_at_start: *original_scroll_position,
-                        scroll_position_at_arrival: Some(scroll_pixel_position.map(|p| p.0)),
-                        target_point: Some(*target_point),
-                    };
-                    1.0
-                } else {
-                    (now - animation.start).as_secs_f32()
-                        / (animation.end - animation.start).as_secs_f32()
-                }
-            }
-            Self::MovingFrom { animation, .. } => {
-                let now = Instant::now();
-                if animation.end < now {
-                    *self = Self::Inactive;
-                    return None;
-                } else {
-                    let delta = (now - animation.start).as_secs_f32()
-                        / (animation.end - animation.start).as_secs_f32();
-                    1.0 - delta
-                }
-            }
-        };
-
-        let cursor = cursor?;
-
-        if !visible_row_range.contains(&cursor.row()) {
-            return None;
-        }
-
-        let target_position = target.to_display_point(&snapshot.display_snapshot);
-
-        if !visible_row_range.contains(&target_position.row()) {
-            return None;
-        }
-
-        let target_row_layout =
-            &line_layouts[target_position.row().minus(visible_row_range.start) as usize];
-        let target_column = target_position.column() as usize;
-
-        let target_character_x = target_row_layout.x_for_index(target_column);
-
-        let target_x = target_character_x - scroll_pixel_position.x;
-        let target_y =
-            (target_position.row().as_f32() - scroll_pixel_position.y / line_height) * line_height;
-
-        let origin_x = line_layouts[cursor.row().minus(visible_row_range.start) as usize]
-            .x_for_index(cursor.column() as usize);
-        let origin_y =
-            (cursor.row().as_f32() - scroll_pixel_position.y / line_height) * line_height;
-
-        let delta = 1.0 - (-10.0 * delta).exp2();
-
-        let x = origin_x + (target_x - origin_x) * delta;
-        let y = origin_y + (target_y - origin_y) * delta;
-
-        Some(EditPredictionMoveState {
-            delta,
-            position: point(x, y),
-        })
-    }
-}
-
-pub(crate) struct EditPredictionMoveState {
-    delta: f32,
-    position: gpui::Point<Pixels>,
-}
-
-impl EditPredictionMoveState {
-    pub fn is_animation_completed(&self) -> bool {
-        self.delta >= 1.
-    }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Default)]
@@ -1786,6 +1505,15 @@ impl Editor {
     }
 
     fn key_context(&self, window: &Window, cx: &App) -> KeyContext {
+        self.key_context_internal(self.has_active_inline_completion(), window, cx)
+    }
+
+    fn key_context_internal(
+        &self,
+        has_active_edit_prediction: bool,
+        window: &Window,
+        cx: &App,
+    ) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
         let mode = match self.mode {
@@ -1836,10 +1564,9 @@ impl Editor {
             key_context.set("extension", extension.to_string());
         }
 
-        if self.has_active_inline_completion() {
+        if has_active_edit_prediction {
             key_context.add("copilot_suggestion");
             key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
-
             if showing_completions || self.edit_prediction_requires_modifier() {
                 key_context.add(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT);
             }
@@ -1857,12 +1584,10 @@ impl Editor {
         window: &Window,
         cx: &App,
     ) -> AcceptEditPredictionBinding {
-        let mut context = self.key_context(window, cx);
-        context.add(EDIT_PREDICTION_KEY_CONTEXT);
-
+        let key_context = self.key_context_internal(true, window, cx);
         AcceptEditPredictionBinding(
             window
-                .bindings_for_action_in_context(&AcceptEditPrediction, context)
+                .bindings_for_action_in_context(&AcceptEditPrediction, key_context)
                 .into_iter()
                 .rev()
                 .next(),
@@ -5067,6 +4792,15 @@ impl Editor {
         self.snippet_stack.is_empty() && self.edit_predictions_enabled()
     }
 
+    pub fn edit_prediction_preview_is_active(&self) -> bool {
+        match self.edit_prediction_preview {
+            EditPredictionPreview::Inactive => false,
+            EditPredictionPreview::Active { .. } => {
+                self.edit_prediction_requires_modifier() || self.has_visible_completions_menu()
+            }
+        }
+    }
+
     pub fn inline_completions_enabled(&self, cx: &App) -> bool {
         let cursor = self.selections.newest_anchor().head();
         if let Some((buffer, cursor_position)) =
@@ -5232,10 +4966,40 @@ impl Editor {
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
                 let target = *target;
-                // Note that this is also done in vim's handler of the Tab action.
-                self.change_selections(Some(Autoscroll::newest()), window, cx, |selections| {
-                    selections.select_anchor_ranges([target..target]);
-                });
+
+                if let Some(position_map) = &self.last_position_map {
+                    if position_map
+                        .visible_row_range
+                        .contains(&target.to_display_point(&position_map.snapshot).row())
+                        || !self.edit_prediction_preview_is_active()
+                    {
+                        // Note that this is also done in vim's handler of the Tab action.
+                        self.change_selections(
+                            Some(Autoscroll::newest()),
+                            window,
+                            cx,
+                            |selections| {
+                                selections.select_anchor_ranges([target..target]);
+                            },
+                        );
+                        self.clear_row_highlights::<EditPredictionPreview>();
+
+                        self.edit_prediction_preview = EditPredictionPreview::Active {
+                            previous_scroll_position: None,
+                        };
+                    } else {
+                        self.edit_prediction_preview = EditPredictionPreview::Active {
+                            previous_scroll_position: Some(position_map.snapshot.scroll_anchor),
+                        };
+                        self.highlight_rows::<EditPredictionPreview>(
+                            target..target,
+                            cx.theme().colors().editor_highlighted_line_background,
+                            true,
+                            cx,
+                        );
+                        self.request_autoscroll(Autoscroll::fit(), cx);
+                    }
+                }
             }
             InlineCompletion::Edit { edits, .. } => {
                 if let Some(provider) = self.edit_prediction_provider() {
@@ -5403,7 +5167,7 @@ impl Editor {
     /// like we are not previewing and the LSP autocomplete menu is visible
     /// or we are in `when_holding_modifier` mode.
     pub fn edit_prediction_visible_in_cursor_popover(&self, has_completion: bool) -> bool {
-        if self.edit_prediction_preview.is_active()
+        if self.edit_prediction_preview_is_active()
             || !self.show_edit_predictions_in_menu()
             || !self.edit_predictions_enabled()
         {
@@ -5425,7 +5189,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if self.show_edit_predictions_in_menu() {
-            self.update_edit_prediction_preview(&modifiers, position_map, window, cx);
+            self.update_edit_prediction_preview(&modifiers, window, cx);
         }
 
         let mouse_position = window.mouse_position();
@@ -5445,7 +5209,6 @@ impl Editor {
     fn update_edit_prediction_preview(
         &mut self,
         modifiers: &Modifiers,
-        position_map: &PositionMap,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -5455,37 +5218,31 @@ impl Editor {
         };
 
         if &accept_keystroke.modifiers == modifiers {
-            let Some(completion) = self.active_inline_completion.as_ref() else {
-                return;
-            };
+            if !self.edit_prediction_preview_is_active() {
+                self.edit_prediction_preview = EditPredictionPreview::Active {
+                    previous_scroll_position: None,
+                };
 
-            if !self.edit_prediction_requires_modifier() && !self.has_visible_completions_menu() {
-                return;
-            }
-
-            let transitioned = self.edit_prediction_preview.start(
-                &completion.completion,
-                &position_map.snapshot,
-                self.selections
-                    .newest_anchor()
-                    .head()
-                    .to_display_point(&position_map.snapshot),
-            );
-
-            if transitioned {
-                self.request_autoscroll(Autoscroll::fit(), cx);
                 self.update_visible_inline_completion(window, cx);
                 cx.notify();
             }
-        } else if self.edit_prediction_preview.end(
-            self.selections
-                .newest_anchor()
-                .head()
-                .to_display_point(&position_map.snapshot),
-            position_map.scroll_pixel_position,
-            window,
-            cx,
-        ) {
+        } else if let EditPredictionPreview::Active {
+            previous_scroll_position,
+        } = self.edit_prediction_preview
+        {
+            if let (Some(previous_scroll_position), Some(position_map)) =
+                (previous_scroll_position, self.last_position_map.as_ref())
+            {
+                self.set_scroll_position(
+                    previous_scroll_position
+                        .scroll_position(&position_map.snapshot.display_snapshot),
+                    window,
+                    cx,
+                );
+            }
+
+            self.edit_prediction_preview = EditPredictionPreview::Inactive;
+            self.clear_row_highlights::<EditPredictionPreview>();
             self.update_visible_inline_completion(window, cx);
             cx.notify();
         }
@@ -5493,7 +5250,7 @@ impl Editor {
 
     fn update_visible_inline_completion(
         &mut self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let selection = self.selections.newest_anchor();
@@ -5643,15 +5400,6 @@ impl Editor {
             ));
 
         self.stale_inline_completion_in_menu = None;
-        let editor_snapshot = self.snapshot(window, cx);
-        if self.edit_prediction_preview.restart(
-            &completion,
-            &editor_snapshot,
-            cursor.to_display_point(&editor_snapshot),
-        ) {
-            self.request_autoscroll(Autoscroll::fit(), cx);
-        }
-
         self.active_inline_completion = Some(InlineCompletionState {
             inlay_ids,
             completion,
@@ -5879,7 +5627,7 @@ impl Editor {
     }
 
     pub fn context_menu_visible(&self) -> bool {
-        !self.edit_prediction_preview.is_active()
+        !self.edit_prediction_preview_is_active()
             && self
                 .context_menu
                 .borrow()
@@ -5990,12 +5738,12 @@ impl Editor {
                                     Icon::new(IconName::ZedPredictUp)
                                 },
                             )
-                            .child(Label::new("Hold"))
+                            .child(Label::new("Hold").size(LabelSize::Small))
                             .children(ui::render_modifiers(
                                 &accept_keystroke.modifiers,
                                 PlatformStyle::platform(),
                                 Some(Color::Default),
-                                None,
+                                Some(IconSize::Small.rems().into()),
                                 true,
                             ))
                             .into_any(),
@@ -14056,23 +13804,6 @@ impl Editor {
         }
     }
 
-    pub fn previewing_edit_prediction_move(
-        &mut self,
-    ) -> Option<(Anchor, &mut EditPredictionPreview)> {
-        if !self.edit_prediction_preview.is_active() {
-            return None;
-        };
-
-        self.active_inline_completion
-            .as_ref()
-            .and_then(|completion| match completion.completion {
-                InlineCompletion::Move { target, .. } => {
-                    Some((target, &mut self.edit_prediction_preview))
-                }
-                _ => None,
-            })
-    }
-
     pub fn show_local_cursors(&self, window: &mut Window, cx: &mut App) -> bool {
         (self.read_only(cx) || self.blink_manager.read(cx).visible())
             && self.focus_handle.is_focused(window)
@@ -14905,7 +14636,7 @@ impl Editor {
     }
 
     pub fn has_visible_completions_menu(&self) -> bool {
-        !self.edit_prediction_preview.is_active()
+        !self.edit_prediction_preview_is_active()
             && self.context_menu.borrow().as_ref().map_or(false, |menu| {
                 menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
             })
