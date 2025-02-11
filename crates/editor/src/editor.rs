@@ -529,15 +529,6 @@ pub enum EditPredictionPreview {
     },
 }
 
-impl EditPredictionPreview {
-    pub fn is_active(&self) -> bool {
-        match self {
-            EditPredictionPreview::Inactive => false,
-            EditPredictionPreview::Active { .. } => true,
-        }
-    }
-}
-
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Default)]
 struct EditorActionId(usize);
 
@@ -1514,6 +1505,15 @@ impl Editor {
     }
 
     fn key_context(&self, window: &Window, cx: &App) -> KeyContext {
+        self.key_context_internal(self.has_active_inline_completion(), window, cx)
+    }
+
+    fn key_context_internal(
+        &self,
+        has_active_edit_prediction: bool,
+        window: &Window,
+        cx: &App,
+    ) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
         let mode = match self.mode {
@@ -1564,10 +1564,9 @@ impl Editor {
             key_context.set("extension", extension.to_string());
         }
 
-        if self.has_active_inline_completion() {
+        if has_active_edit_prediction {
             key_context.add("copilot_suggestion");
             key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
-
             if showing_completions || self.edit_prediction_requires_modifier() {
                 key_context.add(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT);
             }
@@ -1585,12 +1584,10 @@ impl Editor {
         window: &Window,
         cx: &App,
     ) -> AcceptEditPredictionBinding {
-        let mut context = self.key_context(window, cx);
-        context.add(EDIT_PREDICTION_KEY_CONTEXT);
-
+        let key_context = self.key_context_internal(true, window, cx);
         AcceptEditPredictionBinding(
             window
-                .bindings_for_action_in_context(&AcceptEditPrediction, context)
+                .bindings_for_action_in_context(&AcceptEditPrediction, key_context)
                 .into_iter()
                 .rev()
                 .next(),
@@ -3950,7 +3947,6 @@ impl Editor {
                             Some(CodeContextMenu::Completions(menu));
 
                         if editor.show_edit_predictions_in_menu() {
-                            editor.update_edit_prediction_preview(&window.modifiers(), window, cx);
                             editor.update_visible_inline_completion(window, cx);
                         } else {
                             editor.discard_inline_completion(false, cx);
@@ -4798,6 +4794,15 @@ impl Editor {
         self.snippet_stack.is_empty() && self.edit_predictions_enabled()
     }
 
+    pub fn edit_prediction_preview_is_active(&self) -> bool {
+        match self.edit_prediction_preview {
+            EditPredictionPreview::Inactive => false,
+            EditPredictionPreview::Active { .. } => {
+                self.edit_prediction_requires_modifier() || self.has_visible_completions_menu()
+            }
+        }
+    }
+
     pub fn inline_completions_enabled(&self, cx: &App) -> bool {
         let cursor = self.selections.newest_anchor().head();
         if let Some((buffer, cursor_position)) =
@@ -4968,7 +4973,7 @@ impl Editor {
                     if position_map
                         .visible_row_range
                         .contains(&target.to_display_point(&position_map.snapshot).row())
-                        || !self.edit_prediction_preview.is_active()
+                        || !self.edit_prediction_preview_is_active()
                     {
                         // Note that this is also done in vim's handler of the Tab action.
                         self.change_selections(
@@ -5164,7 +5169,7 @@ impl Editor {
     /// like we are not previewing and the LSP autocomplete menu is visible
     /// or we are in `when_holding_modifier` mode.
     pub fn edit_prediction_visible_in_cursor_popover(&self, has_completion: bool) -> bool {
-        if self.edit_prediction_preview.is_active()
+        if self.edit_prediction_preview_is_active()
             || !self.show_edit_predictions_in_menu()
             || !self.edit_predictions_enabled()
         {
@@ -5215,10 +5220,7 @@ impl Editor {
         };
 
         if &accept_keystroke.modifiers == modifiers {
-            if self.active_inline_completion.is_some()
-                && (self.edit_prediction_requires_modifier() || self.has_visible_completions_menu())
-                && !self.edit_prediction_preview.is_active()
-            {
+            if !self.edit_prediction_preview_is_active() {
                 self.edit_prediction_preview = EditPredictionPreview::Active {
                     previous_scroll_position: None,
                 };
@@ -5226,13 +5228,7 @@ impl Editor {
                 self.update_visible_inline_completion(window, cx);
                 cx.notify();
             }
-        } else {
-            self.leave_edit_prediction_preview(window, cx);
-        }
-    }
-
-    fn leave_edit_prediction_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let EditPredictionPreview::Active {
+        } else if let EditPredictionPreview::Active {
             previous_scroll_position,
         } = self.edit_prediction_preview
         {
@@ -5633,7 +5629,7 @@ impl Editor {
     }
 
     pub fn context_menu_visible(&self) -> bool {
-        !self.edit_prediction_preview.is_active()
+        !self.edit_prediction_preview_is_active()
             && self
                 .context_menu
                 .borrow()
@@ -6003,13 +5999,6 @@ impl Editor {
         self.completion_tasks.clear();
         let context_menu = self.context_menu.borrow_mut().take();
         self.stale_inline_completion_in_menu.take();
-
-        if !self.edit_prediction_requires_modifier()
-            && matches!(context_menu, Some(CodeContextMenu::Completions(_)))
-        {
-            self.leave_edit_prediction_preview(window, cx);
-        }
-
         self.update_visible_inline_completion(window, cx);
         context_menu
     }
@@ -14637,7 +14626,7 @@ impl Editor {
     }
 
     pub fn has_visible_completions_menu(&self) -> bool {
-        !self.edit_prediction_preview.is_active()
+        !self.edit_prediction_preview_is_active()
             && self.context_menu.borrow().as_ref().map_or(false, |menu| {
                 menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
             })

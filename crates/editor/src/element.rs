@@ -3578,7 +3578,7 @@ impl EditorElement {
                 let target_display_point = target.to_display_point(editor_snapshot);
 
                 if editor.edit_prediction_requires_modifier() {
-                    if !editor.edit_prediction_preview.is_active() {
+                    if !editor.edit_prediction_preview_is_active() {
                         return None;
                     }
 
@@ -5810,7 +5810,7 @@ fn inline_completion_accept_indicator(
         .text_size(TextSize::XSmall.rems(cx))
         .text_color(cx.theme().colors().text)
         .gap_1()
-        .when(!editor.edit_prediction_preview.is_active(), |parent| {
+        .when(!editor.edit_prediction_preview_is_active(), |parent| {
             parent.children(ui::render_modifiers(
                 &accept_keystroke.modifiers,
                 PlatformStyle::platform(),
