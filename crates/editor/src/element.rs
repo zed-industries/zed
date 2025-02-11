@@ -3601,7 +3601,7 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn layout_inline_completion_popover(
+    fn layout_edit_prediction_popover(
         &self,
         text_bounds: &Bounds<Pixels>,
         editor_snapshot: &EditorSnapshot,
@@ -3646,6 +3646,7 @@ impl EditorElement {
                         .px_2()
                         .py_1()
                         .elevation_2(cx)
+                        .border_color(cx.theme().colors().border)
                         .rounded_br(px(0.))
                         .child(Label::new(accept_keystroke.key.clone()).buffer_font(cx))
                         .into_any();
@@ -7510,7 +7511,7 @@ impl Element for EditorElement {
                         );
                     }
 
-                    let inline_completion_popover = self.layout_inline_completion_popover(
+                    let inline_completion_popover = self.layout_edit_prediction_popover(
                         &text_hitbox.bounds,
                         &snapshot,
                         start_row..end_row,

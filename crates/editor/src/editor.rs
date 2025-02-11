@@ -536,7 +536,10 @@ pub enum EditPredictionPreview {
         target_point: Option<DisplayPoint>,
     },
     /// Modifier released, animating from active
-    MovingFrom(Range<Instant>),
+    MovingFrom {
+        animation: Range<Instant>,
+        target_point: DisplayPoint,
+    },
 }
 
 impl EditPredictionPreview {
@@ -560,7 +563,7 @@ impl EditPredictionPreview {
         cursor: DisplayPoint,
     ) -> bool {
         match self {
-            Self::Inactive => {}
+            Self::Inactive => false,
             Self::MovingTo { target_point, .. }
             | Self::Arrived {
                 target_point: Some(target_point),
@@ -572,6 +575,8 @@ impl EditPredictionPreview {
                     *self = new_preview;
                     return true;
                 }
+
+                false
             }
             Self::Arrived {
                 target_point: None, ..
@@ -579,11 +584,10 @@ impl EditPredictionPreview {
                 let (new_preview, _) = Self::start_now(completion, snapshot, cursor);
 
                 *self = new_preview;
-                return true;
+                true
             }
-            Self::MovingFrom(..) => {}
+            Self::MovingFrom { .. } => false,
         }
-        false
     }
 
     fn start_now(
@@ -641,16 +645,29 @@ impl EditPredictionPreview {
                 let duration = Self::animation_duration(cursor, *target_point);
                 let scroll_position = *scroll_position;
 
-                *self = Self::MovingFrom(now..now + duration);
+                let target_point = *target_point;
+
+                *self = Self::MovingFrom {
+                    animation: now..now + duration,
+                    target_point,
+                };
 
                 if let Some(scroll_position) = scroll_position {
                     cx.spawn_in(window, |editor, mut cx| async move {
                         smol::Timer::after(duration).await;
-                        // todo! az check if is same?
-
                         editor
                             .update_in(&mut cx, |editor, window, cx| {
-                                editor.set_scroll_position(scroll_position, window, cx)
+                                let Self::MovingFrom {
+                                    target_point: current_target_point,
+                                    ..
+                                } = editor.edit_prediction_preview
+                                else {
+                                    return;
+                                };
+
+                                if current_target_point == target_point {
+                                    editor.set_scroll_position(scroll_position, window, cx)
+                                }
                             })
                             .log_err();
                     })
@@ -672,7 +689,7 @@ impl EditPredictionPreview {
     fn is_active(&self) -> bool {
         matches!(
             self,
-            Self::MovingTo { .. } | Self::Arrived { .. } | Self::MovingFrom(..)
+            Self::MovingTo { .. } | Self::Arrived { .. } | Self::MovingFrom { .. }
         )
     }
 
@@ -711,7 +728,7 @@ impl EditPredictionPreview {
                         / (animation.end - animation.start).as_secs_f32()
                 }
             }
-            Self::MovingFrom(animation) => {
+            Self::MovingFrom { animation, .. } => {
                 let now = Instant::now();
                 if animation.end < now {
                     *self = Self::Inactive;
