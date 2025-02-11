@@ -34,6 +34,8 @@ WizardStyle=modern
 // that VS Code is ready to be shutdown, so we're good to use `force` here.
 CloseApplications=force
 
+SignTool=defaultsign {#signToolPath} $f
+
 #if "user" == InstallTarget
 DefaultDirName={userpf}\{#DirName}
 PrivilegesRequired=lowest
@@ -42,8 +44,8 @@ DefaultDirName={pf}\{#DirName}
 #endif
 
 [Languages]
-Name: "english"; MessagesFile: "compiler:Default.isl,{#RepoDir}\messages\en.isl" {#LocalizedLanguageFile}
-Name: "simplifiedChinese"; MessagesFile: "{#RepoDir}\messages\Default.zh-cn.isl,{#RepoDir}\messages\zh-cn.isl" {#LocalizedLanguageFile("chs")}
+Name: "english"; MessagesFile: "compiler:Default.isl,{#RepoDir}\messages\en.isl"
+Name: "simplifiedChinese"; MessagesFile: "{#RepoDir}\messages\Default.zh-cn.isl,{#RepoDir}\messages\zh-cn.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
