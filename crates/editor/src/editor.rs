@@ -12595,7 +12595,7 @@ impl Editor {
     pub fn copy_file_name_without_extension(
         &mut self,
         _: &CopyFileNameWithoutExtension,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(file) = self.target_file(cx) {
@@ -12610,7 +12610,7 @@ impl Editor {
     pub fn copy_file_name(
         &mut self,
         _: &CopyFileName,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(file) = self.target_file(cx) {
