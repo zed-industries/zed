@@ -380,17 +380,15 @@ But you cannot use the same shortcuts to move between all the editor docks (the 
 Subword motion, which allows you to navigate and select individual words in camelCase or snake_case, is not enabled by default. To enable it, add these bindings to your keymap.
 
 ```json
-[
-  {
-    "context": "VimControl && !menu && vim_mode != operator",
-    "bindings": {
-      "w": "vim::NextSubwordStart",
-      "b": "vim::PreviousSubwordStart",
-      "e": "vim::NextSubwordEnd",
-      "g e": "vim::PreviousSubwordEnd"
-    }
+{
+  "context": "VimControl && !menu && vim_mode != operator",
+  "bindings": {
+    "w": "vim::NextSubwordStart",
+    "b": "vim::PreviousSubwordStart",
+    "e": "vim::NextSubwordEnd",
+    "g e": "vim::PreviousSubwordEnd"
   }
-]
+}
 ```
 
 Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), but it doesn't have a shortcut to add surrounds in visual mode. By default, `shift-s` substitutes the selection (erases the text and enters insert mode). To use `shift-s` to add surrounds in visual mode, you can add the following object to your keymap.
@@ -407,15 +405,13 @@ Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), b
 The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for quick navigation to any two-character sequence in your text. You can enable it by adding the following keybindings to your keymap. By default, the `s` key is mapped to `vim::Substitute`. Adding these bindings will override that behavior, so ensure this change aligns with your workflow preferences.
 
 ```json
-[
-  {
-    "context": "vim_mode == normal || vim_mode == visual",
-    "bindings": {
-      "s": ["vim::PushSneak", {}],
-      "S": ["vim::PushSneakBackward", {}]
-    }
+{
+  "context": "vim_mode == normal || vim_mode == visual",
+  "bindings": {
+    "s": ["vim::PushSneak", {}],
+    "S": ["vim::PushSneakBackward", {}]
   }
-]
+}
 ```
 
 ### Restoring common text editing keybindings
