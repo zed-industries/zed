@@ -475,6 +475,8 @@ impl LanguageModelRequest {
             messages: new_messages,
             max_tokens: max_output_tokens,
             system: Some(system_message),
+            tools: vec![],
+            tool_choice: None,
             metadata: None,
             stop_sequences: Vec::new(),
             temperature: self.temperature.or(Some(default_temperature)),

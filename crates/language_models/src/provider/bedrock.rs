@@ -308,7 +308,7 @@ impl BedrockModel {
         request: bedrock::Request,
         cx: &AsyncApp,
     ) -> Result<
-        BoxFuture<'static, BoxStream<'static, Result<BedrockStreamingResponse>>>,
+        BoxFuture<'static, BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
     > {
         let Ok((aa_id, sk, region)) = cx.read_entity(&self.state, |state, cx| {
             let _settings = &AllLanguageModelSettings::get_global(cx).bedrock;
@@ -338,12 +338,11 @@ impl BedrockModel {
 
         Ok(async move {
             let request = bedrock::stream_completion(runtime_client, request, owned_handle);
-
             request.await.unwrap_or_else(|e| {
-                futures::stream::once(async move { Err(e) }).boxed()
+                futures::stream::once(async move { Err(BedrockError::Other(e)) }).boxed()
             })
         }
-        .boxed())
+            .boxed())
     }
 }
 
@@ -417,6 +416,32 @@ impl LanguageModel for BedrockModel {
         _cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         future::ready(Err(anyhow!("not implemented"))).boxed()
+
+        // let mut request = request.into_bedrock(
+        //     self.model.id().into(),
+        //     self.model.default_temperature(),
+        //     self.model.max_output_tokens(),
+        // );
+        //
+        // request.tool_choice = Some(BedrockToolChoice::Tool(
+        //     BedrockSpecificTool::builder()
+        //         .name(name.clone())
+        //         .build()
+        //         .unwrap()
+        // ));
+        //
+        // request.tools = vec![BedrockTool::builder().name(name.clone()).description(description.clone()).build().unwrap()];
+        //
+        // let request = self.stream_completion(request, _cx);
+        // let future = self.request_limiter.stream(async move {
+        //     let response = request.map_err(|e| anyhow!(e)).unwrap().await;
+        //     Ok(extract_tool_args_from_events(
+        //         name,
+        //         response,
+        //         self.handler.clone(),
+        //     ))
+        // });
+        // async move { Ok(future.await?.boxed()) }.boxed()
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
@@ -480,12 +505,87 @@ pub fn get_bedrock_tokens(
         .boxed()
 }
 
+pub async fn extract_tool_args_from_events(
+    _name: String,
+    _events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+    _handle: Handle,
+) -> Result<BoxStream<'static, Result<String>>> {
+    // let mut tool_use_index = None;
+    //
+    // handle.spawn(async move {
+    //     while let Some(event) = events.next().await {
+    //         if let BedrockStreamingResponse::ContentBlockStart(ContentBlockStartEvent {
+    //            content_block_index,
+    //            start,
+    //            ..
+    //         }) = event? {
+    //             match start {
+    //                 None => {
+    //                     continue;
+    //                 }
+    //                 Some(start) => {
+    //                     match start.as_tool_use() {
+    //                         Ok(tool_use) => {
+    //                             if name == tool_use.name {
+    //                                 tool_use_index = Some(content_block_index);
+    //                                 break;
+    //                             }
+    //                         }
+    //                         Err(err) => {
+    //                             return Err(anyhow!("Failed to parse tool use event: {:?}", err));
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    //
+    //     let Some(tool_use_index) = tool_use_index else {
+    //         return Err(anyhow!("Tool is not used"));
+    //     };
+    //
+    //     Ok(events.filter_map(move |event| {
+    //         let result = match event {
+    //             Err(err) => { None }
+    //             Ok(output) => {
+    //                 match output.clone() {
+    //                     BedrockStreamingResponse::ContentBlockDelta(inner) => {
+    //                         match inner.clone().delta {
+    //                             Some(ContentBlockDelta::ToolUse(tool_use)) => {
+    //                                 if inner.content_block_index == tool_use_index {
+    //                                     Some(Ok(tool_use.input))
+    //                                 } else {
+    //                                     None
+    //                                 }
+    //                             }
+    //                             _ => { None }
+    //                         }
+    //                     }
+    //                     BedrockStreamingResponse::ContentBlockStart(_) |
+    //                     BedrockStreamingResponse::ContentBlockStop(_) |
+    //                     BedrockStreamingResponse::MessageStart(_) |
+    //                     BedrockStreamingResponse::MessageStop(_) |
+    //                     BedrockStreamingResponse::Metadata(_) |
+    //                     _ => {
+    //                         None
+    //                     }
+    //                 }
+    //             }
+    //         };
+    //
+    //         async move { result }
+    //     }))
+    // }).await?
+
+    future::ready(Err(anyhow!("not implemented"))).await
+}
+
 pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+    events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+) -> impl Stream<Item=Result<LanguageModelCompletionEvent>> {
     struct State {
-        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+        events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
     }
 
     futures::stream::unfold(
@@ -493,57 +593,57 @@ pub fn map_to_language_model_completion_events(
             events
         },
         move |mut state: State| {
-        let inner_handle = handle.clone();
-        async move {
-            inner_handle.spawn(async {
-                while let Some(event) = state.events.next().await {
-                    match event {
-                        Ok(event) => match event {
-                            ConverseStreamOutput::ContentBlockDelta(cb_delta) => {
-                                if let Some(ContentBlockDelta::Text(text_out)) = cb_delta.delta {
-                                    return Some((
-                                        Some(Ok(LanguageModelCompletionEvent::Text(text_out))),
-                                        state,
-                                    ));
-                                } else if let Some(ContentBlockDelta::ToolUse(_)) = cb_delta.delta {
-                                    return Some((
-                                        Some(Err(anyhow!("The Bedrock provider has not implemented tool use yet"))),
-                                        state,
-                                    ));
-                                } else if cb_delta.delta.is_none() {
-                                    return Some((None, state));
-                                }
-                            }
-                            ConverseStreamOutput::ContentBlockStart(cb_start) => {
-                                if let Some(start) = cb_start.start {
-                                    match start {
-                                        ContentBlockStart::ToolUse(_) => {
-                                            return Some((
-                                                Some(Err(anyhow!("The Bedrock provider has not implemented tool use yet"))),
-                                                state,
-                                            ))
-                                        }
-                                        _ => {}
+            let inner_handle = handle.clone();
+            async move {
+                inner_handle.spawn(async {
+                    while let Some(event) = state.events.next().await {
+                        match event {
+                            Ok(event) => match event {
+                                ConverseStreamOutput::ContentBlockDelta(cb_delta) => {
+                                    if let Some(ContentBlockDelta::Text(text_out)) = cb_delta.delta {
+                                        return Some((
+                                            Some(Ok(LanguageModelCompletionEvent::Text(text_out))),
+                                            state,
+                                        ));
+                                    } else if let Some(ContentBlockDelta::ToolUse(_text_out)) = cb_delta.delta {
+                                        return Some((
+                                            Some(Err(anyhow!("The Bedrock provider has not implemented tool use yet"))),
+                                            state,
+                                        ));
+                                    } else if cb_delta.delta.is_none() {
+                                        return Some((None, state));
                                     }
                                 }
-                            }
-                            ConverseStreamOutput::ContentBlockStop(_) => {
-                                return Some((
-                                    Some(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))),
-                                    state,
-                                ));
-                            }
-                            ConverseStreamOutput::MessageStart(_) |
-                            ConverseStreamOutput::MessageStop(_) |
-                            ConverseStreamOutput::Metadata(_) => {}
-                            _ => {}
-                        },
-                        Err(err) => return Some((Some(Err(anyhow!(err))), state)),
+                                ConverseStreamOutput::ContentBlockStart(cb_start) => {
+                                    if let Some(start) = cb_start.start {
+                                        match start {
+                                            ContentBlockStart::ToolUse(_text_out) => {
+                                                return Some((
+                                                    Some(Err(anyhow!("The Bedrock provider has not implemented tool use yet"))),
+                                                    state,
+                                                ))
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                ConverseStreamOutput::ContentBlockStop(_) => {
+                                    return Some((
+                                        Some(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))),
+                                        state,
+                                    ));
+                                }
+                                ConverseStreamOutput::MessageStart(_) |
+                                ConverseStreamOutput::MessageStop(_) |
+                                ConverseStreamOutput::Metadata(_) => {}
+                                _ => {}
+                            },
+                            Err(err) => return Some((Some(Err(anyhow!(err))), state)),
+                        }
                     }
-                }
-                None
-            }).await.unwrap()
-        }
+                    None
+                }).await.unwrap()
+            }
         },
     ).filter_map(|event| async move { event })
 }
@@ -564,7 +664,7 @@ impl ConfigurationView {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
-        .detach();
+            .detach();
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
@@ -580,7 +680,7 @@ impl ConfigurationView {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
-                .log_err();
+                    .log_err();
             }
         }));
 
@@ -623,7 +723,7 @@ impl ConfigurationView {
                 })?
                 .await
         })
-        .detach_and_log_err(cx);
+            .detach_and_log_err(cx);
     }
 
     fn reset_credentials(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -640,7 +740,7 @@ impl ConfigurationView {
                 .update(&mut cx, |state, cx| state.reset_credentials(cx))?
                 .await
         })
-        .detach_and_log_err(cx);
+            .detach_and_log_err(cx);
     }
 
     fn make_text_style(&self, cx: &Context<Self>) -> TextStyle {

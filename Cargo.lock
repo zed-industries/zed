@@ -1633,7 +1633,6 @@ dependencies = [
  "aws-smithy-types",
  "futures 0.3.31",
  "http_client",
- "schemars",
  "tokio",
 ]
 
@@ -1771,10 +1770,8 @@ name = "bedrock"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "aws-config",
  "aws-sdk-bedrockruntime",
  "futures 0.3.31",
- "gpui_tokio",
  "schemars",
  "serde",
  "strum",

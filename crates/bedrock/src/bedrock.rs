@@ -6,6 +6,7 @@ use anyhow::{anyhow, Context, Error, Result};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
 pub use aws_sdk_bedrockruntime::types::ContentBlock as BedrockInnerContent;
+pub use aws_sdk_bedrockruntime::types::{ToolSpecification as BedrockTool, ToolChoice as BedrockToolChoice, SpecificToolChoice as BedrockSpecificTool};
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
 use bedrock::types::ConverseOutput as Response;
 pub use bedrock::types::{
@@ -13,7 +14,7 @@ pub use bedrock::types::{
     ConverseStreamOutput as BedrockStreamingResponse, Message as BedrockMessage,
     ResponseStream as BedrockResponseStream,
 };
-use futures::stream::BoxStream;
+use futures::stream::{BoxStream};
 use futures::{stream, Stream};
 pub use models::*;
 use serde::{Deserialize, Serialize};
@@ -65,7 +66,7 @@ pub async fn stream_completion(
                             Ok(None) => None,
                             Err(e) => Some((
                                 // Figure out how we can capture Throttling Exceptions
-                                Err(BedrockError::Other(anyhow!(
+                                Err(BedrockError::ClientError(anyhow!(
                                     "{:?}",
                                     aws_sdk_bedrockruntime::error::DisplayErrorContext(e)
                                 ))),
@@ -90,6 +91,8 @@ pub struct Request {
     pub model: String,
     pub max_tokens: u32,
     pub messages: Vec<BedrockMessage>,
+    pub tools: Vec<BedrockTool>,
+    pub tool_choice: Option<BedrockToolChoice>,
     pub system: Option<String>,
     pub metadata: Option<Metadata>,
     pub stop_sequences: Vec<String>,
