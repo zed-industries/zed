@@ -2759,9 +2759,7 @@ impl Window {
                     });
 
                     // Measure and rescale output size for layout
-                    window.with_element_scale(scale, |window| {
-                        measure(known_size, available_space, window, cx).map(|size| size * scale)
-                    })
+                    measure(known_size, available_space, window, cx).map(|size| size * scale)
                 },
             )
     }

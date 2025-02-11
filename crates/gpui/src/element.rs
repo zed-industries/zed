@@ -423,10 +423,17 @@ impl<E: Element> Drawable<E> {
 
     pub(crate) fn layout_as_root(
         &mut self,
-        available_space: Size<AvailableSpace>,
+        mut available_space: Size<AvailableSpace>,
         window: &mut Window,
         cx: &mut App,
     ) -> Size<Pixels> {
+        available_space = available_space.map(|space| match space {
+            AvailableSpace::Definite(pixels) => {
+                AvailableSpace::Definite(pixels * window.element_scale())
+            }
+            x => x,
+        });
+
         if matches!(&self.phase, ElementDrawPhase::Start) {
             window.with_element_origin(Point::default(), |window| {
                 self.request_layout(window, cx);
@@ -468,7 +475,7 @@ impl<E: Element> Drawable<E> {
             _ => panic!("cannot measure after painting"),
         };
 
-        window.layout_bounds(layout_id).size
+        window.layout_bounds(layout_id).size / window.element_scale()
     }
 }
 
@@ -568,9 +575,10 @@ impl AnyElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<FocusHandle> {
-        window.with_element_origin(origin + window.element_origin(), |window| {
-            self.prepaint(window, cx)
-        })
+        window.with_element_origin(
+            origin * window.element_scale() + window.element_origin(),
+            |window| self.prepaint(window, cx),
+        )
     }
 
     /// Performs layout on this element in the available space, then prepaints it at the given absolute origin.

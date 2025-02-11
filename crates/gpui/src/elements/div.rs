@@ -1203,7 +1203,7 @@ impl Element for Div {
             self.interactivity
                 .request_layout(global_id, window, cx, |style, window, cx| {
                     window.with_text_style(style.text_style().cloned(), |window| {
-                        window.with_element_scale(style.scale, |window| {
+                        window.with_element_scale(style.scale * window.element_scale(), |window| {
                             child_layout_ids = self
                                 .children
                                 .iter_mut()
