@@ -1318,7 +1318,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
         em_advance: Pixels,
-        preview: &EditPredictionPreview,
+        preview: &mut EditPredictionPreview,
         target: Anchor,
         cursor: Option<DisplayPoint>,
         window: &mut Window,

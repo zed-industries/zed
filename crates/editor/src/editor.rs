@@ -506,13 +506,17 @@ pub enum EditPredictionPreview {
     /// Modifier is not pressed
     Inactive,
     /// Modifier pressed, animating to active
-    Started {
+    MovingTo {
         animation: Range<Instant>,
+        scroll_position: Option<gpui::Point<f32>>,
+        target_point: DisplayPoint,
+    },
+    Arrived {
         scroll_position: Option<gpui::Point<f32>>,
         target_point: Option<DisplayPoint>,
     },
     /// Modifier released, animating from active
-    Cancelled(Range<Instant>),
+    MovingFrom(Range<Instant>),
 }
 
 impl EditPredictionPreview {
@@ -522,7 +526,7 @@ impl EditPredictionPreview {
         snapshot: &EditorSnapshot,
         cursor: DisplayPoint,
     ) -> bool {
-        if matches!(self, Self::Started { .. }) {
+        if matches!(self, Self::MovingTo { .. } | Self::Arrived { .. }) {
             return false;
         }
         (*self, _) = Self::start_now(completion, snapshot, cursor);
@@ -535,16 +539,29 @@ impl EditPredictionPreview {
         snapshot: &EditorSnapshot,
         cursor: DisplayPoint,
     ) -> bool {
-        if let Self::Started {
-            target_point: current_target_point,
-            ..
-        } = self
-        {
-            let (new_preview, new_target_point) = Self::start_now(completion, snapshot, cursor);
-            if new_target_point != *current_target_point {
+        match self {
+            Self::Inactive => {}
+            Self::MovingTo { target_point, .. }
+            | Self::Arrived {
+                target_point: Some(target_point),
+                ..
+            } => {
+                let (new_preview, new_target_point) = Self::start_now(completion, snapshot, cursor);
+
+                if new_target_point != Some(*target_point) {
+                    *self = new_preview;
+                    return true;
+                }
+            }
+            Self::Arrived {
+                target_point: None, ..
+            } => {
+                let (new_preview, _) = Self::start_now(completion, snapshot, cursor);
+
                 *self = new_preview;
                 return true;
             }
+            Self::MovingFrom(..) => {}
         }
         false
     }
@@ -557,25 +574,21 @@ impl EditPredictionPreview {
         let now = Instant::now();
         match completion {
             InlineCompletion::Edit { .. } => (
-                Self::Started {
+                Self::Arrived {
                     target_point: None,
-                    animation: now..now,
                     scroll_position: None,
                 },
                 None,
             ),
             InlineCompletion::Move { target, .. } => {
                 let target_point = target.to_display_point(&snapshot.display_snapshot);
-                let row_diff = target_point.row().0.abs_diff(cursor.row().0);
-                let column_diff = target_point.column().abs_diff(cursor.column());
-                let distance = ((row_diff.pow(2) + column_diff.pow(2)) as f32).sqrt();
-                let duration = Duration::from_millis((distance * 6.) as u64);
+                let duration = Self::animation_duration(cursor, target_point);
 
                 (
-                    Self::Started {
+                    Self::MovingTo {
                         animation: now..now + duration,
                         scroll_position: Some(snapshot.scroll_position()),
-                        target_point: Some(target_point),
+                        target_point,
                     },
                     Some(target_point),
                 )
@@ -583,18 +596,31 @@ impl EditPredictionPreview {
         }
     }
 
-    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
-        if let Self::Started {
-            animation,
+    fn animation_duration(a: DisplayPoint, b: DisplayPoint) -> Duration {
+        const SPEED: f32 = 6.0;
+
+        let row_diff = b.row().0.abs_diff(a.row().0);
+        let column_diff = b.column().abs_diff(a.column());
+        let distance = ((row_diff.pow(2) + column_diff.pow(2)) as f32).sqrt();
+        Duration::from_millis((distance * SPEED) as u64)
+    }
+
+    fn cancel(&mut self, cursor: DisplayPoint, window: &mut Window, cx: &mut Context<Editor>) {
+        if let Self::MovingTo {
             scroll_position,
+            target_point,
+            ..
+        }
+        | Self::Arrived {
+            scroll_position,
+            target_point: Some(target_point),
             ..
         } = self
         {
             let now = Instant::now();
-            let duration = animation.end - animation.start;
-
+            let duration = Self::animation_duration(cursor, *target_point);
             let scroll_position = *scroll_position;
-            *self = Self::Cancelled(now..now + duration);
+            *self = Self::MovingFrom(now..now + duration);
 
             if let Some(scroll_position) = scroll_position {
                 cx.spawn_in(window, |editor, mut cx| async move {
@@ -609,38 +635,27 @@ impl EditPredictionPreview {
                 })
                 .detach();
             }
+        } else {
+            *self = Self::Inactive;
+            return;
         }
     }
 
     /// Whether the preview is active or we are animating to or from it.
     fn is_active(&self) -> bool {
-        match self {
-            Self::Inactive => false,
-            Self::Started { .. } => true,
-            Self::Cancelled(animation) => animation.end > Instant::now(),
-        }
-    }
-
-    // todo! consider renaming this
-    fn is_started(&self) -> bool {
-        match self {
-            Self::Inactive => false,
-            Self::Started { .. } => true,
-            Self::Cancelled(_) => false,
-        }
+        matches!(
+            self,
+            Self::MovingTo { .. } | Self::Arrived { .. } | Self::MovingFrom(..)
+        )
     }
 
     /// Returns true if the preview is active, not cancelled, and the animation is settled.
     fn is_active_settled(&self) -> bool {
-        match self {
-            Self::Inactive => false,
-            Self::Started { animation, .. } => animation.end < Instant::now(),
-            Self::Cancelled(_) => false,
-        }
+        matches!(self, Self::Arrived { .. })
     }
 
     fn move_state(
-        &self,
+        &mut self,
         snapshot: &EditorSnapshot,
         visible_row_range: Range<DisplayRow>,
         line_layouts: &[LineWithInvisibles],
@@ -649,10 +664,37 @@ impl EditPredictionPreview {
         target: Anchor,
         cursor: Option<DisplayPoint>,
     ) -> Option<EditPredictionMoveState> {
-        let (animation, forwards) = match self {
+        let delta = match self {
             Self::Inactive => return None,
-            Self::Started { animation, .. } => (animation, true),
-            Self::Cancelled(animation) => (animation, false),
+            Self::Arrived { .. } => 1.,
+            Self::MovingTo {
+                animation,
+                scroll_position,
+                target_point,
+            } => {
+                let now = Instant::now();
+                if animation.end < now {
+                    *self = Self::Arrived {
+                        scroll_position: *scroll_position,
+                        target_point: Some(*target_point),
+                    };
+                    1.0
+                } else {
+                    (now - animation.start).as_secs_f32()
+                        / (animation.end - animation.start).as_secs_f32()
+                }
+            }
+            Self::MovingFrom(animation) => {
+                let now = Instant::now();
+                if animation.end < now {
+                    *self = Self::Inactive;
+                    return None;
+                } else {
+                    let delta = (now - animation.start).as_secs_f32()
+                        / (animation.end - animation.start).as_secs_f32();
+                    1.0 - delta
+                }
+            }
         };
 
         let cursor = cursor?;
@@ -673,33 +715,16 @@ impl EditPredictionPreview {
 
         let target_character_x = target_row_layout.x_for_index(target_column);
 
-        let mut target_x = target_character_x - scroll_pixel_position.x;
-        let mut target_y =
+        let target_x = target_character_x - scroll_pixel_position.x;
+        let target_y =
             (target_position.row().as_f32() - scroll_pixel_position.y / line_height) * line_height;
 
-        let mut origin_x = line_layouts[cursor.row().minus(visible_row_range.start) as usize]
+        let origin_x = line_layouts[cursor.row().minus(visible_row_range.start) as usize]
             .x_for_index(cursor.column() as usize);
-        let mut origin_y =
+        let origin_y =
             (cursor.row().as_f32() - scroll_pixel_position.y / line_height) * line_height;
 
-        if !forwards {
-            std::mem::swap(&mut target_x, &mut origin_x);
-            std::mem::swap(&mut target_y, &mut origin_y);
-        }
-
-        let duration = animation.end - animation.start;
-
-        fn ease_out(t: f32) -> f32 {
-            if t >= 1.0 {
-                1.0
-            } else {
-                1.0 - (-10.0 * t).exp2()
-            }
-        }
-
-        let delta = ease_out(
-            (animation.start.elapsed().as_secs_f32() / duration.as_secs_f32()).clamp(0., 1.),
-        );
+        let delta = 1.0 - (-10.0 * delta).exp2();
 
         let x = origin_x + (target_x - origin_x) * delta;
         let y = origin_y + (target_y - origin_y) * delta;
@@ -5324,27 +5349,26 @@ impl Editor {
             return;
         }
 
+        let newest_head = self.selections.newest_anchor().head();
+
         if modifiers.alt {
             if let Some(completion) = self.active_inline_completion.as_ref() {
-                let newest_head = self
-                    .selections
-                    .newest_anchor()
-                    .head()
-                    .to_display_point(&position_map.snapshot);
-
                 if self.edit_prediction_preview.start(
                     &completion.completion,
                     &position_map.snapshot,
-                    newest_head,
+                    newest_head.to_display_point(&position_map.snapshot),
                 ) {
                     self.request_autoscroll(Autoscroll::fit(), cx);
                 }
             }
         } else {
-            self.edit_prediction_preview.cancel(window, cx);
+            self.edit_prediction_preview.cancel(
+                newest_head.to_display_point(&position_map.snapshot),
+                window,
+                cx,
+            );
         }
 
-        // TODO az this would cause a restart
         self.update_visible_inline_completion(window, cx);
         cx.notify();
     }
@@ -13888,7 +13912,9 @@ impl Editor {
         }
     }
 
-    pub fn previewing_edit_prediction_move(&self) -> Option<(Anchor, &EditPredictionPreview)> {
+    pub fn previewing_edit_prediction_move(
+        &mut self,
+    ) -> Option<(Anchor, &mut EditPredictionPreview)> {
         if !self.edit_prediction_preview.is_active() {
             return None;
         };
@@ -13897,7 +13923,7 @@ impl Editor {
             .as_ref()
             .and_then(|completion| match completion.completion {
                 InlineCompletion::Move { target, .. } => {
-                    Some((target, &self.edit_prediction_preview))
+                    Some((target, &mut self.edit_prediction_preview))
                 }
                 _ => None,
             })

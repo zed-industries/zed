@@ -146,7 +146,7 @@ impl Editor {
                 target_bottom = newest_selection_top + 1.;
             }
 
-            if self.edit_prediction_preview.is_started() {
+            if self.edit_prediction_preview.is_active() {
                 if let Some(completion) = self.active_inline_completion.as_ref() {
                     match completion.completion {
                         crate::InlineCompletion::Edit { .. } => {}
