@@ -159,7 +159,7 @@ impl Render for HelloWorld {
 fn main() {
     Application::new()
         .with_assets(Assets {
-            base: PathBuf::from("crates/gpui/examples"),
+            base: PathBuf::from("examples"),
         })
         .run(|cx: &mut App| {
             let bounds = Bounds::centered(None, size(px(500.0), px(500.0)), cx);

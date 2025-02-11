@@ -9,6 +9,7 @@ use gpui::{
     Bounds, Context, ImageSource, KeyBinding, Menu, MenuItem, Point, SharedString, SharedUri,
     TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
+use reqwest_client::ReqwestClient;
 
 struct Assets {
     base: PathBuf,
@@ -127,10 +128,13 @@ actions!(image, [Quit]);
 fn main() {
     env_logger::init();
 
+    let http_client = ReqwestClient::user_agent("gpui_image_example").unwrap();
+
     Application::new()
         .with_assets(Assets {
-            base: PathBuf::from("crates/gpui/examples"),
+            base: PathBuf::from("examples"),
         })
+        .with_http_client(Arc::new(http_client))
         .run(|cx: &mut App| {
             cx.activate(true);
             cx.on_action(|_: &Quit, cx| cx.quit());
@@ -158,7 +162,7 @@ fn main() {
             cx.open_window(window_options, |_, cx| {
                 cx.new(|_| ImageShowcase {
                     // Relative path to your root project path
-                    local_resource: PathBuf::from_str("crates/gpui/examples/image/app-icon.png")
+                    local_resource: PathBuf::from_str("examples/image/app-icon.png")
                         .unwrap()
                         .into(),
 

@@ -70,7 +70,7 @@ impl Render for SvgExample {
 fn main() {
     Application::new()
         .with_assets(Assets {
-            base: PathBuf::from("crates/gpui/examples"),
+            base: PathBuf::from("examples"),
         })
         .run(|cx: &mut App| {
             let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
