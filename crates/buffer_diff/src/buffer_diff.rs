@@ -5,8 +5,8 @@ use language::{Language, LanguageRegistry};
 use rope::Rope;
 use std::{cmp, future::Future, iter, ops::Range, sync::Arc};
 use sum_tree::SumTree;
-use text::ToOffset as _;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point};
+use text::{ToOffset as _, ToPoint as _};
 use util::ResultExt;
 
 pub struct BufferDiff {
@@ -178,6 +178,7 @@ impl BufferDiffSnapshot {
         let mut start = 0;
         let mut pos = buffer.anchor_before(0);
         while let Some(hunk) = hunks.next() {
+            log::debug!("iter");
             assert!(buffer_range.start.cmp(&pos, buffer).is_ge());
             assert!(hunk.buffer_range.start.cmp(&pos, buffer).is_ge());
             if hunk
@@ -200,14 +201,21 @@ impl BufferDiffSnapshot {
                 .cmp(&hunk.buffer_range.end, buffer)
                 .is_lt()
             {
-                break;
+                log::debug!(
+                    "breaking: {:?} vs {:?}",
+                    buffer_range.start.to_point(buffer),
+                    hunk.buffer_range.end.to_point(buffer)
+                );
+                return None;
             }
 
             start += hunk.buffer_range.start.to_offset(buffer) - pos.to_offset(buffer);
             start += hunk.diff_base_byte_range.end - hunk.diff_base_byte_range.start;
             pos = hunk.buffer_range.end;
         }
-        None
+        start += buffer_range.start.to_offset(buffer) - pos.to_offset(buffer);
+        let end = start + buffer_range.end.to_offset(buffer) - buffer_range.start.to_offset(buffer);
+        Some(start..end)
     }
 }
 

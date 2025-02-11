@@ -12693,6 +12693,7 @@ impl Editor {
     }
 
     pub fn unstage_diff_hunks(&mut self, ranges: &[Range<Anchor>], cx: &mut Context<Self>) {
+        log::debug!("try to unstage");
         let Some(project) = &self.project else {
             return;
         };
