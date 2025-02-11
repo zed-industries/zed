@@ -26,6 +26,8 @@ use postage::watch;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
+use rustls::ClientConfig;
+use rustls_platform_verifier::ConfigVerifierExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -1126,18 +1128,7 @@ impl Client {
 
             match url_scheme {
                 Https => {
-                    let client_config = {
-                        let mut root_store = rustls::RootCertStore::empty();
-
-                        let root_certs = rustls_native_certs::load_native_certs();
-                        for error in root_certs.errors {
-                            log::warn!("error loading native certs: {:?}", error);
-                        }
-                        root_store.add_parsable_certificates(root_certs.certs);
-                        rustls::ClientConfig::builder()
-                            .with_root_certificates(root_store)
-                            .with_no_client_auth()
-                    };
+                    let client_config = ClientConfig::with_platform_verifier();
 
                     let (stream, _) =
                         async_tungstenite::async_tls::client_async_tls_with_connector(
