@@ -1,6 +1,7 @@
 # Inno Setup executable path
 $innoSetupPath = "C:\zjk\apps\Inno Setup 6\ISCC.exe"
 $innoFilePath = ".\crates\zed\resources\windows\installer\zed.iss"
+$signToolPath = "C:\zjk\projects\zed\crates\zed\resources\windows\installer\sign.cmd"
 
 $product = @{
     "nameLong"        = "zed"
@@ -38,6 +39,7 @@ $definitions = @{
     "AppId"           = $product.AppId
     "AppUserId"       = $product.AppUserId
     "InstallTarget"   = "user"
+    "signToolPath"    = $signToolPath
 }
 
 $defs = @()
@@ -45,7 +47,9 @@ foreach ($key in $definitions.Keys) {
     $defs += "/d$key=$($definitions[$key])"
 }
 
-$innoArgs = @($issPath) + $innoFilePath + $defs
+# $innoArgs = @($issPath) + $innoFilePath + $defs + "/sdefaultsign=`"C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe`" sign /f `"C:\zjk\projects\installer1\cert.pfx`" /p zjk01 /fd SHA256 $f"
+$innoArgs = @($issPath) + $innoFilePath + $defs + "/sdefaultsign=`$p"
+# $innoArgs = @($issPath) + $innoFilePath + $defs
 
 # Execute Inno Setup
 Write-Host "🚀 Running Inno Setup: $innoSetupPath $innoArgs"
