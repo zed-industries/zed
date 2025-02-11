@@ -573,8 +573,8 @@ impl InlineCompletionButton {
             language::InlineCompletionPreviewMode::Auto => true,
             language::InlineCompletionPreviewMode::WhenHoldingModifier => false,
         };
-        menu = menu.separator().header("Modes").toggleable_entry(
-            "Eager Preview",
+        menu = menu.separator().toggleable_entry(
+            "Eager Preview Mode",
             is_eager_preview_enabled,
             IconPosition::Start,
             None,
