@@ -14,7 +14,7 @@ doctest = false
 
 [features]
 test-support = [
-    "diff/test-support",
+    "buffer_diff/test-support",
     "gpui/test-support",
     "language/test-support",
     "text/test-support",
@@ -26,7 +26,7 @@ anyhow.workspace = true
 clock.workspace = true
 collections.workspace = true
 ctor.workspace = true
-diff.workspace = true
+buffer_diff.workspace = true
 env_logger.workspace = true
 futures.workspace = true
 gpui.workspace = true
@@ -47,7 +47,7 @@ tree-sitter.workspace = true
 util.workspace = true
 
 [dev-dependencies]
-diff = { workspace = true, features = ["test-support"] }
+buffer_diff = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }

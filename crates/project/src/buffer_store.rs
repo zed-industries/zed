@@ -6,9 +6,9 @@ use crate::{
 };
 use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
 use anyhow::{anyhow, bail, Context as _, Result};
+use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::Client;
 use collections::{hash_map, HashMap, HashSet};
-use diff::{BufferDiff, BufferDiffEvent, BufferDiffSnapshot};
 use fs::Fs;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt as _, StreamExt};
 use git::{blame::Blame, repository::RepoPath};
@@ -207,72 +207,74 @@ impl BufferDiffState {
             _ => false,
         };
         self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
+            let mut unstaged_changed_range = None;
             if let Some(unstaged_diff) = &unstaged_diff {
-                let snapshot = if index_changed || language_changed {
-                    cx.update(|cx| {
-                        BufferDiffSnapshot::build(
-                            buffer.clone(),
-                            index,
-                            language.clone(),
-                            language_registry.clone(),
-                            cx,
-                        )
-                    })?
-                    .await
-                } else {
-                    unstaged_diff
-                        .read_with(&cx, |changes, cx| {
-                            BufferDiffSnapshot::build_with_base_buffer(
-                                buffer.clone(),
-                                index,
-                                changes.snapshot.base_text.clone(),
-                                cx,
-                            )
-                        })?
-                        .await
-                };
+                unstaged_changed_range = BufferDiff::update_diff(
+                    unstaged_diff.clone(),
+                    buffer.clone(),
+                    index,
+                    index_changed,
+                    language_changed,
+                    language.clone(),
+                    language_registry.clone(),
+                    &mut cx,
+                )
+                .await?;
 
-                unstaged_diff.update(&mut cx, |unstaged_diff, cx| {
-                    unstaged_diff.set_state(snapshot, &buffer, cx);
+                unstaged_diff.update(&mut cx, |_, cx| {
                     if language_changed {
                         cx.emit(BufferDiffEvent::LanguageChanged);
+                    }
+                    if let Some(changed_range) = unstaged_changed_range.clone() {
+                        cx.emit(BufferDiffEvent::DiffChanged {
+                            changed_range: Some(changed_range),
+                        })
                     }
                 })?;
             }
 
             if let Some(uncommitted_diff) = &uncommitted_diff {
-                let snapshot =
+                let uncommitted_changed_range =
                     if let (Some(unstaged_diff), true) = (&unstaged_diff, index_matches_head) {
-                        unstaged_diff.read_with(&cx, |diff, _| diff.snapshot.clone())?
-                    } else if head_changed || language_changed {
-                        cx.update(|cx| {
-                            BufferDiffSnapshot::build(
-                                buffer.clone(),
-                                head,
-                                language.clone(),
-                                language_registry.clone(),
-                                cx,
-                            )
+                        uncommitted_diff.update(&mut cx, |uncommitted_diff, cx| {
+                            uncommitted_diff.update_diff_from(&buffer, unstaged_diff, cx)
                         })?
-                        .await
                     } else {
-                        uncommitted_diff
-                            .read_with(&cx, |changes, cx| {
-                                BufferDiffSnapshot::build_with_base_buffer(
-                                    buffer.clone(),
-                                    head,
-                                    changes.snapshot.base_text.clone(),
-                                    cx,
-                                )
-                            })?
-                            .await
+                        BufferDiff::update_diff(
+                            uncommitted_diff.clone(),
+                            buffer.clone(),
+                            head,
+                            head_changed,
+                            language_changed,
+                            language.clone(),
+                            language_registry.clone(),
+                            &mut cx,
+                        )
+                        .await?
                     };
 
-                uncommitted_diff.update(&mut cx, |diff, cx| {
-                    diff.set_state(snapshot, &buffer, cx);
+                uncommitted_diff.update(&mut cx, |uncommitted_diff, cx| {
                     if language_changed {
                         cx.emit(BufferDiffEvent::LanguageChanged);
                     }
+                    let changed_range = match (unstaged_changed_range, uncommitted_changed_range) {
+                        (None, None) => None,
+                        (Some(unstaged_range), None) => {
+                            uncommitted_diff.range_to_hunk_range(unstaged_range, &buffer, cx)
+                        }
+                        (None, Some(uncommitted_range)) => Some(uncommitted_range),
+                        (Some(unstaged_range), Some(uncommitted_range)) => maybe!({
+                            let expanded_range = uncommitted_diff.range_to_hunk_range(
+                                unstaged_range,
+                                &buffer,
+                                cx,
+                            )?;
+                            let start = expanded_range.start.min(&uncommitted_range.start, &buffer);
+                            let end = expanded_range.end.max(&uncommitted_range.end, &buffer);
+                            Some(start..end)
+                        }),
+                    };
+                    cx.emit(BufferDiffEvent::DiffChanged { changed_range });
                 })?;
             }
 
@@ -280,6 +282,7 @@ impl BufferDiffState {
                 this.update(&mut cx, |this, _| {
                     this.index_changed = false;
                     this.head_changed = false;
+                    this.language_changed = false;
                     for tx in this.diff_updated_futures.drain(..) {
                         tx.send(()).ok();
                     }
@@ -1478,29 +1481,19 @@ impl BufferStore {
                     diff_state.language = language;
                     diff_state.language_registry = language_registry;
 
-                    let diff = cx.new(|_| BufferDiff {
-                        buffer_id,
-                        snapshot: BufferDiffSnapshot::new(&text_snapshot),
-                        unstaged_diff: None,
-                    });
+                    let diff = cx.new(|_| BufferDiff::new(&text_snapshot));
                     match kind {
                         DiffKind::Unstaged => diff_state.unstaged_diff = Some(diff.downgrade()),
                         DiffKind::Uncommitted => {
                             let unstaged_diff = if let Some(diff) = diff_state.unstaged_diff() {
                                 diff
                             } else {
-                                let unstaged_diff = cx.new(|_| BufferDiff {
-                                    buffer_id,
-                                    snapshot: BufferDiffSnapshot::new(&text_snapshot),
-                                    unstaged_diff: None,
-                                });
+                                let unstaged_diff = cx.new(|_| BufferDiff::new(&text_snapshot));
                                 diff_state.unstaged_diff = Some(unstaged_diff.downgrade());
                                 unstaged_diff
                             };
 
-                            diff.update(cx, |diff, _| {
-                                diff.unstaged_diff = Some(unstaged_diff);
-                            });
+                            diff.update(cx, |diff, _| diff.set_secondary_diff(unstaged_diff));
                             diff_state.uncommitted_diff = Some(diff.downgrade())
                         }
                     };
@@ -2397,9 +2390,8 @@ impl BufferStore {
                 shared.diff = Some(diff.clone());
             }
         })?;
-        let staged_text = diff.read_with(&cx, |diff, _| {
-            diff.snapshot.base_text.as_ref().map(|buffer| buffer.text())
-        })?;
+        let staged_text =
+            diff.read_with(&cx, |diff, _| diff.base_text().map(|buffer| buffer.text()))?;
         Ok(proto::OpenUnstagedDiffResponse { staged_text })
     }
 
@@ -2430,14 +2422,13 @@ impl BufferStore {
             use proto::open_uncommitted_diff_response::Mode;
 
             let staged_buffer = diff
-                .unstaged_diff
-                .as_ref()
-                .and_then(|diff| diff.read(cx).snapshot.base_text.as_ref());
+                .secondary_diff()
+                .and_then(|diff| diff.read(cx).base_text());
 
             let mode;
             let staged_text;
             let committed_text;
-            if let Some(committed_buffer) = &diff.snapshot.base_text {
+            if let Some(committed_buffer) = diff.base_text() {
                 committed_text = Some(committed_buffer.text());
                 if let Some(staged_buffer) = staged_buffer {
                     if staged_buffer.remote_id() == committed_buffer.remote_id() {
