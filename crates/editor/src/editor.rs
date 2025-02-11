@@ -12607,12 +12607,7 @@ impl Editor {
         }
     }
 
-    pub fn copy_file_name(
-        &mut self,
-        _: &CopyFileName,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn copy_file_name(&mut self, _: &CopyFileName, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(file) = self.target_file(cx) {
             if let Some(file_name) = file.path().file_name() {
                 if let Some(name) = file_name.to_str() {
