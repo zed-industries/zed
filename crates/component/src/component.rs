@@ -250,7 +250,7 @@ impl RenderOnce for ComponentExampleGroup {
                         .flex()
                         .items_center()
                         .gap_3()
-                        .child(div().h_px().w_4().bg(cx.theme().colors().border_muted))
+                        .child(div().h_px().w_4().bg(cx.theme().colors().border_variant))
                         .child(
                             div()
                                 .flex_none()

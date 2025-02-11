@@ -41,11 +41,20 @@ impl ComponentPreview {
         let components = components().all_sorted();
         let sorted_components = components.clone();
 
-        v_flex().gap_px().p_1().children(
-            sorted_components
-                .into_iter()
-                .map(|component| self.render_sidebar_entry(&component, _cx)),
-        )
+        v_flex()
+            .max_w_48()
+            .gap_px()
+            .p_1()
+            .children(
+                sorted_components
+                    .into_iter()
+                    .map(|component| self.render_sidebar_entry(&component, _cx)),
+            )
+            .child(
+                label_muted("These will be clickable once the layout is moved to a gpui::List.")
+                    .size(LabelSize::XSmall)
+                    .italic(),
+            )
     }
 
     fn render_sidebar_entry(
