@@ -698,7 +698,15 @@
   {
     "context": "edit_prediction && !edit_prediction_requires_modifier",
     "bindings": {
+      // "tab" is bound in the vim bindings above so that default editor behavior isn't used, so
+      // need to rebind it even though this is in the base keymap.
       "tab": "editor::AcceptEditPrediction"
+    }
+  },
+  {
+    "context": "edit_prediction",
+    "bindings": {
+      "ctrl-l": "editor::AcceptEditPrediction"
     }
   }
 ]
