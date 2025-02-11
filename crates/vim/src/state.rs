@@ -217,7 +217,7 @@ impl VimGlobals {
 
         cx.observe_global::<SettingsStore>(move |cx| {
             if Vim::enabled(cx) {
-                KeyBinding::enable_vim_mode(cx);
+                KeyBinding::set_vim_mode(cx, true);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.show_namespace(Vim::NAMESPACE);
                 });
@@ -225,7 +225,7 @@ impl VimGlobals {
                     interceptor.set(Box::new(command_interceptor));
                 });
             } else {
-                KeyBinding::disable_vim_mode(cx);
+                KeyBinding::set_vim_mode(cx, true);
                 *Vim::globals(cx) = VimGlobals::default();
                 CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
                     interceptor.clear();
