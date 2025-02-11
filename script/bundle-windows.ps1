@@ -8,14 +8,13 @@ $product = @{
     "nameShort"       = "zed"
     "DirName"         = "zed"
     "RegValueName"    = "zed"
-    "ShellNameShort"  = "zed"
+    "ShellNameShort"  = "&Zed Editor"
     "MutexName"       = "ZedSetupMutex" # TODO:
     "applicationName" = "Zed"
-    "AppUserModelId"  = "Zed.Zed"
+    "AppUserModelId"  = "ZedIndustry.Zed"
     # "RepoDir"         = ".\crates\zed\resources\windows\installer"
     "RepoDir"         = "C:\zjk\projects\zed\crates\zed\resources\windows\installer"
     ”AppId"           = "{{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}"
-    ”AppUserId"       = "{{6DBC4C0D-F595-486C-B109-46A42C69D8A5}"
 }
 
 $sourcePath = ".\crates\zed\resources\windows\installer\"
@@ -37,19 +36,17 @@ $definitions = @{
     "OutputDir"       = $outputPath
     "RepoDir"         = $product.RepoDir
     "AppId"           = $product.AppId
-    "AppUserId"       = $product.AppUserId
+    "AppUserId"       = $product.AppUserModelId
     "InstallTarget"   = "user"
     "signToolPath"    = $signToolPath
 }
 
 $defs = @()
 foreach ($key in $definitions.Keys) {
-    $defs += "/d$key=$($definitions[$key])"
+    $defs += "/d$key=`"$($definitions[$key])`""
 }
 
-# $innoArgs = @($issPath) + $innoFilePath + $defs + "/sdefaultsign=`"C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe`" sign /f `"C:\zjk\projects\installer1\cert.pfx`" /p zjk01 /fd SHA256 $f"
-$innoArgs = @($issPath) + $innoFilePath + $defs + "/sdefaultsign=`$p"
-# $innoArgs = @($issPath) + $innoFilePath + $defs
+$innoArgs = @($issPath) + $innoFilePath + $defs + "/sDefaultsign=`"$signToolPath `$f`""
 
 # Execute Inno Setup
 Write-Host "🚀 Running Inno Setup: $innoSetupPath $innoArgs"

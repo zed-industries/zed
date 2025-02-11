@@ -34,7 +34,7 @@ WizardStyle=modern
 // that VS Code is ready to be shutdown, so we're good to use `force` here.
 CloseApplications=force
 
-SignTool=defaultsign {#signToolPath} $f
+SignTool=Defaultsign
 
 #if "user" == InstallTarget
 DefaultDirName={userpf}\{#DirName}
