@@ -29,7 +29,7 @@ use gpui::{
     WindowOptions,
 };
 use image_viewer::ImageInfo;
-use migrator::Migrator;
+use migrate::{migrate_keymap_in_memory, migrate_settings_in_memory, MigratorBanner};
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
@@ -151,6 +151,7 @@ pub fn initialize_workspace(
         let workspace_handle = cx.entity().clone();
         let center_pane = workspace.active_pane().clone();
         initialize_pane(workspace, &center_pane, window, cx);
+
         cx.subscribe_in(&workspace_handle, window, {
             move |workspace, _, event, window, cx| match event {
                 workspace::Event::PaneAdded(pane) => {
@@ -870,6 +871,8 @@ fn initialize_pane(
             toolbar.add_item(lsp_log_item, window, cx);
             let syntax_tree_item = cx.new(|_| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, window, cx);
+            let migrator_banner = cx.new(|_| MigratorBanner::new());
+            toolbar.add_item(migrator_banner, window, cx);
         })
     });
 }
@@ -1103,7 +1106,7 @@ pub fn handle_settings_file_changes(
     cx: &mut App,
     settings_changed: impl Fn(Option<anyhow::Error>, &mut App) + 'static,
 ) {
-    let user_settings_content = Migrator::migrate_settings_in_memory(
+    let user_settings_content = migrate_settings_in_memory(
         cx.background_executor()
             .block(user_settings_file_rx.next())
             .unwrap(),
@@ -1118,10 +1121,8 @@ pub fn handle_settings_file_changes(
     cx.spawn(move |cx| async move {
         while let Some(user_settings_content) = user_settings_file_rx.next().await {
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
-                let result = store.set_user_settings(
-                    &Migrator::migrate_settings_in_memory(user_settings_content),
-                    cx,
-                );
+                let result =
+                    store.set_user_settings(&migrate_settings_in_memory(user_settings_content), cx);
                 if let Err(err) = &result {
                     log::error!("Failed to load user settings: {err}");
                 }
@@ -1182,7 +1183,7 @@ pub fn handle_keymap_file_changes(
                 _ = keyboard_layout_rx.next() => {},
                 content = user_keymap_file_rx.next() => {
                     if let Some(content) = content {
-                        user_keymap_content = Migrator::migrate_keymap_in_memory(content);
+                        user_keymap_content = migrate_keymap_in_memory(content);
                     }
                 }
             };
@@ -1633,7 +1634,7 @@ mod tests {
     use language::{LanguageMatcher, LanguageRegistry};
     use project::{project_settings::ProjectSettings, Project, ProjectPath, WorktreeSettings};
     use serde_json::json;
-    use settings::{handle_settings_file_changes, watch_config_file, SettingsStore};
+    use settings::{watch_config_file, SettingsStore};
     use std::{
         path::{Path, PathBuf},
         time::Duration,

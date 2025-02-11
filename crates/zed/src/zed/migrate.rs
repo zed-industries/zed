@@ -1,63 +1,175 @@
+use anyhow::{Context as _, Result};
+use editor::Editor;
+use fs::Fs;
+use migrator::{migrate_keymap, migrate_settings};
+use settings::{KeymapFile, SettingsStore};
+use util::ResultExt;
+
 use std::sync::Arc;
 
-use anyhow::Context;
-use fs::Fs;
-use settings::{KeymapFile, SettingsStore};
+use gpui::{EventEmitter, Task};
+use ui::prelude::*;
+use workspace::item::ItemHandle;
+use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
+enum MigrationType {
+    Keymap,
+    Settings,
+}
 
-pub fn should_migrate_settings(settings: &serde_json::Value) -> bool {
-    let Ok(old_text) = serde_json::to_string(settings) else {
-        return false;
+pub struct MigratorBanner {
+    migration_type: Option<MigrationType>,
+    should_migrate_task: Option<Task<()>>,
+}
+
+impl Default for MigratorBanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MigratorBanner {
+    pub fn new() -> Self {
+        Self {
+            migration_type: None,
+            should_migrate_task: None,
+        }
+    }
+
+    fn get_title(&self) -> &str {
+        match self.migration_type {
+            Some(MigrationType::Keymap) => "keymap",
+            Some(MigrationType::Settings) => "settings",
+            None => unreachable!(),
+        }
+    }
+}
+
+impl MigratorBanner {}
+
+impl EventEmitter<ToolbarItemEvent> for MigratorBanner {}
+
+impl ToolbarItemView for MigratorBanner {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ToolbarItemLocation {
+        cx.notify();
+        self.migration_type = None;
+        self.should_migrate_task.take();
+        let Some(target) = active_pane_item
+            .and_then(|item| item.act_as::<Editor>(cx))
+            .and_then(|editor| editor.update(cx, |editor, cx| editor.target_file_abs_path(cx)))
+        else {
+            return ToolbarItemLocation::Hidden;
+        };
+        if &target == paths::keymap_file() {
+            let fs = <dyn Fs>::global(cx);
+            let should_migrate = should_migrate_keymap(fs);
+            self.should_migrate_task =
+                Some(cx.spawn_in(window, |migrator_banner, mut cx| async move {
+                    if let Ok(true) = should_migrate.await {
+                        migrator_banner
+                            .update(&mut cx, |this, cx| {
+                                this.migration_type = Some(MigrationType::Keymap);
+                                cx.emit(ToolbarItemEvent::ChangeLocation(
+                                    ToolbarItemLocation::Secondary,
+                                ));
+                                cx.notify();
+                            })
+                            .log_err();
+                    }
+                }));
+        } else if &target == paths::settings_file() {
+            let fs = <dyn Fs>::global(cx);
+            let should_migrate = should_migrate_settings(fs);
+            self.should_migrate_task =
+                Some(cx.spawn_in(window, |migrator_banner, mut cx| async move {
+                    if let Ok(true) = should_migrate.await {
+                        migrator_banner
+                            .update(&mut cx, |this, cx| {
+                                this.migration_type = Some(MigrationType::Settings);
+                                cx.emit(ToolbarItemEvent::ChangeLocation(
+                                    ToolbarItemLocation::Secondary,
+                                ));
+                                cx.notify();
+                            })
+                            .log_err();
+                    }
+                }));
+        }
+        return ToolbarItemLocation::Hidden;
+    }
+}
+
+impl Render for MigratorBanner {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .p_2()
+            .justify_between()
+            .bg(cx.theme().status().info_background)
+            .rounded_md()
+            .child(
+                Label::new(
+                    format!(
+                        "A few {} were updated in this version. Your existing ones still work, but migration is recommended. You can also review the diff before auto-migrating.",
+                        self.get_title()
+                    )
+                )
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new(
+                            SharedString::from("backup-and-migrate"),
+                            "Backup and Migrate",
+                        )
+                        .style(ButtonStyle::Filled)
+                        .on_click(|_, window, cx| {
+                            //
+                        })
+
+                    )
+                    .child(
+                        Button::new(
+                            SharedString::from("view-diff"),
+                            "View Diff",
+                        ),
+                    )
+            )
+            .into_any_element()
+    }
+}
+
+pub fn migrate_keymap_in_memory(old_text: String) -> String {
+    if let Some(new_text) = migrate_keymap(&old_text) {
+        return new_text;
     };
-    migrator::migrate_settings(&old_text)
-        .ok()
-        .flatten()
-        .is_some()
+    old_text
 }
 
-pub fn migrate_settings(fs: Arc<dyn Fs>, cx: &mut gpui::App) {
-    cx.background_executor()
-        .spawn(async move {
-            let old_text = SettingsStore::load_settings(&fs).await?;
-            let Some(new_text) = migrator::migrate_settings(&old_text)? else {
-                return anyhow::Ok(());
-            };
-            let settings_path = paths::settings_file().as_path();
-            if fs.is_file(settings_path).await {
-                fs.atomic_write(paths::settings_backup_file().to_path_buf(), old_text)
-                    .await
-                    .with_context(|| {
-                        "Failed to create settings backup in home directory".to_string()
-                    })?;
-                let resolved_path = fs.canonicalize(settings_path).await.with_context(|| {
-                    format!("Failed to canonicalize settings path {:?}", settings_path)
-                })?;
-                fs.atomic_write(resolved_path.clone(), new_text)
-                    .await
-                    .with_context(|| {
-                        format!("Failed to write settings to file {:?}", resolved_path)
-                    })?;
-            } else {
-                fs.atomic_write(settings_path.to_path_buf(), new_text)
-                    .await
-                    .with_context(|| {
-                        format!("Failed to write settings to file {:?}", settings_path)
-                    })?;
-            }
-            Ok(())
-        })
-        .detach_and_log_err(cx);
-}
-
-pub fn should_migrate_keymap(keymap_file: KeymapFile) -> bool {
-    let Ok(old_text) = serde_json::to_string(&keymap_file) else {
-        return false;
+pub fn migrate_settings_in_memory(old_text: String) -> String {
+    if let Some(new_text) = migrate_settings(&old_text) {
+        return new_text;
     };
-    migrator::migrate_keymap(&old_text).ok().flatten().is_some()
+    old_text
 }
 
-pub async fn migrate_keymap(fs: Arc<dyn Fs>) -> anyhow::Result<()> {
+async fn should_migrate_keymap(fs: Arc<dyn Fs>) -> Result<bool> {
     let old_text = KeymapFile::load_keymap_file(&fs).await?;
-    let Some(new_text) = migrator::migrate_keymap(&old_text)? else {
+    Ok(migrate_keymap(&old_text).is_some())
+}
+
+async fn should_migrate_settings(fs: Arc<dyn Fs>) -> Result<bool> {
+    let old_text = SettingsStore::load_settings(&fs).await?;
+    Ok(migrate_settings(&old_text).is_some())
+}
+
+async fn write_keymap_migration(fs: &Arc<dyn Fs>) -> Result<()> {
+    let old_text = KeymapFile::load_keymap_file(fs).await?;
+    let Some(new_text) = migrate_keymap(&old_text) else {
         return Ok(());
     };
     let keymap_path = paths::keymap_file().as_path();
@@ -77,6 +189,30 @@ pub async fn migrate_keymap(fs: Arc<dyn Fs>) -> anyhow::Result<()> {
             .await
             .with_context(|| format!("Failed to write keymap to file {:?}", keymap_path))?;
     }
+    Ok(())
+}
 
+async fn write_settings_migration(fs: &Arc<dyn Fs>) -> Result<()> {
+    let old_text = SettingsStore::load_settings(fs).await?;
+    let Some(new_text) = migrate_settings(&old_text) else {
+        return Ok(());
+    };
+    let settings_path = paths::settings_file().as_path();
+    if fs.is_file(settings_path).await {
+        fs.atomic_write(paths::settings_backup_file().to_path_buf(), old_text)
+            .await
+            .with_context(|| "Failed to create settings backup in home directory".to_string())?;
+        let resolved_path = fs
+            .canonicalize(settings_path)
+            .await
+            .with_context(|| format!("Failed to canonicalize settings path {:?}", settings_path))?;
+        fs.atomic_write(resolved_path.clone(), new_text)
+            .await
+            .with_context(|| format!("Failed to write settings to file {:?}", resolved_path))?;
+    } else {
+        fs.atomic_write(settings_path.to_path_buf(), new_text)
+            .await
+            .with_context(|| format!("Failed to write settings to file {:?}", settings_path))?;
+    }
     Ok(())
 }

@@ -1,13 +1,7 @@
 use anyhow::{Context, Result};
 use collections::HashMap;
 use convert_case::{Case, Casing};
-use fs::Fs;
-use settings::{KeymapFile, SettingsStore};
-use std::{
-    cmp::Reverse,
-    ops::Range,
-    sync::{Arc, LazyLock},
-};
+use std::{cmp::Reverse, ops::Range, sync::LazyLock};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Query, QueryMatch};
 
