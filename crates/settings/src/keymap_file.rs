@@ -1,11 +1,10 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KeyBinding, KeyBindingContextPredicate,
     NoAction, SharedString, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
 };
-use migrator::migrate_keymap;
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
     schema::{ArrayValidation, InstanceType, Schema, SchemaObject, SubschemaValidation},
@@ -598,7 +597,7 @@ impl KeymapFile {
         self.0.iter()
     }
 
-    async fn load_keymap_file(fs: &Arc<dyn Fs>) -> Result<String> {
+    pub async fn load_keymap_file(fs: &Arc<dyn Fs>) -> Result<String> {
         match fs.load(paths::keymap_file()).await {
             result @ Ok(_) => result,
             Err(err) => {
@@ -610,41 +609,6 @@ impl KeymapFile {
                 Err(err)
             }
         }
-    }
-
-    pub fn should_migrate_keymap(keymap_file: Self) -> bool {
-        let Ok(old_text) = serde_json::to_string(&keymap_file) else {
-            return false;
-        };
-        migrate_keymap(&old_text).is_some()
-    }
-
-    pub async fn migrate_keymap(fs: Arc<dyn Fs>) -> Result<()> {
-        let old_text = Self::load_keymap_file(&fs).await?;
-        let Some(new_text) = migrate_keymap(&old_text) else {
-            return Ok(());
-        };
-        let keymap_path = paths::keymap_file().as_path();
-        if fs.is_file(keymap_path).await {
-            fs.atomic_write(paths::keymap_backup_file().to_path_buf(), old_text)
-                .await
-                .with_context(|| {
-                    "Failed to create settings backup in home directory".to_string()
-                })?;
-            let resolved_path = fs
-                .canonicalize(keymap_path)
-                .await
-                .with_context(|| format!("Failed to canonicalize keymap path {:?}", keymap_path))?;
-            fs.atomic_write(resolved_path.clone(), new_text)
-                .await
-                .with_context(|| format!("Failed to write keymap to file {:?}", resolved_path))?;
-        } else {
-            fs.atomic_write(keymap_path.to_path_buf(), new_text)
-                .await
-                .with_context(|| format!("Failed to write keymap to file {:?}", keymap_path))?;
-        }
-
-        Ok(())
     }
 }
 

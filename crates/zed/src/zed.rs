@@ -4,6 +4,7 @@ pub mod inline_completion_registry;
 pub(crate) mod linux_prompts;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
+mod migrate;
 mod open_listener;
 mod quick_action_bar;
 #[cfg(target_os = "windows")]
@@ -1213,7 +1214,7 @@ fn show_keymap_migration_notification_if_needed(
     notification_id: NotificationId,
     cx: &mut App,
 ) -> bool {
-    if !KeymapFile::should_migrate_keymap(keymap_file) {
+    if !migrate::should_migrate_keymap(keymap_file) {
         return false;
     }
     let message = MarkdownString(format!(
@@ -1228,7 +1229,7 @@ fn show_keymap_migration_notification_if_needed(
         move |_, cx| {
             let fs = <dyn Fs>::global(cx);
             cx.spawn(move |weak_notification, mut cx| async move {
-                KeymapFile::migrate_keymap(fs).await.ok();
+                migrate::migrate_keymap(fs).await.ok();
                 weak_notification
                     .update(&mut cx, |_, cx| {
                         cx.emit(DismissEvent);
@@ -1247,7 +1248,7 @@ fn show_settings_migration_notification_if_needed(
     settings: serde_json::Value,
     cx: &mut App,
 ) {
-    if !SettingsStore::should_migrate_settings(&settings) {
+    if !migrate::should_migrate_settings(&settings) {
         return;
     }
     let message = MarkdownString(format!(
@@ -1261,7 +1262,7 @@ fn show_settings_migration_notification_if_needed(
         "Backup and Migrate Settings".into(),
         move |_, cx| {
             let fs = <dyn Fs>::global(cx);
-            cx.update_global(|store: &mut SettingsStore, _| store.migrate_settings(fs));
+            migrate::migrate_settings(fs, cx);
             cx.emit(DismissEvent);
         },
         cx,
