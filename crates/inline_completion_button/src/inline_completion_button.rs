@@ -438,13 +438,10 @@ impl InlineCompletionButton {
 
         let settings = AllLanguageSettings::get_global(cx);
         let globally_enabled = settings.show_inline_completions(None, cx);
-        menu = menu.toggleable_entry(
-            "All Files",
-            globally_enabled,
-            IconPosition::Start,
-            None,
-            move |_, cx| toggle_inline_completions_globally(fs.clone(), cx),
-        );
+        menu = menu.toggleable_entry("All Files", globally_enabled, IconPosition::Start, None, {
+            let fs = fs.clone();
+            move |_, cx| toggle_inline_completions_globally(fs.clone(), cx)
+        });
         menu = menu.separator().header("Privacy Settings");
 
         if let Some(provider) = &self.edit_prediction_provider {
@@ -553,6 +550,42 @@ impl InlineCompletionButton {
                     .icon_size(IconSize::Small),
             );
         }
+
+        let is_eager_preview_enabled = match settings.inline_completions_preview_mode() {
+            language::InlineCompletionPreviewMode::Auto => true,
+            language::InlineCompletionPreviewMode::WhenHoldingModifier => false,
+        };
+        menu = menu.separator().toggleable_entry(
+            "Eager Preview",
+            is_eager_preview_enabled,
+            IconPosition::Start,
+            None,
+            {
+                let fs = fs.clone();
+                move |_window, cx| {
+                    update_settings_file::<AllLanguageSettings>(
+                        fs.clone(),
+                        cx,
+                        move |settings, _cx| {
+                            let inline_preview = match is_eager_preview_enabled {
+                                true => language::InlineCompletionPreviewMode::WhenHoldingModifier,
+                                false => language::InlineCompletionPreviewMode::Auto,
+                            };
+
+                            if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
+                                edit_predictions.inline_preview = inline_preview;
+                            } else {
+                                settings.edit_predictions =
+                                    Some(language_settings::EditPredictionSettingsContent {
+                                        inline_preview,
+                                        ..Default::default()
+                                    });
+                            }
+                        },
+                    );
+                }
+            },
+        );
 
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
             menu = menu
