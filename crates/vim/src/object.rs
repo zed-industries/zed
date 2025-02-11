@@ -2483,18 +2483,18 @@ mod test {
 
         cx.set_shared_state("    ˇconst f = (x: unknown) => {")
             .await;
-        cx.simulate_shared_keystrokes("y a w").await;
+        cx.simulate_shared_keystrokes("escape y a w").await;
         cx.shared_clipboard().await.assert_eq("const ");
 
         cx.set_shared_state("    ˇconst f = (x: unknown) => {")
             .await;
-        cx.simulate_shared_keystrokes("d a w").await;
+        cx.simulate_shared_keystrokes("escape d a w").await;
         cx.shared_clipboard().await.assert_eq("const ");
         cx.shared_state().await.assert_matches();
 
         cx.set_shared_state("    ˇconst f = (x: unknown) => {")
             .await;
-        cx.simulate_shared_keystrokes("c a w").await;
+        cx.simulate_shared_keystrokes("escape c a w").await;
         cx.shared_clipboard().await.assert_eq("const ");
         cx.shared_state().await.assert_matches();
     }

@@ -10,12 +10,14 @@
 {"Get":{"state":"    ˇconst f = (x: unknown) => {","mode":"Normal"}}
 {"ReadRegister":{"name":"\"","value":"const "}}
 {"Put":{"state":"    ˇconst f = (x: unknown) => {"}}
+{"Key":"escape"}
 {"Key":"d"}
 {"Key":"a"}
 {"Key":"w"}
 {"Get":{"state":"    ˇf = (x: unknown) => {","mode":"Normal"}}
 {"ReadRegister":{"name":"\"","value":"const "}}
 {"Put":{"state":"    ˇconst f = (x: unknown) => {"}}
+{"Key":"escape"}
 {"Key":"c"}
 {"Key":"a"}
 {"Key":"w"}
