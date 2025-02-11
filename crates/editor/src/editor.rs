@@ -5054,8 +5054,8 @@ impl Editor {
                     provider.provider.show_completions_in_menu()
                 });
 
-        let preview_requires_modifier = all_language_settings(file, cx).edit_predictions_mode()
-            == EditPredictionsMode::Auto;
+        let preview_requires_modifier =
+            all_language_settings(file, cx).edit_predictions_mode() == EditPredictionsMode::Auto;
 
         EditPredictionSettings::Enabled {
             show_in_menu,
