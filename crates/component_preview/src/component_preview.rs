@@ -77,14 +77,14 @@ impl ComponentPreview {
             .border_color(cx.theme().colors().border)
             .w_full()
             .gap_3()
-            .p_6()
+            .py_6()
             .child(
                 v_flex()
                     .gap_1()
                     .child(
                         h_flex()
                             .gap_1()
-                            .text_xl()
+                            .text_2xl()
                             .child(div().child(name))
                             .when_some(scope, |this, scope| {
                                 this.child(div().opacity(0.5).child(format!("({})", scope)))
