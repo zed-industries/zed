@@ -2035,6 +2035,7 @@ dependencies = [
  "language",
  "log",
  "pretty_assertions",
+ "rand 0.8.5",
  "rope",
  "serde_json",
  "sum_tree",

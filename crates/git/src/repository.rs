@@ -453,7 +453,11 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn set_index_text(&self, path: &RepoPath, content: Rope) -> anyhow::Result<()> {
-        todo!()
+        let mut state = self.state.lock();
+        state
+            .index_contents
+            .insert(path.clone(), content.to_string());
+        Ok(())
     }
 
     fn remote_url(&self, _name: &str) -> Option<String> {

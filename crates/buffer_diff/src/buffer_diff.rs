@@ -169,11 +169,12 @@ impl BufferDiffSnapshot {
         }
     }
 
-    pub fn buffer_range_to_unchanged_diff_base_range(
+    fn buffer_range_to_unchanged_diff_base_range(
         &self,
         buffer_range: Range<Anchor>,
         buffer: &text::BufferSnapshot,
     ) -> Option<Range<usize>> {
+        // FIXME seek hunks instead of naively iterating
         let mut hunks = self.inner.hunks.iter();
         let mut start = 0;
         let mut pos = buffer.anchor_before(0);
@@ -213,6 +214,57 @@ impl BufferDiffSnapshot {
         start += buffer_range.start.to_offset(buffer) - pos.to_offset(buffer);
         let end = start + buffer_range.end.to_offset(buffer) - buffer_range.start.to_offset(buffer);
         Some(start..end)
+    }
+
+    pub fn secondary_edits_for_stage_or_unstage(
+        &self,
+        stage: bool,
+        hunks: impl Iterator<Item = (Range<usize>, Option<Range<usize>>, Range<Anchor>)>,
+        buffer: &text::BufferSnapshot,
+    ) -> Vec<(Range<usize>, String)> {
+        let Some(secondary_diff) = self.secondary_diff() else {
+            log::debug!("no secondary diff");
+            return Vec::new();
+        };
+        let index_base = secondary_diff.base_text().map_or_else(
+            || Rope::from(""),
+            |snapshot| snapshot.text.as_rope().clone(),
+        );
+        let head_base = self.base_text().map_or_else(
+            || Rope::from(""),
+            |snapshot| snapshot.text.as_rope().clone(),
+        );
+        log::debug!("original: {:?}", index_base.to_string());
+        let mut edits = Vec::new();
+        for (diff_base_byte_range, secondary_diff_base_byte_range, buffer_range) in hunks {
+            let (index_byte_range, replacement_text) = if stage {
+                let mut replacement_text = String::new();
+                let Some(index_byte_range) = secondary_diff_base_byte_range.clone() else {
+                    log::debug!("not a stageable hunk");
+                    continue;
+                };
+                log::debug!("hunk base range: {:?}", diff_base_byte_range);
+                for chunk in buffer.text_for_range(buffer_range.clone()) {
+                    replacement_text.push_str(chunk);
+                }
+                (index_byte_range, replacement_text)
+            } else {
+                let mut replacement_text = String::new();
+                let Some(index_byte_range) = secondary_diff
+                    .buffer_range_to_unchanged_diff_base_range(buffer_range.clone(), &buffer)
+                else {
+                    log::debug!("not an unstageable hunk");
+                    continue;
+                };
+                log::debug!("hunk base range: {:?}", index_byte_range);
+                for chunk in head_base.chunks_in_range(diff_base_byte_range.clone()) {
+                    replacement_text.push_str(chunk);
+                }
+                (index_byte_range, replacement_text)
+            };
+            edits.push((index_byte_range, replacement_text));
+        }
+        edits
     }
 }
 
@@ -928,11 +980,12 @@ pub fn assert_hunks<Iter>(
 
 #[cfg(test)]
 mod tests {
-    use std::assert_eq;
+    use std::{assert_eq, env::consts::OS};
 
     use super::*;
-    use gpui::TestAppContext;
-    use text::{Buffer, BufferId};
+    use gpui::{AppContext as _, TestAppContext};
+    use rand::{rngs::StdRng, seq::SliceRandom as _, Rng as _};
+    use text::{Buffer, BufferId, Rope};
     use unindent::Unindent as _;
 
     #[gpui::test]
@@ -1252,5 +1305,167 @@ mod tests {
         let diff_6 = BufferDiff::build_sync(buffer.snapshot(), base_text, cx);
         let range = diff_6.compare(&diff_5, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(7, 0)..Point::new(8, 0));
+    }
+
+    #[gpui::test]
+    async fn test_secondary_edits_for_stage_unstage(cx: &mut TestAppContext, mut rng: StdRng) {
+        fn gen_line(rng: &mut StdRng) -> String {
+            if rng.gen_bool(0.2) {
+                format!("\n")
+            } else {
+                let c = rng.gen_range('a'..='z');
+                format!("{c}{c}{c}\n")
+            }
+        }
+
+        fn gen_working_copy(rng: &mut StdRng, head: &str) -> String {
+            let mut old_lines = {
+                let mut old_lines = Vec::new();
+                let mut old_lines_iter = head.lines();
+                while let Some(line) = old_lines_iter.next() {
+                    assert!(!line.ends_with("\n"));
+                    old_lines.push(line.to_owned());
+                }
+                if old_lines.last().is_some_and(|line| line.is_empty()) {
+                    old_lines.pop();
+                }
+                old_lines.into_iter()
+            };
+            let mut result = String::new();
+            let unchanged_count = rng.gen_range(0..=old_lines.len());
+            result += &old_lines
+                .by_ref()
+                .take(unchanged_count)
+                .map(|line| format!("{line}\n"))
+                .collect::<String>();
+            while old_lines.len() > 0 {
+                let deleted_count = rng.gen_range(0..=old_lines.len());
+                let _advance = old_lines
+                    .by_ref()
+                    .take(deleted_count)
+                    .map(|line| line.len() + 1)
+                    .sum::<usize>();
+                let minimum_added = if deleted_count == 0 { 1 } else { 0 };
+                let added_count = rng.gen_range(minimum_added..=5);
+                let addition = (0..added_count).map(|_| gen_line(rng)).collect::<String>();
+                result += &addition;
+
+                if old_lines.len() > 0 {
+                    let blank_lines = old_lines.clone().take_while(|line| line.is_empty()).count();
+                    if blank_lines == old_lines.len() {
+                        break;
+                    };
+                    let unchanged_count = rng.gen_range((blank_lines + 1).max(1)..=old_lines.len());
+                    result += &old_lines
+                        .by_ref()
+                        .take(unchanged_count)
+                        .map(|line| format!("{line}\n"))
+                        .collect::<String>();
+                }
+            }
+            result
+        }
+
+        let rng = &mut rng;
+        let head_text = ('a'..='z')
+            .map(|c| format!("{c}{c}{c}\n"))
+            .collect::<String>();
+        let working_copy = gen_working_copy(rng, &head_text);
+        let working_copy = cx.new(|cx| {
+            language::Buffer::local_normalized(
+                Rope::from(working_copy.as_str()),
+                text::LineEnding::default(),
+                cx,
+            )
+        });
+        let working_copy = working_copy.read_with(cx, |working_copy, _| working_copy.snapshot());
+        let mut index_text = cx.new(|cx| {
+            language::Buffer::local_normalized(
+                Rope::from(head_text.as_str()),
+                text::LineEnding::default(),
+                cx,
+            )
+        });
+        let inner = BufferDiff::build_sync(working_copy.text.clone(), head_text.clone(), cx);
+        let secondary = BufferDiff {
+            buffer_id: working_copy.remote_id(),
+            inner: BufferDiff::build_sync(working_copy.text.clone(), head_text.clone(), cx),
+            secondary_diff: None,
+        };
+        let secondary = cx.new(|_| secondary);
+        let mut diff = BufferDiff {
+            buffer_id: working_copy.remote_id(),
+            inner,
+            secondary_diff: Some(secondary),
+        };
+
+        let mut hunks = cx.update(|cx| {
+            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &working_copy, cx)
+                .collect::<Vec<_>>()
+        });
+
+        for hunk in &hunks {
+            assert!(hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk);
+            assert!(hunk.secondary_diff_base_byte_range.is_some());
+        }
+
+        if hunks.len() == 0 {
+            return;
+        }
+        eprintln!("count of hunks: {}", hunks.len());
+
+        // FIXME env(OPERATIONS)
+        for _ in 0..10 {
+            // loop precondition: hunks match what we expect
+            // pick a hunk
+            // flip its stagedness
+            // grab the edits
+            // make the edits
+            // recreate diff following edits
+            // check that hunks match what we mutated in place
+
+            let hunk = hunks.choose_mut(rng).unwrap();
+            let hunk_fields = (
+                hunk.diff_base_byte_range.clone(),
+                hunk.secondary_diff_base_byte_range.clone(),
+                hunk.buffer_range.clone(),
+            );
+            let stage = match (
+                hunk.secondary_status,
+                hunk.secondary_diff_base_byte_range.clone(),
+            ) {
+                (DiffHunkSecondaryStatus::HasSecondaryHunk, Some(_)) => {
+                    hunk.secondary_status = DiffHunkSecondaryStatus::None;
+                    hunk.secondary_diff_base_byte_range = None;
+                    true
+                }
+                (DiffHunkSecondaryStatus::None, None) => {
+                    hunk.secondary_status = DiffHunkSecondaryStatus::HasSecondaryHunk;
+                    // We don't look at this, just notice whether it's Some or not.
+                    hunk.secondary_diff_base_byte_range = Some(0..0);
+                    false
+                }
+                _ => unreachable!(),
+            };
+
+            let snapshot = cx.update(|cx| diff.snapshot(cx));
+            let edits = snapshot.secondary_edits_for_stage_or_unstage(
+                stage,
+                [hunk_fields].into_iter(),
+                &working_copy,
+            );
+            index_text.update(cx, |index_text, cx| {
+                index_text.edit(edits, None, cx);
+            });
+        }
+
+        // get HEAD text
+        // generate WC text
+        // get hunks from git crate
+        // initialize set of staged hunks to {}
+        // repeatedly (#ops): pick a staged hunk to unstage, or an unstaged hunk to stage
+        // build up expected index text from scratch using the set of staged hunks
+        // execute the operation
+        // compare
     }
 }

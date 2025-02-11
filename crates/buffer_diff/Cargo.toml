@@ -27,8 +27,9 @@ text.workspace = true
 util.workspace = true
 
 [dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
+rand.workspace = true
 serde_json.workspace = true
 text = { workspace = true, features = ["test-support"] }
-gpui = { workspace = true, features = ["test-support"] }
 unindent.workspace = true

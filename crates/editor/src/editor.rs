@@ -12666,64 +12666,32 @@ impl Editor {
                 continue;
             };
             let Some(secondary_diff) = diff.secondary_diff() else {
-                log::debug!("no secondary diff");
+                log::debug!("no secondary diff for buffer id");
                 continue;
             };
+
+            let edits = diff.secondary_edits_for_stage_or_unstage(
+                stage,
+                hunks.map(|hunk| {
+                    (
+                        hunk.diff_base_byte_range.clone(),
+                        hunk.secondary_diff_base_byte_range.clone(),
+                        hunk.buffer_range.clone(),
+                    )
+                }),
+                &buffer,
+            );
+
             let index_base = secondary_diff.base_text().map_or_else(
                 || Rope::from(""),
                 |snapshot| snapshot.text.as_rope().clone(),
             );
-            let head_base = diff.base_text().map_or_else(
-                || Rope::from(""),
-                |snapshot| snapshot.text.as_rope().clone(),
-            );
-            log::debug!("original: {:?}", index_base.to_string());
-            let mut edits = Vec::new();
-            for hunk in hunks {
-                let (index_byte_range, replacement_text) = if stage {
-                    let mut replacement_text = String::new();
-                    let Some(index_byte_range) = hunk.secondary_diff_base_byte_range.clone() else {
-                        log::debug!("not a stageable hunk");
-                        continue;
-                    };
-                    log::debug!("hunk base range: {:?}", hunk.diff_base_byte_range);
-                    for chunk in buffer.text_for_range(hunk.buffer_range.clone()) {
-                        replacement_text.push_str(chunk);
-                    }
-                    (index_byte_range, replacement_text)
-                } else {
-                    let mut replacement_text = String::new();
-                    let Some(index_byte_range) = secondary_diff
-                        .buffer_range_to_unchanged_diff_base_range(
-                            hunk.buffer_range.clone(),
-                            &buffer,
-                        )
-                    else {
-                        log::debug!("not an unstageable hunk");
-                        continue;
-                    };
-                    log::debug!("hunk base range: {:?}", index_byte_range);
-                    for chunk in head_base.chunks_in_range(hunk.diff_base_byte_range.clone()) {
-                        replacement_text.push_str(chunk);
-                    }
-                    (index_byte_range, replacement_text)
-                };
-                edits.push((index_byte_range, replacement_text));
-            }
-
             let index_buffer = cx.new(|cx| {
                 Buffer::local_normalized(index_base.clone(), text::LineEnding::default(), cx)
             });
-            let index_buffer = cx.new(|cx| MultiBuffer::singleton(index_buffer, cx));
             let new_index_text = index_buffer.update(cx, |index_buffer, cx| {
                 index_buffer.edit(edits, None, cx);
-                index_buffer
-                    .snapshot(cx)
-                    .as_singleton()
-                    .unwrap()
-                    .2
-                    .as_rope()
-                    .clone()
+                index_buffer.snapshot().as_rope().clone()
             });
 
             project
