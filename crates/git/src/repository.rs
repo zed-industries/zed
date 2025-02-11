@@ -269,29 +269,26 @@ impl GitRepository for RealGitRepository {
         let input = String::from_utf8_lossy(&output.stdout);
 
         let mut branches = parse_branch_input(&input)?;
-        // handle the case when you're in a new git repo with no commits
-        if !branches.iter().any(|branch| branch.is_head) {
-            let args = vec!["symbolic-ref", "--short", "HEAD"];
+        if branches.is_empty() {
+            let args = vec!["symbolic-ref", "--quiet", "--short", "HEAD"];
 
             let output = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
                 .args(args)
                 .output()?;
 
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "Failed to git git branches:\n{}",
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
-            let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            // git symbolic-ref returns a non-0 exit code if HEAD points
+            // to something other than a branch
+            if output.status.success() {
+                let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
-            branches.push(Branch {
-                name: name.into(),
-                is_head: true,
-                upstream: None,
-                most_recent_commit: None,
-            });
+                branches.push(Branch {
+                    name: name.into(),
+                    is_head: true,
+                    upstream: None,
+                    most_recent_commit: None,
+                });
+            }
         }
 
         Ok(branches)
