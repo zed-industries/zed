@@ -1574,6 +1574,7 @@ impl Editor {
             window
                 .bindings_for_action_in_context(&AcceptEditPrediction, context)
                 .into_iter()
+                .rev()
                 .next(),
         )
     }
