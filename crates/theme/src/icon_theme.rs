@@ -94,6 +94,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("lock", "icons/file_icons/lock.svg"),
     ("log", "icons/file_icons/info.svg"),
     ("lua", "icons/file_icons/lua.svg"),
+    ("markdown", "icons/file_icons/book.svg"),
     ("metal", "icons/file_icons/metal.svg"),
     ("nim", "icons/file_icons/nim.svg"),
     ("nix", "icons/file_icons/nix.svg"),
