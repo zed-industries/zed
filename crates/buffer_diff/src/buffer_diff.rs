@@ -238,6 +238,7 @@ impl BufferDiffSnapshot {
         let mut edits = Vec::new();
         for (diff_base_byte_range, secondary_diff_base_byte_range, buffer_range) in hunks {
             let (index_byte_range, replacement_text) = if stage {
+                eprintln!("staging");
                 let mut replacement_text = String::new();
                 let Some(index_byte_range) = secondary_diff_base_byte_range.clone() else {
                     log::debug!("not a stageable hunk");
@@ -249,6 +250,7 @@ impl BufferDiffSnapshot {
                 }
                 (index_byte_range, replacement_text)
             } else {
+                eprintln!("unstaging");
                 let mut replacement_text = String::new();
                 let Some(index_byte_range) = secondary_diff
                     .buffer_range_to_unchanged_diff_base_range(buffer_range.clone(), &buffer)
@@ -1389,7 +1391,11 @@ mod tests {
         let inner = BufferDiff::build_sync(working_copy.text.clone(), head_text.clone(), cx);
         let secondary = BufferDiff {
             buffer_id: working_copy.remote_id(),
-            inner: BufferDiff::build_sync(working_copy.text.clone(), head_text.clone(), cx),
+            inner: BufferDiff::build_sync(
+                working_copy.text.clone(),
+                index_text.read_with(cx, |index_text, _| index_text.text()),
+                cx,
+            ),
             secondary_diff: None,
         };
         let secondary = cx.new(|_| secondary);
@@ -1454,9 +1460,45 @@ mod tests {
                 [hunk_fields].into_iter(),
                 &working_copy,
             );
+            dbg!(&edits);
             index_text.update(cx, |index_text, cx| {
                 index_text.edit(edits, None, cx);
             });
+
+            let inner = BufferDiff::build_sync(working_copy.text.clone(), head_text.clone(), cx);
+            let secondary = BufferDiff {
+                buffer_id: working_copy.remote_id(),
+                inner: BufferDiff::build_sync(
+                    working_copy.text.clone(),
+                    index_text.read_with(cx, |index_text, _| index_text.text()),
+                    cx,
+                ),
+                secondary_diff: None,
+            };
+            let secondary = cx.new(|_| secondary);
+            diff = BufferDiff {
+                buffer_id: working_copy.remote_id(),
+                inner,
+                secondary_diff: Some(secondary),
+            };
+
+            let new_hunks = cx.update(|cx| {
+                diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &working_copy, cx)
+                    .collect::<Vec<_>>()
+            });
+            assert_eq!(hunks.len(), new_hunks.len());
+            for (old_hunk, new_hunk) in hunks.iter().zip(&new_hunks) {
+                assert_eq!(
+                    old_hunk.buffer_range.to_point(&working_copy),
+                    new_hunk.buffer_range.to_point(&working_copy)
+                );
+                assert_eq!(old_hunk.secondary_status, new_hunk.secondary_status);
+                assert_eq!(
+                    old_hunk.secondary_diff_base_byte_range.is_some(),
+                    new_hunk.secondary_diff_base_byte_range.is_some()
+                )
+            }
+            hunks = new_hunks;
         }
 
         // get HEAD text
