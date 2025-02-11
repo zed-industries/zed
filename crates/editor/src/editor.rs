@@ -12588,6 +12588,144 @@ impl Editor {
         self.toggle_diff_hunks_in_ranges(ranges, cx);
     }
 
+    fn diff_hunks_in_ranges<'a>(
+        &'a self,
+        ranges: Vec<Range<Anchor>>,
+        buffer: &'a MultiBufferSnapshot,
+    ) -> impl 'a + Iterator<Item = MultiBufferDiffHunk> {
+        ranges.into_iter().flat_map(move |range| {
+            let end_excerpt_id = range.end.excerpt_id;
+            let range = range.to_point(buffer);
+            let mut peek_end = range.end;
+            if range.end.row < buffer.max_row().0 {
+                peek_end = Point::new(range.end.row + 1, 0);
+            }
+            buffer
+                .diff_hunks_in_range(range.start..peek_end)
+                .filter(move |hunk| hunk.excerpt_id.cmp(&end_excerpt_id, buffer).is_le())
+        })
+    }
+
+    pub fn stage_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut Context<Self>) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        let project = project.read(cx);
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+
+        let chunk_by = self
+            .diff_hunks_in_ranges(ranges, &snapshot)
+            .chunk_by(|hunk| hunk.buffer_id);
+        for (buffer_id, hunks) in &chunk_by {
+            let Some(buffer) = project.buffer_for_id(buffer_id, cx) else {
+                log::debug!("no buffer for id");
+                continue;
+            };
+            let Some((git_repo, path)) = project.git_repo_and_path_for_buffer_id(buffer_id, cx)
+            else {
+                log::debug!("no git repo for buffer id");
+                continue;
+            };
+            let Some(diff) = snapshot.diff_for_buffer_id(buffer_id) else {
+                log::debug!("no diff for buffer id");
+                continue;
+            };
+            let Some(secondary_diff) = diff.secondary_diff() else {
+                log::debug!("no secondary diff");
+                continue;
+            };
+            let mut index_base = secondary_diff.base_text().map_or_else(
+                || Rope::from(""),
+                |snapshot| snapshot.text.as_rope().clone(),
+            );
+            log::debug!("original: {:?}", index_base.to_string());
+            for hunk in hunks {
+                let mut replacement_text = String::new();
+                let Some(index_byte_range) = hunk.secondary_diff_base_byte_range.clone() else {
+                    log::debug!("not a stageable hunk");
+                    continue;
+                };
+                log::debug!("hunk base range: {:?}", hunk.diff_base_byte_range);
+                for chunk in buffer.read(cx).text_for_range(hunk.buffer_range.clone()) {
+                    replacement_text.push_str(chunk);
+                }
+                index_base.replace(index_byte_range, &replacement_text);
+                log::debug!("replace with {replacement_text:?}");
+            }
+            log::debug!("final base: {:?}", index_base.to_string());
+
+            project
+                .git_state()
+                .read(cx)
+                .set_index_text(git_repo, path, index_base);
+        }
+    }
+
+    pub fn unstage_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut Context<Self>) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        let project = project.read(cx);
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+
+        let chunk_by = self
+            .diff_hunks_in_ranges(ranges, &snapshot)
+            .chunk_by(|hunk| hunk.buffer_id);
+        for (buffer_id, hunks) in &chunk_by {
+            let Some((git_repo, path)) = project.git_repo_and_path_for_buffer_id(buffer_id, cx)
+            else {
+                log::debug!("no git repo for buffer id");
+                continue;
+            };
+            let Some(diff) = snapshot.diff_for_buffer_id(buffer_id) else {
+                log::debug!("no diff for buffer id");
+                continue;
+            };
+            let Some(secondary_diff) = diff.secondary_diff() else {
+                log::debug!("no secondary diff");
+                continue;
+            };
+            let mut index_base = secondary_diff.base_text().map_or_else(
+                || Rope::from(""),
+                |snapshot| snapshot.text.as_rope().clone(),
+            );
+            let head_base = diff.base_text().map_or_else(
+                || Rope::from(""),
+                |snapshot| snapshot.text.as_rope().clone(),
+            );
+            log::debug!("original: {:?}", index_base.to_string());
+            for hunk in hunks {
+                let mut replacement_text = String::new();
+                let Some(index_byte_range) = hunk.secondary_diff_base_byte_range.clone() else {
+                    log::debug!("not an unstageable hunk");
+                    continue;
+                };
+                log::debug!("hunk base range: {:?}", index_byte_range);
+                for chunk in head_base.chunks_in_range(hunk.diff_base_byte_range.clone()) {
+                    replacement_text.push_str(chunk);
+                }
+                index_base.replace(index_byte_range, &replacement_text);
+                log::debug!("replace with {replacement_text:?}");
+            }
+            log::debug!("final base: {:?}", index_base.to_string());
+
+            project
+                .git_state()
+                .read(cx)
+                .set_index_text(git_repo, path, index_base);
+        }
+    }
+
+    pub fn stage_selected_diff_hunks(
+        &mut self,
+        _: &StageSelectedDiffHunks,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ranges = self.selections.disjoint.iter().map(|s| s.range()).collect();
+        self.stage_diff_hunks(ranges, cx);
+    }
+
     pub fn expand_selected_diff_hunks(&mut self, cx: &mut Context<Self>) {
         let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
         self.buffer

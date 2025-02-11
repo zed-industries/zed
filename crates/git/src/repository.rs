@@ -8,6 +8,8 @@ use gpui::SharedString;
 use parking_lot::Mutex;
 use rope::Rope;
 use std::borrow::Borrow;
+use std::io::Write as _;
+use std::process::Stdio;
 use std::sync::LazyLock;
 use std::{
     cmp::Ordering,
@@ -38,6 +40,8 @@ pub trait GitRepository: Send + Sync {
     ///
     /// Note that for symlink entries, this will return the contents of the symlink, not the target.
     fn load_committed_text(&self, path: &RepoPath) -> Option<String>;
+
+    fn set_index_text(&self, path: &RepoPath, content: Rope) -> anyhow::Result<()>;
 
     /// Returns the URL of the remote with the given name.
     fn remote_url(&self, name: &str) -> Option<String>;
@@ -159,6 +163,42 @@ impl GitRepository for RealGitRepository {
         let content = repo.find_blob(oid).log_err()?.content().to_owned();
         let content = String::from_utf8(content).log_err()?;
         Some(content)
+    }
+
+    fn set_index_text(&self, path: &RepoPath, content: Rope) -> anyhow::Result<()> {
+        let working_directory = self
+            .repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")?
+            .to_path_buf();
+        let mut child = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["hash-object", "-w", "--stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(content.to_string().as_bytes())?;
+        let output = child.wait_with_output()?.stdout;
+        let sha = String::from_utf8(output)?;
+
+        log::debug!("indexing SHA: {sha}, path {path:?}");
+
+        let status = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["update-index", "--cacheinfo", "100644", &sha])
+            .arg(path.as_ref())
+            .status()?;
+
+        if !status.success() {
+            return Err(anyhow!("Failed to add to index: {status:?}"));
+        }
+
+        Ok(())
     }
 
     fn remote_url(&self, name: &str) -> Option<String> {
@@ -410,6 +450,10 @@ impl GitRepository for FakeGitRepository {
     fn load_committed_text(&self, path: &RepoPath) -> Option<String> {
         let state = self.state.lock();
         state.head_contents.get(path.as_ref()).cloned()
+    }
+
+    fn set_index_text(&self, path: &RepoPath, content: Rope) -> anyhow::Result<()> {
+        todo!()
     }
 
     fn remote_url(&self, _name: &str) -> Option<String> {

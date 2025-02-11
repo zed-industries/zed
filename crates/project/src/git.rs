@@ -18,16 +18,16 @@ use rpc::{proto, AnyProtoClient};
 use settings::WorktreeId;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use text::BufferId;
+use text::{BufferId, Rope};
 use util::{maybe, ResultExt};
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
 
 pub struct GitState {
-    project_id: Option<ProjectId>,
-    client: Option<AnyProtoClient>,
+    pub(super) project_id: Option<ProjectId>,
+    pub(super) client: Option<AnyProtoClient>,
+    pub update_sender: mpsc::UnboundedSender<(Message, oneshot::Sender<anyhow::Result<()>>)>,
     repositories: Vec<Entity<Repository>>,
     active_index: Option<usize>,
-    update_sender: mpsc::UnboundedSender<(Message, oneshot::Sender<anyhow::Result<()>>)>,
     _subscription: Subscription,
 }
 
@@ -51,7 +51,7 @@ pub enum GitRepo {
     },
 }
 
-enum Message {
+pub enum Message {
     Commit {
         git_repo: GitRepo,
         message: SharedString,
@@ -59,6 +59,7 @@ enum Message {
     },
     Stage(GitRepo, Vec<RepoPath>),
     Unstage(GitRepo, Vec<RepoPath>),
+    SetIndexText(GitRepo, RepoPath, Rope),
 }
 
 pub enum GitEvent {
@@ -291,9 +292,25 @@ impl GitState {
                 }
                 Ok(())
             }
+            Message::SetIndexText(git_repo, path, content) => match git_repo {
+                GitRepo::Local(repo) => repo.set_index_text(&path, content),
+                GitRepo::Remote { .. } => todo!(),
+            },
         }
     }
+
+    // FIXME channel
+    pub fn set_index_text(&self, git_repo: GitRepo, path: RepoPath, content: Rope) {
+        self.update_sender
+            .unbounded_send((
+                Message::SetIndexText(git_repo, path, content),
+                oneshot::channel().0,
+            ))
+            .ok();
+    }
 }
+
+impl GitRepo {}
 
 impl Repository {
     fn id(&self) -> (WorktreeId, ProjectEntryId) {

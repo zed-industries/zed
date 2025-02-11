@@ -418,6 +418,7 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_git_blame_inline);
         register_action(editor, window, Editor::toggle_selected_diff_hunks);
         register_action(editor, window, Editor::expand_all_diff_hunks);
+        register_action(editor, window, Editor::stage_selected_diff_hunks);
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.format(action, window, cx) {
                 task.detach_and_notify_err(window, cx);
@@ -9053,6 +9054,19 @@ fn diff_hunk_controls(
                             let snapshot = editor.snapshot(window, cx);
                             let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
                             editor.revert_hunks_in_ranges([point..point].into_iter(), window, cx);
+                        });
+                    }
+                }),
+        )
+        .child(
+            IconButton::new("stage", IconName::Book)
+                .shape(IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, _window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.stage_diff_hunks(vec![hunk_range.start..hunk_range.start], cx);
                         });
                     }
                 }),

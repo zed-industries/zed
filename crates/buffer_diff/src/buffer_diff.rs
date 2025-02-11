@@ -65,6 +65,7 @@ pub struct DiffHunk {
     /// The range in the buffer's diff base text to which this hunk corresponds.
     pub diff_base_byte_range: Range<usize>,
     pub secondary_status: DiffHunkSecondaryStatus,
+    pub secondary_diff_base_byte_range: Option<Range<usize>>,
 }
 
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
@@ -225,6 +226,7 @@ impl BufferDiffInner {
             }
 
             let mut secondary_status = DiffHunkSecondaryStatus::None;
+            let mut secondary_diff_base_byte_range = None;
             if let Some(secondary_cursor) = secondary_cursor.as_mut() {
                 if start_anchor
                     .cmp(&secondary_cursor.start().buffer_range.start, buffer)
@@ -237,6 +239,8 @@ impl BufferDiffInner {
                     let secondary_range = secondary_hunk.buffer_range.to_point(buffer);
                     if secondary_range == (start_point..end_point) {
                         secondary_status = DiffHunkSecondaryStatus::HasSecondaryHunk;
+                        secondary_diff_base_byte_range =
+                            Some(secondary_hunk.diff_base_byte_range.clone());
                     } else if secondary_range.start <= end_point {
                         secondary_status = DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk;
                     }
@@ -248,6 +252,7 @@ impl BufferDiffInner {
                 diff_base_byte_range: start_base..end_base,
                 buffer_range: start_anchor..end_anchor,
                 secondary_status,
+                secondary_diff_base_byte_range,
             });
         })
     }
@@ -282,6 +287,7 @@ impl BufferDiffInner {
                 buffer_range: hunk.buffer_range.clone(),
                 // The secondary status is not used by callers of this method.
                 secondary_status: DiffHunkSecondaryStatus::None,
+                secondary_diff_base_byte_range: None,
             })
         })
     }
