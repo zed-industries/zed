@@ -770,6 +770,8 @@ fn parse_upstream_track(upstream_track: &str) -> Result<Option<UpstreamTracking>
 
 #[test]
 fn test_branches_parsing() {
+    // suppress "help: octal escapes are not supported, `\0` is always null"
+    #[allow(clippy::octal_escapes)]
     let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\0\01733187470\0generated protobuf\n";
     assert_eq!(
         parse_branch_input(&input).unwrap(),
