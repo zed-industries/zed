@@ -664,11 +664,17 @@ and then another
             let mut did_retry = false;
 
             loop {
-                let request_builder = http_client::Request::builder().method(Method::POST).uri(
-                    http_client
-                        .build_zed_llm_url("/predict_edits/v2", &[])?
-                        .as_ref(),
-                );
+                let request_builder = http_client::Request::builder().method(Method::POST);
+                let request_builder =
+                    if let Ok(predict_edits_url) = std::env::var("ZED_PREDICT_EDITS_URL") {
+                        request_builder.uri(predict_edits_url)
+                    } else {
+                        request_builder.uri(
+                            http_client
+                                .build_zed_llm_url("/predict_edits/v2", &[])?
+                                .as_ref(),
+                        )
+                    };
                 let request = request_builder
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", token))
