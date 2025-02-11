@@ -12624,6 +12624,16 @@ impl Editor {
         hunks.any(|hunk| hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk)
     }
 
+    pub fn toggle_staged_selected_diff_hunks(
+        &mut self,
+        _: &ToggleStagedSelectedDiffHunks,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
+        self.stage_or_unstage_diff_hunks(&ranges, cx);
+    }
+
     pub fn stage_or_unstage_diff_hunks(
         &mut self,
         ranges: &[Range<Anchor>],
