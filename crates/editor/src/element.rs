@@ -1286,6 +1286,7 @@ impl EditorElement {
         cursor_layouts
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_edit_prediction_preview_cursor(
         &self,
         snapshot: &EditorSnapshot,

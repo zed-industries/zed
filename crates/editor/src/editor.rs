@@ -715,6 +715,7 @@ impl EditPredictionPreview {
         matches!(self, Self::Arrived { .. })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn move_state(
         &mut self,
         snapshot: &EditorSnapshot,
