@@ -12629,87 +12629,24 @@ impl Editor {
         ranges: &[Range<Anchor>],
         cx: &mut Context<Self>,
     ) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        if self.has_stageable_diff_hunks_in_ranges(ranges, &snapshot) {
-            self.stage_diff_hunks(ranges, cx)
-        } else {
-            self.unstage_diff_hunks(ranges, cx)
-        }
-    }
-
-    pub fn stage_diff_hunks(&mut self, ranges: &[Range<Anchor>], cx: &mut Context<Self>) {
         let Some(project) = &self.project else {
             return;
         };
-        let project = project.read(cx);
         let snapshot = self.buffer.read(cx).snapshot(cx);
+        let stage = self.has_stageable_diff_hunks_in_ranges(ranges, &snapshot);
 
         let chunk_by = self
             .diff_hunks_in_ranges(&ranges, &snapshot)
             .chunk_by(|hunk| hunk.buffer_id);
         for (buffer_id, hunks) in &chunk_by {
-            let Some(buffer) = project.buffer_for_id(buffer_id, cx) else {
+            let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
                 log::debug!("no buffer for id");
                 continue;
             };
-            let Some((git_repo, path)) = project.git_repo_and_path_for_buffer_id(buffer_id, cx)
-            else {
-                log::debug!("no git repo for buffer id");
-                continue;
-            };
-            let Some(diff) = snapshot.diff_for_buffer_id(buffer_id) else {
-                log::debug!("no diff for buffer id");
-                continue;
-            };
-            let Some(secondary_diff) = diff.secondary_diff() else {
-                log::debug!("no secondary diff");
-                continue;
-            };
-            let mut index_base = secondary_diff.base_text().map_or_else(
-                || Rope::from(""),
-                |snapshot| snapshot.text.as_rope().clone(),
-            );
-            log::debug!("original: {:?}", index_base.to_string());
-            for hunk in hunks {
-                let mut replacement_text = String::new();
-                let Some(index_byte_range) = hunk.secondary_diff_base_byte_range.clone() else {
-                    log::debug!("not a stageable hunk");
-                    continue;
-                };
-                log::debug!("hunk base range: {:?}", hunk.diff_base_byte_range);
-                for chunk in buffer.read(cx).text_for_range(hunk.buffer_range.clone()) {
-                    replacement_text.push_str(chunk);
-                }
-                index_base.replace(index_byte_range, &replacement_text);
-                log::debug!("replace with {replacement_text:?}");
-            }
-            log::debug!("final base: {:?}", index_base.to_string());
-
-            project
-                .git_state()
-                .read(cx)
-                .set_index_text(git_repo, path, index_base);
-        }
-    }
-
-    pub fn unstage_diff_hunks(&mut self, ranges: &[Range<Anchor>], cx: &mut Context<Self>) {
-        log::debug!("try to unstage");
-        let Some(project) = &self.project else {
-            return;
-        };
-        let project = project.read(cx);
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-
-        let chunk_by = self
-            .diff_hunks_in_ranges(ranges, &snapshot)
-            .chunk_by(|hunk| hunk.buffer_id);
-        for (buffer_id, hunks) in &chunk_by {
-            let Some(buffer) = project.buffer_for_id(buffer_id, cx) else {
-                log::debug!("no buffer for buffer id");
-                continue;
-            };
             let buffer = buffer.read(cx).snapshot();
-            let Some((git_repo, path)) = project.git_repo_and_path_for_buffer_id(buffer_id, cx)
+            let Some((git_repo, path)) = project
+                .read(cx)
+                .git_repo_and_path_for_buffer_id(buffer_id, cx)
             else {
                 log::debug!("no git repo for buffer id");
                 continue;
@@ -12722,7 +12659,7 @@ impl Editor {
                 log::debug!("no secondary diff");
                 continue;
             };
-            let mut index_base = secondary_diff.base_text().map_or_else(
+            let index_base = secondary_diff.base_text().map_or_else(
                 || Rope::from(""),
                 |snapshot| snapshot.text.as_rope().clone(),
             );
@@ -12731,43 +12668,60 @@ impl Editor {
                 |snapshot| snapshot.text.as_rope().clone(),
             );
             log::debug!("original: {:?}", index_base.to_string());
+            let mut edits = Vec::new();
             for hunk in hunks {
-                let mut replacement_text = String::new();
-                let Some(index_byte_range) = secondary_diff
-                    .buffer_range_to_unchanged_diff_base_range(hunk.buffer_range.clone(), &buffer)
-                else {
-                    log::debug!("not an unstageable hunk");
-                    continue;
+                let (index_byte_range, replacement_text) = if stage {
+                    let mut replacement_text = String::new();
+                    let Some(index_byte_range) = hunk.secondary_diff_base_byte_range.clone() else {
+                        log::debug!("not a stageable hunk");
+                        continue;
+                    };
+                    log::debug!("hunk base range: {:?}", hunk.diff_base_byte_range);
+                    for chunk in buffer.text_for_range(hunk.buffer_range.clone()) {
+                        replacement_text.push_str(chunk);
+                    }
+                    (index_byte_range, replacement_text)
+                } else {
+                    let mut replacement_text = String::new();
+                    let Some(index_byte_range) = secondary_diff
+                        .buffer_range_to_unchanged_diff_base_range(
+                            hunk.buffer_range.clone(),
+                            &buffer,
+                        )
+                    else {
+                        log::debug!("not an unstageable hunk");
+                        continue;
+                    };
+                    log::debug!("hunk base range: {:?}", index_byte_range);
+                    for chunk in head_base.chunks_in_range(hunk.diff_base_byte_range.clone()) {
+                        replacement_text.push_str(chunk);
+                    }
+                    (index_byte_range, replacement_text)
                 };
-                log::debug!("hunk base range: {:?}", index_byte_range);
-                for chunk in head_base.chunks_in_range(hunk.diff_base_byte_range.clone()) {
-                    replacement_text.push_str(chunk);
-                }
-                index_base.replace(index_byte_range, &replacement_text);
-                log::debug!("replace with {replacement_text:?}");
+                edits.push((index_byte_range, replacement_text));
             }
-            log::debug!("final base: {:?}", index_base.to_string());
+
+            let index_buffer = cx.new(|cx| {
+                Buffer::local_normalized(index_base.clone(), text::LineEnding::default(), cx)
+            });
+            let index_buffer = cx.new(|cx| MultiBuffer::singleton(index_buffer, cx));
+            let new_index_text = index_buffer.update(cx, |index_buffer, cx| {
+                index_buffer.edit(edits, None, cx);
+                index_buffer
+                    .snapshot(cx)
+                    .as_singleton()
+                    .unwrap()
+                    .2
+                    .as_rope()
+                    .clone()
+            });
 
             project
+                .read(cx)
                 .git_state()
                 .read(cx)
-                .set_index_text(git_repo, path, index_base);
+                .set_index_text(git_repo, path, new_index_text);
         }
-    }
-
-    pub fn stage_selected_diff_hunks(
-        &mut self,
-        _: &StageSelectedDiffHunks,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let ranges = self
-            .selections
-            .disjoint
-            .iter()
-            .map(|s| s.range())
-            .collect::<Vec<_>>();
-        self.stage_diff_hunks(&ranges, cx);
     }
 
     pub fn expand_selected_diff_hunks(&mut self, cx: &mut Context<Self>) {

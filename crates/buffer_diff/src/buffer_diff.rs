@@ -189,10 +189,7 @@ impl BufferDiffSnapshot {
             {
                 // target buffer range is contained in the unchanged stretch leading up to this next hunk,
                 // so do a final adjustment based on that
-                start += buffer_range.start.to_offset(buffer) - pos.to_offset(buffer);
-                let end = start + buffer_range.end.to_offset(buffer)
-                    - buffer_range.start.to_offset(buffer);
-                return Some(start..end);
+                break;
             }
 
             // if the target buffer range intersects this hunk at all, no dice
