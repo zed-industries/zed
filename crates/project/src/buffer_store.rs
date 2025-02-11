@@ -260,16 +260,20 @@ impl BufferDiffState {
                     let changed_range = match (unstaged_changed_range, uncommitted_changed_range) {
                         (None, None) => None,
                         (Some(unstaged_range), None) => {
-                            Some(uncommitted_diff.range_to_hunk_range(unstaged_range, &buffer, cx))
+                            uncommitted_diff.range_to_hunk_range(unstaged_range, &buffer, cx)
                         }
                         (None, Some(uncommitted_range)) => Some(uncommitted_range),
-                        (Some(unstaged_range), Some(uncommitted_range)) => maybe!({
-                            let expanded_range =
-                                uncommitted_diff.range_to_hunk_range(unstaged_range, &buffer, cx);
-                            let start = expanded_range.start.min(&uncommitted_range.start, &buffer);
-                            let end = expanded_range.end.max(&uncommitted_range.end, &buffer);
+                        (Some(unstaged_range), Some(uncommitted_range)) => {
+                            let mut start = uncommitted_range.start;
+                            let mut end = uncommitted_range.end;
+                            if let Some(unstaged_range) =
+                                uncommitted_diff.range_to_hunk_range(unstaged_range, &buffer, cx)
+                            {
+                                start = unstaged_range.start.min(&uncommitted_range.start, &buffer);
+                                end = unstaged_range.end.max(&uncommitted_range.end, &buffer);
+                            }
                             Some(start..end)
-                        }),
+                        }
                     };
                     cx.emit(BufferDiffEvent::DiffChanged { changed_range });
                 })?;
