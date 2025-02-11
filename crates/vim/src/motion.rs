@@ -1176,21 +1176,10 @@ impl Motion {
             if self.linewise() {
                 selection.start = map.prev_line_boundary(selection.start.to_point(map)).1;
 
-                if expand_to_surrounding_newline {
-                    if selection.end.row() < map.max_point().row() {
-                        *selection.end.row_mut() += 1;
-                        *selection.end.column_mut() = 0;
-                        selection.end = map.clip_point(selection.end, Bias::Right);
-                        // Don't reset the end here
-                        return Some(selection.start..selection.end);
-                    } else if selection.start.row().0 > 0 {
-                        *selection.start.row_mut() -= 1;
-                        *selection.start.column_mut() = map.line_len(selection.start.row());
-                        selection.start = map.clip_point(selection.start, Bias::Left);
-                    }
-                }
-
                 selection.end = map.next_line_boundary(selection.end.to_point(map)).1;
+                if expand_to_surrounding_newline {
+                    selection.end = movement::right(map, selection.end)
+                }
             } else {
                 // Another special case: When using the "w" motion in combination with an
                 // operator and the last word moved over is at the end of a line, the end of

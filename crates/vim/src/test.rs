@@ -1707,3 +1707,16 @@ async fn test_ctrl_o_dot(cx: &mut gpui::TestAppContext) {
     cx.simulate_shared_keystrokes("l l escape .").await;
     cx.shared_state().await.assert_eq("hellˇllo world.");
 }
+
+#[gpui::test]
+async fn test_yy_shift_g(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.set_shared_wrap(12).await;
+
+    cx.set_shared_state("ˇabc def ghi jkl mno pqr stu vwx y&z")
+        .await;
+    cx.simulate_shared_keystrokes("y shift-g").await;
+    cx.shared_clipboard()
+        .await
+        .assert_eq("abc def ghi jkl mno pqr stu vwx y&z\n");
+}

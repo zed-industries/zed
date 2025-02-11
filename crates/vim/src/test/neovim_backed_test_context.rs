@@ -122,9 +122,9 @@ impl SharedClipboard {
                 # currently expected:
                 {}
                 # neovim register \"{}:
-                {}
+                {:?}
                 # zed register \"{}:
-                {}"},
+                {:?}"},
             message,
             self.state.initial,
             self.state.recent_keystrokes,
