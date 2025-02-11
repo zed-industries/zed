@@ -3,7 +3,7 @@ use gpui::{hsla, App, Styled};
 use crate::prelude::*;
 use crate::ElevationIndex;
 
-fn elevated<E: Styled>(this: E, cx: &mut App, index: ElevationIndex) -> E {
+fn elevated<E: Styled>(this: E, cx: &App, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
         .rounded_lg()
         .border_1()
@@ -54,7 +54,7 @@ pub trait StyledExt: Styled + Sized {
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Examples: Notifications, Palettes, Detached/Floating Windows, Detached/Floating Panels
-    fn elevation_2(self, cx: &mut App) -> Self {
+    fn elevation_2(self, cx: &App) -> Self {
         elevated(self, cx, ElevationIndex::ElevatedSurface)
     }
 
