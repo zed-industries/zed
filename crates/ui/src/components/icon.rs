@@ -221,7 +221,6 @@ pub enum IconName {
     Hash,
     HistoryRerun,
     Indicator,
-    IndicatorX,
     Info,
     InlayHint,
     Keyboard,
