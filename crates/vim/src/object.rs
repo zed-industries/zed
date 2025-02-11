@@ -1762,8 +1762,8 @@ mod test {
         cx.simulate_keystrokes("v i {");
         cx.assert_state(
             indoc! {
-                "ˇfunc empty(a string) bool {
-                   «if a == \"\" {
+                "func empty(a string) bool {
+                   «ˇif a == \"\" {
                       return true
                    }
                    return false»
