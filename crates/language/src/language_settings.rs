@@ -250,7 +250,7 @@ pub struct AllLanguageSettingsContent {
     pub features: Option<FeaturesContent>,
     /// The edit prediction settings.
     #[serde(default)]
-    pub edit_predictions: Option<InlineCompletionSettingsContent>,
+    pub edit_predictions: Option<EditPredictionSettingsContent>,
     /// The default language settings.
     #[serde(flatten)]
     pub defaults: LanguageSettingsContent,
@@ -428,7 +428,7 @@ pub struct LanguageSettingsContent {
 
 /// The contents of the edit prediction settings.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct InlineCompletionSettingsContent {
+pub struct EditPredictionSettingsContent {
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.

@@ -587,16 +587,18 @@ impl BufferDiff {
         range: Range<Anchor>,
         buffer: &text::BufferSnapshot,
         cx: &App,
-    ) -> Range<Anchor> {
+    ) -> Option<Range<Anchor>> {
         let start = self
             .hunks_intersecting_range(range.clone(), &buffer, cx)
-            .next()
-            .map_or(Anchor::MIN, |hunk| hunk.buffer_range.start);
+            .next()?
+            .buffer_range
+            .start;
         let end = self
             .hunks_intersecting_range_rev(range.clone(), &buffer)
-            .next()
-            .map_or(Anchor::MAX, |hunk| hunk.buffer_range.end);
-        start..end
+            .next()?
+            .buffer_range
+            .end;
+        Some(start..end)
     }
 
     #[allow(clippy::too_many_arguments)]
