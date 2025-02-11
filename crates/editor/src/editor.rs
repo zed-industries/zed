@@ -75,14 +75,14 @@ use code_context_menus::{
 };
 use git::blame::GitBlame;
 use gpui::{
-    div, impl_actions, linear_color_stop, linear_gradient, point, prelude::*, pulsating_between,
-    px, relative, size, Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext,
-    AvailableSpace, Background, Bounds, ClipboardEntry, ClipboardItem, Context, DispatchPhase,
-    ElementId, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable,
-    FontId, FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext, Modifiers,
-    MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size,
-    Styled, StyledText, Subscription, Task, TextRun, TextStyle, TextStyleRefinement,
-    UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    div, impl_actions, point, prelude::*, pulsating_between, px, relative, size, Action, Animation,
+    AnimationExt, AnyElement, App, AsyncWindowContext, AvailableSpace, Background, Bounds,
+    ClipboardEntry, ClipboardItem, Context, DispatchPhase, ElementId, Entity, EntityInputHandler,
+    EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight, Global,
+    HighlightStyle, Hsla, InteractiveText, KeyContext, Modifiers, MouseButton, MouseDownEvent,
+    PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText, Subscription,
+    Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
+    WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -485,7 +485,6 @@ enum InlineCompletion {
     },
     Move {
         target: Anchor,
-        range_around_target: Range<text::Anchor>,
         snapshot: BufferSnapshot,
     },
 }
@@ -519,6 +518,296 @@ enum InlineCompletionHighlight {}
 pub enum MenuInlineCompletionsPolicy {
     Never,
     ByProvider,
+}
+
+// TODO az do we need this?
+#[derive(Clone)]
+pub enum EditPredictionPreview {
+    /// Modifier is not pressed
+    Inactive,
+    /// Modifier pressed, animating to active
+    MovingTo {
+        animation: Range<Instant>,
+        scroll_position_at_start: Option<gpui::Point<f32>>,
+        target_point: DisplayPoint,
+    },
+    Arrived {
+        scroll_position_at_start: Option<gpui::Point<f32>>,
+        scroll_position_at_arrival: Option<gpui::Point<f32>>,
+        target_point: Option<DisplayPoint>,
+    },
+    /// Modifier released, animating from active
+    MovingFrom {
+        animation: Range<Instant>,
+        target_point: DisplayPoint,
+    },
+}
+
+impl EditPredictionPreview {
+    fn start(
+        &mut self,
+        completion: &InlineCompletion,
+        snapshot: &EditorSnapshot,
+        cursor: DisplayPoint,
+    ) -> bool {
+        if matches!(self, Self::MovingTo { .. } | Self::Arrived { .. }) {
+            return false;
+        }
+        (*self, _) = Self::start_now(completion, snapshot, cursor);
+        true
+    }
+
+    fn restart(
+        &mut self,
+        completion: &InlineCompletion,
+        snapshot: &EditorSnapshot,
+        cursor: DisplayPoint,
+    ) -> bool {
+        match self {
+            Self::Inactive => false,
+            Self::MovingTo { target_point, .. }
+            | Self::Arrived {
+                target_point: Some(target_point),
+                ..
+            } => {
+                let (new_preview, new_target_point) = Self::start_now(completion, snapshot, cursor);
+
+                if new_target_point != Some(*target_point) {
+                    *self = new_preview;
+                    return true;
+                }
+
+                false
+            }
+            Self::Arrived {
+                target_point: None, ..
+            } => {
+                let (new_preview, _) = Self::start_now(completion, snapshot, cursor);
+
+                *self = new_preview;
+                true
+            }
+            Self::MovingFrom { .. } => false,
+        }
+    }
+
+    fn start_now(
+        completion: &InlineCompletion,
+        snapshot: &EditorSnapshot,
+        cursor: DisplayPoint,
+    ) -> (Self, Option<DisplayPoint>) {
+        let now = Instant::now();
+        match completion {
+            InlineCompletion::Edit { .. } => (
+                Self::Arrived {
+                    target_point: None,
+                    scroll_position_at_start: None,
+                    scroll_position_at_arrival: None,
+                },
+                None,
+            ),
+            InlineCompletion::Move { target, .. } => {
+                let target_point = target.to_display_point(&snapshot.display_snapshot);
+                let duration = Self::animation_duration(cursor, target_point);
+
+                (
+                    Self::MovingTo {
+                        animation: now..now + duration,
+                        scroll_position_at_start: Some(snapshot.scroll_position()),
+                        target_point,
+                    },
+                    Some(target_point),
+                )
+            }
+        }
+    }
+
+    fn animation_duration(a: DisplayPoint, b: DisplayPoint) -> Duration {
+        const SPEED: f32 = 8.0;
+
+        let row_diff = b.row().0.abs_diff(a.row().0);
+        let column_diff = b.column().abs_diff(a.column());
+        let distance = ((row_diff.pow(2) + column_diff.pow(2)) as f32).sqrt();
+        Duration::from_millis((distance * SPEED) as u64)
+    }
+
+    fn end(
+        &mut self,
+        cursor: DisplayPoint,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> bool {
+        let (scroll_position, target_point) = match self {
+            Self::MovingTo {
+                scroll_position_at_start,
+                target_point,
+                ..
+            }
+            | Self::Arrived {
+                scroll_position_at_start,
+                scroll_position_at_arrival: None,
+                target_point: Some(target_point),
+                ..
+            } => (*scroll_position_at_start, target_point),
+            Self::Arrived {
+                scroll_position_at_start,
+                scroll_position_at_arrival: Some(scroll_at_arrival),
+                target_point: Some(target_point),
+            } => {
+                const TOLERANCE: f32 = 4.0;
+
+                let diff = *scroll_at_arrival - scroll_pixel_position.map(|p| p.0);
+
+                if diff.x.abs() < TOLERANCE && diff.y.abs() < TOLERANCE {
+                    (*scroll_position_at_start, target_point)
+                } else {
+                    (None, target_point)
+                }
+            }
+            Self::Arrived {
+                target_point: None, ..
+            } => {
+                *self = Self::Inactive;
+                return true;
+            }
+            Self::MovingFrom { .. } | Self::Inactive => return false,
+        };
+
+        let now = Instant::now();
+        let duration = Self::animation_duration(cursor, *target_point);
+        let target_point = *target_point;
+
+        *self = Self::MovingFrom {
+            animation: now..now + duration,
+            target_point,
+        };
+
+        if let Some(scroll_position) = scroll_position {
+            cx.spawn_in(window, |editor, mut cx| async move {
+                smol::Timer::after(duration).await;
+                editor
+                    .update_in(&mut cx, |editor, window, cx| {
+                        if let Self::MovingFrom { .. } | Self::Inactive =
+                            editor.edit_prediction_preview
+                        {
+                            editor.set_scroll_position(scroll_position, window, cx)
+                        }
+                    })
+                    .log_err();
+            })
+            .detach();
+        }
+
+        true
+    }
+
+    /// Whether the preview is active or we are animating to or from it.
+    fn is_active(&self) -> bool {
+        matches!(
+            self,
+            Self::MovingTo { .. } | Self::Arrived { .. } | Self::MovingFrom { .. }
+        )
+    }
+
+    /// Returns true if the preview is active, not cancelled, and the animation is settled.
+    fn is_active_settled(&self) -> bool {
+        matches!(self, Self::Arrived { .. })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn move_state(
+        &mut self,
+        snapshot: &EditorSnapshot,
+        visible_row_range: Range<DisplayRow>,
+        line_layouts: &[LineWithInvisibles],
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_height: Pixels,
+        target: Anchor,
+        cursor: Option<DisplayPoint>,
+    ) -> Option<EditPredictionMoveState> {
+        let delta = match self {
+            Self::Inactive => return None,
+            Self::Arrived { .. } => 1.,
+            Self::MovingTo {
+                animation,
+                scroll_position_at_start: original_scroll_position,
+                target_point,
+            } => {
+                let now = Instant::now();
+                if animation.end < now {
+                    *self = Self::Arrived {
+                        scroll_position_at_start: *original_scroll_position,
+                        scroll_position_at_arrival: Some(scroll_pixel_position.map(|p| p.0)),
+                        target_point: Some(*target_point),
+                    };
+                    1.0
+                } else {
+                    (now - animation.start).as_secs_f32()
+                        / (animation.end - animation.start).as_secs_f32()
+                }
+            }
+            Self::MovingFrom { animation, .. } => {
+                let now = Instant::now();
+                if animation.end < now {
+                    *self = Self::Inactive;
+                    return None;
+                } else {
+                    let delta = (now - animation.start).as_secs_f32()
+                        / (animation.end - animation.start).as_secs_f32();
+                    1.0 - delta
+                }
+            }
+        };
+
+        let cursor = cursor?;
+
+        if !visible_row_range.contains(&cursor.row()) {
+            return None;
+        }
+
+        let target_position = target.to_display_point(&snapshot.display_snapshot);
+
+        if !visible_row_range.contains(&target_position.row()) {
+            return None;
+        }
+
+        let target_row_layout =
+            &line_layouts[target_position.row().minus(visible_row_range.start) as usize];
+        let target_column = target_position.column() as usize;
+
+        let target_character_x = target_row_layout.x_for_index(target_column);
+
+        let target_x = target_character_x - scroll_pixel_position.x;
+        let target_y =
+            (target_position.row().as_f32() - scroll_pixel_position.y / line_height) * line_height;
+
+        let origin_x = line_layouts[cursor.row().minus(visible_row_range.start) as usize]
+            .x_for_index(cursor.column() as usize);
+        let origin_y =
+            (cursor.row().as_f32() - scroll_pixel_position.y / line_height) * line_height;
+
+        let delta = 1.0 - (-10.0 * delta).exp2();
+
+        let x = origin_x + (target_x - origin_x) * delta;
+        let y = origin_y + (target_y - origin_y) * delta;
+
+        Some(EditPredictionMoveState {
+            delta,
+            position: point(x, y),
+        })
+    }
+}
+
+pub(crate) struct EditPredictionMoveState {
+    delta: f32,
+    position: gpui::Point<Pixels>,
+}
+
+impl EditPredictionMoveState {
+    pub fn is_animation_completed(&self) -> bool {
+        self.delta >= 1.
+    }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Default)]
@@ -704,7 +993,7 @@ pub struct Editor {
     inline_completions_hidden_for_vim_mode: bool,
     show_inline_completions_override: Option<bool>,
     menu_inline_completions_policy: MenuInlineCompletionsPolicy,
-    previewing_inline_completion: bool,
+    edit_prediction_preview: EditPredictionPreview,
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
@@ -1397,7 +1686,7 @@ impl Editor {
             edit_prediction_provider: None,
             active_inline_completion: None,
             stale_inline_completion_in_menu: None,
-            previewing_inline_completion: false,
+            edit_prediction_preview: EditPredictionPreview::Inactive,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -5112,11 +5401,11 @@ impl Editor {
         true
     }
 
-    /// Returns true when we're displaying the inline completion popover below the cursor
+    /// Returns true when we're displaying the edit prediction popover below the cursor
     /// like we are not previewing and the LSP autocomplete menu is visible
     /// or we are in `when_holding_modifier` mode.
     pub fn edit_prediction_visible_in_cursor_popover(&self, has_completion: bool) -> bool {
-        if self.previewing_inline_completion
+        if self.edit_prediction_preview.is_active()
             || !self.show_edit_predictions_in_menu()
             || !self.edit_predictions_enabled()
         {
@@ -5138,15 +5427,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if self.show_edit_predictions_in_menu() {
-            let accept_binding = self.accept_edit_prediction_keybind(window, cx);
-            if let Some(accept_keystroke) = accept_binding.keystroke() {
-                let was_previewing_inline_completion = self.previewing_inline_completion;
-                self.previewing_inline_completion = modifiers == accept_keystroke.modifiers
-                    && accept_keystroke.modifiers.modified();
-                if self.previewing_inline_completion != was_previewing_inline_completion {
-                    self.update_visible_inline_completion(window, cx);
-                }
-            }
+            self.update_edit_prediction_preview(&modifiers, position_map, window, cx);
         }
 
         let mouse_position = window.mouse_position();
@@ -5163,9 +5444,50 @@ impl Editor {
         )
     }
 
+    fn update_edit_prediction_preview(
+        &mut self,
+        modifiers: &Modifiers,
+        position_map: &PositionMap,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let accept_keybind = self.accept_edit_prediction_keybind(window, cx);
+        let Some(accept_keystroke) = accept_keybind.keystroke() else {
+            return;
+        };
+
+        if &accept_keystroke.modifiers == modifiers {
+            if let Some(completion) = self.active_inline_completion.as_ref() {
+                if self.edit_prediction_preview.start(
+                    &completion.completion,
+                    &position_map.snapshot,
+                    self.selections
+                        .newest_anchor()
+                        .head()
+                        .to_display_point(&position_map.snapshot),
+                ) {
+                    self.request_autoscroll(Autoscroll::fit(), cx);
+                    self.update_visible_inline_completion(window, cx);
+                    cx.notify();
+                }
+            }
+        } else if self.edit_prediction_preview.end(
+            self.selections
+                .newest_anchor()
+                .head()
+                .to_display_point(&position_map.snapshot),
+            position_map.scroll_pixel_position,
+            window,
+            cx,
+        ) {
+            self.update_visible_inline_completion(window, cx);
+            cx.notify();
+        }
+    }
+
     fn update_visible_inline_completion(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let selection = self.selections.newest_anchor();
@@ -5252,25 +5574,11 @@ impl Editor {
             invalidation_row_range =
                 move_invalidation_row_range.unwrap_or(edit_start_row..edit_end_row);
             let target = first_edit_start;
-            let target_point = text::ToPoint::to_point(&target.text_anchor, &snapshot);
-            // TODO: Base this off of TreeSitter or word boundaries?
-            let target_excerpt_begin = snapshot.anchor_before(snapshot.clip_point(
-                Point::new(target_point.row, target_point.column.saturating_sub(20)),
-                Bias::Left,
-            ));
-            let target_excerpt_end = snapshot.anchor_after(snapshot.clip_point(
-                Point::new(target_point.row, target_point.column + 20),
-                Bias::Right,
-            ));
-            let range_around_target = target_excerpt_begin..target_excerpt_end;
-            InlineCompletion::Move {
-                target,
-                range_around_target,
-                snapshot,
-            }
+            InlineCompletion::Move { target, snapshot }
         } else {
             let show_completions_in_buffer = !self.edit_prediction_visible_in_cursor_popover(true)
                 && !self.inline_completions_hidden_for_vim_mode;
+
             if show_completions_in_buffer {
                 if edits
                     .iter()
@@ -5329,6 +5637,15 @@ impl Editor {
             ));
 
         self.stale_inline_completion_in_menu = None;
+        let editor_snapshot = self.snapshot(window, cx);
+        if self.edit_prediction_preview.restart(
+            &completion,
+            &editor_snapshot,
+            cursor.to_display_point(&editor_snapshot),
+        ) {
+            self.request_autoscroll(Autoscroll::fit(), cx);
+        }
+
         self.active_inline_completion = Some(InlineCompletionState {
             inlay_ids,
             completion,
@@ -5556,7 +5873,7 @@ impl Editor {
     }
 
     pub fn context_menu_visible(&self) -> bool {
-        !self.previewing_inline_completion
+        !self.edit_prediction_preview.is_active()
             && self
                 .context_menu
                 .borrow()
@@ -5591,7 +5908,7 @@ impl Editor {
         cursor_point: Point,
         style: &EditorStyle,
         accept_keystroke: &gpui::Keystroke,
-        window: &Window,
+        _window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         let provider = self.edit_prediction_provider.as_ref()?;
@@ -5646,20 +5963,51 @@ impl Editor {
         }
 
         let completion = match &self.active_inline_completion {
-            Some(completion) => self.render_edit_prediction_cursor_popover_preview(
-                completion,
-                cursor_point,
-                style,
-                window,
-                cx,
-            )?,
+            Some(completion) => match &completion.completion {
+                InlineCompletion::Move {
+                    target, snapshot, ..
+                } if !self.has_visible_completions_menu() => {
+                    use text::ToPoint as _;
+
+                    return Some(
+                        h_flex()
+                            .px_2()
+                            .py_1()
+                            .elevation_2(cx)
+                            .border_color(cx.theme().colors().border)
+                            .rounded_tl(px(0.))
+                            .gap_2()
+                            .child(
+                                if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
+                                    Icon::new(IconName::ZedPredictDown)
+                                } else {
+                                    Icon::new(IconName::ZedPredictUp)
+                                },
+                            )
+                            .child(Label::new("Hold"))
+                            .children(ui::render_modifiers(
+                                &accept_keystroke.modifiers,
+                                PlatformStyle::platform(),
+                                Some(Color::Default),
+                                None,
+                                true,
+                            ))
+                            .into_any(),
+                    );
+                }
+                _ => self.render_edit_prediction_cursor_popover_preview(
+                    completion,
+                    cursor_point,
+                    style,
+                    cx,
+                )?,
+            },
 
             None if is_refreshing => match &self.stale_inline_completion_in_menu {
                 Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
                     stale_completion,
                     cursor_point,
                     style,
-                    window,
                     cx,
                 )?,
 
@@ -5670,9 +6018,6 @@ impl Editor {
 
             None => pending_completion_container().child(Label::new("No Prediction")),
         };
-
-        let buffer_font = theme::ThemeSettings::get_global(cx).buffer_font.clone();
-        let completion = completion.font(buffer_font.clone());
 
         let completion = if is_refreshing {
             completion
@@ -5698,6 +6043,7 @@ impl Editor {
                 .px_2()
                 .py_1()
                 .elevation_2(cx)
+                .border_color(cx.theme().colors().border)
                 .child(completion)
                 .child(ui::Divider::vertical())
                 .child(
@@ -5705,19 +6051,22 @@ impl Editor {
                         .h_full()
                         .gap_1()
                         .pl_2()
-                        .child(h_flex().font(buffer_font.clone()).gap_1().children(
-                            ui::render_modifiers(
-                                &accept_keystroke.modifiers,
-                                PlatformStyle::platform(),
-                                Some(if !has_completion {
-                                    Color::Muted
-                                } else {
-                                    Color::Default
-                                }),
-                                None,
-                                true,
-                            ),
-                        ))
+                        .child(
+                            h_flex()
+                                .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                                .gap_1()
+                                .children(ui::render_modifiers(
+                                    &accept_keystroke.modifiers,
+                                    PlatformStyle::platform(),
+                                    Some(if !has_completion {
+                                        Color::Muted
+                                    } else {
+                                        Color::Default
+                                    }),
+                                    None,
+                                    true,
+                                )),
+                        )
                         .child(Label::new("Preview").into_any_element())
                         .opacity(if has_completion { 1.0 } else { 0.4 }),
                 )
@@ -5730,7 +6079,6 @@ impl Editor {
         completion: &InlineCompletionState,
         cursor_point: Point,
         style: &EditorStyle,
-        window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<Div> {
         use text::ToPoint as _;
@@ -5756,6 +6104,23 @@ impl Editor {
         }
 
         match &completion.completion {
+            InlineCompletion::Move {
+                target, snapshot, ..
+            } => Some(
+                h_flex()
+                    .px_2()
+                    .gap_2()
+                    .flex_1()
+                    .child(
+                        if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
+                            Icon::new(IconName::ZedPredictDown)
+                        } else {
+                            Icon::new(IconName::ZedPredictUp)
+                        },
+                    )
+                    .child(Label::new("Jump to Edit")),
+            ),
+
             InlineCompletion::Edit {
                 edits,
                 edit_preview,
@@ -5825,102 +6190,10 @@ impl Editor {
                         .gap_2()
                         .pr_1()
                         .overflow_x_hidden()
+                        .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                         .child(left)
                         .child(preview),
                 )
-            }
-
-            InlineCompletion::Move {
-                target,
-                range_around_target,
-                snapshot,
-            } => {
-                let highlighted_text = snapshot.highlighted_text_for_range(
-                    range_around_target.clone(),
-                    None,
-                    &style.syntax,
-                );
-                let base = h_flex().gap_3().flex_1().child(render_relative_row_jump(
-                    "Jump ",
-                    cursor_point.row,
-                    target.text_anchor.to_point(&snapshot).row,
-                ));
-
-                if highlighted_text.text.is_empty() {
-                    return Some(base);
-                }
-
-                let cursor_color = self.current_user_player_color(cx).cursor;
-
-                let start_point = range_around_target.start.to_point(&snapshot);
-                let end_point = range_around_target.end.to_point(&snapshot);
-                let target_point = target.text_anchor.to_point(&snapshot);
-
-                let styled_text = highlighted_text.to_styled_text(&style.text);
-                let text_len = highlighted_text.text.len();
-
-                let cursor_relative_position = window
-                    .text_system()
-                    .layout_line(
-                        highlighted_text.text,
-                        style.text.font_size.to_pixels(window.rem_size()),
-                        // We don't need to include highlights
-                        // because we are only using this for the cursor position
-                        &[TextRun {
-                            len: text_len,
-                            font: style.text.font(),
-                            color: style.text.color,
-                            background_color: None,
-                            underline: None,
-                            strikethrough: None,
-                        }],
-                    )
-                    .log_err()
-                    .map(|line| {
-                        line.x_for_index(
-                            target_point.column.saturating_sub(start_point.column) as usize
-                        )
-                    });
-
-                let fade_before = start_point.column > 0;
-                let fade_after = end_point.column < snapshot.line_len(end_point.row);
-
-                let background = cx.theme().colors().elevated_surface_background;
-
-                let preview = h_flex()
-                    .relative()
-                    .child(styled_text)
-                    .when(fade_before, |parent| {
-                        parent.child(div().absolute().top_0().left_0().w_4().h_full().bg(
-                            linear_gradient(
-                                90.,
-                                linear_color_stop(background, 0.),
-                                linear_color_stop(background.opacity(0.), 1.),
-                            ),
-                        ))
-                    })
-                    .when(fade_after, |parent| {
-                        parent.child(div().absolute().top_0().right_0().w_4().h_full().bg(
-                            linear_gradient(
-                                -90.,
-                                linear_color_stop(background, 0.),
-                                linear_color_stop(background.opacity(0.), 1.),
-                            ),
-                        ))
-                    })
-                    .when_some(cursor_relative_position, |parent, position| {
-                        parent.child(
-                            div()
-                                .w(px(2.))
-                                .h_full()
-                                .bg(cursor_color)
-                                .absolute()
-                                .top_0()
-                                .left(position),
-                        )
-                    });
-
-                Some(base.child(preview))
             }
         }
     }
@@ -13740,6 +14013,23 @@ impl Editor {
         }
     }
 
+    pub fn previewing_edit_prediction_move(
+        &mut self,
+    ) -> Option<(Anchor, &mut EditPredictionPreview)> {
+        if !self.edit_prediction_preview.is_active() {
+            return None;
+        };
+
+        self.active_inline_completion
+            .as_ref()
+            .and_then(|completion| match completion.completion {
+                InlineCompletion::Move { target, .. } => {
+                    Some((target, &mut self.edit_prediction_preview))
+                }
+                _ => None,
+            })
+    }
+
     pub fn show_local_cursors(&self, window: &mut Window, cx: &mut App) -> bool {
         (self.read_only(cx) || self.blink_manager.read(cx).visible())
             && self.focus_handle.is_focused(window)
@@ -14572,7 +14862,7 @@ impl Editor {
     }
 
     pub fn has_visible_completions_menu(&self) -> bool {
-        !self.previewing_inline_completion
+        !self.edit_prediction_preview.is_active()
             && self.context_menu.borrow().as_ref().map_or(false, |menu| {
                 menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
             })

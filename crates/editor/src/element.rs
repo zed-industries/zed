@@ -16,12 +16,12 @@ use crate::{
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
     AcceptEditPrediction, BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint,
-    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk,
-    GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
-    InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
-    RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR,
+    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode,
+    EditPredictionPreview, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
+    ExpandExcerpts, FocusedBlock, GoToHunk, GoToPrevHunk, GutterDimensions, HalfPageDown,
+    HalfPageUp, HandleInput, HoveredCursor, InlineCompletion, JumpData, LineDown, LineUp,
+    OpenExcerpts, PageDown, PageUp, Point, RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase,
+    Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR,
     EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
@@ -1114,18 +1114,44 @@ impl EditorElement {
         em_width: Pixels,
         em_advance: Pixels,
         autoscroll_containing_element: bool,
+        newest_selection_head: Option<DisplayPoint>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<CursorLayout> {
         let mut autoscroll_bounds = None;
         let cursor_layouts = self.editor.update(cx, |editor, cx| {
             let mut cursors = Vec::new();
+
+            let previewing_move =
+                if let Some((target, preview)) = editor.previewing_edit_prediction_move() {
+                    cursors.extend(self.layout_edit_prediction_preview_cursor(
+                        snapshot,
+                        visible_display_row_range.clone(),
+                        line_layouts,
+                        content_origin,
+                        scroll_pixel_position,
+                        line_height,
+                        em_advance,
+                        preview,
+                        target,
+                        newest_selection_head,
+                        window,
+                        cx,
+                    ));
+
+                    true
+                } else {
+                    false
+                };
+
+            let show_local_cursors = !previewing_move && editor.show_local_cursors(window, cx);
+
             for (player_color, selections) in selections {
                 for selection in selections {
                     let cursor_position = selection.head;
 
                     let in_range = visible_display_row_range.contains(&cursor_position.row());
-                    if (selection.is_local && !editor.show_local_cursors(window, cx))
+                    if (selection.is_local && !show_local_cursors)
                         || !in_range
                         || block_start_rows.contains(&cursor_position.row())
                     {
@@ -1249,6 +1275,7 @@ impl EditorElement {
                     cursors.push(cursor);
                 }
             }
+
             cursors
         });
 
@@ -1257,6 +1284,50 @@ impl EditorElement {
         }
 
         cursor_layouts
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_edit_prediction_preview_cursor(
+        &self,
+        snapshot: &EditorSnapshot,
+        visible_row_range: Range<DisplayRow>,
+        line_layouts: &[LineWithInvisibles],
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_height: Pixels,
+        em_advance: Pixels,
+        preview: &mut EditPredictionPreview,
+        target: Anchor,
+        cursor: Option<DisplayPoint>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<CursorLayout> {
+        let state = preview.move_state(
+            snapshot,
+            visible_row_range,
+            line_layouts,
+            scroll_pixel_position,
+            line_height,
+            target,
+            cursor,
+        )?;
+
+        if !state.is_animation_completed() {
+            window.request_animation_frame();
+        }
+
+        let mut cursor = CursorLayout {
+            color: self.style.local_player.cursor,
+            block_width: em_advance,
+            origin: state.position,
+            line_height,
+            shape: CursorShape::Bar,
+            block_text: None,
+            cursor_name: None,
+        };
+
+        cursor.layout(content_origin, None, window, cx);
+        Some(cursor)
     }
 
     fn layout_scrollbars(
@@ -3531,7 +3602,7 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn layout_inline_completion_popover(
+    fn layout_edit_prediction_popover(
         &self,
         text_bounds: &Bounds<Pixels>,
         editor_snapshot: &EditorSnapshot,
@@ -3559,6 +3630,49 @@ impl EditorElement {
 
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
+                if editor.edit_prediction_requires_modifier() {
+                    let cursor_position =
+                        target.to_display_point(&editor_snapshot.display_snapshot);
+
+                    if !editor.edit_prediction_preview.is_active_settled()
+                        || !visible_row_range.contains(&cursor_position.row())
+                    {
+                        return None;
+                    }
+
+                    let accept_keybind = editor.accept_edit_prediction_keybind(window, cx);
+                    let accept_keystroke = accept_keybind.keystroke()?;
+
+                    let mut element = div()
+                        .px_2()
+                        .py_1()
+                        .elevation_2(cx)
+                        .border_color(cx.theme().colors().border)
+                        .rounded_br(px(0.))
+                        .child(Label::new(accept_keystroke.key.clone()).buffer_font(cx))
+                        .into_any();
+
+                    let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+
+                    let cursor_row_layout = &line_layouts
+                        [cursor_position.row().minus(visible_row_range.start) as usize];
+                    let cursor_column = cursor_position.column() as usize;
+
+                    let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
+                    let target_y = (cursor_position.row().as_f32()
+                        - scroll_pixel_position.y / line_height)
+                        * line_height;
+
+                    let offset = point(
+                        cursor_character_x - size.width,
+                        target_y - size.height - PADDING_Y,
+                    );
+
+                    element.prepaint_at(text_bounds.origin + offset, window, cx);
+
+                    return Some(element);
+                }
+
                 let target_display_point = target.to_display_point(editor_snapshot);
                 if target_display_point.row().as_f32() < scroll_top {
                     let mut element = inline_completion_accept_indicator(
@@ -5688,7 +5802,7 @@ fn inline_completion_accept_indicator(
         .text_size(TextSize::XSmall.rems(cx))
         .text_color(cx.theme().colors().text)
         .gap_1()
-        .when(!editor.previewing_inline_completion, |parent| {
+        .when(!editor.edit_prediction_preview.is_active(), |parent| {
             parent.children(ui::render_modifiers(
                 &accept_keystroke.modifiers,
                 PlatformStyle::platform(),
@@ -7246,6 +7360,7 @@ impl Element for EditorElement {
                         em_width,
                         em_advance,
                         autoscroll_containing_element,
+                        newest_selection_head,
                         window,
                         cx,
                     );
@@ -7397,7 +7512,7 @@ impl Element for EditorElement {
                         );
                     }
 
-                    let inline_completion_popover = self.layout_inline_completion_popover(
+                    let inline_completion_popover = self.layout_edit_prediction_popover(
                         &text_hitbox.bounds,
                         &snapshot,
                         start_row..end_row,
