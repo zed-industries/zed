@@ -1,16 +1,21 @@
 use anyhow::{Context as _, Result};
 use editor::Editor;
 use fs::Fs;
+use markdown_preview::markdown_elements::ParsedMarkdown;
+use markdown_preview::markdown_renderer::render_parsed_markdown;
 use migrator::{migrate_keymap, migrate_settings};
 use settings::{KeymapFile, SettingsStore};
+use util::markdown::MarkdownString;
 use util::ResultExt;
 
 use std::sync::Arc;
 
-use gpui::{EventEmitter, Task};
+use gpui::{EventEmitter, Task, WeakEntity};
 use ui::prelude::*;
 use workspace::item::ItemHandle;
-use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
+use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace};
+
+#[derive(Debug, Copy, Clone)]
 enum MigrationType {
     Keymap,
     Settings,
@@ -18,28 +23,18 @@ enum MigrationType {
 
 pub struct MigratorBanner {
     migration_type: Option<MigrationType>,
+    message: ParsedMarkdown,
     should_migrate_task: Option<Task<()>>,
-}
-
-impl Default for MigratorBanner {
-    fn default() -> Self {
-        Self::new()
-    }
+    workspace: WeakEntity<Workspace>,
 }
 
 impl MigratorBanner {
-    pub fn new() -> Self {
+    pub fn new(workspace: &Workspace) -> Self {
         Self {
             migration_type: None,
+            message: ParsedMarkdown { children: vec![] },
             should_migrate_task: None,
-        }
-    }
-
-    fn get_title(&self) -> &str {
-        match self.migration_type {
-            Some(MigrationType::Keymap) => "keymap",
-            Some(MigrationType::Settings) => "settings",
-            None => unreachable!(),
+            workspace: workspace.weak_handle(),
         }
     }
 }
@@ -57,6 +52,7 @@ impl ToolbarItemView for MigratorBanner {
     ) -> ToolbarItemLocation {
         cx.notify();
         self.migration_type = None;
+        self.message = ParsedMarkdown { children: vec![] };
         self.should_migrate_task.take();
         let Some(target) = active_pane_item
             .and_then(|item| item.act_as::<Editor>(cx))
@@ -70,9 +66,24 @@ impl ToolbarItemView for MigratorBanner {
             self.should_migrate_task =
                 Some(cx.spawn_in(window, |migrator_banner, mut cx| async move {
                     if let Ok(true) = should_migrate.await {
+                        let message = MarkdownString(format!(
+                            "Your keymap require migration to support this version of Zed. A backup will be saved to {}.",
+                            MarkdownString::inline_code(&paths::keymap_backup_file().to_string_lossy())
+                        ));
+                        let parsed_markdown = cx.background_executor().spawn(async move {
+                            let file_location_directory = None;
+                            let language_registry = None;
+                            markdown_preview::markdown_parser::parse_markdown(
+                                &message.0,
+                                file_location_directory,
+                                language_registry,
+                            )
+                            .await
+                        }).await;
                         migrator_banner
                             .update(&mut cx, |this, cx| {
                                 this.migration_type = Some(MigrationType::Keymap);
+                                this.message = parsed_markdown;
                                 cx.emit(ToolbarItemEvent::ChangeLocation(
                                     ToolbarItemLocation::Secondary,
                                 ));
@@ -87,9 +98,24 @@ impl ToolbarItemView for MigratorBanner {
             self.should_migrate_task =
                 Some(cx.spawn_in(window, |migrator_banner, mut cx| async move {
                     if let Ok(true) = should_migrate.await {
+                        let message = MarkdownString(format!(
+                            "Your settings require migration to support this version of Zed. A backup will be saved to {}.",
+                            MarkdownString::inline_code(&paths::keymap_backup_file().to_string_lossy())
+                        ));
+                        let parsed_markdown = cx.background_executor().spawn(async move {
+                            let file_location_directory = None;
+                            let language_registry = None;
+                            markdown_preview::markdown_parser::parse_markdown(
+                                &message.0,
+                                file_location_directory,
+                                language_registry,
+                            )
+                            .await
+                        }).await;
                         migrator_banner
                             .update(&mut cx, |this, cx| {
                                 this.migration_type = Some(MigrationType::Settings);
+                                this.message = parsed_markdown;
                                 cx.emit(ToolbarItemEvent::ChangeLocation(
                                     ToolbarItemLocation::Secondary,
                                 ));
@@ -104,40 +130,44 @@ impl ToolbarItemView for MigratorBanner {
 }
 
 impl Render for MigratorBanner {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let migration_type = self.migration_type;
         h_flex()
-            .p_2()
+            .py_1()
+            .px_2()
             .justify_between()
             .bg(cx.theme().status().info_background)
             .rounded_md()
+            .gap_2()
+            .overflow_hidden()
             .child(
-                Label::new(
-                    format!(
-                        "A few {} were updated in this version. Your existing ones still work, but migration is recommended. You can also review the diff before auto-migrating.",
-                        self.get_title()
-                    )
-                )
+                render_parsed_markdown(&self.message, Some(self.workspace.clone()), window, cx)
+                    .text_ellipsis(),
             )
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new(
-                            SharedString::from("backup-and-migrate"),
-                            "Backup and Migrate",
-                        )
-                        .style(ButtonStyle::Filled)
-                        .on_click(|_, window, cx| {
-                            //
-                        })
-
-                    )
-                    .child(
-                        Button::new(
-                            SharedString::from("view-diff"),
-                            "View Diff",
-                        ),
-                    )
+                Button::new(
+                    SharedString::from("backup-and-migrate"),
+                    "Backup and Migrate",
+                )
+                .style(ButtonStyle::Filled)
+                .on_click(move |_, _, cx| {
+                    let fs = <dyn Fs>::global(cx);
+                    match migration_type {
+                        Some(MigrationType::Keymap) => {
+                            cx.spawn(
+                                move |_| async move { write_keymap_migration(&fs).await.ok() },
+                            )
+                            .detach();
+                        }
+                        Some(MigrationType::Settings) => {
+                            cx.spawn(
+                                move |_| async move { write_settings_migration(&fs).await.ok() },
+                            )
+                            .detach();
+                        }
+                        None => unreachable!(),
+                    }
+                }),
             )
             .into_any_element()
     }

@@ -871,7 +871,7 @@ fn initialize_pane(
             toolbar.add_item(lsp_log_item, window, cx);
             let syntax_tree_item = cx.new(|_| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, window, cx);
-            let migrator_banner = cx.new(|_| MigratorBanner::new());
+            let migrator_banner = cx.new(|_| MigratorBanner::new(workspace));
             toolbar.add_item(migrator_banner, window, cx);
         })
     });
@@ -1192,6 +1192,7 @@ pub fn handle_keymap_file_changes(
                 match load_result {
                     KeymapFileLoadResult::Success { key_bindings } => {
                         reload_keymaps(cx, key_bindings);
+                        dismiss_app_notification(&notification_id.clone(), cx);
                     }
                     KeymapFileLoadResult::SomeFailedToLoad {
                         key_bindings,
