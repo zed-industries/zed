@@ -95,8 +95,8 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CompletionDocumentation, CursorShape, Diagnostic, EditPreview, HighlightedText, IndentKind,
-    IndentSize, InlineCompletionPreviewMode, Language, OffsetRangeExt, Point, Selection,
+    CompletionDocumentation, CursorShape, Diagnostic, EditPredictionsMode, EditPreview,
+    HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection,
     SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
@@ -5054,9 +5054,8 @@ impl Editor {
                     provider.provider.show_completions_in_menu()
                 });
 
-        let preview_requires_modifier = all_language_settings(file, cx)
-            .inline_completions_preview_mode()
-            == InlineCompletionPreviewMode::WhenHoldingModifier;
+        let preview_requires_modifier = all_language_settings(file, cx).edit_predictions_mode()
+            == EditPredictionsMode::WhenHoldingModifier;
 
         EditPredictionSettings::Enabled {
             show_in_menu,
