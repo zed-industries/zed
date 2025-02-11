@@ -43,7 +43,6 @@ pub use disclosure::*;
 pub use divider::*;
 pub use dropdown_menu::*;
 pub use facepile::*;
-pub use highlighted_label::*;
 pub use icon::*;
 pub use image::*;
 pub use indent_guides::*;
