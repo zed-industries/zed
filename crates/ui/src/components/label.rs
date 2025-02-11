@@ -492,7 +492,7 @@ mod label_preview {
                         "Special Cases",
                         vec![
                             single_example("Single Line", Label::new("Line 1\nLine 2\nLine 3").single_line().into_any_element()),
-                            single_example("Text Ellipsis", Label::new("This is a very long file name that should be truncated: very_long_file_name_with_many_words.rs").text_ellipsis().into_any_element()),
+                            single_example("Text Ellipsis", div().max_w_24().child(Label::new("This is a very long file name that should be truncated: very_long_file_name_with_many_words.rs").text_ellipsis()).into_any_element()),
                         ],
                     ),
                 ])
