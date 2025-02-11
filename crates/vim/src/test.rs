@@ -1707,3 +1707,30 @@ async fn test_ctrl_o_dot(cx: &mut gpui::TestAppContext) {
     cx.simulate_shared_keystrokes("l l escape .").await;
     cx.shared_state().await.assert_eq("hellˇllo world.");
 }
+
+#[gpui::test]
+async fn test_exchange_separate_range(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("ˇhello world").await;
+    cx.simulate_shared_keystrokes("c x i w w c x i w").await;
+    cx.shared_state().await.assert_eq("world ˇhello");
+}
+
+#[gpui::test]
+async fn test_exchange_complete_overlap(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("ˇhello world").await;
+    cx.simulate_shared_keystrokes("c x x w c x i w").await;
+    cx.shared_state().await.assert_eq("ˇhello");
+}
+
+#[gpui::test]
+async fn test_exchange_partial_overlap(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("ˇhello world").await;
+    cx.simulate_shared_keystrokes("c x t r w c x i w").await;
+    cx.shared_state().await.assert_eq("hello ˇworld");
+}
