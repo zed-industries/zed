@@ -708,7 +708,7 @@ impl LspLogView {
             editor.set_text(log_contents, window, cx);
             editor.move_to_end(&MoveToEnd, window, cx);
             editor.set_read_only(true);
-            editor.set_show_inline_completions(Some(false), window, cx);
+            editor.set_show_edit_predictions(Some(false), window, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor
         });
@@ -751,7 +751,7 @@ impl LspLogView {
             );
             editor.set_text(server_info, window, cx);
             editor.set_read_only(true);
-            editor.set_show_inline_completions(Some(false), window, cx);
+            editor.set_show_edit_predictions(Some(false), window, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor
         });

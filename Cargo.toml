@@ -34,7 +34,7 @@ members = [
     "crates/db",
     "crates/deepseek",
     "crates/diagnostics",
-    "crates/diff",
+    "crates/buffer_diff",
     "crates/docs_preprocessor",
     "crates/editor",
     "crates/evals",
@@ -171,7 +171,6 @@ members = [
     "extensions/haskell",
     "extensions/html",
     "extensions/lua",
-    "extensions/php",
     "extensions/perplexity",
     "extensions/proto",
     "extensions/purescript",
@@ -236,7 +235,7 @@ copilot = { path = "crates/copilot" }
 db = { path = "crates/db" }
 deepseek = { path = "crates/deepseek" }
 diagnostics = { path = "crates/diagnostics" }
-diff = { path = "crates/diff" }
+buffer_diff = { path = "crates/buffer_diff" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
@@ -423,6 +422,7 @@ ignore = "0.4.22"
 image = "0.25.1"
 indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
+inventory = "0.3.19"
 itertools = "0.14.0"
 jsonwebtoken = "9.3"
 jupyter-protocol = { version = "0.6.0" }

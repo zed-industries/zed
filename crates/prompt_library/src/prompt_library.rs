@@ -563,7 +563,7 @@ impl PromptLibrary {
                             editor.set_text(prompt_metadata.title.unwrap_or_default(), window, cx);
                             if prompt_id.is_built_in() {
                                 editor.set_read_only(true);
-                                editor.set_show_inline_completions(Some(false), window, cx);
+                                editor.set_show_edit_predictions(Some(false), window, cx);
                             }
                             editor
                         });
@@ -578,7 +578,7 @@ impl PromptLibrary {
                             let mut editor = Editor::for_buffer(buffer, None, window, cx);
                             if prompt_id.is_built_in() {
                                 editor.set_read_only(true);
-                                editor.set_show_inline_completions(Some(false), window, cx);
+                                editor.set_show_edit_predictions(Some(false), window, cx);
                             }
                             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
                             editor.set_show_gutter(false, cx);

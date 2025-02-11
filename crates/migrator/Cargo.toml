@@ -15,6 +15,7 @@ doctest = false
 [dependencies]
 collections.workspace = true
 convert_case.workspace = true
+log.workspace = true
 streaming-iterator.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter.workspace = true

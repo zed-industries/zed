@@ -13,6 +13,7 @@ use gpui::{
     App, AppContext, Context, Entity, EventEmitter, SharedString, Subscription, Task, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
+use rpc::proto::ToProto;
 use rpc::{proto, AnyProtoClient};
 use settings::WorktreeId;
 use std::path::{Path, PathBuf};
@@ -222,7 +223,7 @@ impl GitState {
                                 work_directory_id: work_directory_id.to_proto(),
                                 paths: paths
                                     .into_iter()
-                                    .map(|repo_path| repo_path.to_proto())
+                                    .map(|repo_path| repo_path.as_ref().to_proto())
                                     .collect(),
                             })
                             .await
@@ -247,7 +248,7 @@ impl GitState {
                                 work_directory_id: work_directory_id.to_proto(),
                                 paths: paths
                                     .into_iter()
-                                    .map(|repo_path| repo_path.to_proto())
+                                    .map(|repo_path| repo_path.as_ref().to_proto())
                                     .collect(),
                             })
                             .await

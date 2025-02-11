@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc};
+use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 use anyhow::{bail, Result};
 
@@ -8,7 +8,10 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
 use language::{LanguageName, LanguageRegistry, LanguageToolchainStore, Toolchain, ToolchainList};
-use rpc::{proto, AnyProtoClient, TypedEnvelope};
+use rpc::{
+    proto::{self, FromProto, ToProto},
+    AnyProtoClient, TypedEnvelope,
+};
 use settings::WorktreeId;
 use util::ResultExt as _;
 
@@ -120,7 +123,9 @@ impl ToolchainStore {
             };
             let toolchain = Toolchain {
                 name: toolchain.name.into(),
-                path: toolchain.path.into(),
+                // todo(windows)
+                // Do we need to convert path to native string?
+                path: PathBuf::from(toolchain.path).to_proto().into(),
                 as_json: serde_json::Value::from_str(&toolchain.raw_json)?,
                 language_name,
             };
@@ -144,10 +149,13 @@ impl ToolchainStore {
             .await;
 
         Ok(proto::ActiveToolchainResponse {
-            toolchain: toolchain.map(|toolchain| proto::Toolchain {
-                name: toolchain.name.into(),
-                path: toolchain.path.into(),
-                raw_json: toolchain.as_json.to_string(),
+            toolchain: toolchain.map(|toolchain| {
+                let path = PathBuf::from(toolchain.path.to_string());
+                proto::Toolchain {
+                    name: toolchain.name.into(),
+                    path: path.to_proto(),
+                    raw_json: toolchain.as_json.to_string(),
+                }
             }),
         })
     }
@@ -183,10 +191,13 @@ impl ToolchainStore {
             toolchains
                 .toolchains
                 .into_iter()
-                .map(|toolchain| proto::Toolchain {
-                    name: toolchain.name.to_string(),
-                    path: toolchain.path.to_string(),
-                    raw_json: toolchain.as_json.to_string(),
+                .map(|toolchain| {
+                    let path = PathBuf::from(toolchain.path.to_string());
+                    proto::Toolchain {
+                        name: toolchain.name.to_string(),
+                        path: path.to_proto(),
+                        raw_json: toolchain.as_json.to_string(),
+                    }
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -354,6 +365,7 @@ impl RemoteToolchainStore {
         let project_id = self.project_id;
         let client = self.client.clone();
         cx.spawn(move |_| async move {
+            let path = PathBuf::from(toolchain.path.to_string());
             let _ = client
                 .request(proto::ActivateToolchain {
                     project_id,
@@ -361,7 +373,7 @@ impl RemoteToolchainStore {
                     language_name: toolchain.language_name.into(),
                     toolchain: Some(proto::Toolchain {
                         name: toolchain.name.into(),
-                        path: toolchain.path.into(),
+                        path: path.to_proto(),
                         raw_json: toolchain.as_json.to_string(),
                     }),
                 })
@@ -398,7 +410,12 @@ impl RemoteToolchainStore {
                     Some(Toolchain {
                         language_name: language_name.clone(),
                         name: toolchain.name.into(),
-                        path: toolchain.path.into(),
+                        // todo(windows)
+                        // Do we need to convert path to native string?
+                        path: PathBuf::from_proto(toolchain.path)
+                            .to_string_lossy()
+                            .to_string()
+                            .into(),
                         as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
                     })
                 })
@@ -439,7 +456,12 @@ impl RemoteToolchainStore {
                 Some(Toolchain {
                     language_name: language_name.clone(),
                     name: toolchain.name.into(),
-                    path: toolchain.path.into(),
+                    // todo(windows)
+                    // Do we need to convert path to native string?
+                    path: PathBuf::from_proto(toolchain.path)
+                        .to_string_lossy()
+                        .to_string()
+                        .into(),
                     as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
                 })
             })

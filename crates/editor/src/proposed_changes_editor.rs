@@ -1,6 +1,6 @@
 use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SemanticsProvider};
+use buffer_diff::BufferDiff;
 use collections::HashSet;
-use diff::BufferDiff;
 use futures::{channel::mpsc, future::join_all};
 use gpui::{App, Entity, EventEmitter, Focusable, Render, Subscription, Task};
 use language::{Buffer, BufferEvent, Capability};
@@ -185,7 +185,7 @@ impl ProposedChangesEditor {
             } else {
                 branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
                 new_diffs.push(cx.new(|cx| {
-                    let mut diff = BufferDiff::new(&branch_buffer, cx);
+                    let mut diff = BufferDiff::new(branch_buffer.read(cx));
                     let _ = diff.set_base_text(
                         location.buffer.clone(),
                         branch_buffer.read(cx).text_snapshot(),
