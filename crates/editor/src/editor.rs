@@ -13116,6 +13116,31 @@ impl Editor {
         }
     }
 
+    pub fn copy_file_name_without_extension(
+        &mut self,
+        _: &CopyFileNameWithoutExtension,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(file) = self.target_file(cx) {
+            if let Some(file_stem) = file.path().file_stem() {
+                if let Some(name) = file_stem.to_str() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
+                }
+            }
+        }
+    }
+
+    pub fn copy_file_name(&mut self, _: &CopyFileName, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(file) = self.target_file(cx) {
+            if let Some(file_name) = file.path().file_name() {
+                if let Some(name) = file_name.to_str() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
+                }
+            }
+        }
+    }
+
     pub fn toggle_git_blame(
         &mut self,
         _: &ToggleGitBlame,
