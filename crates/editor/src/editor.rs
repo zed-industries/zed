@@ -709,6 +709,7 @@ pub struct Editor {
     /// Used to prevent flickering as the user types while the menu is open
     stale_inline_completion_in_menu: Option<InlineCompletionState>,
     edit_prediction_settings: EditPredictionSettings,
+    edit_prediction_cursor_on_leading_whitespace: bool,
     inline_completions_hidden_for_vim_mode: bool,
     show_inline_completions_override: Option<bool>,
     menu_inline_completions_policy: MenuInlineCompletionsPolicy,
@@ -1423,6 +1424,7 @@ impl Editor {
             show_inline_completions_override: None,
             menu_inline_completions_policy: MenuInlineCompletionsPolicy::ByProvider,
             edit_prediction_settings: EditPredictionSettings::Disabled,
+            edit_prediction_cursor_on_leading_whitespace: false,
             custom_context_menu: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
@@ -1567,8 +1569,12 @@ impl Editor {
         if has_active_edit_prediction {
             key_context.add("copilot_suggestion");
             key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
-
-            if showing_completions || self.edit_prediction_requires_modifier() {
+            if showing_completions
+                || self.edit_prediction_requires_modifier()
+                // Require modifier key when the cursor is on leading whitespace, to allow `tab`
+                // bindings to insert tab characters.
+                || self.edit_prediction_cursor_on_leading_whitespace
+            {
                 key_context.add(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT);
             }
         }
@@ -4931,23 +4937,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let buffer = self.buffer.read(cx);
-        let snapshot = buffer.snapshot(cx);
-        let selection = self.selections.newest_adjusted(cx);
-        let cursor = selection.head();
-        let current_indent = snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
-        let suggested_indents = snapshot.suggested_indents([cursor.row], cx);
-        if let Some(suggested_indent) = suggested_indents.get(&MultiBufferRow(cursor.row)).copied()
-        {
-            if cursor.column < suggested_indent.len
-                && cursor.column <= current_indent.len
-                && current_indent.len <= suggested_indent.len
-            {
-                self.tab(&Default::default(), window, cx);
-                return;
-            }
-        }
-
         if self.show_edit_predictions_in_menu() {
             self.hide_context_menu(window, cx);
         }
@@ -5297,6 +5286,9 @@ impl Editor {
             self.discard_inline_completion(false, cx);
             return None;
         }
+
+        self.edit_prediction_cursor_on_leading_whitespace =
+            multibuffer.is_line_whitespace_upto(cursor);
 
         let inline_completion = provider.suggest(&buffer, cursor_buffer_position, cx)?;
         let edits = inline_completion

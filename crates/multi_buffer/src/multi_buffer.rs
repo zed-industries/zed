@@ -4236,6 +4236,21 @@ impl MultiBufferSnapshot {
         indent
     }
 
+    pub fn is_line_whitespace_upto<T>(&self, position: T) -> bool
+    where
+        T: ToOffset,
+    {
+        for char in self.reversed_chars_at(position) {
+            if !char.is_whitespace() {
+                return false;
+            }
+            if char == '\n' {
+                return true;
+            }
+        }
+        return true;
+    }
+
     pub fn prev_non_blank_row(&self, mut row: MultiBufferRow) -> Option<MultiBufferRow> {
         while row.0 > 0 {
             row.0 -= 1;
