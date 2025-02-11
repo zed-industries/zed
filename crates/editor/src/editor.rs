@@ -534,8 +534,7 @@ impl EditPredictionPreview {
         completion: &InlineCompletion,
         snapshot: &EditorSnapshot,
         cursor: DisplayPoint,
-    ) {
-        // todo! autoscroll
+    ) -> bool {
         if let Self::Started {
             target_point: current_target_point,
             ..
@@ -544,8 +543,10 @@ impl EditPredictionPreview {
             let (new_preview, new_target_point) = Self::start_now(completion, snapshot, cursor);
             if new_target_point != *current_target_point {
                 *self = new_preview;
+                return true;
             }
         }
+        false
     }
 
     fn start_now(
@@ -568,7 +569,7 @@ impl EditPredictionPreview {
                 let row_diff = target_point.row().0.abs_diff(cursor.row().0);
                 let column_diff = target_point.column().abs_diff(cursor.column());
                 let distance = ((row_diff.pow(2) + column_diff.pow(2)) as f32).sqrt();
-                let duration = Duration::from_millis((distance * 20.) as u64);
+                let duration = Duration::from_millis((distance * 6.) as u64);
 
                 (
                     Self::Started {
@@ -597,7 +598,7 @@ impl EditPredictionPreview {
 
             if let Some(scroll_position) = scroll_position {
                 cx.spawn_in(window, |editor, mut cx| async move {
-                    smol::Timer::after(duration + Duration::from_millis(30)).await;
+                    smol::Timer::after(duration).await;
                     // todo! az check if is same?
 
                     editor
@@ -5490,11 +5491,13 @@ impl Editor {
         self.stale_inline_completion_in_menu = None;
         // todo! az pass only display snaphot?
         let editor_snapshot = self.snapshot(window, cx);
-        self.edit_prediction_preview.restart(
+        if self.edit_prediction_preview.restart(
             &completion,
             &editor_snapshot,
             cursor.to_display_point(&editor_snapshot),
-        );
+        ) {
+            self.request_autoscroll(Autoscroll::fit(), cx);
+        }
 
         self.active_inline_completion = Some(InlineCompletionState {
             inlay_ids,

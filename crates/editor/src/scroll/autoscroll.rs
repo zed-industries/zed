@@ -153,9 +153,17 @@ impl Editor {
                         crate::InlineCompletion::Move { target, .. } => {
                             let target_row = target.to_display_point(&display_map).row().as_f32();
 
-                            // todo! az try to fit real cursor
-                            target_top = target_row;
-                            target_bottom = target_row + 1.;
+                            if target_row < target_top {
+                                target_top = target_row;
+                            } else if target_row >= target_bottom {
+                                target_bottom = target_row + 1.;
+                            }
+
+                            let selections_fit = target_bottom - target_top <= visible_lines;
+                            if !selections_fit {
+                                target_top = target_row;
+                                target_bottom = target_row + 1.;
+                            }
                         }
                     }
                 }
