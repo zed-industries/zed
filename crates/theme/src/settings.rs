@@ -177,8 +177,7 @@ impl ThemeSettings {
         if let Some(icon_theme_selection) = theme_settings.icon_theme_selection.clone() {
             let mut icon_theme_name = icon_theme_selection.icon_theme(*system_appearance);
 
-            // If the selected icon theme doesn't exist, fall back to a default
-            // theme based on the system appearance.
+            // If the selected icon theme doesn't exist, fall back to the default theme.
             let theme_registry = ThemeRegistry::global(cx);
             if theme_registry
                 .get_icon_theme(icon_theme_name)
