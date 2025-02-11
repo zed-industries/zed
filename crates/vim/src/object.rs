@@ -727,8 +727,25 @@ fn around_containing_word(
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
 ) -> Option<Range<DisplayPoint>> {
-    in_word(map, relative_to, ignore_punctuation)
-        .map(|range| expand_to_include_whitespace(map, range, true))
+    in_word(map, relative_to, ignore_punctuation).map(|range| {
+        let line_start = DisplayPoint::new(range.start.row(), 0);
+        let is_first_word = map
+            .buffer_chars_at(line_start.to_offset(map, Bias::Left))
+            .take_while(|(ch, offset)| {
+                offset < &range.start.to_offset(map, Bias::Left) && ch.is_whitespace()
+            })
+            .count()
+            > 0;
+
+        if is_first_word {
+            // For first word on line, trim indentation
+            let mut expanded = expand_to_include_whitespace(map, range.clone(), true);
+            expanded.start = range.start;
+            expanded
+        } else {
+            expand_to_include_whitespace(map, range, true)
+        }
+    })
 }
 
 fn around_next_word(
