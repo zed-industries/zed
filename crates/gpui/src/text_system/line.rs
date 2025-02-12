@@ -305,9 +305,11 @@ fn paint_line(
                 }
 
                 if let Some((mut underline_origin, underline_style)) = finished_underline {
+                    println!("painting underline before {:?}", underline_origin);
                     if underline_origin.x == glyph_origin.x {
                         underline_origin.x -= max_glyph_size.width.half();
                     };
+                    println!("painting underline {:?}", underline_origin);
                     window.paint_underline(
                         underline_origin,
                         glyph_origin.x - underline_origin.x,
@@ -355,7 +357,7 @@ fn paint_line(
             }
         }
 
-        let mut last_line_end_x = origin.x + layout.width;
+        let mut last_line_end_x = glyph_origin.x;
         if let Some(boundary) = wrap_boundaries.last() {
             let run = &layout.runs[boundary.run_ix];
             let glyph = &run.glyphs[boundary.glyph_ix];
