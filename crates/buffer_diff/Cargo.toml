@@ -16,7 +16,6 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
-env_logger.workspace = true
 futures.workspace = true
 git2.workspace = true
 gpui.workspace = true
