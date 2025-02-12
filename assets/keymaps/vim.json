@@ -696,14 +696,6 @@
     }
   },
   {
-    "context": "Editor && edit_prediction && !edit_prediction_requires_modifier",
-    "bindings": {
-      // This is identical to the binding in the base keymap, but the vim bindings above to
-      // "vim::Tab" shadow it, so it needs to be bound again.
-      "tab": "editor::AcceptEditPrediction"
-    }
-  },
-  {
     "context": "os != macos && Editor && edit_prediction",
     "bindings": {
       // alt-l is provided as an alternative to tab/alt-tab. and will be displayed in the UI. This

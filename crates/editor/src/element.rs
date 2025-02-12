@@ -5812,7 +5812,7 @@ fn inline_completion_accept_indicator(
         .text_size(TextSize::XSmall.rems(cx))
         .text_color(cx.theme().colors().text)
         .gap_1()
-        .when(!editor.edit_prediction_preview_is_active(), |parent| {
+        .when(accept_keystroke.modifiers != window.modifiers(), |parent| {
             parent.children(ui::render_modifiers(
                 &accept_keystroke.modifiers,
                 PlatformStyle::platform(),

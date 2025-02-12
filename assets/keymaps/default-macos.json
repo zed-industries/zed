@@ -587,13 +587,6 @@
     }
   },
   {
-    "context": "Editor && edit_prediction && !edit_prediction_requires_modifier",
-    "use_key_equivalents": true,
-    "bindings": {
-      "tab": "editor::AcceptEditPrediction"
-    }
-  },
-  {
     "context": "Editor && showing_code_actions",
     "use_key_equivalents": true,
     "bindings": {
