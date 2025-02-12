@@ -7754,6 +7754,7 @@ struct ScrollbarRangeData {
 }
 
 impl ScrollbarRangeData {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         scrollbar_bounds: Bounds<Pixels>,
         letter_size: Size<Pixels>,
@@ -7775,7 +7776,7 @@ impl ScrollbarRangeData {
             ScrollBeyondLastLine::VerticalScrollMargin => px(1.0 + settings.vertical_scroll_margin),
         };
 
-        let right_margin = if longest_line_width >= editor_width {
+        let right_margin = if longest_line_width + longest_line_blame_width >= editor_width {
             letter_size.width + style.scrollbar_width
         } else {
             px(0.0)
