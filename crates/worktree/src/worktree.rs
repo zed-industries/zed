@@ -4578,7 +4578,7 @@ impl BackgroundScanner {
         self.scan_dirs(false, scan_job_rx).await;
 
         let status_update = if !dot_git_abs_paths.is_empty() {
-            Some(self.schedule_git_repositories_update(dot_git_abs_paths))
+            Some(self.update_git_repositories(dot_git_abs_paths))
         } else {
             None
         };
@@ -5296,7 +5296,7 @@ impl BackgroundScanner {
         state.snapshot.entries_by_id.edit(entries_by_id_edits, &());
     }
 
-    fn schedule_git_repositories_update(&self, dot_git_paths: Vec<PathBuf>) -> Task<()> {
+    fn update_git_repositories(&self, dot_git_paths: Vec<PathBuf>) -> Task<()> {
         log::debug!("reloading repositories: {dot_git_paths:?}");
 
         let mut repos_to_update = Vec::new();
@@ -5712,6 +5712,7 @@ impl RepoPaths {
     }
 }
 
+#[derive(Debug)]
 struct ScanJob {
     abs_path: Arc<Path>,
     path: Arc<Path>,

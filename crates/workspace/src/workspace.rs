@@ -1772,6 +1772,7 @@ impl Workspace {
         self.project.read(cx).visible_worktrees(cx)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn worktree_scans_complete(&self, cx: &App) -> impl Future<Output = ()> + 'static {
         let futures = self
             .worktrees(cx)
