@@ -5,8 +5,8 @@ use language::{Language, LanguageRegistry};
 use rope::Rope;
 use std::{cmp, future::Future, iter, ops::Range, sync::Arc};
 use sum_tree::SumTree;
+use text::ToOffset as _;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point};
-use text::{ToOffset as _, ToPoint as _};
 use util::ResultExt;
 
 pub struct BufferDiff {
@@ -179,7 +179,6 @@ impl BufferDiffSnapshot {
         let mut start = 0;
         let mut pos = buffer.anchor_before(0);
         while let Some(hunk) = hunks.next() {
-            log::debug!("iter");
             assert!(buffer_range.start.cmp(&pos, buffer).is_ge());
             assert!(hunk.buffer_range.start.cmp(&pos, buffer).is_ge());
             if hunk
@@ -199,11 +198,6 @@ impl BufferDiffSnapshot {
                 .cmp(&hunk.buffer_range.end, buffer)
                 .is_lt()
             {
-                log::debug!(
-                    "breaking: {:?} vs {:?}",
-                    buffer_range.start.to_point(buffer),
-                    hunk.buffer_range.end.to_point(buffer)
-                );
                 return None;
             }
 
@@ -237,7 +231,6 @@ impl BufferDiffSnapshot {
         log::debug!("original: {:?}", index_base.to_string());
         let mut edits = Vec::new();
         for (diff_base_byte_range, secondary_diff_base_byte_range, buffer_range) in hunks {
-            log::debug!("HUNK");
             let (index_byte_range, replacement_text) = if stage {
                 log::debug!("staging");
                 let mut replacement_text = String::new();
@@ -1424,6 +1417,10 @@ mod tests {
             }
         }
 
+        let operations = std::env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
+
         let rng = &mut rng;
         let head_text = ('a'..='z').fold(String::new(), |mut s, c| {
             writeln!(&mut s, "{c}{c}{c}").unwrap();
@@ -1459,8 +1456,7 @@ mod tests {
             return;
         }
 
-        // FIXME env(OPERATIONS)
-        for _ in 0..10 {
+        for _ in 0..operations {
             let i = rng.gen_range(0..hunks.len());
             let hunk = &mut hunks[i];
             let hunk_fields = (
