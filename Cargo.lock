@@ -2607,7 +2607,6 @@ dependencies = [
  "rand 0.8.5",
  "release_channel",
  "rpc",
- "rustls 0.23.22",
  "schemars",
  "serde",
  "serde_json",
