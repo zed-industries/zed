@@ -188,6 +188,10 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn icon(&self) -> IconName {
+        IconName::AiBedrock
+    }
+
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
