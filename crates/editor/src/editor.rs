@@ -9122,21 +9122,25 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut to_unfold = Vec::new();
         let mut new_selection_ranges = Vec::new();
+        let selections = self
+            .selections
+            .all::<Point>(cx)
+            .into_iter()
+            .map(|selection| selection.start..selection.end)
+            .collect::<Vec<_>>();
+
         {
-            let selections = self.selections.all::<Point>(cx);
             let buffer = self.buffer.read(cx).read(cx);
-            for selection in selections {
+            for selection in &selections {
                 for row in selection.start.row..selection.end.row {
                     let cursor = Point::new(row, buffer.line_len(MultiBufferRow(row)));
                     new_selection_ranges.push(cursor..cursor);
                 }
                 new_selection_ranges.push(selection.end..selection.end);
-                to_unfold.push(selection.start..selection.end);
             }
         }
-        self.unfold_ranges(&to_unfold, true, true, cx);
+        self.unfold_ranges(&selections, true, true, cx);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.select_ranges(new_selection_ranges);
         });
