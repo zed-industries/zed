@@ -108,7 +108,7 @@ pub fn aws_document_to_value(doc: &Document) -> Value {
         Document::String(s) => Value::String(s.clone()),
         Document::Array(arr) => Value::Array(
             arr.iter()
-                .map(|item| aws_document_to_value(item))
+                .map(aws_document_to_value)
                 .collect()
         ),
         Document::Object(map) => Value::Object(
