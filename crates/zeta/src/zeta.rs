@@ -57,9 +57,9 @@ const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 
-const MAX_CONTEXT_TOKENS: usize = 100;
-const MAX_REWRITE_TOKENS: usize = 300;
-const MAX_EVENT_TOKENS: usize = 400;
+const MAX_CONTEXT_TOKENS: usize = 150;
+const MAX_REWRITE_TOKENS: usize = 350;
+const MAX_EVENT_TOKENS: usize = 500;
 
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
