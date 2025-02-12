@@ -5775,7 +5775,7 @@ impl Editor {
                 .px_2()
                 .elevation_2(cx)
                 .border_color(cx.theme().colors().border)
-                .child(div().py_1().overflow_hidden().child(completion))
+                .child(div().flex_1().py_1().overflow_hidden().child(completion))
                 .child(
                     h_flex()
                         .h_full()
