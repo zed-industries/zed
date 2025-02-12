@@ -6809,7 +6809,8 @@ impl Element for EditorElement {
                         .unwrap_or_default();
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
-                    let editor_width = text_width - gutter_dimensions.margin - em_width;
+                    let editor_width =
+                        text_width - gutter_dimensions.margin - em_width - style.scrollbar_width;
 
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
@@ -7144,6 +7145,7 @@ impl Element for EditorElement {
                         longest_line_width,
                         longest_line_blame_width,
                         &style,
+                        editor_width,
                         cx,
                     );
 
@@ -7759,14 +7761,12 @@ impl ScrollbarRangeData {
         longest_line_width: Pixels,
         longest_line_blame_width: Pixels,
         style: &EditorStyle,
-
+        editor_width: Pixels,
         cx: &mut App,
     ) -> ScrollbarRangeData {
         // TODO: Simplify this function down, it requires a lot of parameters
         let max_row = snapshot.max_point().row();
         let text_bounds_size = size(longest_line_width, max_row.0 as f32 * letter_size.height);
-
-        let scrollbar_width = style.scrollbar_width;
 
         let settings = EditorSettings::get_global(cx);
         let scroll_beyond_last_line: Pixels = match settings.scroll_beyond_last_line {
@@ -7775,8 +7775,14 @@ impl ScrollbarRangeData {
             ScrollBeyondLastLine::VerticalScrollMargin => px(1.0 + settings.vertical_scroll_margin),
         };
 
+        let right_margin = if longest_line_width >= editor_width {
+            letter_size.width + style.scrollbar_width
+        } else {
+            px(0.0)
+        };
+
         let overscroll = size(
-            scrollbar_width + (letter_size.width / 2.0) + longest_line_blame_width,
+            right_margin + longest_line_blame_width,
             letter_size.height * scroll_beyond_last_line,
         );
 
