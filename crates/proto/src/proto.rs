@@ -440,6 +440,7 @@ messages!(
     (SyncExtensionsResponse, Background),
     (InstallExtension, Background),
     (RegisterBufferWithLanguageServers, Background),
+    (SetIndexText, Background),
 );
 
 request_messages!(
@@ -573,6 +574,7 @@ request_messages!(
     (SyncExtensions, SyncExtensionsResponse),
     (InstallExtension, Ack),
     (RegisterBufferWithLanguageServers, Ack),
+    (SetIndexText, Ack),
 );
 
 entity_messages!(
@@ -665,6 +667,7 @@ entity_messages!(
     GetPathMetadata,
     CancelLanguageServerWork,
     RegisterBufferWithLanguageServers,
+    SetIndexText,
 );
 
 entity_messages!(
