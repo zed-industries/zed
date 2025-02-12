@@ -467,6 +467,10 @@ impl GitRepository for FakeGitRepository {
         } else {
             state.index_contents.remove(path);
         }
+        state
+            .event_emitter
+            .try_send(state.path.clone())
+            .expect("Dropped repo change event");
         Ok(())
     }
 

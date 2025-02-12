@@ -189,6 +189,7 @@ impl BufferDiffState {
         buffer: text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
+        log::debug!("recalculate diffs");
         let (tx, rx) = oneshot::channel();
         self.diff_updated_futures.push(tx);
 
