@@ -5667,19 +5667,17 @@ impl Editor {
             .bg(bg_color)
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
             .text_size(TextSize::XSmall.rems(cx))
-            .when(!self.edit_prediction_preview_is_active(), |parent| {
-                parent.children(ui::render_modifiers(
-                    &accept_keystroke.modifiers,
-                    PlatformStyle::platform(),
-                    Some(if accept_keystroke.modifiers == window.modifiers() {
-                        Color::Accent
-                    } else {
-                        Color::Muted
-                    }),
-                    Some(IconSize::XSmall.rems().into()),
-                    false,
-                ))
-            })
+            .children(ui::render_modifiers(
+                &accept_keystroke.modifiers,
+                PlatformStyle::platform(),
+                Some(if accept_keystroke.modifiers == window.modifiers() {
+                    Color::Accent
+                } else {
+                    Color::Muted
+                }),
+                Some(IconSize::XSmall.rems().into()),
+                false,
+            ))
             .child(accept_keystroke.key.clone())
             .into()
     }
