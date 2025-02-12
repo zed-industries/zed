@@ -13930,9 +13930,6 @@ async fn test_stage_and_unstage_added_file_hunk(
     cx.assert_index_text(None);
 }
 
-#[gpui::test]
-async fn test_stage_and_unstage_deleted_file_hunk(cx: &mut gpui::TestAppContext) {}
-
 async fn setup_indent_guides_editor(
     text: &str,
     cx: &mut gpui::TestAppContext,

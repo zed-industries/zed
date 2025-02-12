@@ -96,9 +96,9 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CompletionDocumentation, CursorShape, Diagnostic, EditPreview, HighlightedText, IndentKind,
-    IndentSize, InlineCompletionPreviewMode, Language, OffsetRangeExt, Point, Selection,
-    SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    CompletionDocumentation, CursorShape, Diagnostic, DiskState, EditPreview, HighlightedText,
+    IndentKind, IndentSize, InlineCompletionPreviewMode, Language, OffsetRangeExt, Point,
+    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -12696,7 +12696,12 @@ impl Editor {
                 index_buffer.edit(edits, None, cx);
                 index_buffer.snapshot().as_rope().to_string()
             });
-            let new_index_text = if new_index_text.is_empty() && diff.is_single_insertion {
+            let new_index_text = if new_index_text.is_empty()
+                && (diff.is_single_insertion
+                    || buffer
+                        .file()
+                        .map_or(false, |file| file.disk_state() == DiskState::New))
+            {
                 log::debug!("removing from index");
                 None
             } else {
