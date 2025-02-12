@@ -1973,7 +1973,7 @@ impl Project {
         cx: &mut App,
     ) -> OpenLspBufferHandle {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.register_buffer_with_language_servers(&buffer, None, cx)
+            lsp_store.register_buffer_with_language_servers(&buffer, cx)
         })
     }
 
@@ -2599,7 +2599,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.restart_language_servers_for_buffers(buffers, None, cx)
+            lsp_store.restart_language_servers_for_buffers(buffers, cx)
         })
     }
 
