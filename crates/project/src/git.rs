@@ -292,9 +292,20 @@ impl GitState {
                 }
                 Ok(())
             }
-            Message::SetIndexText(git_repo, path, content) => match git_repo {
-                GitRepo::Local(repo) => repo.set_index_text(&path, content),
-                GitRepo::Remote { .. } => todo!(),
+            Message::SetIndexText(git_repo, path, text) => match git_repo {
+                GitRepo::Local(repo) => repo.set_index_text(&path, text),
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                } => client.send(proto::SetIndexText {
+                    project_id: project_id.0,
+                    worktree_id: worktree_id.to_proto(),
+                    work_directory_id: work_directory_id.to_proto(),
+                    path: path.as_ref().to_proto(),
+                    text,
+                }),
             },
         }
     }

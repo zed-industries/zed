@@ -1009,6 +1009,8 @@ pub fn assert_hunks<Iter>(
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::*;
     use gpui::{AppContext as _, TestAppContext};
     use rand::{rngs::StdRng, Rng as _};
@@ -1338,7 +1340,7 @@ mod tests {
     async fn test_secondary_edits_for_stage_unstage(cx: &mut TestAppContext, mut rng: StdRng) {
         fn gen_line(rng: &mut StdRng) -> String {
             if rng.gen_bool(0.2) {
-                format!("\n")
+                "\n".to_owned()
             } else {
                 let c = rng.gen_range('A'..='Z');
                 format!("{c}{c}{c}\n")
@@ -1360,11 +1362,14 @@ mod tests {
             };
             let mut result = String::new();
             let unchanged_count = rng.gen_range(0..=old_lines.len());
-            result += &old_lines
-                .by_ref()
-                .take(unchanged_count)
-                .map(|line| format!("{line}\n"))
-                .collect::<String>();
+            result +=
+                &old_lines
+                    .by_ref()
+                    .take(unchanged_count)
+                    .fold(String::new(), |mut s, line| {
+                        writeln!(&mut s, "{line}").unwrap();
+                        s
+                    });
             while old_lines.len() > 0 {
                 let deleted_count = rng.gen_range(0..=old_lines.len());
                 let _advance = old_lines
@@ -1383,11 +1388,13 @@ mod tests {
                         break;
                     };
                     let unchanged_count = rng.gen_range((blank_lines + 1).max(1)..=old_lines.len());
-                    result += &old_lines
-                        .by_ref()
-                        .take(unchanged_count)
-                        .map(|line| format!("{line}\n"))
-                        .collect::<String>();
+                    result += &old_lines.by_ref().take(unchanged_count).fold(
+                        String::new(),
+                        |mut s, line| {
+                            writeln!(&mut s, "{line}").unwrap();
+                            s
+                        },
+                    );
                 }
             }
             result
@@ -1418,9 +1425,10 @@ mod tests {
         }
 
         let rng = &mut rng;
-        let head_text = ('a'..='z')
-            .map(|c| format!("{c}{c}{c}\n"))
-            .collect::<String>();
+        let head_text = ('a'..='z').fold(String::new(), |mut s, c| {
+            writeln!(&mut s, "{c}{c}{c}").unwrap();
+            s
+        });
         let working_copy = gen_working_copy(rng, &head_text);
         let working_copy = cx.new(|cx| {
             language::Buffer::local_normalized(
