@@ -1,0 +1,7 @@
+{"SetOption":{"value":"wrap"}}
+{"SetOption":{"value":"columns=12"}}
+{"Put":{"state":"ˇabc def ghi jkl mno pqr stu vwx y&z"}}
+{"Key":"y"}
+{"Key":"shift-g"}
+{"Get":{"state":"ˇabc def ghi jkl mno pqr stu vwx y&z","mode":"Normal"}}
+{"ReadRegister":{"name":"\"","value":"abc def ghi jkl mno pqr stu vwx y&z\n"}}
