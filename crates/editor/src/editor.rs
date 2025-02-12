@@ -5205,7 +5205,7 @@ impl Editor {
             return;
         };
 
-        if &accept_keystroke.modifiers == modifiers {
+        if &accept_keystroke.modifiers == modifiers && accept_keystroke.modifiers.modified() {
             if matches!(
                 self.edit_prediction_preview,
                 EditPredictionPreview::Inactive
