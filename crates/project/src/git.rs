@@ -562,8 +562,8 @@ impl GitStore {
 impl GitRepo {}
 
 impl Repository {
-    pub fn git_state(&self) -> Option<Entity<GitState>> {
-        self.git_state.upgrade()
+    pub fn git_store(&self) -> Option<Entity<GitStore>> {
+        self.git_store.upgrade()
     }
 
     fn id(&self) -> (WorktreeId, ProjectEntryId) {

@@ -47,7 +47,7 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 
 use ::git::{
     blame::Blame,
-    repository::{Branch, GitRepository},
+    repository::{Branch, GitRepository, RepoPath},
     status::FileStatus,
 };
 use gpui::{
@@ -4235,7 +4235,7 @@ impl Project {
             .buffer_for_id(buffer_id, cx)?
             .read(cx)
             .project_path(cx)?;
-        self.git_state
+        self.git_store
             .read(cx)
             .all_repositories()
             .into_iter()
