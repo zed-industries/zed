@@ -840,7 +840,9 @@ impl Vim {
             return;
         };
         match name {
-            m if m.starts_with(|c: char| c.is_uppercase()) => {
+            m if m.starts_with(|c: char| c.is_uppercase())
+                || m.starts_with(|c: char| c.is_digit(10)) =>
+            {
                 editor.update(cx, |editor, cx| {
                     VimGlobals::set_global_mark(editor, m.clone(), &positions, cx);
                 });

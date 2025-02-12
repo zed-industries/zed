@@ -4,7 +4,8 @@ use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
-    Anchor, Bias, DisplayPoint, ToOffset,
+    tasks::task_context,
+    Anchor, Bias, DisplayPoint, Editor, ToOffset,
 };
 use gpui::{Context, Window};
 use language::SelectionGoal;
@@ -102,7 +103,7 @@ impl Vim {
                     .collect::<Vec<Anchor>>()
             }),
             "." => self.change_list.last().cloned(),
-            m if m.starts_with(|c: char| c.is_uppercase()) => {
+            m if m.starts_with(|c: char| c.is_digit(10)) => {
                 if let Some((path, points)) = self.get_global_mark(text.to_string(), window, cx) {
                     if let Some(workspace) = self.workspace(window) {
                         workspace.update(cx, |workspace, cx| {
@@ -113,29 +114,70 @@ impl Vim {
                             let Some(path_str) = path.to_str() else {
                                 return;
                             };
-                            println!("1234");
+
                             workspace
                                 .open_path((worktree_id, path_str), None, true, window, cx)
                                 .detach();
                         });
                     }
-                    if let Some(editor) = self.editor() {
-                        let editor = editor.read(cx);
-                        Some(
-                            points
-                                .iter()
-                                .map(|&point| {
-                                    let snapshot = editor.buffer().read(cx).snapshot(cx);
-                                    snapshot.anchor_before(point.to_offset(&snapshot))
-                                })
-                                .collect(),
-                        )
-                    } else {
-                        None
-                    }
-                } else {
-                    None
                 }
+                None
+            }
+            m if m.starts_with(|c: char| c.is_uppercase()) => {
+                let mut result: Option<Vec<Anchor>> = None;
+                if let Some((path, points)) = self.get_global_mark(text.to_string(), window, cx) {
+                    if let Some(workspace) = self.workspace(window) {
+                        workspace.update(cx, |workspace, cx| {
+                            let Some(worktree) = workspace.worktrees(cx).next() else {
+                                return;
+                            };
+                            let worktree_id = worktree.read(cx).id();
+                            let Some(path_str) = path.to_str() else {
+                                return;
+                            };
+
+                            if let Some(editor) = workspace
+                                .active_item(cx)
+                                .and_then(|item| item.downcast::<Editor>())
+                            {
+                                let editor = editor.read(cx);
+                                if let Some(file) = editor
+                                    .buffer()
+                                    .read(cx)
+                                    .as_singleton()
+                                    .and_then(|buffer| buffer.read(cx).file())
+                                {
+                                    if *file.path() == path {
+                                        // If we are already in the correct file => get the anchor
+                                        result = Some(
+                                            points
+                                                .iter()
+                                                .map(|point| {
+                                                    let snapshot =
+                                                        editor.buffer().read(cx).snapshot(cx);
+                                                    snapshot
+                                                        .anchor_before(point.to_offset(&snapshot))
+                                                })
+                                                .collect(),
+                                        );
+                                    } else {
+                                        // If we are in the wrong file => jump to the correct file
+                                        workspace
+                                            .open_path(
+                                                (worktree_id, path_str),
+                                                None,
+                                                true,
+                                                window,
+                                                cx,
+                                            )
+                                            .detach(); //TODO: Somehow get the editor handle for this
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
+                result
             }
             _ => self.get_local_mark(text.to_string(), window, cx), //self.marks.get(&*text).cloned(),
         };
