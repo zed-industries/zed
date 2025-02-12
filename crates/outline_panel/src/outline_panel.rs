@@ -5581,7 +5581,9 @@ mod tests {
                     );
                 });
         });
-        let all_matches = r#"/rust-analyzer/
+        let root_path = path!("/rust-analyzer/");
+        let all_matches = format!(
+            r#"{root_path}
   crates/
     ide/src/
       inlay_hints/
@@ -5600,7 +5602,8 @@ mod tests {
         analysis_stats.rs
           search: param_names_for_lifetime_elision_hints: true,
       config.rs
-        search: param_names_for_lifetime_elision_hints: self"#;
+        search: param_names_for_lifetime_elision_hints: self"#
+        );
         let select_first_in_all_matches = |line_to_select: &str| {
             assert!(all_matches.contains(line_to_select));
             all_matches.replacen(
