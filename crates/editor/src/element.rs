@@ -3815,7 +3815,7 @@ impl EditorElement {
                 let mut element = h_flex()
                     .items_start()
                     .child(
-                        div()
+                        h_flex()
                             .bg(cx.theme().colors().editor_background)
                             .border(BORDER_WIDTH)
                             .shadow_sm()

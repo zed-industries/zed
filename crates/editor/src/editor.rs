@@ -161,7 +161,7 @@ use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
 use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
 use ui::{
-    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
+    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize, Key,
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TakeUntilExt, TryFutureExt};
@@ -5657,29 +5657,39 @@ impl Editor {
     fn render_edit_prediction_accept_keybind(&self, window: &mut Window, cx: &App) -> Option<Div> {
         let accept_binding = self.accept_edit_prediction_keybind(window, cx);
         let accept_keystroke = accept_binding.keystroke()?;
-        let colors = cx.theme().colors();
-        let accent_color = colors.text_accent;
-        let editor_bg_color = colors.editor_background;
-        let bg_color = editor_bg_color.blend(accent_color.opacity(0.1));
+
+        let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
+
+        let modifiers_color = if accept_keystroke.modifiers == window.modifiers() {
+            Color::Accent
+        } else {
+            Color::Muted
+        };
 
         h_flex()
             .px_0p5()
-            .gap_1()
-            .bg(bg_color)
+            .when(is_platform_style_mac, |parent| parent.gap_0p5())
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
             .text_size(TextSize::XSmall.rems(cx))
-            .children(ui::render_modifiers(
+            .child(h_flex().children(ui::render_modifiers(
                 &accept_keystroke.modifiers,
                 PlatformStyle::platform(),
-                Some(if accept_keystroke.modifiers == window.modifiers() {
-                    Color::Accent
-                } else {
-                    Color::Muted
-                }),
+                Some(modifiers_color),
                 Some(IconSize::XSmall.rems().into()),
-                false,
-            ))
-            .child(accept_keystroke.key.clone())
+                true,
+            )))
+            .when(is_platform_style_mac, |parent| {
+                parent.child(accept_keystroke.key.clone())
+            })
+            .when(!is_platform_style_mac, |parent| {
+                parent.child(
+                    Key::new(
+                        util::capitalize(&accept_keystroke.key),
+                        Some(Color::Default),
+                    )
+                    .size(Some(IconSize::XSmall.rems().into())),
+                )
+            })
             .into()
     }
 
@@ -5808,13 +5818,13 @@ impl Editor {
                                 },
                             )
                             .child(Label::new("Hold").size(LabelSize::Small))
-                            .children(ui::render_modifiers(
+                            .child(h_flex().children(ui::render_modifiers(
                                 &accept_keystroke.modifiers,
                                 PlatformStyle::platform(),
                                 Some(Color::Default),
                                 Some(IconSize::Small.rems().into()),
-                                true,
-                            ))
+                                false,
+                            )))
                             .into_any(),
                     );
                 }
@@ -5858,6 +5868,7 @@ impl Editor {
 
         let has_completion = self.active_inline_completion.is_some();
 
+        let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
         Some(
             h_flex()
                 .min_w(min_width)
@@ -5886,8 +5897,8 @@ impl Editor {
                         .child(
                             h_flex()
                                 .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                                .gap_1()
-                                .children(ui::render_modifiers(
+                                .when(is_platform_style_mac, |parent| parent.gap_1())
+                                .child(h_flex().children(ui::render_modifiers(
                                     &accept_keystroke.modifiers,
                                     PlatformStyle::platform(),
                                     Some(if !has_completion {
@@ -5896,8 +5907,8 @@ impl Editor {
                                         Color::Default
                                     }),
                                     None,
-                                    true,
-                                )),
+                                    false,
+                                ))),
                         )
                         .child(Label::new("Preview").into_any_element())
                         .opacity(if has_completion { 1.0 } else { 0.4 }),
