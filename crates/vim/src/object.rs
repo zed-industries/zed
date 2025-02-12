@@ -82,8 +82,12 @@ fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
 
     if let Some(ranges) = candidates {
         for (open_range, close_range) in ranges {
-            let start_off = open_range.start;
+            let mut start_off = open_range.start;
             let end_off = close_range.end;
+            // To support f-strings in python
+            if snapshot.chars_at(start_off).next() == Some('f') {
+                start_off += 1;
+            }
             if let Some(range_filter) = range_filter {
                 if !range_filter(open_range.clone(), close_range.clone()) {
                     continue;
@@ -176,7 +180,7 @@ fn find_any_quotes(
     around: bool,
 ) -> Option<Range<DisplayPoint>> {
     find_any_delimiters(map, display_point, around, |buffer, start| {
-        matches!(buffer.chars_at(start).next(), Some('\'' | '"' | '`'))
+        matches!(buffer.chars_at(start).next(), Some('\'' | '"' | '`' | 'f'))
     })
 }
 
