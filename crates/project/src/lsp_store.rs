@@ -991,6 +991,34 @@ impl LocalLspStore {
             })
     }
 
+    fn language_server_ids_for_project_path(
+        &self,
+        project_path: ProjectPath,
+        language: &Language,
+        cx: &mut App,
+    ) -> Vec<LanguageServerId> {
+        let Some(worktree) = self
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(project_path.worktree_id, cx)
+        else {
+            return vec![];
+        };
+        let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
+        let root = self.lsp_tree.update(cx, |this, cx| {
+            this.get(
+                project_path,
+                AdapterQuery::Language(&language.name()),
+                delegate,
+                cx,
+            )
+            .filter_map(|node| node.server_id())
+            .collect::<Vec<_>>()
+        });
+
+        root
+    }
+
     fn language_server_ids_for_buffer(
         &self,
         buffer: &Buffer,
@@ -1005,26 +1033,7 @@ impl LocalLspStore {
                 .map(Arc::from)
                 .unwrap_or_else(|| file.path().clone());
             let worktree_path = ProjectPath { worktree_id, path };
-            let Some(worktree) = self
-                .worktree_store
-                .read(cx)
-                .worktree_for_id(worktree_id, cx)
-            else {
-                return vec![];
-            };
-            let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
-            let root = self.lsp_tree.update(cx, |this, cx| {
-                this.get(
-                    worktree_path,
-                    AdapterQuery::Language(&language.name()),
-                    delegate,
-                    cx,
-                )
-                .filter_map(|node| node.server_id())
-                .collect::<Vec<_>>()
-            });
-
-            root
+            self.language_server_ids_for_project_path(worktree_path, language, cx)
         } else {
             Vec::new()
         }
@@ -1657,38 +1666,16 @@ impl LocalLspStore {
 
     pub(crate) fn reset_buffer(&mut self, buffer: &Entity<Buffer>, old_file: &File, cx: &mut App) {
         buffer.update(cx, |buffer, cx| {
-            let worktree_id = old_file.worktree_id(cx);
-
-            if let Some(language) = buffer.language().cloned() {
-                let Some(worktree) = self
-                    .worktree_store
-                    .read(cx)
-                    .worktree_for_id(worktree_id, cx)
-                else {
-                    return;
-                };
-                let Some(path): Option<Arc<Path>> = old_file.path().parent().map(Arc::from) else {
-                    return;
-                };
-
-                let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
-                let nodes = self.lsp_tree.update(cx, |this, cx| {
-                    this.get(
-                        ProjectPath { worktree_id, path },
-                        AdapterQuery::Language(&language.name()),
-                        delegate,
-                        cx,
-                    )
-                    .collect::<Vec<_>>()
-                });
-                for node in nodes {
-                    let Some(server_id) = node.server_id() else {
-                        continue;
-                    };
-
-                    buffer.update_diagnostics(server_id, DiagnosticSet::new([], buffer), cx);
-                    buffer.set_completion_triggers(server_id, Default::default(), cx);
-                }
+            let Some(language) = buffer.language() else {
+                return;
+            };
+            let path = ProjectPath {
+                worktree_id: old_file.worktree_id(cx),
+                path: old_file.path.clone(),
+            };
+            for server_id in self.language_server_ids_for_project_path(path, language, cx) {
+                buffer.update_diagnostics(server_id, DiagnosticSet::new([], buffer), cx);
+                buffer.set_completion_triggers(server_id, Default::default(), cx);
             }
         });
     }
