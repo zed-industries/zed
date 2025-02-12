@@ -168,7 +168,7 @@ impl Render for ZedPredictModal {
             .id("edit-prediction-onboarding")
             .key_context("ZedPredictModal")
             .relative()
-            .w(px(440.))
+            .w(px(480.))
             .h_full()
             .max_h(max_height)
             .p_4()
@@ -201,7 +201,7 @@ impl Render for ZedPredictModal {
                         svg()
                             .path("icons/zed_predict_bg.svg")
                             .text_color(cx.theme().colors().icon_disabled)
-                            .w(px(418.))
+                            .w(px(460.))
                             .h(px(128.))
                             .overflow_hidden(),
                     ),
@@ -354,7 +354,7 @@ impl Render for ZedPredictModal {
                                         "training-data-checkbox",
                                         self.data_collection_opted_in.into(),
                                     )
-                                    .label("Optionally share training data (OSS-only).")
+                                    .label("Open source repos: optionally share training data.")
                                     .fill()
                                     .on_click(cx.listener(
                                         move |this, state, _window, cx| {
@@ -391,26 +391,27 @@ impl Render for ZedPredictModal {
                                     .border_color(cx.theme().colors().border_variant)
                                     .child(
                                         div().child(
-                                            Label::new("To improve edit predictions, help fine-tune Zed's model by sharing data from the open-source projects you work on.")
+                                            Label::new("To improve edit predictions, please consider contributing to our open dataset based on your interactions within open source repositories.")
                                                 .mb_1()
                                         )
                                     )
                                     .child(info_item(
-                                        "We ask this exclusively for open-source projects.",
+                                        "We ask this exclusively for open source projects.",
                                     ))
                                     .child(info_item(
-                                        "Zed automatically detects if your project is open-source.",
-                                    ))
-                                    .child(info_item(
-                                        "This setting is valid for all OSS projects you open in Zed.",
+                                        "Zed automatically detects if your project is open source.",
                                     ))
                                     .child(info_item("Toggle it anytime via the status bar menu."))
                                     .child(multiline_info_item(
-                                        "Files with sensitive data, like `.env`, are excluded",
+                                        "If turned on, this setting is valid for all open source projects",
+                                        label_item("you open in Zed.")
+                                    ))
+                                    .child(multiline_info_item(
+                                        "Files with sensitive data, like `.env`, are excluded by default",
                                         h_flex()
                                             .w_full()
                                             .flex_wrap()
-                                            .child(label_item("by default via the"))
+                                            .child(label_item("via the"))
                                             .child(
                                                 Button::new("doc-link", "disabled_globs").on_click(
                                                     cx.listener(Self::inline_completions_doc),
