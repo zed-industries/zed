@@ -422,7 +422,7 @@ impl Object {
 /// If the selection spans multiple lines and is preceded by an opening brace (`{`),
 /// this function will trim the selection to exclude the final newline
 /// in order to preserve a properly indented line.
-fn preserve_indented_newline(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) {
+pub fn preserve_indented_newline(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) {
     let (start_point, end_point) = (selection.start.to_point(map), selection.end.to_point(map));
 
     if start_point.row == end_point.row {
@@ -446,6 +446,7 @@ fn preserve_indented_newline(map: &DisplaySnapshot, selection: &mut Selection<Di
                         match ch {
                             '\n' => {
                                 selection.end = offset.to_display_point(map);
+                                selection.reversed = true;
                                 break;
                             }
                             ch if !ch.is_whitespace() => break,
@@ -726,8 +727,25 @@ fn around_containing_word(
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
 ) -> Option<Range<DisplayPoint>> {
-    in_word(map, relative_to, ignore_punctuation)
-        .map(|range| expand_to_include_whitespace(map, range, true))
+    in_word(map, relative_to, ignore_punctuation).map(|range| {
+        let line_start = DisplayPoint::new(range.start.row(), 0);
+        let is_first_word = map
+            .buffer_chars_at(line_start.to_offset(map, Bias::Left))
+            .take_while(|(ch, offset)| {
+                offset < &range.start.to_offset(map, Bias::Left) && ch.is_whitespace()
+            })
+            .count()
+            > 0;
+
+        if is_first_word {
+            // For first word on line, trim indentation
+            let mut expanded = expand_to_include_whitespace(map, range.clone(), true);
+            expanded.start = range.start;
+            expanded
+        } else {
+            expand_to_include_whitespace(map, range, true)
+        }
+    })
 }
 
 fn around_next_word(
@@ -1759,6 +1777,17 @@ mod test {
             Mode::Normal,
         );
         cx.simulate_keystrokes("v i {");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                   «ˇif a == \"\" {
+                      return true
+                   }
+                   return false»
+                }"
+            },
+            Mode::Visual,
+        );
 
         cx.set_state(
             indoc! {
@@ -1772,6 +1801,17 @@ mod test {
             Mode::Normal,
         );
         cx.simulate_keystrokes("v i {");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                     if a == \"\" {
+                         «ˇreturn true»
+                     }
+                     return false
+                }"
+            },
+            Mode::Visual,
+        );
 
         cx.set_state(
             indoc! {
@@ -1785,6 +1825,41 @@ mod test {
             Mode::Normal,
         );
         cx.simulate_keystrokes("v i {");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                     if a == \"\" {
+                         «ˇreturn true»
+                     }
+                     return false
+                }"
+            },
+            Mode::Visual,
+        );
+
+        cx.set_state(
+            indoc! {
+                "func empty(a string) bool {
+                     if a == \"\" {
+                         return true
+                     }
+                     return false
+                ˇ}"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v i {");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                     «ˇif a == \"\" {
+                         return true
+                     }
+                     return false»
+                }"
+            },
+            Mode::Visual,
+        );
     }
 
     #[gpui::test]
@@ -2396,5 +2471,37 @@ mod test {
             "<html><head></head>«<body><b>hi!</b></body>ˇ»",
             Mode::Visual,
         );
+    }
+    #[gpui::test]
+    async fn test_around_containing_word_indent(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("    ˇconst f = (x: unknown) => {")
+            .await;
+        cx.simulate_shared_keystrokes("v a w").await;
+        cx.shared_state()
+            .await
+            .assert_eq("    «const ˇ»f = (x: unknown) => {");
+
+        cx.set_shared_state("    ˇconst f = (x: unknown) => {")
+            .await;
+        cx.simulate_shared_keystrokes("y a w").await;
+        cx.shared_clipboard().await.assert_eq("const ");
+
+        cx.set_shared_state("    ˇconst f = (x: unknown) => {")
+            .await;
+        cx.simulate_shared_keystrokes("d a w").await;
+        cx.shared_state()
+            .await
+            .assert_eq("    ˇf = (x: unknown) => {");
+        cx.shared_clipboard().await.assert_eq("const ");
+
+        cx.set_shared_state("    ˇconst f = (x: unknown) => {")
+            .await;
+        cx.simulate_shared_keystrokes("c a w").await;
+        cx.shared_state()
+            .await
+            .assert_eq("    ˇf = (x: unknown) => {");
+        cx.shared_clipboard().await.assert_eq("const ");
     }
 }

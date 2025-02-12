@@ -36,7 +36,7 @@ use std::{
 };
 use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
-use ui::{h_flex, prelude::*, IconDecorationKind, Label};
+use ui::{prelude::*, IconDecorationKind};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
@@ -679,8 +679,8 @@ impl Item for Editor {
             .child(
                 Label::new(self.title(cx).to_string())
                     .color(label_color)
-                    .italic(params.preview)
-                    .strikethrough(was_deleted),
+                    .when(params.preview, |this| this.italic())
+                    .when(was_deleted, |this| this.strikethrough()),
             )
             .when_some(description, |this, description| {
                 this.child(

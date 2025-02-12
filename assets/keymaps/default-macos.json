@@ -39,7 +39,7 @@
       "cmd-m": "zed::Minimize",
       "fn-f": "zed::ToggleFullScreen",
       "ctrl-cmd-f": "zed::ToggleFullScreen",
-      "ctrl-cmd-z": "zeta::RateCompletions",
+      "ctrl-cmd-z": "edit_prediction::RateCompletions",
       "ctrl-cmd-i": "edit_prediction::ToggleMenu"
     }
   },
@@ -583,7 +583,6 @@
   {
     "context": "Editor && edit_prediction",
     "bindings": {
-      // Changing the modifier currently breaks accepting while you also an LSP completions menu open
       "alt-tab": "editor::AcceptEditPrediction"
     }
   },

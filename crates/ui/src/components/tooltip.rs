@@ -206,6 +206,7 @@ impl Render for LinkPreview {
     }
 }
 
+// View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Tooltip {
     fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
         example_group(vec![single_example(

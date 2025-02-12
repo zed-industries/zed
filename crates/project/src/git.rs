@@ -15,8 +15,7 @@ use gpui::{
     WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
-use rpc::proto::git_reset;
-use rpc::{proto, AnyProtoClient, TypedEnvelope};
+use rpc::{proto, ToProto, git_reset, AnyProtoClient, TypedEnvelope};
 use settings::WorktreeId;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -242,7 +241,7 @@ impl GitStore {
                                 work_directory_id: work_directory_id.to_proto(),
                                 paths: paths
                                     .into_iter()
-                                    .map(|repo_path| repo_path.to_proto())
+                                    .map(|repo_path| repo_path.as_ref().to_proto())
                                     .collect(),
                             })
                             .await
@@ -296,7 +295,7 @@ impl GitStore {
                                 work_directory_id: work_directory_id.to_proto(),
                                 paths: paths
                                     .into_iter()
-                                    .map(|repo_path| repo_path.to_proto())
+                                    .map(|repo_path| repo_path.as_ref().to_proto())
                                     .collect(),
                             })
                             .await

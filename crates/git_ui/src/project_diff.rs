@@ -1,8 +1,8 @@
 use std::any::{Any, TypeId};
 
 use anyhow::Result;
+use buffer_diff::BufferDiff;
 use collections::HashSet;
-use diff::BufferDiff;
 use editor::{scroll::Autoscroll, Editor, EditorEvent};
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
@@ -126,6 +126,7 @@ impl ProjectDiff {
                 window,
                 cx,
             );
+            diff_display_editor.set_distinguish_unstaged_diff_hunks();
             diff_display_editor.set_expand_all_diff_hunks(cx);
             diff_display_editor.register_addon(GitPanelAddon {
                 git_panel: git_panel.clone(),
@@ -317,10 +318,10 @@ impl ProjectDiff {
 
         let snapshot = buffer.read(cx).snapshot();
         let diff = diff.read(cx);
-        let diff_hunk_ranges = if diff.snapshot.base_text.is_none() {
+        let diff_hunk_ranges = if diff.base_text().is_none() {
             vec![Point::zero()..snapshot.max_point()]
         } else {
-            diff.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot)
+            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                 .collect::<Vec<_>>()
         };
@@ -334,6 +335,22 @@ impl ProjectDiff {
                 cx,
             );
         });
+        if self.multibuffer.read(cx).is_empty()
+            && self
+                .editor
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+        {
+            self.focus_handle.focus(window);
+        } else if self.focus_handle.contains_focused(window, cx)
+            && !self.multibuffer.read(cx).is_empty()
+        {
+            self.editor.update(cx, |editor, cx| {
+                editor.focus_handle(cx).focus(window);
+                editor.move_to_beginning(&Default::default(), window, cx);
+            });
+        }
         if self.pending_scroll.as_ref() == Some(&path_key) {
             self.scroll_to_path(path_key, window, cx);
         }
@@ -364,8 +381,12 @@ impl ProjectDiff {
 impl EventEmitter<EditorEvent> for ProjectDiff {}
 
 impl Focusable for ProjectDiff {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        if self.multibuffer.read(cx).is_empty() {
+            self.focus_handle.clone()
+        } else {
+            self.editor.focus_handle(cx)
+        }
     }
 }
 
@@ -406,7 +427,7 @@ impl Item for ProjectDiff {
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("project diagnostics")
+        Some("Project Diff Opened")
     }
 
     fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
@@ -536,22 +557,17 @@ impl Item for ProjectDiff {
 impl Render for ProjectDiff {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
-        if is_empty {
-            div()
-                .bg(cx.theme().colors().editor_background)
-                .flex()
-                .items_center()
-                .justify_center()
-                .size_full()
-                .child(Label::new("No uncommitted changes"))
-        } else {
-            div()
-                .bg(cx.theme().colors().editor_background)
-                .flex()
-                .items_center()
-                .justify_center()
-                .size_full()
-                .child(self.editor.clone())
-        }
+
+        div()
+            .track_focus(&self.focus_handle)
+            .bg(cx.theme().colors().editor_background)
+            .flex()
+            .items_center()
+            .justify_center()
+            .size_full()
+            .when(is_empty, |el| {
+                el.child(Label::new("No uncommitted changes"))
+            })
+            .when(!is_empty, |el| el.child(self.editor.clone()))
     }
 }

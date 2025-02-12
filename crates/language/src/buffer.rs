@@ -1102,6 +1102,10 @@ impl Buffer {
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
         cx.background_executor().spawn(async move {
             if !edits.is_empty() {
+                if let Some(language) = language.clone() {
+                    syntax_snapshot.reparse(&old_snapshot, registry.clone(), language);
+                }
+
                 branch_buffer.edit(edits.iter().cloned());
                 let snapshot = branch_buffer.snapshot();
                 syntax_snapshot.interpolate(&snapshot);
