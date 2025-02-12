@@ -792,11 +792,11 @@
     ],
     // When to show edit predictions previews in buffer.
     // This setting takes two possible values:
-    // 1. Display inline when holding modifier key (alt by default).
-    //     "mode": "auto"
-    // 2. Display inline when there are no language server completions available.
+    // 1. Display inline when there are no language server completions available.
     //     "mode": "eager_preview"
-    "mode": "auto"
+    // 2. Display inline when holding modifier key (alt by default).
+    //     "mode": "auto"
+    "mode": "eager_preview"
   },
   // Settings specific to journaling
   "journal": {
