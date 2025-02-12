@@ -1,6 +1,6 @@
 use gpui::{
-    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, FontWeight, SharedString,
-    Window, WindowBounds, WindowOptions,
+    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, SharedString, Window,
+    WindowBounds, WindowOptions,
 };
 
 struct HelloWorld {
@@ -39,12 +39,17 @@ impl Render for HelloWorld {
                             .text_color(rgb(0xffffff))
                             .active(|this| {
                                 this.text_color(gpui::red())
+                                    .text_center()
+                                    .text_decoration_2()
                                     .text_decoration_color(gpui::red())
                                     .bg(rgb(0xA0A0A0))
                             })
                             .hover(|this| {
                                 this.text_color(gpui::blue())
+                                    .text_center()
+                                    .text_decoration_2()
                                     .text_decoration_color(gpui::blue())
+                                    .line_through()
                                     .bg(rgb(0xA0A0A0))
                             })
                             .child(format!("Hello, {}!", &self.text)),

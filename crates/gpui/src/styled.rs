@@ -487,7 +487,7 @@ pub trait Styled: Sized {
     }
 
     /// Sets the decoration of the text to have a line through it.
-    /// [Docs](https://tailwindcss.com/docs/text-decoration#setting-the-text-decoration)
+    /// [Docs](https://tailwindcss.com/docs/text-decoration-line#adding-a-line-through-text)
     fn line_through(mut self) -> Self {
         let style = self.text_style().get_or_insert_with(Default::default);
         style.strikethrough = Some(StrikethroughStyle {

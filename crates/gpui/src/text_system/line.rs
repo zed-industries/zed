@@ -194,6 +194,7 @@ fn paint_line(
 
                 if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
                     wraps.next();
+
                     if let Some((background_origin, background_color)) = current_background.as_mut()
                     {
                         if let Some(text_style) = &interactive_text_style {
@@ -215,13 +216,8 @@ fn paint_line(
                         background_origin.x = origin.x;
                         background_origin.y += line_height;
                     }
-                    if let Some((underline_origin, underline_style)) = current_underline.as_mut() {
-                        if let Some(text_style) = &interactive_text_style {
-                            if let Some(val) = text_style.underline {
-                                *underline_style = val;
-                            }
-                        }
 
+                    if let Some((underline_origin, underline_style)) = current_underline.as_mut() {
                         if glyph_origin.x == underline_origin.x {
                             underline_origin.x -= max_glyph_size.width.half();
                         };
@@ -233,15 +229,10 @@ fn paint_line(
                         underline_origin.x = origin.x;
                         underline_origin.y += line_height;
                     }
+
                     if let Some((strikethrough_origin, strikethrough_style)) =
                         current_strikethrough.as_mut()
                     {
-                        if let Some(text_style) = &interactive_text_style {
-                            if let Some(val) = text_style.strikethrough {
-                                *strikethrough_style = val;
-                            }
-                        }
-
                         if glyph_origin.x == strikethrough_origin.x {
                             strikethrough_origin.x -= max_glyph_size.width.half();
                         };
@@ -287,7 +278,13 @@ fn paint_line(
                                 finished_background = current_background.take();
                             }
                         }
-                        if let Some(run_background) = style_run.background_color {
+                        if let Some(mut run_background) = style_run.background_color {
+                            // Override by current text style
+                            if let Some(text_style) = &interactive_text_style {
+                                if let Some(val) = text_style.background_color {
+                                    run_background = val;
+                                }
+                            }
                             current_background.get_or_insert((
                                 point(glyph_origin.x, glyph_origin.y),
                                 run_background,
@@ -299,7 +296,14 @@ fn paint_line(
                                 finished_underline = current_underline.take();
                             }
                         }
-                        if let Some(run_underline) = style_run.underline.as_ref() {
+                        if let Some(mut run_underline) = style_run.underline.as_ref() {
+                            // Override by current text style
+                            if let Some(text_style) = &interactive_text_style {
+                                if let Some(val) = &text_style.underline {
+                                    run_underline = val;
+                                }
+                            }
+
                             current_underline.get_or_insert((
                                 point(
                                     glyph_origin.x,
@@ -317,7 +321,14 @@ fn paint_line(
                                 finished_strikethrough = current_strikethrough.take();
                             }
                         }
-                        if let Some(run_strikethrough) = style_run.strikethrough.as_ref() {
+                        if let Some(mut run_strikethrough) = style_run.strikethrough.as_ref() {
+                            // Override by current text style
+                            if let Some(text_style) = &interactive_text_style {
+                                if let Some(val) = &text_style.strikethrough {
+                                    run_strikethrough = val;
+                                }
+                            }
+
                             current_strikethrough.get_or_insert((
                                 point(
                                     glyph_origin.x,
