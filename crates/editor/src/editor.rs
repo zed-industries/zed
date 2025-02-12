@@ -5925,7 +5925,7 @@ impl Editor {
                             h_flex()
                                 .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                                 .when(is_platform_style_mac, |parent| parent.gap_1())
-                                .children(itertools::intersperse_with(
+                                .child(h_flex().children(itertools::intersperse_with(
                                     ui::render_modifiers_for_edit_prediction(
                                         &accept_keystroke.modifiers,
                                         PlatformStyle::platform(),
@@ -5943,7 +5943,7 @@ impl Editor {
                                             gpui::Empty.into_any_element()
                                         }
                                     },
-                                )),
+                                ))),
                         )
                         .child(Label::new("Preview").into_any_element())
                         .opacity(if has_completion { 1.0 } else { 0.4 }),
