@@ -1111,7 +1111,11 @@ pub fn handle_settings_file_changes(
         .background_executor()
         .block(user_settings_file_rx.next())
         .unwrap();
-    let user_settings_content = migrate_settings(&content).unwrap_or(content);
+    let user_settings_content = if let Ok(Some(migrated_content)) = migrate_settings(&content) {
+        migrated_content
+    } else {
+        content
+    };
     SettingsStore::update_global(cx, |store, cx| {
         let result = store.set_user_settings(&user_settings_content, cx);
         if let Err(err) = &result {
@@ -1121,9 +1125,17 @@ pub fn handle_settings_file_changes(
     });
     cx.spawn(move |cx| async move {
         while let Some(content) = user_settings_file_rx.next().await {
-            let migrated_content = migrate_settings(&content);
-            let content_migrated = migrated_content.is_some();
-            let user_settings_content = migrated_content.unwrap_or(content);
+            let user_settings_content;
+            let content_migrated;
+
+            if let Ok(Some(migrated_content)) = migrate_settings(&content) {
+                user_settings_content = migrated_content;
+                content_migrated = true;
+            } else {
+                user_settings_content = content;
+                content_migrated = false;
+            }
+
             cx.update(|cx| {
                 if let Some(notifier) = MigratorNotification::try_global(cx) {
                     notifier.update(cx, |_, cx| {
@@ -1198,9 +1210,13 @@ pub fn handle_keymap_file_changes(
                 _ = keyboard_layout_rx.next() => {},
                 content = user_keymap_file_rx.next() => {
                     if let Some(content) = content {
-                        let migrated_content = migrate_keymap(&content);
-                        content_migrated = migrated_content.is_some();
-                        user_keymap_content = migrated_content.unwrap_or(content);
+                        if let Ok(Some(migrated_content)) = migrate_keymap(&content) {
+                            user_keymap_content = migrated_content;
+                            content_migrated = true;
+                        } else {
+                            user_keymap_content = content;
+                            content_migrated = false;
+                        }
                     }
                 }
             };

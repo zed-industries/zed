@@ -226,17 +226,23 @@ impl Render for MigratorBanner {
 
 async fn should_migrate_keymap(fs: Arc<dyn Fs>) -> Result<bool> {
     let old_text = KeymapFile::load_keymap_file(&fs).await?;
-    Ok(migrate_keymap(&old_text).is_some())
+    if let Ok(Some(_)) = migrate_keymap(&old_text) {
+        return Ok(true);
+    };
+    Ok(false)
 }
 
 async fn should_migrate_settings(fs: Arc<dyn Fs>) -> Result<bool> {
     let old_text = SettingsStore::load_settings(&fs).await?;
-    Ok(migrate_settings(&old_text).is_some())
+    if let Ok(Some(_)) = migrate_settings(&old_text) {
+        return Ok(true);
+    };
+    Ok(false)
 }
 
 async fn write_keymap_migration(fs: &Arc<dyn Fs>) -> Result<()> {
     let old_text = KeymapFile::load_keymap_file(fs).await?;
-    let Some(new_text) = migrate_keymap(&old_text) else {
+    let Ok(Some(new_text)) = migrate_keymap(&old_text) else {
         return Ok(());
     };
     let keymap_path = paths::keymap_file().as_path();
@@ -261,7 +267,7 @@ async fn write_keymap_migration(fs: &Arc<dyn Fs>) -> Result<()> {
 
 async fn write_settings_migration(fs: &Arc<dyn Fs>) -> Result<()> {
     let old_text = SettingsStore::load_settings(fs).await?;
-    let Some(new_text) = migrate_settings(&old_text) else {
+    let Ok(Some(new_text)) = migrate_settings(&old_text) else {
         return Ok(());
     };
     let settings_path = paths::settings_file().as_path();
