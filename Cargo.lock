@@ -1771,9 +1771,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "aws-sdk-bedrockruntime",
+ "aws-smithy-types",
  "futures 0.3.31",
  "schemars",
  "serde",
+ "serde_json",
  "strum",
  "thiserror 1.0.69",
  "tokio",
