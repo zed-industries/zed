@@ -116,7 +116,7 @@
     "lockb": "bun",
     "log": "log",
     "lua": "lua",
-    "luau": "lua",
+    "luau": "luau",
     "m4a": "audio",
     "m4v": "video",
     "markdown": "markdown",
