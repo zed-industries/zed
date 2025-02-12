@@ -305,11 +305,9 @@ fn paint_line(
                 }
 
                 if let Some((mut underline_origin, underline_style)) = finished_underline {
-                    println!("painting underline before {:?}", underline_origin);
                     if underline_origin.x == glyph_origin.x {
                         underline_origin.x -= max_glyph_size.width.half();
                     };
-                    println!("painting underline {:?}", underline_origin);
                     window.paint_underline(
                         underline_origin,
                         glyph_origin.x - underline_origin.x,
