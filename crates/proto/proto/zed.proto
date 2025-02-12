@@ -315,7 +315,9 @@ message Envelope {
         OpenCommitMessageBuffer open_commit_message_buffer = 296;
 
         OpenUncommittedDiff open_uncommitted_diff = 297;
-        OpenUncommittedDiffResponse open_uncommitted_diff_response = 298; // current max
+        OpenUncommittedDiffResponse open_uncommitted_diff_response = 298;
+
+        SetIndexText set_index_text = 299; // current max
     }
 
     reserved 87 to 88;
@@ -2085,6 +2087,14 @@ message OpenUncommittedDiffResponse {
     optional string staged_text = 1;
     optional string committed_text = 2;
     Mode mode = 3;
+}
+
+message SetIndexText {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string path = 4;
+    optional string text = 5;
 }
 
 message GetNotifications {

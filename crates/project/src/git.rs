@@ -24,11 +24,11 @@ use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
 
 pub struct GitState {
     buffer_store: Option<WeakEntity<BufferStore>>,
-    project_id: Option<ProjectId>,
-    client: Option<AnyProtoClient>,
+    pub(super) project_id: Option<ProjectId>,
+    pub(super) client: Option<AnyProtoClient>,
     repositories: Vec<Entity<Repository>>,
     active_index: Option<usize>,
-    update_sender: mpsc::UnboundedSender<(Message, oneshot::Sender<anyhow::Result<()>>)>,
+    pub update_sender: mpsc::UnboundedSender<(Message, oneshot::Sender<anyhow::Result<()>>)>,
     _subscription: Subscription,
 }
 
@@ -52,7 +52,7 @@ pub enum GitRepo {
     },
 }
 
-enum Message {
+pub enum Message {
     Commit {
         git_repo: GitRepo,
         message: SharedString,
@@ -60,6 +60,7 @@ enum Message {
     },
     Stage(GitRepo, Vec<RepoPath>),
     Unstage(GitRepo, Vec<RepoPath>),
+    SetIndexText(GitRepo, RepoPath, Option<String>),
 }
 
 pub enum GitEvent {
@@ -294,11 +295,32 @@ impl GitState {
                 }
                 Ok(())
             }
+            Message::SetIndexText(git_repo, path, text) => match git_repo {
+                GitRepo::Local(repo) => repo.set_index_text(&path, text),
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                } => client.send(proto::SetIndexText {
+                    project_id: project_id.0,
+                    worktree_id: worktree_id.to_proto(),
+                    work_directory_id: work_directory_id.to_proto(),
+                    path: path.as_ref().to_proto(),
+                    text,
+                }),
+            },
         }
     }
 }
 
+impl GitRepo {}
+
 impl Repository {
+    pub fn git_state(&self) -> Option<Entity<GitState>> {
+        self.git_state.upgrade()
+    }
+
     fn id(&self) -> (WorktreeId, ProjectEntryId) {
         (self.worktree_id, self.repository_entry.work_directory_id())
     }
@@ -579,6 +601,21 @@ impl Repository {
                     message,
                     name_and_email,
                 },
+                result_tx,
+            ))
+            .ok();
+        result_rx
+    }
+
+    pub fn set_index_text(
+        &self,
+        path: &RepoPath,
+        content: Option<String>,
+    ) -> oneshot::Receiver<anyhow::Result<()>> {
+        let (result_tx, result_rx) = futures::channel::oneshot::channel();
+        self.update_sender
+            .unbounded_send((
+                Message::SetIndexText(self.git_repo.clone(), path.clone(), content),
                 result_tx,
             ))
             .ok();
