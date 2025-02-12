@@ -133,6 +133,7 @@ pub struct MultiBufferDiffHunk {
     pub diff_base_byte_range: Range<usize>,
     /// Whether or not this hunk also appears in the 'secondary diff'.
     pub secondary_status: DiffHunkSecondaryStatus,
+    pub secondary_diff_base_byte_range: Option<Range<usize>>,
 }
 
 impl MultiBufferDiffHunk {
@@ -2191,7 +2192,11 @@ impl MultiBuffer {
             let secondary_diff_insertion = new_diff
                 .secondary_diff()
                 .map_or(true, |secondary_diff| secondary_diff.base_text().is_none());
-            new_diff = BufferDiff::build_with_single_insertion(secondary_diff_insertion, cx);
+            new_diff = BufferDiff::build_with_single_insertion(
+                secondary_diff_insertion,
+                buffer.snapshot(),
+                cx,
+            );
         }
 
         let mut snapshot = self.snapshot.borrow_mut();
@@ -3477,6 +3482,7 @@ impl MultiBufferSnapshot {
                 buffer_range: hunk.buffer_range.clone(),
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                 secondary_status: hunk.secondary_status,
+                secondary_diff_base_byte_range: hunk.secondary_diff_base_byte_range,
             })
         })
     }
@@ -3846,6 +3852,7 @@ impl MultiBufferSnapshot {
                         buffer_range: hunk.buffer_range.clone(),
                         diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                         secondary_status: hunk.secondary_status,
+                        secondary_diff_base_byte_range: hunk.secondary_diff_base_byte_range,
                     });
                 }
             }
@@ -5936,6 +5943,10 @@ impl MultiBufferSnapshot {
 
     pub fn show_headers(&self) -> bool {
         self.show_headers
+    }
+
+    pub fn diff_for_buffer_id(&self, buffer_id: BufferId) -> Option<&BufferDiffSnapshot> {
+        self.diffs.get(&buffer_id)
     }
 }
 

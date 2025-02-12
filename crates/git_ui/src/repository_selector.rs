@@ -4,7 +4,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::{
-    git::{GitState, Repository},
+    git::{GitStore, Repository},
     Project,
 };
 use std::sync::Arc;
@@ -20,8 +20,8 @@ pub struct RepositorySelector {
 
 impl RepositorySelector {
     pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let git_state = project.read(cx).git_state().clone();
-        let all_repositories = git_state.read(cx).all_repositories();
+        let git_store = project.read(cx).git_store().clone();
+        let all_repositories = git_store.read(cx).all_repositories();
         let filtered_repositories = all_repositories.clone();
         let delegate = RepositorySelectorDelegate {
             project: project.downgrade(),
@@ -38,7 +38,7 @@ impl RepositorySelector {
         });
 
         let _subscriptions =
-            vec![cx.subscribe_in(&git_state, window, Self::handle_project_git_event)];
+            vec![cx.subscribe_in(&git_store, window, Self::handle_project_git_event)];
 
         RepositorySelector {
             picker,
@@ -49,7 +49,7 @@ impl RepositorySelector {
 
     fn handle_project_git_event(
         &mut self,
-        git_state: &Entity<GitState>,
+        git_store: &Entity<GitStore>,
         _event: &project::git::GitEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -57,7 +57,7 @@ impl RepositorySelector {
         // TODO handle events individually
         let task = self.picker.update(cx, |this, cx| {
             let query = this.query(cx);
-            this.delegate.repository_entries = git_state.read(cx).all_repositories();
+            this.delegate.repository_entries = git_store.read(cx).all_repositories();
             this.delegate.update_matches(query, window, cx)
         });
         self.update_matches_task = Some(task);
