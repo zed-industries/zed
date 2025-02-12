@@ -701,7 +701,8 @@ impl Project {
                 )
             });
 
-            let git_state = cx.new(|cx| GitState::new(&worktree_store, None, None, cx));
+            let git_state =
+                cx.new(|cx| GitState::new(&worktree_store, Some(&buffer_store), None, None, cx));
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -824,6 +825,7 @@ impl Project {
             let git_state = cx.new(|cx| {
                 GitState::new(
                     &worktree_store,
+                    Some(&buffer_store),
                     Some(ssh_proto.clone()),
                     Some(ProjectId(SSH_PROJECT_ID)),
                     cx,
@@ -1029,6 +1031,7 @@ impl Project {
         let git_state = cx.new(|cx| {
             GitState::new(
                 &worktree_store,
+                Some(&buffer_store),
                 Some(client.clone().into()),
                 Some(ProjectId(remote_id)),
                 cx,
@@ -4038,10 +4041,10 @@ impl Project {
             .collect();
 
         repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.stage_entries(entries)
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.stage_entries(entries, cx)
             })?
-            .await??;
+            .await?;
         Ok(proto::Ack {})
     }
 
@@ -4064,10 +4067,10 @@ impl Project {
             .collect();
 
         repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.unstage_entries(entries)
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.unstage_entries(entries, cx)
             })?
-            .await??;
+            .await?;
         Ok(proto::Ack {})
     }
 

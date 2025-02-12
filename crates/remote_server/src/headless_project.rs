@@ -83,13 +83,15 @@ impl HeadlessProject {
             store
         });
 
-        let git_state = cx.new(|cx| GitState::new(&worktree_store, None, None, cx));
-
         let buffer_store = cx.new(|cx| {
             let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
+
+        let git_state =
+            cx.new(|cx| GitState::new(&worktree_store, Some(&buffer_store), None, None, cx));
+
         let prettier_store = cx.new(|cx| {
             PrettierStore::new(
                 node_runtime.clone(),
@@ -635,10 +637,10 @@ impl HeadlessProject {
             .collect();
 
         repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.stage_entries(entries)
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.stage_entries(entries, cx)
             })?
-            .await??;
+            .await?;
         Ok(proto::Ack {})
     }
 
@@ -661,10 +663,10 @@ impl HeadlessProject {
             .collect();
 
         repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.unstage_entries(entries)
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.unstage_entries(entries, cx)
             })?
-            .await??;
+            .await?;
 
         Ok(proto::Ack {})
     }
