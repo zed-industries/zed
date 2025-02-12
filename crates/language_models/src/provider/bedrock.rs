@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use aws_config::Region;
+use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
 use bedrock::bedrock_client::types::{ContentBlockDelta, ContentBlockStart, ContentBlockStartEvent, ConverseStreamOutput};
@@ -322,6 +323,7 @@ impl BedrockModel {
         // Config::builder might be an expensive operation, figure out if it works or not
         let runtime_client = bedrock_client::Client::from_conf(
             Config::builder()
+                .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
                 .credentials_provider(Credentials::new(
                     aa_id.unwrap(),
                     sk.unwrap(),
