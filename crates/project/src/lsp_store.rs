@@ -1983,13 +1983,10 @@ impl LocalLspStore {
         cx: &mut App,
     ) {
         buffer.update(cx, |buffer, cx| {
-            let servers = self.buffer_snapshots.remove(&buffer.remote_id());
-            if let Some(servers_with_registration) = servers {
-                for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
-                    if servers_with_registration.contains_key(&language_server.server_id()) {
-                        language_server.unregister_buffer(file_url.clone());
-                    }
-                }
+            let _ = self.buffer_snapshots.remove(&buffer.remote_id());
+
+            for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
+                language_server.unregister_buffer(file_url.clone());
             }
         });
     }
