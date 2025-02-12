@@ -5813,7 +5813,7 @@ fn inline_completion_accept_indicator(
         .text_color(cx.theme().colors().text)
         .gap_1()
         .when(!editor.edit_prediction_preview_is_active(), |parent| {
-            parent.children(ui::render_modifiers(
+            parent.children(ui::render_modifiers_for_edit_prediction(
                 &accept_keystroke.modifiers,
                 PlatformStyle::platform(),
                 Some(Color::Default),
