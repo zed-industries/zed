@@ -6,14 +6,15 @@ use crate::{
 };
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
+use editor::commit_tooltip::CommitTooltip;
 use editor::{
     actions::MoveToEnd, scroll::ScrollbarAutoHide, Editor, EditorElement, EditorMode,
     EditorSettings, MultiBuffer, ShowScrollbar,
 };
-use git::repository::ResetMode;
+use git::repository::{CommitDetails, ResetMode};
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
 use gpui::*;
-use language::{Buffer, File};
+use language::{markdown, Buffer, File, ParsedMarkdown};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use multi_buffer::ExcerptInfo;
 use panel::{panel_editor_container, panel_editor_style, panel_filled_button, PanelHeader};
@@ -750,11 +751,10 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
+        let prior_head = self.load_commit_details("HEAD", cx);
 
         let task = cx.spawn(|_, mut cx| async move {
-            let prior_head = repo
-                .update(&mut cx, |repo, cx| repo.show("HEAD", cx))?
-                .await?;
+            let prior_head = prior_head.await?;
 
             repo.update(&mut cx, |repo, _| repo.reset("HEAD^", ResetMode::Soft))?
                 .await??;
@@ -1290,7 +1290,8 @@ impl GitPanel {
     fn render_previous_commit(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.as_ref()?;
         let branch = active_repository.read(cx).branch()?;
-        let commit = branch.most_recent_commit.as_ref()?;
+        let commit = branch.most_recent_commit.as_ref()?.clone();
+
         if branch.upstream.as_ref().is_some_and(|upstream| {
             if let Some(tracking) = &upstream.tracking {
                 tracking.ahead == 0
@@ -1326,20 +1327,13 @@ impl GitPanel {
         .size(LabelSize::Small)
         .color(Color::Muted);
 
-        // TODO: Show commit message in a popover if truncated
-        let commit_msg = commit
-            .subject
-            .lines()
-            .next()
-            .unwrap_or(&commit.subject)
-            .to_string();
-
         let tooltip = if self.has_staged_changes() {
             "git reset HEAD^ --soft"
         } else {
             "git reset HEAD^"
         };
 
+        let this = cx.entity();
         Some(
             h_flex()
                 .items_center()
@@ -1356,10 +1350,20 @@ impl GitPanel {
                         .max_w(relative(0.6))
                         .h_full()
                         .child(
-                            Label::new(commit_msg)
+                            Label::new(commit.subject.clone())
                                 .size(LabelSize::Small)
                                 .text_ellipsis(),
-                        ),
+                        )
+                        .id("commit-msg-hover")
+                        .hoverable_tooltip(move |window, cx| {
+                            GitPanelMessageTooltip::new(
+                                this.clone(),
+                                commit.sha.clone(),
+                                window,
+                                cx,
+                            )
+                            .into()
+                        }),
                 )
                 .child(div().flex_1())
                 .child(
@@ -1670,6 +1674,17 @@ impl GitPanel {
             .into_any_element()
     }
 
+    fn load_commit_details(
+        &self,
+        sha: &str,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<CommitDetails>> {
+        let Some(repo) = self.active_repository.clone() else {
+            return Task::ready(Err(anyhow::anyhow!("no active repo")));
+        };
+        repo.update(cx, |repo, cx| repo.show(sha, cx))
+    }
+
     fn render_entry(
         &self,
         ix: usize,
@@ -1951,3 +1966,81 @@ impl Panel for GitPanel {
 }
 
 impl PanelHeader for GitPanel {}
+
+struct GitPanelMessageTooltip {
+    commit_tooltip: Option<Entity<CommitTooltip>>,
+}
+
+impl GitPanelMessageTooltip {
+    fn new(
+        git_panel: Entity<GitPanel>,
+        sha: SharedString,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let workspace = git_panel.read(cx).workspace.clone();
+        cx.new(|cx| {
+            cx.spawn_in(window, |this, mut cx| async move {
+                let language_registry = workspace.update(&mut cx, |workspace, _cx| {
+                    workspace.app_state().languages.clone()
+                })?;
+
+                let details = git_panel
+                    .update(&mut cx, |git_panel, cx| {
+                        git_panel.load_commit_details(&sha, cx)
+                    })?
+                    .await?;
+
+                let mut parsed_message = ParsedMarkdown::default();
+                markdown::parse_markdown_block(
+                    &details.message,
+                    Some(&language_registry),
+                    None,
+                    &mut parsed_message.text,
+                    &mut parsed_message.highlights,
+                    &mut parsed_message.region_ranges,
+                    &mut parsed_message.regions,
+                )
+                .await;
+
+                let commit_details = editor::commit_tooltip::CommitDetails {
+                    sha: details.sha.clone(),
+                    committer_name: details.committer_name.clone(),
+                    committer_email: details.committer_email.clone(),
+                    commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
+                    message: Some(editor::commit_tooltip::ParsedCommitMessage {
+                        message: details.message.clone(),
+                        parsed_message,
+                        ..Default::default()
+                    }),
+                };
+
+                this.update_in(&mut cx, |this: &mut GitPanelMessageTooltip, window, cx| {
+                    this.commit_tooltip = Some(cx.new(move |cx| {
+                        CommitTooltip::new(
+                            commit_details,
+                            panel_editor_style(true, window, cx),
+                            Some(workspace),
+                        )
+                    }));
+                    cx.notify();
+                })
+            })
+            .detach();
+
+            Self {
+                commit_tooltip: None,
+            }
+        })
+    }
+}
+
+impl Render for GitPanelMessageTooltip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<'_, Self>) -> impl IntoElement {
+        if let Some(commit_tooltip) = &self.commit_tooltip {
+            commit_tooltip.clone().into_any_element()
+        } else {
+            gpui::Empty.into_any_element()
+        }
+    }
+}
