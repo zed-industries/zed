@@ -29,7 +29,7 @@ use gpui::{
     WindowOptions,
 };
 use image_viewer::ImageInfo;
-use migrate::{MigrationType, MigratorBanner, MigratorEvent, MigratorNotification};
+use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
 use migrator::{migrate_keymap, migrate_settings};
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
@@ -871,8 +871,8 @@ fn initialize_pane(
             toolbar.add_item(lsp_log_item, window, cx);
             let syntax_tree_item = cx.new(|_| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, window, cx);
-            let migrator_banner = cx.new(|cx| MigratorBanner::new(workspace, cx));
-            toolbar.add_item(migrator_banner, window, cx);
+            let migration_banner = cx.new(|cx| MigrationBanner::new(workspace, cx));
+            toolbar.add_item(migration_banner, window, cx);
         })
     });
 }
@@ -1106,7 +1106,7 @@ pub fn handle_settings_file_changes(
     cx: &mut App,
     settings_changed: impl Fn(Option<anyhow::Error>, &mut App) + 'static,
 ) {
-    MigratorNotification::set_global(cx.new(|_| MigratorNotification), cx);
+    MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
     let content = cx
         .background_executor()
         .block(user_settings_file_rx.next())
@@ -1137,9 +1137,9 @@ pub fn handle_settings_file_changes(
             }
 
             cx.update(|cx| {
-                if let Some(notifier) = MigratorNotification::try_global(cx) {
+                if let Some(notifier) = MigrationNotification::try_global(cx) {
                     notifier.update(cx, |_, cx| {
-                        cx.emit(MigratorEvent::ContentChanged {
+                        cx.emit(MigrationEvent::ContentChanged {
                             migration_type: MigrationType::Settings,
                             migrated: content_migrated,
                         });
@@ -1221,9 +1221,9 @@ pub fn handle_keymap_file_changes(
                 }
             };
             cx.update(|cx| {
-                if let Some(notifier) = MigratorNotification::try_global(cx) {
+                if let Some(notifier) = MigrationNotification::try_global(cx) {
                     notifier.update(cx, |_, cx| {
-                        cx.emit(MigratorEvent::ContentChanged {
+                        cx.emit(MigrationEvent::ContentChanged {
                             migration_type: MigrationType::Keymap,
                             migrated: content_migrated,
                         });

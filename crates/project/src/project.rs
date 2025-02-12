@@ -4225,6 +4225,27 @@ impl Project {
     pub fn all_repositories(&self, cx: &App) -> Vec<Entity<Repository>> {
         self.git_store.read(cx).all_repositories()
     }
+
+    pub fn repository_and_path_for_buffer_id(
+        &self,
+        buffer_id: BufferId,
+        cx: &App,
+    ) -> Option<(Entity<Repository>, RepoPath)> {
+        let path = self
+            .buffer_for_id(buffer_id, cx)?
+            .read(cx)
+            .project_path(cx)?;
+        self.git_state
+            .read(cx)
+            .all_repositories()
+            .into_iter()
+            .find_map(|repo| {
+                Some((
+                    repo.clone(),
+                    repo.read(cx).repository_entry.relativize(&path.path).ok()?,
+                ))
+            })
+    }
 }
 
 fn deserialize_code_actions(code_actions: &HashMap<String, bool>) -> Vec<lsp::CodeActionKind> {

@@ -230,7 +230,9 @@ pub struct Key {
 impl RenderOnce for Key {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let single_char = self.key.len() == 1;
-        let size = self.size.unwrap_or(px(14.).into());
+        let size = self
+            .size
+            .unwrap_or_else(|| TextSize::default().rems(cx).into());
 
         div()
             .py_0()

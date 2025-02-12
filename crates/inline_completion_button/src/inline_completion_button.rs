@@ -569,41 +569,43 @@ impl InlineCompletionButton {
             );
         }
 
-        let is_eager_preview_enabled = match settings.edit_predictions_mode() {
-            language::EditPredictionsMode::Auto => false,
-            language::EditPredictionsMode::EagerPreview => true,
-        };
-        menu = menu.separator().toggleable_entry(
-            "Eager Preview Mode",
-            is_eager_preview_enabled,
-            IconPosition::Start,
-            None,
-            {
-                let fs = fs.clone();
-                move |_window, cx| {
-                    update_settings_file::<AllLanguageSettings>(
-                        fs.clone(),
-                        cx,
-                        move |settings, _cx| {
-                            let new_mode = match is_eager_preview_enabled {
-                                true => language::EditPredictionsMode::Auto,
-                                false => language::EditPredictionsMode::EagerPreview,
-                            };
+        if cx.has_flag::<feature_flags::PredictEditsNonEagerModeFeatureFlag>() {
+            let is_eager_preview_enabled = match settings.edit_predictions_mode() {
+                language::EditPredictionsMode::Auto => false,
+                language::EditPredictionsMode::EagerPreview => true,
+            };
+            menu = menu.separator().toggleable_entry(
+                "Eager Preview Mode",
+                is_eager_preview_enabled,
+                IconPosition::Start,
+                None,
+                {
+                    let fs = fs.clone();
+                    move |_window, cx| {
+                        update_settings_file::<AllLanguageSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _cx| {
+                                let new_mode = match is_eager_preview_enabled {
+                                    true => language::EditPredictionsMode::Auto,
+                                    false => language::EditPredictionsMode::EagerPreview,
+                                };
 
-                            if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
-                                edit_predictions.mode = new_mode;
-                            } else {
-                                settings.edit_predictions =
-                                    Some(language_settings::EditPredictionSettingsContent {
-                                        mode: new_mode,
-                                        ..Default::default()
-                                    });
-                            }
-                        },
-                    );
-                }
-            },
-        );
+                                if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
+                                    edit_predictions.mode = new_mode;
+                                } else {
+                                    settings.edit_predictions =
+                                        Some(language_settings::EditPredictionSettingsContent {
+                                            mode: new_mode,
+                                            ..Default::default()
+                                        });
+                                }
+                            },
+                        );
+                    }
+                },
+            );
+        }
 
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
             menu = menu

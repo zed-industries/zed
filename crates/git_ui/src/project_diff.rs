@@ -69,6 +69,7 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        workspace.open_panel::<GitPanel>(window, cx);
         Self::deploy_at(workspace, None, window, cx)
     }
 

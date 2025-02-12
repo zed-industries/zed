@@ -316,9 +316,14 @@ message Envelope {
 
         OpenUncommittedDiff open_uncommitted_diff = 297;
         OpenUncommittedDiffResponse open_uncommitted_diff_response = 298;
+<<<<<<< HEAD
         GitShow git_show = 299;
         GitReset git_reset = 300; // current max
         GitCommitDetails git_commit_details = 301; // current max
+=======
+
+        SetIndexText set_index_text = 299; // current max
+>>>>>>> @{-1}
     }
 
     reserved 87 to 88;
@@ -2090,6 +2095,14 @@ message OpenUncommittedDiffResponse {
     optional string staged_text = 1;
     optional string committed_text = 2;
     Mode mode = 3;
+}
+
+message SetIndexText {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string path = 4;
+    optional string text = 5;
 }
 
 message GetNotifications {

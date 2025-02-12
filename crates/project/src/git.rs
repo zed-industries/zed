@@ -25,8 +25,8 @@ use util::{maybe, ResultExt};
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
 
 pub struct GitStore {
-    project_id: Option<ProjectId>,
-    client: Option<AnyProtoClient>,
+    pub(super) project_id: Option<ProjectId>,
+    pub(super) client: Option<AnyProtoClient>,
     buffer_store: Entity<BufferStore>,
     repositories: Vec<Entity<Repository>>,
     active_index: Option<usize>,
@@ -54,7 +54,7 @@ pub enum GitRepo {
     },
 }
 
-enum Message {
+pub enum Message {
     Commit {
         git_repo: GitRepo,
         message: SharedString,
@@ -67,6 +67,7 @@ enum Message {
     },
     Stage(GitRepo, Vec<RepoPath>),
     Unstage(GitRepo, Vec<RepoPath>),
+    SetIndexText(GitRepo, RepoPath, Option<String>),
 }
 
 pub enum GitEvent {
@@ -106,6 +107,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
+        client.add_entity_request_handler(Self::handle_set_index_text);
     }
 
     pub fn active_repository(&self) -> Option<Entity<Repository>> {
@@ -339,6 +341,21 @@ impl GitStore {
                 }
                 Ok(())
             }
+            Message::SetIndexText(git_repo, path, text) => match git_repo {
+                GitRepo::Local(repo) => repo.set_index_text(&path, text),
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                } => client.send(proto::SetIndexText {
+                    project_id: project_id.0,
+                    worktree_id: worktree_id.to_proto(),
+                    work_directory_id: work_directory_id.to_proto(),
+                    path: path.as_ref().to_proto(),
+                    text,
+                }),
+            },
         }
     }
 
@@ -392,6 +409,27 @@ impl GitStore {
             })?
             .await??;
 
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_set_index_text(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::SetIndexText>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.set_index_text(
+                    &RepoPath::from_str(&envelope.payload.path),
+                    envelope.payload.text,
+                )
+            })?
+            .await??;
         Ok(proto::Ack {})
     }
 
@@ -521,7 +559,13 @@ impl GitStore {
     }
 }
 
+impl GitRepo {}
+
 impl Repository {
+    pub fn git_state(&self) -> Option<Entity<GitState>> {
+        self.git_state.upgrade()
+    }
+
     fn id(&self) -> (WorktreeId, ProjectEntryId) {
         (self.worktree_id, self.repository_entry.work_directory_id())
     }
@@ -793,6 +837,21 @@ impl Repository {
                     message,
                     name_and_email,
                 },
+                result_tx,
+            ))
+            .ok();
+        result_rx
+    }
+
+    pub fn set_index_text(
+        &self,
+        path: &RepoPath,
+        content: Option<String>,
+    ) -> oneshot::Receiver<anyhow::Result<()>> {
+        let (result_tx, result_rx) = futures::channel::oneshot::channel();
+        self.update_sender
+            .unbounded_send((
+                Message::SetIndexText(self.git_repo.clone(), path.clone(), content),
                 result_tx,
             ))
             .ok();
