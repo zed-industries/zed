@@ -118,7 +118,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("settings", "icons/file_icons/settings.svg"),
     ("solidity", "icons/file_icons/solidity.svg"),
     ("storage", "icons/file_icons/database.svg"),
-    ("stylelint", "icons/file_icons/javascript.svg"),
+    ("stylelint", "icons/file_icons/stylelint.svg"),
     ("svelte", "icons/file_icons/svelte.svg"),
     ("swift", "icons/file_icons/swift.svg"),
     ("tcl", "icons/file_icons/tcl.svg"),
