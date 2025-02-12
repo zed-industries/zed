@@ -174,7 +174,7 @@ impl Render for MigratorBanner {
             .bg(cx.theme().status().info_background.opacity(0.6))
             .border_1()
             .border_color(cx.theme().colors().border_variant)
-            .rounded_lg()
+            .rounded_md()
             .overflow_hidden()
             .child(
                 h_flex()
@@ -186,15 +186,13 @@ impl Render for MigratorBanner {
                     )
                     .child(
                         h_flex()
-                            .gap_1()
+                            .gap_0p5()
                             .child(
-                                div()
-                                    .child(
                                 Label::new(format!(
                                     "Your {} file requires migration to support this version of Zed. A backup will be saved to",
                                     file_type
                                 ))
-                                .color(Color::Default))
+                                .color(Color::Default)
                             )
                             .child(
                                 div()
