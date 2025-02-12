@@ -3811,6 +3811,7 @@ impl EditorElement {
 
                 let mut element = v_flex()
                     .items_end()
+                    .flex_grow()
                     .child(
                         h_flex()
                             .h(ACCEPT_INDICATOR_HEIGHT)
@@ -3820,19 +3821,19 @@ impl EditorElement {
                             .shadow_sm()
                             .bg(Editor::edit_prediction_line_popover_bg_color(cx))
                             .border_1()
-                            .border_b_0()
                             .border_color(cx.theme().colors().border)
                             .rounded_t_lg()
                             .children(editor.render_edit_prediction_accept_keybind(window, cx)),
                     )
                     .child(
-                        div()
+                        h_flex()
                             .bg(cx.theme().colors().editor_background)
                             .border_1()
                             .shadow_sm()
                             .border_color(cx.theme().colors().border)
                             .rounded_lg()
                             .rounded_tr(Pixels::ZERO)
+                            .flex_1()
                             .child(styled_text),
                     )
                     .into_any();
