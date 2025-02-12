@@ -1,22 +1,20 @@
 use ::proto::{FromProto, ToProto};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
-use git::repository::RepoPath;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, SharedString};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel};
 use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
-    git::{GitStore, Repository},
+    git::GitStore,
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
     worktree_store::WorktreeStore,
-    LspStore, LspStoreEvent, PrettierStore, ProjectEntryId, ProjectPath, ToolchainStore,
-    WorktreeId,
+    LspStore, LspStoreEvent, PrettierStore, ProjectPath, ToolchainStore, WorktreeId,
 };
 use remote::ssh_session::ChannelClient;
 use rpc::{
@@ -83,14 +81,14 @@ impl HeadlessProject {
             store
         });
 
-        let git_store =
-            cx.new(|cx| GitStore::new(&worktree_store, buffer_store.clone(), None, None, cx));
-
         let buffer_store = cx.new(|cx| {
             let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
+
+        let git_store =
+            cx.new(|cx| GitStore::new(&worktree_store, buffer_store.clone(), None, None, cx));
         let prettier_store = cx.new(|cx| {
             PrettierStore::new(
                 node_runtime.clone(),
