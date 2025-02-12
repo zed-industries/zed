@@ -15,7 +15,8 @@ use gpui::{
     WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
-use rpc::{proto, ToProto, git_reset, AnyProtoClient, TypedEnvelope};
+use rpc::proto::{git_reset, ToProto};
+use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use settings::WorktreeId;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
