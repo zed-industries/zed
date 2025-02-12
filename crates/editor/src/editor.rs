@@ -5686,11 +5686,12 @@ impl Editor {
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
             .text_size(TextSize::XSmall.rems(cx))
             .child(h_flex().children(itertools::intersperse_with(
-                ui::render_modifiers_for_edit_prediction(
+                ui::render_modifiers(
                     &accept_keystroke.modifiers,
                     PlatformStyle::platform(),
                     Some(modifiers_color),
                     Some(IconSize::XSmall.rems().into()),
+                    true,
                 ),
                 gen_plus_icon_on_non_mac,
             )))
@@ -5811,8 +5812,6 @@ impl Editor {
                 .child(Icon::new(IconName::ZedPredict))
         }
 
-        let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
-
         let completion = match &self.active_inline_completion {
             Some(completion) => match &completion.completion {
                 InlineCompletion::Move {
@@ -5836,21 +5835,12 @@ impl Editor {
                                 },
                             )
                             .child(Label::new("Hold").size(LabelSize::Small))
-                            // Agus! - h_flex() look ok with multiple modifiers on mac? Or is gap needed here
-                            .child(h_flex().children(itertools::intersperse_with(
-                                ui::render_modifiers_for_edit_prediction(
-                                    &accept_keystroke.modifiers,
-                                    PlatformStyle::platform(),
-                                    Some(Color::Default),
-                                    Some(IconSize::Small.rems().into()),
-                                ),
-                                || {
-                                    if !is_platform_style_mac {
-                                        "+".into_any_element()
-                                    } else {
-                                        gpui::Empty.into_any_element()
-                                    }
-                                },
+                            .child(h_flex().children(ui::render_modifiers(
+                                &accept_keystroke.modifiers,
+                                PlatformStyle::platform(),
+                                Some(Color::Default),
+                                Some(IconSize::Small.rems().into()),
+                                false,
                             )))
                             .into_any(),
                     );
@@ -5925,24 +5915,16 @@ impl Editor {
                             h_flex()
                                 .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                                 .when(is_platform_style_mac, |parent| parent.gap_1())
-                                .child(h_flex().children(itertools::intersperse_with(
-                                    ui::render_modifiers_for_edit_prediction(
-                                        &accept_keystroke.modifiers,
-                                        PlatformStyle::platform(),
-                                        Some(if !has_completion {
-                                            Color::Muted
-                                        } else {
-                                            Color::Default
-                                        }),
-                                        None,
-                                    ),
-                                    || {
-                                        if !is_platform_style_mac {
-                                            "+".into_any_element()
-                                        } else {
-                                            gpui::Empty.into_any_element()
-                                        }
-                                    },
+                                .child(h_flex().children(ui::render_modifiers(
+                                    &accept_keystroke.modifiers,
+                                    PlatformStyle::platform(),
+                                    Some(if !has_completion {
+                                        Color::Muted
+                                    } else {
+                                        Color::Default
+                                    }),
+                                    None,
+                                    false,
                                 ))),
                         )
                         .child(Label::new("Preview").into_any_element())

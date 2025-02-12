@@ -92,7 +92,7 @@ impl RenderOnce for KeyBinding {
                         self.platform_style,
                         None,
                         self.size,
-                        false,
+                        true,
                     ))
                     .map(|el| {
                         el.child(render_key(&keystroke, self.platform_style, None, self.size))
@@ -145,10 +145,12 @@ pub fn render_modifiers(
     platform_style: PlatformStyle,
     color: Option<Color>,
     size: Option<AbsoluteLength>,
-    standalone: bool,
+    trailing_separator: bool,
 ) -> impl Iterator<Item = AnyElement> {
+    #[derive(Clone)]
     enum KeyOrIcon {
         Key(&'static str),
+        Plus,
         Icon(IconName),
     }
 
@@ -200,98 +202,34 @@ pub fn render_modifiers(
         .into_iter()
         .filter(|modifier| modifier.enabled)
         .collect::<Vec<_>>();
-    let last_ix = filtered.len().saturating_sub(1);
 
-    filtered
-        .into_iter()
-        .enumerate()
-        .flat_map(move |(ix, modifier)| match platform_style {
-            PlatformStyle::Mac => vec![modifier.mac],
-            PlatformStyle::Linux if standalone && ix == last_ix => vec![modifier.linux],
-            PlatformStyle::Linux => vec![modifier.linux, KeyOrIcon::Key("+")],
-            PlatformStyle::Windows if standalone && ix == last_ix => {
-                vec![modifier.windows]
-            }
-            PlatformStyle::Windows => vec![modifier.windows, KeyOrIcon::Key("+")],
-        })
-        .map(move |key_or_icon| match key_or_icon {
-            KeyOrIcon::Key(key) => Key::new(key, color).size(size).into_any_element(),
-            KeyOrIcon::Icon(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
-        })
-}
-
-// TODO: Dedupe with `render_modifiers`. Since this change is close to initial launch, de-risking it
-// by not changing the rendering for all modifiers.
-pub fn render_modifiers_for_edit_prediction(
-    modifiers: &Modifiers,
-    platform_style: PlatformStyle,
-    color: Option<Color>,
-    size: Option<AbsoluteLength>,
-) -> impl Iterator<Item = AnyElement> {
-    enum KeyOrIcon {
-        Key(String),
-        Icon(IconName),
-    }
-
-    struct Modifier {
-        enabled: bool,
-        mac: KeyOrIcon,
-        linux: &'static str,
-        windows: &'static str,
-    }
-
-    let table = {
-        use KeyOrIcon::*;
-
-        [
-            Modifier {
-                enabled: modifiers.function,
-                mac: Icon(IconName::Control),
-                linux: "Fn",
-                windows: "Fn",
-            },
-            Modifier {
-                enabled: modifiers.control,
-                mac: Icon(IconName::Control),
-                linux: "Ctrl",
-                windows: "Ctrl",
-            },
-            Modifier {
-                enabled: modifiers.alt,
-                mac: Icon(IconName::Option),
-                linux: "Alt",
-                windows: "Alt",
-            },
-            Modifier {
-                enabled: modifiers.platform,
-                mac: Icon(IconName::Command),
-                linux: "Super",
-                windows: "Win",
-            },
-            Modifier {
-                enabled: modifiers.shift,
-                mac: Icon(IconName::Shift),
-                linux: "Shift",
-                windows: "Shift",
-            },
-        ]
-    };
-
-    let filtered = table
-        .into_iter()
-        .filter(|modifier| modifier.enabled)
-        .collect::<Vec<_>>();
-
-    filtered
+    let platform_keys = filtered
         .into_iter()
         .map(move |modifier| match platform_style {
-            PlatformStyle::Mac => modifier.mac,
-            PlatformStyle::Linux => KeyOrIcon::Key(modifier.linux.to_string()),
-            PlatformStyle::Windows => KeyOrIcon::Key(modifier.windows.to_string()),
+            PlatformStyle::Mac => Some(modifier.mac),
+            PlatformStyle::Linux => Some(modifier.linux),
+            PlatformStyle::Windows => Some(modifier.windows),
+        });
+
+    let separator = match platform_style {
+        PlatformStyle::Mac => None,
+        PlatformStyle::Linux => Some(KeyOrIcon::Plus),
+        PlatformStyle::Windows => Some(KeyOrIcon::Plus),
+    };
+
+    let platform_keys = itertools::intersperse(platform_keys, separator.clone());
+
+    platform_keys
+        .chain(if trailing_separator {
+            Some(separator)
+        } else {
+            None
         })
+        .flatten()
         .map(move |key_or_icon| match key_or_icon {
             KeyOrIcon::Key(key) => Key::new(key, color).size(size).into_any_element(),
             KeyOrIcon::Icon(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
+            KeyOrIcon::Plus => "+".into_any_element(),
         })
 }
 
