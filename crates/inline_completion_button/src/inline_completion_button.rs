@@ -569,12 +569,12 @@ impl InlineCompletionButton {
             );
         }
 
-        let is_eager_preview_enabled = match settings.edit_predictions_mode() {
-            language::EditPredictionsMode::Auto => false,
-            language::EditPredictionsMode::EagerPreview => true,
-        };
-        menu = if cx.is_staff() {
-            menu.separator().toggleable_entry(
+        if cx.has_flag::<feature_flags::PredictEditsNonEagerModeFeatureFlag>() {
+            let is_eager_preview_enabled = match settings.edit_predictions_mode() {
+                language::EditPredictionsMode::Auto => false,
+                language::EditPredictionsMode::EagerPreview => true,
+            };
+            menu = menu.separator().toggleable_entry(
                 "Eager Preview Mode",
                 is_eager_preview_enabled,
                 IconPosition::Start,
@@ -604,10 +604,8 @@ impl InlineCompletionButton {
                         );
                     }
                 },
-            )
-        } else {
-            menu
-        };
+            );
+        }
 
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
             menu = menu
