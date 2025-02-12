@@ -242,10 +242,6 @@ impl LanguageModel for GoogleLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn telemetry_id(&self) -> String {
-        format!("google/{}", self.model.id())
-    }
-
     fn max_token_count(&self) -> usize {
         self.model.max_token_count()
     }

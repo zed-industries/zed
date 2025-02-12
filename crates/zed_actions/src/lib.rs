@@ -37,7 +37,6 @@ actions!(
         About,
         Extensions,
         OpenLicenses,
-        OpenTelemetryLog,
         DecreaseBufferFontSize,
         IncreaseBufferFontSize,
         ResetBufferFontSize,

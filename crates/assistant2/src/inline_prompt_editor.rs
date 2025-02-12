@@ -299,23 +299,11 @@ impl<T: 'static> PromptEditor<T> {
         &mut self,
         _: &Entity<Editor>,
         event: &EditorEvent,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
             EditorEvent::Edited { .. } => {
-                if let Some(workspace) = window.root::<Workspace>().flatten() {
-                    workspace.update(cx, |workspace, cx| {
-                        let is_via_ssh = workspace
-                            .project()
-                            .update(cx, |project, _| project.is_via_ssh());
-
-                        workspace
-                            .client()
-                            .telemetry()
-                            .log_edit_event("inline assist", is_via_ssh);
-                    });
-                }
                 let prompt = self.editor.read(cx).text(cx);
                 if self
                     .prompt_history_ix

@@ -252,10 +252,6 @@ impl LanguageModel for DeepSeekLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn telemetry_id(&self) -> String {
-        format!("deepseek/{}", self.model.id())
-    }
-
     fn max_token_count(&self) -> usize {
         self.model.max_token_count()
     }

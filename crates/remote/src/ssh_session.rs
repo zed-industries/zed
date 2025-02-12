@@ -227,21 +227,6 @@ impl SshPlatform {
 
 pub trait SshClientDelegate: Send + Sync {
     fn ask_password(&self, prompt: String, cx: &mut AsyncApp) -> oneshot::Receiver<Result<String>>;
-    fn get_download_params(
-        &self,
-        platform: SshPlatform,
-        release_channel: ReleaseChannel,
-        version: Option<SemanticVersion>,
-        cx: &mut AsyncApp,
-    ) -> Task<Result<Option<(String, String)>>>;
-
-    fn download_server_binary_locally(
-        &self,
-        platform: SshPlatform,
-        release_channel: ReleaseChannel,
-        version: Option<SemanticVersion>,
-        cx: &mut AsyncApp,
-    ) -> Task<Result<PathBuf>>;
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncApp);
 }
 
@@ -1739,114 +1724,7 @@ impl SshRemoteConnection {
             _ => Ok(Some(AppVersion::global(cx))),
         })??;
 
-        let platform = self.platform().await?;
-
-        if !self.socket.connection_options.upload_binary_over_ssh {
-            if let Some((url, body)) = delegate
-                .get_download_params(platform, release_channel, wanted_version, cx)
-                .await?
-            {
-                match self
-                    .download_binary_on_server(&url, &body, &tmp_path_gz, delegate, cx)
-                    .await
-                {
-                    Ok(_) => {
-                        self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
-                            .await?;
-                        return Ok(dst_path);
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "Failed to download binary on server, attempting to upload server: {}",
-                            e
-                        )
-                    }
-                }
-            }
-        }
-
-        let src_path = delegate
-            .download_server_binary_locally(platform, release_channel, wanted_version, cx)
-            .await?;
-        self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
-            .await?;
-        self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
-            .await?;
-        return Ok(dst_path);
-    }
-
-    async fn download_binary_on_server(
-        &self,
-        url: &str,
-        body: &str,
-        tmp_path_gz: &Path,
-        delegate: &Arc<dyn SshClientDelegate>,
-        cx: &mut AsyncApp,
-    ) -> Result<()> {
-        if let Some(parent) = tmp_path_gz.parent() {
-            self.socket
-                .run_command("mkdir", &["-p", &parent.to_string_lossy()])
-                .await?;
-        }
-
-        delegate.set_status(Some("Downloading remote development server on host"), cx);
-
-        match self
-            .socket
-            .run_command(
-                "curl",
-                &[
-                    "-f",
-                    "-L",
-                    "-X",
-                    "GET",
-                    "-H",
-                    "Content-Type: application/json",
-                    "-d",
-                    &body,
-                    &url,
-                    "-o",
-                    &tmp_path_gz.to_string_lossy(),
-                ],
-            )
-            .await
-        {
-            Ok(_) => {}
-            Err(e) => {
-                if self.socket.run_command("which", &["curl"]).await.is_ok() {
-                    return Err(e);
-                }
-
-                match self
-                    .socket
-                    .run_command(
-                        "wget",
-                        &[
-                            "--max-redirect=5",
-                            "--method=GET",
-                            "--header=Content-Type: application/json",
-                            "--body-data",
-                            &body,
-                            &url,
-                            "-O",
-                            &tmp_path_gz.to_string_lossy(),
-                        ],
-                    )
-                    .await
-                {
-                    Ok(_) => {}
-                    Err(e) => {
-                        if self.socket.run_command("which", &["wget"]).await.is_ok() {
-                            return Err(e);
-                        } else {
-                            anyhow::bail!("Neither curl nor wget is available");
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
+        anyhow::bail!("Not implemented");
     }
 
     async fn upload_local_server_binary(
@@ -2361,13 +2239,10 @@ mod fake {
         },
         select_biased, FutureExt, SinkExt, StreamExt,
     };
-    use gpui::{App, AsyncApp, SemanticVersion, Task, TestAppContext};
-    use release_channel::ReleaseChannel;
+    use gpui::{App, AsyncApp, Task, TestAppContext};
     use rpc::proto::Envelope;
 
-    use super::{
-        ChannelClient, RemoteConnection, SshClientDelegate, SshConnectionOptions, SshPlatform,
-    };
+    use super::{ChannelClient, RemoteConnection, SshClientDelegate, SshConnectionOptions};
 
     pub(super) struct FakeRemoteConnection {
         pub(super) connection_options: SshConnectionOptions,
@@ -2471,26 +2346,6 @@ mod fake {
 
     impl SshClientDelegate for Delegate {
         fn ask_password(&self, _: String, _: &mut AsyncApp) -> oneshot::Receiver<Result<String>> {
-            unreachable!()
-        }
-
-        fn download_server_binary_locally(
-            &self,
-            _: SshPlatform,
-            _: ReleaseChannel,
-            _: Option<SemanticVersion>,
-            _: &mut AsyncApp,
-        ) -> Task<Result<PathBuf>> {
-            unreachable!()
-        }
-
-        fn get_download_params(
-            &self,
-            _platform: SshPlatform,
-            _release_channel: ReleaseChannel,
-            _version: Option<SemanticVersion>,
-            _cx: &mut AsyncApp,
-        ) -> Task<Result<Option<(String, String)>>> {
             unreachable!()
         }
 

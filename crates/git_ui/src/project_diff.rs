@@ -427,10 +427,6 @@ impl Item for ProjectDiff {
             .into_any_element()
     }
 
-    fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("Project Diff Opened")
-    }
-
     fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }

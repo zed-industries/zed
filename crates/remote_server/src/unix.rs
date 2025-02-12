@@ -1,8 +1,7 @@
 use crate::headless_project::HeadlessAppState;
 use crate::HeadlessProject;
 use anyhow::{anyhow, Context as _, Result};
-use chrono::Utc;
-use client::{telemetry, ProxySettings};
+use client::ProxySettings;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::channel::mpsc;
@@ -16,7 +15,7 @@ use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
 
-use release_channel::{AppVersion, ReleaseChannel, RELEASE_CHANNEL};
+use release_channel::AppVersion;
 use remote::proxy::ProxyLaunchError;
 use remote::ssh_session::ChannelClient;
 use remote::{
@@ -32,17 +31,16 @@ use smol::io::AsyncReadExt;
 
 use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
+use std::env;
 use std::ffi::OsStr;
 use std::ops::ControlFlow;
 use std::str::FromStr;
-use std::{env, thread};
 use std::{
     io::Write,
     mem,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use telemetry_events::LocationData;
 use util::ResultExt;
 
 fn init_logging_proxy() {
@@ -140,57 +138,11 @@ fn init_panic_hook() {
             backtrace.drain(0..=ix);
         }
 
-        let thread = thread::current();
-        let thread_name = thread.name().unwrap_or("<unnamed>");
-
         log::error!(
             "panic occurred: {}\nBacktrace:\n{}",
             &payload,
             (&backtrace).join("\n")
         );
-
-        let release_channel = *RELEASE_CHANNEL;
-        let version = match release_channel {
-            ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION"),
-            ReleaseChannel::Nightly | ReleaseChannel::Dev => {
-                option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha")
-            }
-        };
-
-        let panic_data = telemetry_events::Panic {
-            thread: thread_name.into(),
-            payload: payload.clone(),
-            location_data: info.location().map(|location| LocationData {
-                file: location.file().into(),
-                line: location.line(),
-            }),
-            app_version: format!("remote-server-{version}"),
-            app_commit_sha: option_env!("ZED_COMMIT_SHA").map(|sha| sha.into()),
-            release_channel: release_channel.display_name().into(),
-            target: env!("TARGET").to_owned().into(),
-            os_name: telemetry::os_name(),
-            os_version: Some(telemetry::os_version()),
-            architecture: env::consts::ARCH.into(),
-            panicked_on: Utc::now().timestamp_millis(),
-            backtrace,
-            system_id: None,            // Set on SSH client
-            installation_id: None,      // Set on SSH client
-            session_id: "".to_string(), // Set on SSH client
-        };
-
-        if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
-            let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-            let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
-            let panic_file = std::fs::OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(&panic_file_path)
-                .log_err();
-            if let Some(mut panic_file) = panic_file {
-                writeln!(&mut panic_file, "{panic_data_json}").log_err();
-                panic_file.flush().log_err();
-            }
-        }
 
         std::process::abort();
     }));

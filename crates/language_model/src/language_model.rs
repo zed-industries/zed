@@ -111,7 +111,6 @@ pub trait LanguageModel: Send + Sync {
     }
     fn provider_id(&self) -> LanguageModelProviderId;
     fn provider_name(&self) -> LanguageModelProviderName;
-    fn telemetry_id(&self) -> String;
 
     fn api_key(&self, _cx: &App) -> Option<String> {
         None

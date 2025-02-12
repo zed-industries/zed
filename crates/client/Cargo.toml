@@ -39,7 +39,6 @@ serde_json.workspace = true
 settings.workspace = true
 sha2.workspace = true
 smol.workspace = true
-telemetry_events.workspace = true
 text.workspace = true
 thiserror.workspace = true
 time.workspace = true
@@ -48,7 +47,6 @@ tokio-socks = { version = "0.5.2", default-features = false, features = ["future
 url.workspace = true
 util.workspace = true
 worktree.workspace = true
-telemetry.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

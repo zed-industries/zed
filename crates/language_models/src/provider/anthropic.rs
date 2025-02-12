@@ -345,10 +345,6 @@ impl LanguageModel for AnthropicModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn telemetry_id(&self) -> String {
-        format!("anthropic/{}", self.model.id())
-    }
-
     fn api_key(&self, cx: &App) -> Option<String> {
         self.state.read(cx).api_key.clone()
     }

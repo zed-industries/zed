@@ -14,8 +14,6 @@ use std::{
 fn main() {
     env_logger::init();
 
-    use clock::FakeSystemClock;
-
     Application::new().run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
@@ -25,8 +23,6 @@ fn main() {
             store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
         });
 
-        let clock = Arc::new(FakeSystemClock::new());
-
         let http = Arc::new(HttpClientWithUrl::new(
             Arc::new(
                 reqwest_client::ReqwestClient::user_agent("Zed semantic index example").unwrap(),
@@ -34,7 +30,7 @@ fn main() {
             "http://localhost:11434",
             None,
         ));
-        let client = client::Client::new(clock, http.clone(), cx);
+        let client = client::Client::new(http.clone(), cx);
         Client::set_global(client.clone(), cx);
 
         let args: Vec<String> = std::env::args().collect();

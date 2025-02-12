@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{SlashCommandId, SlashCommandWorkingSet};
-use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
+use client::{proto, Client, TypedEnvelope};
 use clock::ReplicaId;
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
@@ -53,7 +53,6 @@ pub struct ContextStore {
     fs: Arc<dyn Fs>,
     languages: Arc<LanguageRegistry>,
     slash_commands: Arc<SlashCommandWorkingSet>,
-    telemetry: Arc<Telemetry>,
     _watch_updates: Task<Option<()>>,
     client: Arc<Client>,
     project: Entity<Project>,
@@ -99,7 +98,6 @@ impl ContextStore {
     ) -> Task<Result<Entity<Self>>> {
         let fs = project.read(cx).fs().clone();
         let languages = project.read(cx).languages().clone();
-        let telemetry = project.read(cx).client().telemetry().clone();
         cx.spawn(|mut cx| async move {
             const CONTEXT_WATCH_DURATION: Duration = Duration::from_millis(100);
             let (mut events, _) = fs.watch(contexts_dir(), CONTEXT_WATCH_DURATION).await;
@@ -119,7 +117,6 @@ impl ContextStore {
                     fs,
                     languages,
                     slash_commands,
-                    telemetry,
                     _watch_updates: cx.spawn(|this, mut cx| {
                         async move {
                             while events.next().await.is_some() {
@@ -356,7 +353,6 @@ impl ContextStore {
             AssistantContext::local(
                 self.languages.clone(),
                 Some(self.project.clone()),
-                Some(self.telemetry.clone()),
                 self.prompt_builder.clone(),
                 self.slash_commands.clone(),
                 cx,
@@ -379,7 +375,6 @@ impl ContextStore {
         let capability = project.capability();
         let language_registry = self.languages.clone();
         let project = self.project.clone();
-        let telemetry = self.telemetry.clone();
         let prompt_builder = self.prompt_builder.clone();
         let slash_commands = self.slash_commands.clone();
         let request = self.client.request(proto::CreateContext { project_id });
@@ -396,7 +391,6 @@ impl ContextStore {
                     prompt_builder,
                     slash_commands,
                     Some(project),
-                    Some(telemetry),
                     cx,
                 )
             })?;
@@ -435,7 +429,6 @@ impl ContextStore {
         let fs = self.fs.clone();
         let languages = self.languages.clone();
         let project = self.project.clone();
-        let telemetry = self.telemetry.clone();
         let load = cx.background_executor().spawn({
             let path = path.clone();
             async move {
@@ -456,7 +449,6 @@ impl ContextStore {
                     prompt_builder,
                     slash_commands,
                     Some(project),
-                    Some(telemetry),
                     cx,
                 )
             })?;
@@ -515,7 +507,6 @@ impl ContextStore {
         let capability = project.capability();
         let language_registry = self.languages.clone();
         let project = self.project.clone();
-        let telemetry = self.telemetry.clone();
         let request = self.client.request(proto::OpenContext {
             project_id,
             context_id: context_id.to_proto(),
@@ -534,7 +525,6 @@ impl ContextStore {
                     prompt_builder,
                     slash_commands,
                     Some(project),
-                    Some(telemetry),
                     cx,
                 )
             })?;

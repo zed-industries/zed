@@ -1,16 +1,12 @@
 use crate::inline_prompt_editor::CodegenStatus;
-use client::telemetry::Telemetry;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{App, Context, Entity, EventEmitter, Task};
 use language_model::{LanguageModelRegistry, LanguageModelRequest};
-use language_models::report_assistant_event;
-use std::{sync::Arc, time::Instant};
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use std::time::Instant;
 use terminal::Terminal;
 
 pub struct TerminalCodegen {
     pub status: CodegenStatus,
-    pub telemetry: Option<Arc<Telemetry>>,
     terminal: Entity<Terminal>,
     generation: Task<()>,
     pub message_id: Option<String>,
@@ -20,10 +16,9 @@ pub struct TerminalCodegen {
 impl EventEmitter<CodegenEvent> for TerminalCodegen {}
 
 impl TerminalCodegen {
-    pub fn new(terminal: Entity<Terminal>, telemetry: Option<Arc<Telemetry>>) -> Self {
+    pub fn new(terminal: Entity<Terminal>) -> Self {
         Self {
             terminal,
-            telemetry,
             status: CodegenStatus::Idle,
             generation: Task::ready(()),
             message_id: None,
@@ -36,14 +31,9 @@ impl TerminalCodegen {
             return;
         };
 
-        let model_api_key = model.api_key(cx);
-        let http_client = cx.http_client();
-        let telemetry = self.telemetry.clone();
         self.status = CodegenStatus::Pending;
         self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
         self.generation = cx.spawn(|this, mut cx| async move {
-            let model_telemetry_id = model.telemetry_id();
-            let model_provider_id = model.provider_id();
             let response = model.stream_completion_text(prompt, &cx).await;
             let generate = async {
                 let message_id = response
@@ -54,8 +44,6 @@ impl TerminalCodegen {
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
 
                 let task = cx.background_executor().spawn({
-                    let message_id = message_id.clone();
-                    let executor = cx.background_executor().clone();
                     async move {
                         let mut response_latency = None;
                         let request_start = Instant::now();
@@ -73,25 +61,6 @@ impl TerminalCodegen {
                         };
 
                         let result = task.await;
-
-                        let error_message = result.as_ref().err().map(|error| error.to_string());
-                        report_assistant_event(
-                            AssistantEvent {
-                                conversation_id: None,
-                                kind: AssistantKind::InlineTerminal,
-                                message_id,
-                                phase: AssistantPhase::Response,
-                                model: model_telemetry_id,
-                                model_provider: model_provider_id.to_string(),
-                                response_latency,
-                                error_message,
-                                language_name: None,
-                            },
-                            telemetry,
-                            http_client,
-                            model_api_key,
-                            &executor,
-                        );
 
                         result?;
                         anyhow::Ok(())

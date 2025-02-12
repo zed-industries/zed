@@ -12,7 +12,6 @@ use crate::provider::{
     self,
     anthropic::AnthropicSettings,
     cloud::{self, ZedDotDevSettings},
-    copilot_chat::CopilotChatSettings,
     deepseek::DeepSeekSettings,
     google::GoogleSettings,
     lmstudio::LmStudioSettings,
@@ -60,7 +59,6 @@ pub struct AllLanguageModelSettings {
     pub openai: OpenAiSettings,
     pub zed_dot_dev: ZedDotDevSettings,
     pub google: GoogleSettings,
-    pub copilot_chat: CopilotChatSettings,
     pub lmstudio: LmStudioSettings,
     pub deepseek: DeepSeekSettings,
 }

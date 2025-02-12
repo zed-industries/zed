@@ -1,4 +1,4 @@
-# This file is used to build collab in a Docker image.
+# This file is used to build  in a Docker image.
 # In particular, we don't use clang.
 [build]
 # v0 mangling scheme provides more detailed backtraces around closures

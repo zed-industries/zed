@@ -1,5 +1,4 @@
 use collections::{HashMap, VecDeque};
-use copilot::Copilot;
 use editor::{actions::MoveToEnd, scroll::Autoscroll, Editor, EditorEvent};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
@@ -27,8 +26,6 @@ const MAX_STORED_LOG_ENTRIES: usize = 2000;
 pub struct LogStore {
     projects: HashMap<WeakEntity<Project>, ProjectState>,
     language_servers: HashMap<LanguageServerId, LanguageServerState>,
-    copilot_log_subscription: Option<lsp::Subscription>,
-    _copilot_subscription: Option<gpui::Subscription>,
     io_tx: mpsc::UnboundedSender<(LanguageServerId, IoKind, String)>,
 }
 
@@ -114,7 +111,6 @@ struct LanguageServerState {
 pub enum LanguageServerKind {
     Local { project: WeakEntity<Project> },
     Remote { project: WeakEntity<Project> },
-    Global,
 }
 
 impl LanguageServerKind {
@@ -128,7 +124,6 @@ impl std::fmt::Debug for LanguageServerKind {
         match self {
             LanguageServerKind::Local { .. } => write!(f, "LanguageServerKind::Local"),
             LanguageServerKind::Remote { .. } => write!(f, "LanguageServerKind::Remote"),
-            LanguageServerKind::Global => write!(f, "LanguageServerKind::Global"),
         }
     }
 }
@@ -138,7 +133,6 @@ impl LanguageServerKind {
         match self {
             Self::Local { project } => Some(project),
             Self::Remote { project } => Some(project),
-            Self::Global { .. } => None,
         }
     }
 }
@@ -236,45 +230,7 @@ impl LogStore {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let (io_tx, mut io_rx) = mpsc::unbounded();
 
-        let copilot_subscription = Copilot::global(cx).map(|copilot| {
-            let copilot = &copilot;
-            cx.subscribe(copilot, |this, copilot, inline_completion_event, cx| {
-                if let copilot::Event::CopilotLanguageServerStarted = inline_completion_event {
-                    if let Some(server) = copilot.read(cx).language_server() {
-                        let server_id = server.server_id();
-                        let weak_this = cx.weak_entity();
-                        this.copilot_log_subscription =
-                            Some(server.on_notification::<copilot::request::LogMessage, _>(
-                                move |params, mut cx| {
-                                    weak_this
-                                        .update(&mut cx, |this, cx| {
-                                            this.add_language_server_log(
-                                                server_id,
-                                                MessageType::LOG,
-                                                &params.message,
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
-                                },
-                            ));
-                        let name = LanguageServerName::new_static("copilot");
-                        this.add_language_server(
-                            LanguageServerKind::Global,
-                            server.server_id(),
-                            Some(name),
-                            None,
-                            Some(server.clone()),
-                            cx,
-                        );
-                    }
-                }
-            })
-        });
-
         let this = Self {
-            copilot_log_subscription: None,
-            _copilot_subscription: copilot_subscription,
             projects: HashMap::default(),
             language_servers: HashMap::default(),
             io_tx,
@@ -502,7 +458,6 @@ impl LogStore {
                         None
                     }
                 }
-                LanguageServerKind::Global => Some(*id),
             })
     }
 
@@ -792,16 +747,6 @@ impl LspLogView {
                         trace_level: lsp::TraceValue::Off,
                     }
                 }
-
-                LanguageServerKind::Global => LogMenuItem {
-                    server_id: *server_id,
-                    server_name: state.name.clone().unwrap_or(unknown_server.clone()),
-                    server_kind: state.kind.clone(),
-                    worktree_root_name: "supplementary".to_string(),
-                    rpc_trace_enabled: state.rpc_state.is_some(),
-                    selected_entry: self.active_entry_kind,
-                    trace_level: lsp::TraceValue::Off,
-                },
             })
             .chain(
                 self.project
@@ -1052,10 +997,6 @@ impl Item for LspLogView {
 
     fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
         Some("LSP Logs".into())
-    }
-
-    fn telemetry_event_text(&self) -> Option<&'static str> {
-        None
     }
 
     fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {

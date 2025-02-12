@@ -21,18 +21,8 @@ fn toggle_screen_sharing(_: &ToggleScreenSharing, window: &mut Window, cx: &mut 
     if let Some(room) = call.room().cloned() {
         let toggle_screen_sharing = room.update(cx, |room, cx| {
             if room.is_screen_sharing() {
-                telemetry::event!(
-                    "Screen Share Disabled",
-                    room_id = room.id(),
-                    channel_id = room.channel_id(),
-                );
                 Task::ready(room.unshare_screen(cx))
             } else {
-                telemetry::event!(
-                    "Screen Share Enabled",
-                    room_id = room.id(),
-                    channel_id = room.channel_id(),
-                );
                 room.share_screen(cx)
             }
         });
@@ -44,17 +34,6 @@ fn toggle_mute(_: &ToggleMute, cx: &mut App) {
     let call = ActiveCall::global(cx).read(cx);
     if let Some(room) = call.room().cloned() {
         room.update(cx, |room, cx| {
-            let operation = if room.is_muted() {
-                "Microphone Enabled"
-            } else {
-                "Microphone Disabled"
-            };
-            telemetry::event!(
-                operation,
-                room_id = room.id(),
-                channel_id = room.channel_id(),
-            );
-
             room.toggle_mute(cx)
         });
     }

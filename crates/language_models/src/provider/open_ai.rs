@@ -262,10 +262,6 @@ impl LanguageModel for OpenAiLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn telemetry_id(&self) -> String {
-        format!("openai/{}", self.model.id())
-    }
-
     fn max_token_count(&self) -> usize {
         self.model.max_token_count()
     }

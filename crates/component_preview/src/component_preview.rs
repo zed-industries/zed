@@ -164,10 +164,6 @@ impl Item for ComponentPreview {
         Some("Component Preview".into())
     }
 
-    fn telemetry_event_text(&self) -> Option<&'static str> {
-        None
-    }
-
     fn show_toolbar(&self) -> bool {
         false
     }

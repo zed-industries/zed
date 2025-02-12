@@ -381,11 +381,6 @@ impl PickerDelegate for CommandPaletteDelegate {
         }
         let action_ix = self.matches[self.selected_ix].candidate_id;
         let command = self.commands.swap_remove(action_ix);
-        telemetry::event!(
-            "Action Invoked",
-            source = "command palette",
-            action = command.name
-        );
         self.matches.clear();
         self.commands.clear();
         HitCounts::update_global(cx, |hit_counts, _cx| {

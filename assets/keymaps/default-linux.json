@@ -31,7 +31,6 @@
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
       "f11": "zed::ToggleFullScreen",
-      "ctrl-alt-z": "edit_prediction::RateCompletions",
       "ctrl-shift-i": "edit_prediction::ToggleMenu"
     }
   },
@@ -451,13 +450,6 @@
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
     }
   },
-  {
-    "context": "ApplicationMenu",
-    "bindings": {
-      "left": "app_menu::ActivateMenuLeft",
-      "right": "app_menu::ActivateMenuRight"
-    }
-  },
   // Bindings from Sublime Text
   {
     "context": "Editor",
@@ -542,12 +534,6 @@
     "bindings": {
       "ctrl-alt-shift-f": "workspace::FollowNextCollaborator",
       "ctrl-alt-i": "zed::DebugElements"
-    }
-  },
-  {
-    "context": "!Terminal",
-    "bindings": {
-      "ctrl-shift-c": "collab_panel::ToggleFocus"
     }
   },
   {
@@ -733,35 +719,10 @@
     }
   },
   {
-    "context": "CollabPanel && not_editing",
-    "bindings": {
-      "ctrl-backspace": "collab_panel::Remove",
-      "space": "menu::Confirm"
-    }
-  },
-  {
-    "context": "(CollabPanel && editing) > Editor",
-    "bindings": {
-      "space": "collab_panel::InsertSpace"
-    }
-  },
-  {
-    "context": "ChannelModal",
-    "bindings": {
-      "tab": "channel_modal::ToggleMode"
-    }
-  },
-  {
     "context": "Picker > Editor",
     "bindings": {
       "tab": "picker::ConfirmCompletion",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }]
-    }
-  },
-  {
-    "context": "ChannelModal > Picker > Editor",
-    "bindings": {
-      "tab": "channel_modal::ToggleMode"
     }
   },
   {

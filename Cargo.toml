@@ -13,16 +13,12 @@ members = [
     "crates/assistant_tool",
     "crates/assistant_tools",
     "crates/audio",
-    "crates/auto_update",
-    "crates/auto_update_ui",
     "crates/breadcrumbs",
     "crates/call",
     "crates/channel",
     "crates/cli",
     "crates/client",
     "crates/clock",
-    "crates/collab",
-    "crates/collab_ui",
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette_hooks",
@@ -30,7 +26,6 @@ members = [
     "crates/component_preview",
     "crates/context_server",
     "crates/context_server_settings",
-    "crates/copilot",
     "crates/db",
     "crates/deepseek",
     "crates/diagnostics",
@@ -44,7 +39,6 @@ members = [
     "crates/extension_host",
     "crates/extensions_ui",
     "crates/feature_flags",
-    "crates/feedback",
     "crates/file_finder",
     "crates/file_icons",
     "crates/fs",
@@ -127,13 +121,9 @@ members = [
     "crates/storybook",
     "crates/streaming_diff",
     "crates/sum_tree",
-    "crates/supermaven",
-    "crates/supermaven_api",
     "crates/tab_switcher",
     "crates/task",
     "crates/tasks_ui",
-    "crates/telemetry",
-    "crates/telemetry_events",
     "crates/terminal",
     "crates/terminal_view",
     "crates/text",
@@ -156,7 +146,6 @@ members = [
     "crates/worktree",
     "crates/zed",
     "crates/zed_actions",
-    "crates/zeta",
 
     #
     # Extensions
@@ -214,16 +203,12 @@ assistant_slash_commands = { path = "crates/assistant_slash_commands" }
 assistant_tool = { path = "crates/assistant_tool" }
 assistant_tools = { path = "crates/assistant_tools" }
 audio = { path = "crates/audio" }
-auto_update = { path = "crates/auto_update" }
-auto_update_ui = { path = "crates/auto_update_ui" }
 breadcrumbs = { path = "crates/breadcrumbs" }
 call = { path = "crates/call" }
 channel = { path = "crates/channel" }
 cli = { path = "crates/cli" }
 client = { path = "crates/client" }
 clock = { path = "crates/clock" }
-collab = { path = "crates/collab" }
-collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
@@ -231,7 +216,6 @@ component = { path = "crates/component" }
 component_preview = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
 context_server_settings = { path = "crates/context_server_settings" }
-copilot = { path = "crates/copilot" }
 db = { path = "crates/db" }
 deepseek = { path = "crates/deepseek" }
 diagnostics = { path = "crates/diagnostics" }
@@ -241,7 +225,6 @@ extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
 extensions_ui = { path = "crates/extensions_ui" }
 feature_flags = { path = "crates/feature_flags" }
-feedback = { path = "crates/feedback" }
 file_finder = { path = "crates/file_finder" }
 file_icons = { path = "crates/file_icons" }
 fs = { path = "crates/fs" }
@@ -326,13 +309,9 @@ story = { path = "crates/story" }
 storybook = { path = "crates/storybook" }
 streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
-supermaven = { path = "crates/supermaven" }
-supermaven_api = { path = "crates/supermaven_api" }
 tab_switcher = { path = "crates/tab_switcher" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
-telemetry = { path = "crates/telemetry" }
-telemetry_events = { path = "crates/telemetry_events" }
 terminal = { path = "crates/terminal" }
 terminal_view = { path = "crates/terminal_view" }
 text = { path = "crates/text" }
@@ -355,7 +334,6 @@ workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
-zeta = { path = "crates/zeta" }
 
 #
 # External crates
@@ -675,8 +653,6 @@ snippet = { codegen-units = 1 }
 snippets_ui = { codegen-units = 1 }
 sqlez_macros = { codegen-units = 1 }
 story = { codegen-units = 1 }
-supermaven_api = { codegen-units = 1 }
-telemetry_events = { codegen-units = 1 }
 theme_selector = { codegen-units = 1 }
 time_format = { codegen-units = 1 }
 ui_input = { codegen-units = 1 }

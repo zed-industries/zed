@@ -16,7 +16,6 @@ anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
-copilot = { workspace = true, features = ["schemars"] }
 deepseek = { workspace = true, features = ["schemars"] }
 editor.workspace = true
 feature_flags.workspace = true
@@ -38,7 +37,6 @@ serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
 strum.workspace = true
-telemetry_events.workspace = true
 theme.workspace = true
 thiserror.workspace = true
 tiktoken-rs.workspace = true

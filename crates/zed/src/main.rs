@@ -9,16 +9,16 @@ use chrono::Offset;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, ProxySettings, UserStore};
-use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use env_logger::Builder;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
-use futures::{future, StreamExt};
+use futures::StreamExt;
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
+use title_bar;
 
 use gpui_tokio::Tokio;
 use http_client::{read_proxy_from_env, Uri};
@@ -46,9 +46,9 @@ use std::{
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use time::UtcOffset;
-use util::{maybe, ResultExt, TryFutureExt};
+use util::{maybe, ResultExt};
 use uuid::Uuid;
-use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
+use welcome::{show_welcome_view, FIRST_OPEN};
 use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, derive_paths_with_position, handle_cli_connection,
@@ -186,19 +186,12 @@ fn main() {
 
     let system_id = app.background_executor().block(system_id()).ok();
     let installation_id = app.background_executor().block(installation_id()).ok();
-    let session_id = Uuid::new_v4().to_string();
     let session = app.background_executor().block(Session::new());
     let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
     let app_commit_sha =
         option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha(commit_sha.to_string()));
 
-    reliability::init_panic_hook(
-        app_version,
-        app_commit_sha.clone(),
-        system_id.as_ref().map(|id| id.to_string()),
-        installation_id.as_ref().map(|id| id.to_string()),
-        session_id.clone(),
-    );
+    reliability::init_panic_hook(app_commit_sha.clone());
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -368,27 +361,13 @@ fn main() {
         zed::init(cx);
         project::Project::init(&client, cx);
         client::init(&client, cx);
-        let telemetry = client.telemetry();
-        telemetry.start(
-            system_id.as_ref().map(|id| id.to_string()),
-            installation_id.as_ref().map(|id| id.to_string()),
-            session_id.clone(),
-            cx,
-        );
 
         // We should rename these in the future to `first app open`, `first app open for release channel`, and `app open`
         if let (Some(system_id), Some(installation_id)) = (&system_id, &installation_id) {
             match (&system_id, &installation_id) {
-                (IdType::New(_), IdType::New(_)) => {
-                    telemetry::event!("App First Opened");
-                    telemetry::event!("App First Opened For Release Channel");
-                }
-                (IdType::Existing(_), IdType::New(_)) => {
-                    telemetry::event!("App First Opened For Release Channel");
-                }
-                (_, IdType::Existing(_)) => {
-                    telemetry::event!("App Opened");
-                }
+                (IdType::New(_), IdType::New(_)) => {}
+                (IdType::Existing(_), IdType::New(_)) => {}
+                (_, IdType::Existing(_)) => {}
             }
         }
         let app_session = cx.new(|cx| AppSession::new(session, cx));
@@ -405,16 +384,6 @@ fn main() {
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
-        auto_update::init(client.http_client(), cx);
-        auto_update_ui::init(cx);
-        reliability::init(
-            client.http_client(),
-            system_id.as_ref().map(|id| id.to_string()),
-            installation_id.clone().map(|id| id.to_string()),
-            session_id.clone(),
-            cx,
-        );
-
         SystemAppearance::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
         theme_extension::init(
@@ -423,15 +392,6 @@ fn main() {
             cx.background_executor().clone(),
         );
         command_palette::init(cx);
-        let copilot_language_server_id = app_state.languages.next_language_server_id();
-        copilot::init(
-            copilot_language_server_id,
-            app_state.fs.clone(),
-            app_state.client.http_client(),
-            app_state.node_runtime.clone(),
-            cx,
-        );
-        supermaven::init(app_state.client.clone(), cx);
         language_model::init(cx);
         language_models::init(
             app_state.user_store.clone(),
@@ -452,12 +412,7 @@ fn main() {
             prompt_builder.clone(),
             cx,
         );
-        assistant2::init(
-            app_state.fs.clone(),
-            app_state.client.clone(),
-            prompt_builder.clone(),
-            cx,
-        );
+        assistant2::init(app_state.fs.clone(), prompt_builder.clone(), cx);
         assistant_tools::init(cx);
         repl::init(app_state.fs.clone(), cx);
         extension_host::init(
@@ -505,14 +460,12 @@ fn main() {
         language_tools::init(cx);
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-        collab_ui::init(&app_state, cx);
+        title_bar::init(cx);
         git_ui::init(cx);
-        feedback::init(cx);
         markdown_preview::init(cx);
         welcome::init(cx);
         settings_ui::init(cx);
         extensions_ui::init(cx);
-        zeta::init(cx);
 
         cx.observe_global::<SettingsStore>({
             let languages = app_state.languages.clone();
@@ -539,17 +492,6 @@ fn main() {
             }
         })
         .detach();
-        telemetry::event!(
-            "Settings Changed",
-            setting = "theme",
-            value = cx.theme().name.to_string()
-        );
-        telemetry::event!(
-            "Settings Changed",
-            setting = "keymap",
-            value = BaseKeymap::get_global(cx).to_string()
-        );
-        telemetry.flush_events();
 
         let fs = app_state.fs.clone();
         load_user_themes_in_background(fs.clone(), cx);
@@ -685,25 +627,6 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     })?
                     .await?;
                 }
-
-                let workspace_window =
-                    workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                let workspace = workspace_window.entity(&cx)?;
-
-                let mut promises = Vec::new();
-                for (channel_id, heading) in request.open_channel_notes {
-                    promises.push(cx.update_window(workspace_window.into(), |_, window, cx| {
-                        ChannelView::open(
-                            client::ChannelId(channel_id),
-                            heading,
-                            workspace.clone(),
-                            window,
-                            cx,
-                        )
-                        .log_err()
-                    })?)
-                }
-                future::join_all(promises).await;
                 anyhow::Ok(())
             })
             .await;

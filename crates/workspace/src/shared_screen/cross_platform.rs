@@ -85,10 +85,6 @@ impl Item for SharedScreen {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 
-    fn telemetry_event_text(&self) -> Option<&'static str> {
-        None
-    }
-
     fn set_nav_history(
         &mut self,
         history: ItemNavHistory,

@@ -20,7 +20,6 @@ mod ui;
 use std::sync::Arc;
 
 use assistant_settings::AssistantSettings;
-use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
@@ -59,27 +58,12 @@ actions!(
 const NAMESPACE: &str = "assistant2";
 
 /// Initializes the `assistant2` crate.
-pub fn init(
-    fs: Arc<dyn Fs>,
-    client: Arc<Client>,
-    prompt_builder: Arc<PromptBuilder>,
-    cx: &mut App,
-) {
+pub fn init(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>, cx: &mut App) {
     AssistantSettings::register(cx);
     assistant_panel::init(cx);
 
-    inline_assistant::init(
-        fs.clone(),
-        prompt_builder.clone(),
-        client.telemetry().clone(),
-        cx,
-    );
-    terminal_inline_assistant::init(
-        fs.clone(),
-        prompt_builder.clone(),
-        client.telemetry().clone(),
-        cx,
-    );
+    inline_assistant::init(fs.clone(), prompt_builder.clone(), cx);
+    terminal_inline_assistant::init(fs.clone(), prompt_builder.clone(), cx);
 
     feature_gate_assistant2_actions(cx);
 }

@@ -16,7 +16,6 @@ pub enum ComponentStory {
     AutoHeightEditor,
     Avatar,
     Button,
-    CollabNotification,
     ContextMenu,
     Cursor,
     DefaultColors,
@@ -49,9 +48,6 @@ impl ComponentStory {
             Self::AutoHeightEditor => AutoHeightEditorStory::new(window, cx).into(),
             Self::Avatar => cx.new(|_| ui::AvatarStory).into(),
             Self::Button => cx.new(|_| ui::ButtonStory).into(),
-            Self::CollabNotification => cx
-                .new(|_| collab_ui::notifications::CollabNotificationStory)
-                .into(),
             Self::ContextMenu => cx.new(|_| ui::ContextMenuStory).into(),
             Self::Cursor => cx.new(|_| crate::stories::CursorStory).into(),
             Self::DefaultColors => DefaultColorsStory::model(cx).into(),

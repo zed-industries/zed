@@ -199,20 +199,14 @@ impl LanguageSettings {
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionProvider {
-    None,
     #[default]
-    Copilot,
-    Supermaven,
-    Zed,
+    None,
 }
 
 impl EditPredictionProvider {
     pub fn is_zed(&self) -> bool {
         match self {
-            EditPredictionProvider::Zed => true,
-            EditPredictionProvider::None
-            | EditPredictionProvider::Copilot
-            | EditPredictionProvider::Supermaven => false,
+            EditPredictionProvider::None => false,
         }
     }
 }
@@ -1020,7 +1014,6 @@ impl settings::Settings for AllLanguageSettings {
             languages.insert(language_name.clone(), language_settings);
         }
 
-        let mut copilot_enabled = default_value.features.as_ref().and_then(|f| f.copilot);
         let mut edit_prediction_provider = default_value
             .features
             .as_ref()
@@ -1051,9 +1044,6 @@ impl settings::Settings for AllLanguageSettings {
         }
 
         for user_settings in sources.customizations() {
-            if let Some(copilot) = user_settings.features.as_ref().and_then(|f| f.copilot) {
-                copilot_enabled = Some(copilot);
-            }
             if let Some(provider) = user_settings
                 .features
                 .as_ref()
@@ -1111,8 +1101,6 @@ impl settings::Settings for AllLanguageSettings {
             edit_predictions: EditPredictionSettings {
                 provider: if let Some(provider) = edit_prediction_provider {
                     provider
-                } else if copilot_enabled.unwrap_or(true) {
-                    EditPredictionProvider::Copilot
                 } else {
                     EditPredictionProvider::None
                 },

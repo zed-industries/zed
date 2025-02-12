@@ -153,10 +153,6 @@ impl Item for KeyContextView {
         Some("Keyboard Context".into())
     }
 
-    fn telemetry_event_text(&self) -> Option<&'static str> {
-        None
-    }
-
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,

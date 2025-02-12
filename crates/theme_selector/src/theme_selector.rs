@@ -212,7 +212,6 @@ impl PickerDelegate for ThemeSelectorDelegate {
 
         let theme_name = cx.theme().name.clone();
 
-        telemetry::event!("Settings Changed", setting = "theme", value = theme_name);
 
         let appearance = Appearance::from(window.appearance());
 

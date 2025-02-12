@@ -137,13 +137,11 @@ pub fn init(
     inline_assistant::init(
         fs.clone(),
         prompt_builder.clone(),
-        client.telemetry().clone(),
         cx,
     );
     terminal_inline_assistant::init(
         fs.clone(),
         prompt_builder.clone(),
-        client.telemetry().clone(),
         cx,
     );
     indexed_docs::init(cx);

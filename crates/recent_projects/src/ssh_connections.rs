@@ -1,22 +1,20 @@
 use std::collections::BTreeSet;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::{anyhow, Result};
-use auto_update::AutoUpdater;
+use anyhow::Result;
 use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::channel::oneshot;
 use gpui::{
     percentage, Animation, AnimationExt, AnyWindowHandle, App, AsyncApp, DismissEvent, Entity,
-    EventEmitter, Focusable, FontFeatures, ParentElement as _, PromptLevel, Render,
-    SemanticVersion, SharedString, Task, TextStyleRefinement, Transformation, WeakEntity,
+    EventEmitter, Focusable, FontFeatures, ParentElement as _, PromptLevel, Render, SharedString,
+    Task, TextStyleRefinement, Transformation, WeakEntity,
 };
 
 use language::CursorShape;
 use markdown::{Markdown, MarkdownStyle};
-use release_channel::ReleaseChannel;
 use remote::ssh_session::ConnectionIdentifier;
-use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
+use remote::{SshConnectionOptions, SshRemoteClient};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -444,56 +442,6 @@ impl remote::SshClientDelegate for SshClientDelegate {
 
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncApp) {
         self.update_status(status, cx)
-    }
-
-    fn download_server_binary_locally(
-        &self,
-        platform: SshPlatform,
-        release_channel: ReleaseChannel,
-        version: Option<SemanticVersion>,
-        cx: &mut AsyncApp,
-    ) -> Task<anyhow::Result<PathBuf>> {
-        cx.spawn(|mut cx| async move {
-            let binary_path = AutoUpdater::download_remote_server_release(
-                platform.os,
-                platform.arch,
-                release_channel,
-                version,
-                &mut cx,
-            )
-            .await
-            .map_err(|e| {
-                anyhow!(
-                    "Failed to download remote server binary (version: {}, os: {}, arch: {}): {}",
-                    version
-                        .map(|v| format!("{}", v))
-                        .unwrap_or("unknown".to_string()),
-                    platform.os,
-                    platform.arch,
-                    e
-                )
-            })?;
-            Ok(binary_path)
-        })
-    }
-
-    fn get_download_params(
-        &self,
-        platform: SshPlatform,
-        release_channel: ReleaseChannel,
-        version: Option<SemanticVersion>,
-        cx: &mut AsyncApp,
-    ) -> Task<Result<Option<(String, String)>>> {
-        cx.spawn(|mut cx| async move {
-            AutoUpdater::get_remote_server_release_url(
-                platform.os,
-                platform.arch,
-                release_channel,
-                version,
-                &mut cx,
-            )
-            .await
-        })
     }
 }
 

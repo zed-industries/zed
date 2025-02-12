@@ -295,10 +295,6 @@ impl LanguageModel for OllamaLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn telemetry_id(&self) -> String {
-        format!("ollama/{}", self.model.id())
-    }
-
     fn max_token_count(&self) -> usize {
         self.model.max_token_count()
     }

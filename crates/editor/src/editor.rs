@@ -151,7 +151,7 @@ use std::{
     mem,
     num::NonZeroU32,
     ops::{ControlFlow, Deref, DerefMut, Not as _, Range, RangeInclusive},
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
@@ -493,7 +493,6 @@ enum InlineCompletion {
 struct InlineCompletionState {
     inlay_ids: Vec<InlayId>,
     completion: InlineCompletion,
-    completion_id: Option<SharedString>,
     invalidation_range: Range<Anchor>,
 }
 
@@ -1498,8 +1497,6 @@ impl Editor {
                 }
             }
         }
-
-        this.report_editor_event("Editor Opened", None, cx);
         this
     }
 
@@ -2669,7 +2666,7 @@ impl Editor {
             return true;
         }
 
-        if is_user_requested && self.discard_inline_completion(true, cx) {
+        if is_user_requested && self.discard_inline_completion(cx) {
             return true;
         }
 
@@ -3960,7 +3957,7 @@ impl Editor {
                         if editor.show_edit_predictions_in_menu() {
                             editor.update_visible_inline_completion(window, cx);
                         } else {
-                            editor.discard_inline_completion(false, cx);
+                            editor.discard_inline_completion(cx);
                         }
 
                         cx.notify();
@@ -4022,7 +4019,7 @@ impl Editor {
         let entries = completions_menu.entries.borrow();
         let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
         if self.show_edit_predictions_in_menu() {
-            self.discard_inline_completion(true, cx);
+            self.discard_inline_completion(cx);
         }
         let candidate_id = mat.candidate_id;
         drop(entries);
@@ -4268,7 +4265,7 @@ impl Editor {
                     }
 
                     editor.completion_tasks.clear();
-                    editor.discard_inline_completion(false, cx);
+                    editor.discard_inline_completion(cx);
                     let task_context =
                         tasks
                             .as_ref()
@@ -4708,7 +4705,7 @@ impl Editor {
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
 
         if !self.inline_completions_enabled_in_buffer(&buffer, cursor_buffer_position, cx) {
-            self.discard_inline_completion(false, cx);
+            self.discard_inline_completion(cx);
             return None;
         }
 
@@ -4717,7 +4714,7 @@ impl Editor {
                 || !self.is_focused(window)
                 || buffer.read(cx).is_empty())
         {
-            self.discard_inline_completion(false, cx);
+            self.discard_inline_completion(cx);
             return None;
         }
 
@@ -4949,12 +4946,6 @@ impl Editor {
             return;
         };
 
-        self.report_inline_completion_event(
-            active_inline_completion.completion_id.clone(),
-            true,
-            cx,
-        );
-
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
                 let target = *target;
@@ -5034,12 +5025,6 @@ impl Editor {
             return;
         }
 
-        self.report_inline_completion_event(
-            active_inline_completion.completion_id.clone(),
-            true,
-            cx,
-        );
-
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
                 let target = *target;
@@ -5090,56 +5075,12 @@ impl Editor {
         }
     }
 
-    fn discard_inline_completion(
-        &mut self,
-        should_report_inline_completion_event: bool,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if should_report_inline_completion_event {
-            let completion_id = self
-                .active_inline_completion
-                .as_ref()
-                .and_then(|active_completion| active_completion.completion_id.clone());
-
-            self.report_inline_completion_event(completion_id, false, cx);
-        }
-
+    fn discard_inline_completion(&mut self, cx: &mut Context<Self>) -> bool {
         if let Some(provider) = self.edit_prediction_provider() {
             provider.discard(cx);
         }
 
         self.take_active_inline_completion(cx)
-    }
-
-    fn report_inline_completion_event(&self, id: Option<SharedString>, accepted: bool, cx: &App) {
-        let Some(provider) = self.edit_prediction_provider() else {
-            return;
-        };
-
-        let Some((_, buffer, _)) = self
-            .buffer
-            .read(cx)
-            .excerpt_containing(self.selections.newest_anchor().head(), cx)
-        else {
-            return;
-        };
-
-        let extension = buffer
-            .read(cx)
-            .file()
-            .and_then(|file| Some(file.path().extension()?.to_string_lossy().to_string()));
-
-        let event_type = match accepted {
-            true => "Edit Prediction Accepted",
-            false => "Edit Prediction Discarded",
-        };
-        telemetry::event!(
-            event_type,
-            provider = provider.name(),
-            prediction_id = id,
-            suggestion_accepted = accepted,
-            file_extension = extension,
-        );
     }
 
     pub fn has_active_inline_completion(&self) -> bool {
@@ -5272,7 +5213,7 @@ impl Editor {
                     !invalidation_range.contains(&offset_selection.head())
                 })
         {
-            self.discard_inline_completion(false, cx);
+            self.discard_inline_completion(cx);
             return None;
         }
 
@@ -5289,7 +5230,7 @@ impl Editor {
             self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
 
         if !self.edit_prediction_settings.is_enabled() {
-            self.discard_inline_completion(false, cx);
+            self.discard_inline_completion(cx);
             return None;
         }
 
@@ -5403,7 +5344,6 @@ impl Editor {
         self.active_inline_completion = Some(InlineCompletionState {
             inlay_ids,
             completion,
-            completion_id: inline_completion.id,
             invalidation_range,
         });
 
@@ -5759,9 +5699,8 @@ impl Editor {
                     .id("accept-terms")
                     .cursor_pointer()
                     .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-                    .on_click(cx.listener(|this, _event, window, cx| {
+                    .on_click(cx.listener(|_this, _event, window, cx| {
                         cx.stop_propagation();
-                        this.report_editor_event("Edit Prediction Provider ToS Clicked", None, cx);
                         window.dispatch_action(
                             zed_actions::OpenZedPredictOnboarding.boxed_clone(),
                             cx,
@@ -14100,16 +14039,7 @@ impl Editor {
                         }
                     }
                 }
-
-                let Some(project) = &self.project else { return };
-                let (telemetry, is_via_ssh) = {
-                    let project = project.read(cx);
-                    let telemetry = project.client().telemetry().clone();
-                    let is_via_ssh = project.is_via_ssh();
-                    (telemetry, is_via_ssh)
-                };
                 refresh_linked_ranges(self, window, cx);
-                telemetry.log_edit_event("editor", is_via_ssh);
             }
             multi_buffer::Event::ExcerptsAdded {
                 buffer,
@@ -14507,57 +14437,6 @@ impl Editor {
             .collect()
     }
 
-    fn report_editor_event(
-        &self,
-        event_type: &'static str,
-        file_extension: Option<String>,
-        cx: &App,
-    ) {
-        if cfg!(any(test, feature = "test-support")) {
-            return;
-        }
-
-        let Some(project) = &self.project else { return };
-
-        // If None, we are in a file without an extension
-        let file = self
-            .buffer
-            .read(cx)
-            .as_singleton()
-            .and_then(|b| b.read(cx).file());
-        let file_extension = file_extension.or(file
-            .as_ref()
-            .and_then(|file| Path::new(file.file_name(cx)).extension())
-            .and_then(|e| e.to_str())
-            .map(|a| a.to_string()));
-
-        let vim_mode = cx
-            .global::<SettingsStore>()
-            .raw_user_settings()
-            .get("vim_mode")
-            == Some(&serde_json::Value::Bool(true));
-
-        let edit_predictions_provider = all_language_settings(file, cx).edit_predictions.provider;
-        let copilot_enabled = edit_predictions_provider
-            == language::language_settings::EditPredictionProvider::Copilot;
-        let copilot_enabled_for_language = self
-            .buffer
-            .read(cx)
-            .settings_at(0, cx)
-            .show_edit_predictions;
-
-        let project = project.read(cx);
-        telemetry::event!(
-            event_type,
-            file_extension,
-            vim_mode,
-            copilot_enabled,
-            copilot_enabled_for_language,
-            edit_predictions_provider,
-            is_via_ssh = project.is_via_ssh(),
-        );
-    }
-
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
     /// with each line being an array of {text, highlight} objects.
     fn copy_highlight_json(
@@ -14757,7 +14636,7 @@ impl Editor {
         }
 
         self.hide_context_menu(window, cx);
-        self.discard_inline_completion(false, cx);
+        self.discard_inline_completion(cx);
         cx.emit(EditorEvent::Blurred);
         cx.notify();
     }

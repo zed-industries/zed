@@ -2,7 +2,6 @@ use crate::{AssistantPanel, AssistantPanelEvent, DEFAULT_CONTEXT_LINES};
 use anyhow::{Context as _, Result};
 use assistant_context_editor::{humanize_token_count, RequestType};
 use assistant_settings::AssistantSettings;
-use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp, SelectAll},
@@ -19,7 +18,6 @@ use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
-use language_models::report_assistant_event;
 use prompt_library::PromptBuilder;
 use settings::{update_settings_file, Settings};
 use std::{
@@ -27,7 +25,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
@@ -35,13 +32,8 @@ use ui::{prelude::*, text_for_action, IconButtonShape, Tooltip};
 use util::ResultExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
-pub fn init(
-    fs: Arc<dyn Fs>,
-    prompt_builder: Arc<PromptBuilder>,
-    telemetry: Arc<Telemetry>,
-    cx: &mut App,
-) {
-    cx.set_global(TerminalInlineAssistant::new(fs, prompt_builder, telemetry));
+pub fn init(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>, cx: &mut App) {
+    cx.set_global(TerminalInlineAssistant::new(fs, prompt_builder));
 }
 
 const PROMPT_HISTORY_MAX_LEN: usize = 20;
@@ -61,7 +53,6 @@ pub struct TerminalInlineAssistant {
     next_assist_id: TerminalInlineAssistId,
     assists: HashMap<TerminalInlineAssistId, TerminalInlineAssist>,
     prompt_history: VecDeque<String>,
-    telemetry: Option<Arc<Telemetry>>,
     fs: Arc<dyn Fs>,
     prompt_builder: Arc<PromptBuilder>,
 }
@@ -69,16 +60,11 @@ pub struct TerminalInlineAssistant {
 impl Global for TerminalInlineAssistant {}
 
 impl TerminalInlineAssistant {
-    pub fn new(
-        fs: Arc<dyn Fs>,
-        prompt_builder: Arc<PromptBuilder>,
-        telemetry: Arc<Telemetry>,
-    ) -> Self {
+    pub fn new(fs: Arc<dyn Fs>, prompt_builder: Arc<PromptBuilder>) -> Self {
         Self {
             next_assist_id: TerminalInlineAssistId::default(),
             assists: HashMap::default(),
             prompt_history: VecDeque::default(),
-            telemetry: Some(telemetry),
             fs,
             prompt_builder,
         }
@@ -97,7 +83,7 @@ impl TerminalInlineAssistant {
         let assist_id = self.next_assist_id.post_inc();
         let prompt_buffer = cx.new(|cx| Buffer::local(initial_prompt.unwrap_or_default(), cx));
         let prompt_buffer = cx.new(|cx| MultiBuffer::singleton(prompt_buffer, cx));
-        let codegen = cx.new(|_| Codegen::new(terminal, self.telemetry.clone()));
+        let codegen = cx.new(|_| Codegen::new(terminal));
 
         let prompt_editor = cx.new(|cx| {
             PromptEditor::new(
@@ -317,32 +303,6 @@ impl TerminalInlineAssistant {
                     this.focus_handle(cx).focus(window);
                 })
                 .log_err();
-
-            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                let codegen = assist.codegen.read(cx);
-                let executor = cx.background_executor().clone();
-                report_assistant_event(
-                    AssistantEvent {
-                        conversation_id: None,
-                        kind: AssistantKind::InlineTerminal,
-                        message_id: codegen.message_id.clone(),
-                        phase: if undo {
-                            AssistantPhase::Rejected
-                        } else {
-                            AssistantPhase::Accepted
-                        },
-                        model: model.telemetry_id(),
-                        model_provider: model.provider_id().to_string(),
-                        response_latency: None,
-                        error_message: None,
-                        language_name: None,
-                    },
-                    codegen.telemetry.clone(),
-                    cx.http_client(),
-                    model.api_key(cx),
-                    &executor,
-                );
-            }
 
             assist.codegen.update(cx, |codegen, cx| {
                 if undo {
@@ -1109,7 +1069,6 @@ impl TerminalTransaction {
 
 pub struct Codegen {
     status: CodegenStatus,
-    telemetry: Option<Arc<Telemetry>>,
     terminal: Entity<Terminal>,
     generation: Task<()>,
     message_id: Option<String>,
@@ -1117,10 +1076,9 @@ pub struct Codegen {
 }
 
 impl Codegen {
-    pub fn new(terminal: Entity<Terminal>, telemetry: Option<Arc<Telemetry>>) -> Self {
+    pub fn new(terminal: Entity<Terminal>) -> Self {
         Self {
             terminal,
-            telemetry,
             status: CodegenStatus::Idle,
             generation: Task::ready(()),
             message_id: None,
@@ -1133,14 +1091,9 @@ impl Codegen {
             return;
         };
 
-        let model_api_key = model.api_key(cx);
-        let http_client = cx.http_client();
-        let telemetry = self.telemetry.clone();
         self.status = CodegenStatus::Pending;
         self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
         self.generation = cx.spawn(|this, mut cx| async move {
-            let model_telemetry_id = model.telemetry_id();
-            let model_provider_id = model.provider_id();
             let response = model.stream_completion_text(prompt, &cx).await;
             let generate = async {
                 let message_id = response
@@ -1151,8 +1104,6 @@ impl Codegen {
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
 
                 let task = cx.background_executor().spawn({
-                    let message_id = message_id.clone();
-                    let executor = cx.background_executor().clone();
                     async move {
                         let mut response_latency = None;
                         let request_start = Instant::now();
@@ -1170,25 +1121,6 @@ impl Codegen {
                         };
 
                         let result = task.await;
-
-                        let error_message = result.as_ref().err().map(|error| error.to_string());
-                        report_assistant_event(
-                            AssistantEvent {
-                                conversation_id: None,
-                                kind: AssistantKind::InlineTerminal,
-                                message_id,
-                                phase: AssistantPhase::Response,
-                                model: model_telemetry_id,
-                                model_provider: model_provider_id.to_string(),
-                                response_latency,
-                                error_message,
-                                language_name: None,
-                            },
-                            telemetry,
-                            http_client,
-                            model_api_key,
-                            &executor,
-                        );
 
                         result?;
                         anyhow::Ok(())

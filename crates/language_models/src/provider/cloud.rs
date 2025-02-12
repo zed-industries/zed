@@ -562,10 +562,6 @@ impl LanguageModel for CloudLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn telemetry_id(&self) -> String {
-        format!("zed.dev/{}", self.model.id())
-    }
-
     fn availability(&self) -> LanguageModelAvailability {
         self.model.availability()
     }

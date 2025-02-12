@@ -174,12 +174,6 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
         if let Some(selection) = self.matches.get(self.selected_index) {
             let base_keymap = BaseKeymap::from_names(&selection.string);
 
-            telemetry::event!(
-                "Settings Changed",
-                setting = "keymap",
-                value = base_keymap.to_string()
-            );
-
             update_settings_file::<BaseKeymap>(self.fs.clone(), cx, move |setting, _| {
                 *setting = Some(base_keymap)
             });

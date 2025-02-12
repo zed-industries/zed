@@ -663,9 +663,8 @@ impl AppState {
 
         let fs = fs::FakeFs::new(cx.background_executor().clone());
         let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let clock = Arc::new(clock::FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
-        let client = Client::new(clock, http_client.clone(), cx);
+        let client = Client::new(http_client.clone(), cx);
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
@@ -2720,10 +2719,6 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if let Some(text) = item.telemetry_event_text(cx) {
-            telemetry::event!(text);
-        }
-
         pane.update(cx, |pane, cx| {
             pane.add_item(
                 item,
@@ -6195,8 +6190,6 @@ pub fn open_ssh_project(
 
         cx.update_window(window.into(), |_, window, cx| {
             window.replace_root(cx, |window, cx| {
-                telemetry::event!("SSH Project Opened");
-
                 let mut workspace =
                     Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
                 workspace.set_serialized_ssh_project(serialized_ssh_project);
