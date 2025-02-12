@@ -4917,18 +4917,25 @@ async fn test_split_selection_into_lines(cx: &mut TestAppContext) {
         "aaˇ\nbbˇ\nccˇ\nddˇ\neeˇ\nffˇ",
     );
 
-    // // Whole buffer, left-to-right, last line ends with newline
-    // test(
-    //     &mut cx,
-    //     "«ˇaa\nbb\ncc\ndd\nee\nff\n»",
-    //     "aaˇ\nbbˇ\nccˇ\nddˇ\neeˇ\nffˇ\n",
-    // );
-    // // Same thing, right-to-left
-    // test(
-    //     &mut cx,
-    //     "«aa\nbb\ncc\ndd\nee\nff\nˇ»",
-    //     "aaˇ\nbbˇ\nccˇ\nddˇ\neeˇ\nffˇ\n",
-    // );
+    // Whole buffer, left-to-right, last line ends with newline
+    test(
+        &mut cx,
+        "«ˇaa\nbb\ncc\ndd\nee\nff\n»",
+        "aaˇ\nbbˇ\nccˇ\nddˇ\neeˇ\nffˇ\n",
+    );
+    // Same thing, right-to-left
+    test(
+        &mut cx,
+        "«aa\nbb\ncc\ndd\nee\nff\nˇ»",
+        "aaˇ\nbbˇ\nccˇ\nddˇ\neeˇ\nffˇ\n",
+    );
+
+    // Starts at the end of a line, ends at the start of another
+    test(
+        &mut cx,
+        "aa\nbb«ˇ\ncc\ndd\nee\n»ff\n",
+        "aa\nbbˇ\nccˇ\nddˇ\neeˇ\nff\n",
+    );
 }
 
 #[gpui::test]
@@ -5002,8 +5009,7 @@ fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestAppCont
                 DisplayPoint::new(DisplayRow(3), 5)..DisplayPoint::new(DisplayRow(3), 5),
                 DisplayPoint::new(DisplayRow(4), 5)..DisplayPoint::new(DisplayRow(4), 5),
                 DisplayPoint::new(DisplayRow(5), 5)..DisplayPoint::new(DisplayRow(5), 5),
-                DisplayPoint::new(DisplayRow(6), 5)..DisplayPoint::new(DisplayRow(6), 5),
-                DisplayPoint::new(DisplayRow(7), 0)..DisplayPoint::new(DisplayRow(7), 0)
+                DisplayPoint::new(DisplayRow(6), 5)..DisplayPoint::new(DisplayRow(6), 5)
             ]
         );
     });

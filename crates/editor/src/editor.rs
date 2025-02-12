@@ -9138,7 +9138,14 @@ impl Editor {
                     let cursor = Point::new(row, buffer.line_len(MultiBufferRow(row)));
                     new_selection_ranges.push(cursor..cursor);
                 }
-                new_selection_ranges.push(selection.end..selection.end);
+
+                let is_multiline_selection = selection.start.row != selection.end.row;
+                // Don't insert last one if it's a multi-line selection ending at the start of a line,
+                // so this action feels more ergonomic when paired with other selection operations
+                let should_skip_last = is_multiline_selection && selection.end.column == 0;
+                if !should_skip_last {
+                    new_selection_ranges.push(selection.end..selection.end);
+                }
             }
         }
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
