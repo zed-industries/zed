@@ -1290,7 +1290,6 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
         VK_INSERT => "insert",
         VK_DELETE => "delete",
         _ => {
-            let vk_code = wparam.loword();
             if is_modifier(VIRTUAL_KEY(vk_code)) {
                 return Some(KeystrokeOrModifier::Modifier(modifiers));
             }
