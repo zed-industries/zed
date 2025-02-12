@@ -1943,14 +1943,12 @@ impl LocalLspStore {
                     .or_default()
                     .insert(server.server_id(), vec![snapshot]);
 
-                if old_snapshots.is_none() {
-                    server.register_buffer(
-                        uri.clone(),
-                        adapter.language_id(&language.name()),
-                        0,
-                        initial_snapshot.text(),
-                    );
-                }
+                server.register_buffer(
+                    uri.clone(),
+                    adapter.language_id(&language.name()),
+                    0,
+                    initial_snapshot.text(),
+                );
             }
         }
     }
@@ -3245,7 +3243,6 @@ impl LspStore {
         self.detect_language_for_buffer(buffer, cx);
         if let Some(local) = self.as_local_mut() {
             local.initialize_buffer(buffer, cx);
-            local.register_buffer_with_language_servers(buffer, cx);
         }
 
         Ok(())
