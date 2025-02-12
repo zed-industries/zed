@@ -103,6 +103,7 @@ impl Model {
             "o1" => Ok(Self::O1),
             "o1-preview" => Ok(Self::O1Preview),
             "o1-mini" => Ok(Self::O1Mini),
+            "o3-mini" => Ok(Self::O3Mini),
             _ => Err(anyhow!("invalid model id")),
         }
     }

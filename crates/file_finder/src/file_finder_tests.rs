@@ -817,7 +817,10 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
                 .as_u64() as usize,
         )
     });
-    cx.dispatch_action(workspace::CloseActiveItem { save_intent: None });
+    cx.dispatch_action(workspace::CloseActiveItem {
+        save_intent: None,
+        close_pinned: false,
+    });
 
     let initial_history_items =
         open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
@@ -2000,7 +2003,10 @@ async fn open_close_queried_buffer(
     )
     .await;
 
-    cx.dispatch_action(workspace::CloseActiveItem { save_intent: None });
+    cx.dispatch_action(workspace::CloseActiveItem {
+        save_intent: None,
+        close_pinned: false,
+    });
 
     history_items
 }

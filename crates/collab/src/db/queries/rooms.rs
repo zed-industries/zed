@@ -736,11 +736,19 @@ impl Database {
                             }
                         }
 
+                        let current_merge_conflicts = db_repository
+                            .current_merge_conflicts
+                            .as_ref()
+                            .map(|conflicts| serde_json::from_str(&conflicts))
+                            .transpose()?
+                            .unwrap_or_default();
+
                         worktree.updated_repositories.push(proto::RepositoryEntry {
                             work_directory_id: db_repository.work_directory_id as u64,
                             branch: db_repository.branch,
                             updated_statuses,
                             removed_statuses,
+                            current_merge_conflicts,
                         });
                     }
                 }

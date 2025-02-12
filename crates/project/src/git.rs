@@ -13,8 +13,10 @@ use gpui::{
     App, AppContext, Context, Entity, EventEmitter, SharedString, Subscription, Task, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
+use rpc::proto::ToProto;
 use rpc::{proto, AnyProtoClient};
 use settings::WorktreeId;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use text::BufferId;
 use util::{maybe, ResultExt};
@@ -221,7 +223,7 @@ impl GitState {
                                 work_directory_id: work_directory_id.to_proto(),
                                 paths: paths
                                     .into_iter()
-                                    .map(|repo_path| repo_path.to_proto())
+                                    .map(|repo_path| repo_path.as_ref().to_proto())
                                     .collect(),
                             })
                             .await
@@ -246,7 +248,7 @@ impl GitState {
                                 work_directory_id: work_directory_id.to_proto(),
                                 paths: paths
                                     .into_iter()
-                                    .map(|repo_path| repo_path.to_proto())
+                                    .map(|repo_path| repo_path.as_ref().to_proto())
                                     .collect(),
                             })
                             .await
@@ -298,31 +300,37 @@ impl Repository {
         (self.worktree_id, self.repository_entry.work_directory_id())
     }
 
-    pub fn display_name(&self, project: &Project, cx: &App) -> SharedString {
-        maybe!({
-            let path = self.repo_path_to_project_path(&"".into())?;
-            Some(
-                project
-                    .absolute_path(&path, cx)?
-                    .file_name()?
-                    .to_string_lossy()
-                    .to_string()
-                    .into(),
-            )
-        })
-        .unwrap_or("".into())
+    pub fn branch(&self) -> Option<Arc<str>> {
+        self.repository_entry.branch()
     }
 
-    pub fn activate(&self, cx: &mut App) {
+    pub fn display_name(&self, project: &Project, cx: &App) -> SharedString {
+        maybe!({
+            let project_path = self.repo_path_to_project_path(&"".into())?;
+            let worktree_name = project
+                .worktree_for_id(project_path.worktree_id, cx)?
+                .read(cx)
+                .root_name();
+
+            let mut path = PathBuf::new();
+            path = path.join(worktree_name);
+            path = path.join(project_path.path);
+            Some(path.to_string_lossy().to_string())
+        })
+        .unwrap_or_else(|| self.repository_entry.work_directory.display_name())
+        .into()
+    }
+
+    pub fn activate(&self, cx: &mut Context<Self>) {
         let Some(git_state) = self.git_state.upgrade() else {
             return;
         };
+        let entity = cx.entity();
         git_state.update(cx, |git_state, cx| {
-            let Some((index, _)) = git_state
+            let Some(index) = git_state
                 .repositories
                 .iter()
-                .enumerate()
-                .find(|(_, handle)| handle.read(cx).id() == self.id())
+                .position(|handle| *handle == entity)
             else {
                 return;
             };
@@ -335,16 +343,30 @@ impl Repository {
         self.repository_entry.status()
     }
 
+    pub fn has_conflict(&self, path: &RepoPath) -> bool {
+        self.repository_entry
+            .current_merge_conflicts
+            .contains(&path)
+    }
+
     pub fn repo_path_to_project_path(&self, path: &RepoPath) -> Option<ProjectPath> {
         let path = self.repository_entry.unrelativize(path)?;
         Some((self.worktree_id, path).into())
     }
 
     pub fn project_path_to_repo_path(&self, path: &ProjectPath) -> Option<RepoPath> {
-        if path.worktree_id != self.worktree_id {
+        self.worktree_id_path_to_repo_path(path.worktree_id, &path.path)
+    }
+
+    pub fn worktree_id_path_to_repo_path(
+        &self,
+        worktree_id: WorktreeId,
+        path: &Path,
+    ) -> Option<RepoPath> {
+        if worktree_id != self.worktree_id {
             return None;
         }
-        self.repository_entry.relativize(&path.path).log_err()
+        self.repository_entry.relativize(path).log_err()
     }
 
     pub fn open_commit_buffer(

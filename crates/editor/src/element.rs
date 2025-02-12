@@ -15,29 +15,31 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
-    BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
-    DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk,
-    GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
-    InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
-    RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    AcceptEditPrediction, BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint,
+    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode,
+    EditPredictionPreview, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
+    ExpandExcerpts, FocusedBlock, GoToHunk, GoToPrevHunk, GutterDimensions, HalfPageDown,
+    HalfPageUp, HandleInput, HoveredCursor, InlineCompletion, JumpData, LineDown, LineUp,
+    OpenExcerpts, PageDown, PageUp, Point, RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase,
+    Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR,
+    EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
+use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus};
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
 use file_icons::FileIcons;
-use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
+use git::{blame::BlameEntry, Oid};
 use gpui::{
-    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
-    relative, size, svg, transparent_black, Action, Along, AnyElement, App, AvailableSpace,
-    Axis as ScrollbarAxis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner,
-    Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, FocusHandle,
+    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash,
+    point, px, quad, relative, size, svg, transparent_black, Action, Along, AnyElement, App,
+    AvailableSpace, Axis as ScrollbarAxis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context,
+    Corner, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
     Focusable as _, FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement,
-    Keystroke, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
-    SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription, TextRun,
-    TextStyleRefinement, WeakEntity, Window,
+    KeyBindingContextPredicate, Keystroke, Length, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
+    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
+    Subscription, TextRun, TextStyleRefinement, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -53,7 +55,7 @@ use multi_buffer::{
     RowInfo, ToOffset,
 };
 use project::project_settings::{GitGutterSetting, ProjectSettings};
-use settings::Settings;
+use settings::{KeyBindingValidator, KeyBindingValidatorRegistration, Settings};
 use smallvec::{smallvec, SmallVec};
 use std::{
     any::TypeId,
@@ -73,7 +75,7 @@ use ui::{
     POPOVER_Y_PADDING,
 };
 use unicode_segmentation::UnicodeSegmentation;
-use util::{RangeExt, ResultExt};
+use util::{markdown::MarkdownString, RangeExt, ResultExt};
 use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
@@ -83,7 +85,6 @@ enum DisplayDiffHunk {
     Folded {
         display_row: DisplayRow,
     },
-
     Unfolded {
         diff_base_byte_range: Range<usize>,
         display_row_range: Range<DisplayRow>,
@@ -407,6 +408,8 @@ impl EditorElement {
         register_action(editor, window, Editor::reveal_in_finder);
         register_action(editor, window, Editor::copy_path);
         register_action(editor, window, Editor::copy_relative_path);
+        register_action(editor, window, Editor::copy_file_name);
+        register_action(editor, window, Editor::copy_file_name_without_extension);
         register_action(editor, window, Editor::copy_highlight_json);
         register_action(editor, window, Editor::copy_permalink_to_line);
         register_action(editor, window, Editor::open_permalink_to_line);
@@ -474,8 +477,8 @@ impl EditorElement {
             }
         });
         register_action(editor, window, Editor::show_signature_help);
-        register_action(editor, window, Editor::next_inline_completion);
-        register_action(editor, window, Editor::previous_inline_completion);
+        register_action(editor, window, Editor::next_edit_prediction);
+        register_action(editor, window, Editor::previous_edit_prediction);
         register_action(editor, window, Editor::show_inline_completion);
         register_action(editor, window, Editor::context_menu_first);
         register_action(editor, window, Editor::context_menu_prev);
@@ -485,7 +488,7 @@ impl EditorElement {
         register_action(editor, window, Editor::unique_lines_case_insensitive);
         register_action(editor, window, Editor::unique_lines_case_sensitive);
         register_action(editor, window, Editor::accept_partial_inline_completion);
-        register_action(editor, window, Editor::accept_inline_completion);
+        register_action(editor, window, Editor::accept_edit_prediction);
         register_action(editor, window, Editor::revert_file);
         register_action(editor, window, Editor::revert_selected_hunks);
         register_action(editor, window, Editor::apply_all_diff_hunks);
@@ -510,33 +513,10 @@ impl EditorElement {
                     if editor.hover_state.focused(window, cx) {
                         return;
                     }
-                    Self::modifiers_changed(editor, event, &position_map, window, cx)
+                    editor.handle_modifiers_changed(event.modifiers, &position_map, window, cx);
                 })
             }
         });
-    }
-
-    fn modifiers_changed(
-        editor: &mut Editor,
-        event: &ModifiersChangedEvent,
-        position_map: &PositionMap,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
-        editor.update_inline_completion_preview(&event.modifiers, window, cx);
-
-        let mouse_position = window.mouse_position();
-        if !position_map.text_hitbox.is_hovered(window) {
-            return;
-        }
-
-        editor.update_hovered_link(
-            position_map.point_for_position(mouse_position),
-            &position_map.snapshot,
-            event.modifiers,
-            window,
-            cx,
-        )
     }
 
     fn mouse_left_down(
@@ -558,7 +538,7 @@ impl EditorElement {
         let mut modifiers = event.modifiers;
 
         if let Some(hovered_hunk) = hovered_hunk {
-            editor.toggle_diff_hunks_in_ranges(vec![hovered_hunk], cx);
+            editor.toggle_diff_hunks_in_ranges_narrow(vec![hovered_hunk], cx);
             cx.notify();
             return;
         } else if gutter_hitbox.is_hovered(window) {
@@ -1136,18 +1116,44 @@ impl EditorElement {
         em_width: Pixels,
         em_advance: Pixels,
         autoscroll_containing_element: bool,
+        newest_selection_head: Option<DisplayPoint>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<CursorLayout> {
         let mut autoscroll_bounds = None;
         let cursor_layouts = self.editor.update(cx, |editor, cx| {
             let mut cursors = Vec::new();
+
+            let previewing_move =
+                if let Some((target, preview)) = editor.previewing_edit_prediction_move() {
+                    cursors.extend(self.layout_edit_prediction_preview_cursor(
+                        snapshot,
+                        visible_display_row_range.clone(),
+                        line_layouts,
+                        content_origin,
+                        scroll_pixel_position,
+                        line_height,
+                        em_advance,
+                        preview,
+                        target,
+                        newest_selection_head,
+                        window,
+                        cx,
+                    ));
+
+                    true
+                } else {
+                    false
+                };
+
+            let show_local_cursors = !previewing_move && editor.show_local_cursors(window, cx);
+
             for (player_color, selections) in selections {
                 for selection in selections {
                     let cursor_position = selection.head;
 
                     let in_range = visible_display_row_range.contains(&cursor_position.row());
-                    if (selection.is_local && !editor.show_local_cursors(window, cx))
+                    if (selection.is_local && !show_local_cursors)
                         || !in_range
                         || block_start_rows.contains(&cursor_position.row())
                     {
@@ -1271,6 +1277,7 @@ impl EditorElement {
                     cursors.push(cursor);
                 }
             }
+
             cursors
         });
 
@@ -1279,6 +1286,50 @@ impl EditorElement {
         }
 
         cursor_layouts
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_edit_prediction_preview_cursor(
+        &self,
+        snapshot: &EditorSnapshot,
+        visible_row_range: Range<DisplayRow>,
+        line_layouts: &[LineWithInvisibles],
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_height: Pixels,
+        em_advance: Pixels,
+        preview: &mut EditPredictionPreview,
+        target: Anchor,
+        cursor: Option<DisplayPoint>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<CursorLayout> {
+        let state = preview.move_state(
+            snapshot,
+            visible_row_range,
+            line_layouts,
+            scroll_pixel_position,
+            line_height,
+            target,
+            cursor,
+        )?;
+
+        if !state.is_animation_completed() {
+            window.request_animation_frame();
+        }
+
+        let mut cursor = CursorLayout {
+            color: self.style.local_player.cursor,
+            block_width: em_advance,
+            origin: state.position,
+            line_height,
+            shape: CursorShape::Bar,
+            block_text: None,
+            cursor_name: None,
+        };
+
+        cursor.layout(content_origin, None, window, cx);
+        Some(cursor)
     }
 
     fn layout_scrollbars(
@@ -1531,7 +1582,7 @@ impl EditorElement {
             if let Some(inline_completion) = editor.active_inline_completion.as_ref() {
                 match &inline_completion.completion {
                     InlineCompletion::Edit {
-                        display_mode: EditDisplayMode::TabAccept(_),
+                        display_mode: EditDisplayMode::TabAccept,
                         ..
                     } => padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS,
                     _ => {}
@@ -2015,7 +2066,7 @@ impl EditorElement {
                     .get(&display_row)
                     .unwrap_or(&non_relative_number);
                 write!(&mut line_number, "{number}").unwrap();
-                if row_info.diff_status == Some(DiffHunkStatus::Removed) {
+                if matches!(row_info.diff_status, Some(DiffHunkStatus::Removed(_))) {
                     return None;
                 }
 
@@ -2281,35 +2332,18 @@ impl EditorElement {
                 height,
             } => {
                 let selected = selected_buffer_ids.contains(&first_excerpt.buffer_id);
-                let icon_offset = gutter_dimensions.width
-                    - (gutter_dimensions.left_padding + gutter_dimensions.margin);
                 let mut result = v_flex().id(block_id).w_full();
 
                 if let Some(prev_excerpt) = prev_excerpt {
                     if *show_excerpt_controls {
-                        result =
-                            result.child(
-                                h_flex()
-                                    .id("expand_down_hit_area")
-                                    .w(icon_offset)
-                                    .h(MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32
-                                        * window.line_height())
-                                    .flex_none()
-                                    .justify_end()
-                                    .child(self.render_expand_excerpt_button(
-                                        IconName::ArrowDownFromLine,
-                                        None,
-                                        cx,
-                                    ))
-                                    .on_click(window.listener_for(&self.editor, {
-                                        let excerpt_id = prev_excerpt.id;
-                                        let direction = ExpandExcerptDirection::Down;
-                                        move |editor, _, _, cx| {
-                                            editor.expand_excerpt(excerpt_id, direction, cx);
-                                            cx.stop_propagation();
-                                        }
-                                    })),
-                            );
+                        result = result.child(self.render_expand_excerpt_control(
+                            block_id,
+                            ExpandExcerptDirection::Down,
+                            prev_excerpt.id,
+                            gutter_dimensions,
+                            window,
+                            cx,
+                        ));
                     }
                 }
 
@@ -2333,65 +2367,19 @@ impl EditorElement {
                 height,
                 starts_new_buffer,
             } => {
-                let icon_offset = gutter_dimensions.width
-                    - (gutter_dimensions.left_padding + gutter_dimensions.margin);
-                let header_height =
-                    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32 * window.line_height();
                 let color = cx.theme().colors().clone();
-                let hover_color = color.border_variant.opacity(0.5);
-                let focus_handle = self.editor.focus_handle(cx).clone();
-
                 let mut result = v_flex().id(block_id).w_full();
-                let expand_area = |id: SharedString| {
-                    h_flex()
-                        .id(id)
-                        .w_full()
-                        .cursor_pointer()
-                        .block_mouse_down()
-                        .on_mouse_move(|_, _, cx| cx.stop_propagation())
-                        .hover(|style| style.bg(hover_color))
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            move |window, cx| {
-                                Tooltip::for_action_in(
-                                    "Expand Excerpt",
-                                    &ExpandExcerpts { lines: 0 },
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                            }
-                        })
-                };
 
                 if let Some(prev_excerpt) = prev_excerpt {
                     if *show_excerpt_controls {
-                        let group_name = "expand-down";
-
-                        result = result.child(
-                            expand_area(format!("block-{}-down", block_id).into())
-                                .group(group_name)
-                                .child(
-                                    h_flex()
-                                        .w(icon_offset)
-                                        .h(header_height)
-                                        .flex_none()
-                                        .justify_end()
-                                        .child(self.render_expand_excerpt_button(
-                                            IconName::ArrowDownFromLine,
-                                            Some(group_name.to_string()),
-                                            cx,
-                                        )),
-                                )
-                                .on_click(window.listener_for(&self.editor, {
-                                    let excerpt_id = prev_excerpt.id;
-                                    let direction = ExpandExcerptDirection::Down;
-                                    move |editor, _, _, cx| {
-                                        editor.expand_excerpt(excerpt_id, direction, cx);
-                                        cx.stop_propagation();
-                                    }
-                                })),
-                        );
+                        result = result.child(self.render_expand_excerpt_control(
+                            block_id,
+                            ExpandExcerptDirection::Down,
+                            prev_excerpt.id,
+                            gutter_dimensions,
+                            window,
+                            cx,
+                        ));
                     }
                 }
 
@@ -2417,43 +2405,20 @@ impl EditorElement {
                         }
 
                         if *show_excerpt_controls {
-                            let group_name = "expand-up-first";
-
-                            result = result.child(
-                                h_flex().group(group_name).child(
-                                    expand_area(format!("block-{}-up-first", block_id).into())
-                                        .h(header_height)
-                                        .child(
-                                            h_flex()
-                                                .w(icon_offset)
-                                                .h(header_height)
-                                                .flex_none()
-                                                .justify_end()
-                                                .child(self.render_expand_excerpt_button(
-                                                    IconName::ArrowUpFromLine,
-                                                    Some(group_name.to_string()),
-                                                    cx,
-                                                )),
-                                        )
-                                        .on_click(window.listener_for(&self.editor, {
-                                            let excerpt_id = next_excerpt.id;
-                                            let direction = ExpandExcerptDirection::Up;
-                                            move |editor, _, _, cx| {
-                                                editor.expand_excerpt(excerpt_id, direction, cx);
-                                                cx.stop_propagation();
-                                            }
-                                        })),
-                                ),
-                            );
+                            result = result.child(self.render_expand_excerpt_control(
+                                block_id,
+                                ExpandExcerptDirection::Up,
+                                next_excerpt.id,
+                                gutter_dimensions,
+                                window,
+                                cx,
+                            ));
                         }
                     } else {
-                        let group_name = "expand-up-subsequent";
-
                         if *show_excerpt_controls {
                             result = result.child(
                                 h_flex()
                                     .relative()
-                                    .group(group_name)
                                     .child(
                                         div()
                                             .top(px(0.))
@@ -2462,55 +2427,14 @@ impl EditorElement {
                                             .h_px()
                                             .bg(color.border_variant),
                                     )
-                                    .child(
-                                        expand_area(format!("block-{}-up", block_id).into())
-                                            .h(header_height)
-                                            .child(
-                                                h_flex()
-                                                    .w(icon_offset)
-                                                    .h(header_height)
-                                                    .flex_none()
-                                                    .justify_end()
-                                                    .child(if *show_excerpt_controls {
-                                                        self.render_expand_excerpt_button(
-                                                            IconName::ArrowUpFromLine,
-                                                            Some(group_name.to_string()),
-                                                            cx,
-                                                        )
-                                                    } else {
-                                                        ButtonLike::new("jump-icon")
-                                                            .style(ButtonStyle::Transparent)
-                                                            .child(
-                                                                svg()
-                                                                    .path(
-                                                                        IconName::ArrowUpRight
-                                                                            .path(),
-                                                                    )
-                                                                    .size(IconSize::XSmall.rems())
-                                                                    .text_color(
-                                                                        color.border_variant,
-                                                                    )
-                                                                    .group_hover(
-                                                                        group_name,
-                                                                        |style| {
-                                                                            style.text_color(
-                                                                                color.border,
-                                                                            )
-                                                                        },
-                                                                    ),
-                                                            )
-                                                    }),
-                                            )
-                                            .on_click(window.listener_for(&self.editor, {
-                                                let excerpt_id = next_excerpt.id;
-                                                let direction = ExpandExcerptDirection::Up;
-                                                move |editor, _, _, cx| {
-                                                    editor
-                                                        .expand_excerpt(excerpt_id, direction, cx);
-                                                    cx.stop_propagation();
-                                                }
-                                            })),
-                                    ),
+                                    .child(self.render_expand_excerpt_control(
+                                        block_id,
+                                        ExpandExcerptDirection::Up,
+                                        next_excerpt.id,
+                                        gutter_dimensions,
+                                        window,
+                                        cx,
+                                    )),
                             );
                         }
                     };
@@ -2638,6 +2562,16 @@ impl EditorElement {
                                 ),
                         )
                     })
+                    .children(
+                        self.editor
+                            .read(cx)
+                            .addons
+                            .values()
+                            .filter_map(|addon| {
+                                addon.render_buffer_header_controls(for_excerpt, window, cx)
+                            })
+                            .take(1),
+                    )
                     .child(
                         h_flex()
                             .cursor_pointer()
@@ -2687,26 +2621,93 @@ impl EditorElement {
             )
     }
 
-    fn render_expand_excerpt_button(
+    fn render_expand_excerpt_control(
         &self,
-        icon: IconName,
-        group_name: impl Into<Option<String>>,
+        block_id: BlockId,
+        direction: ExpandExcerptDirection,
+        excerpt_id: ExcerptId,
+        gutter_dimensions: &GutterDimensions,
+        window: &Window,
         cx: &mut App,
-    ) -> ButtonLike {
-        let group_name = group_name.into();
-        ButtonLike::new("expand-icon")
-            .style(ButtonStyle::Transparent)
-            .child(
-                svg()
-                    .path(icon.path())
-                    .size(IconSize::XSmall.rems())
-                    .text_color(cx.theme().colors().editor_line_number)
-                    .when_some(group_name, |svg, group_name| {
-                        svg.group_hover(group_name, |style| {
-                            style.text_color(cx.theme().colors().editor_active_line_number)
-                        })
-                    }),
+    ) -> impl IntoElement {
+        let color = cx.theme().colors().clone();
+        let hover_color = color.border_variant.opacity(0.5);
+        let focus_handle = self.editor.focus_handle(cx).clone();
+
+        let icon_offset =
+            gutter_dimensions.width - (gutter_dimensions.left_padding + gutter_dimensions.margin);
+        let header_height = MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32 * window.line_height();
+        let group_name = if direction == ExpandExcerptDirection::Down {
+            "expand-down"
+        } else {
+            "expand-up"
+        };
+
+        let expand_area = |id: SharedString| {
+            h_flex()
+                .id(id)
+                .w_full()
+                .cursor_pointer()
+                .block_mouse_down()
+                .on_mouse_move(|_, _, cx| cx.stop_propagation())
+                .hover(|style| style.bg(hover_color))
+                .tooltip({
+                    let focus_handle = focus_handle.clone();
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Expand Excerpt",
+                            &ExpandExcerpts { lines: 0 },
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+        };
+
+        expand_area(
+            format!(
+                "block-{}-{}",
+                block_id,
+                if direction == ExpandExcerptDirection::Down {
+                    "down"
+                } else {
+                    "up"
+                }
             )
+            .into(),
+        )
+        .group(group_name)
+        .child(
+            h_flex()
+                .w(icon_offset)
+                .h(header_height)
+                .flex_none()
+                .justify_end()
+                .child(
+                    ButtonLike::new("expand-icon")
+                        .style(ButtonStyle::Transparent)
+                        .child(
+                            svg()
+                                .path(if direction == ExpandExcerptDirection::Down {
+                                    IconName::ArrowDownFromLine.path()
+                                } else {
+                                    IconName::ArrowUpFromLine.path()
+                                })
+                                .size(IconSize::XSmall.rems())
+                                .text_color(cx.theme().colors().editor_line_number)
+                                .group_hover(group_name, |style| {
+                                    style.text_color(cx.theme().colors().editor_active_line_number)
+                                }),
+                        ),
+                ),
+        )
+        .on_click(window.listener_for(&self.editor, {
+            move |editor, _, _, cx| {
+                editor.expand_excerpt(excerpt_id, direction, cx);
+                cx.stop_propagation();
+            }
+        }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3037,7 +3038,9 @@ impl EditorElement {
 
         {
             let editor = self.editor.read(cx);
-            if editor.has_active_completions_menu() && editor.show_inline_completions_in_menu(cx) {
+            if editor
+                .edit_prediction_visible_in_cursor_popover(editor.has_active_inline_completion())
+            {
                 height_above_menu +=
                     editor.edit_prediction_cursor_popover_height() + POPOVER_Y_PADDING;
                 edit_prediction_popover_visible = true;
@@ -3098,7 +3101,7 @@ impl EditorElement {
                     };
                     let mut element = self
                         .render_context_menu(line_height, menu_height, y_flipped, window, cx)
-                        .unwrap();
+                        .expect("Visible context menu should always render.");
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     Some((CursorPopoverType::CodeContextMenu, element, size))
                 } else {
@@ -3114,59 +3117,14 @@ impl EditorElement {
                 );
 
                 let edit_prediction = if edit_prediction_popover_visible {
-                    let accept_keystroke: Option<Keystroke>;
-
-                    // TODO: load modifier from keymap.
-                    // `bindings_for_action_in` returns `None` in Linux, and is intermittent on macOS
-                    #[cfg(target_os = "macos")]
-                    {
-                        // let bindings = window.bindings_for_action_in(
-                        //     &crate::AcceptInlineCompletion,
-                        //     &self.editor.focus_handle(cx),
-                        // );
-
-                        // let last_binding = bindings.last();
-
-                        // accept_keystroke = if let Some(binding) = last_binding {
-                        //     match &binding.keystrokes() {
-                        //         // TODO: no need to clone once this logic works on linux.
-                        //         [keystroke] => Some(keystroke.clone()),
-                        //         _ => None,
-                        //     }
-                        // } else {
-                        //     None
-                        // };
-                        accept_keystroke = Some(Keystroke {
-                            modifiers: gpui::Modifiers {
-                                alt: true,
-                                ..Default::default()
-                            },
-                            key: "tab".to_string(),
-                            key_char: None,
-                        });
-                    }
-
-                    #[cfg(not(target_os = "macos"))]
-                    {
-                        accept_keystroke = Some(Keystroke {
-                            modifiers: gpui::Modifiers {
-                                alt: true,
-                                ..Default::default()
-                            },
-                            key: "enter".to_string(),
-                            key_char: None,
-                        });
-                    }
-
                     self.editor.update(cx, move |editor, cx| {
+                        let accept_binding = editor.accept_edit_prediction_keybind(window, cx);
                         let mut element = editor.render_edit_prediction_cursor_popover(
                             min_width,
                             max_width,
                             cursor_point,
-                            start_row,
-                            &line_layouts,
                             style,
-                            accept_keystroke.as_ref()?,
+                            accept_binding.keystroke()?,
                             window,
                             cx,
                         )?;
@@ -3256,8 +3214,12 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let editor = self.editor.read(cx);
+        if !editor.context_menu_visible() {
+            return;
+        }
         let Some(crate::ContextMenuOrigin::GutterIndicator(gutter_row)) =
-            self.editor.read(cx).context_menu_origin()
+            editor.context_menu_origin()
         else {
             return;
         };
@@ -3285,11 +3247,9 @@ impl EditorElement {
             window,
             cx,
             move |height, _max_width_for_stable_x, y_flipped, window, cx| {
-                let Some(mut element) =
-                    self.render_context_menu(line_height, height, y_flipped, window, cx)
-                else {
-                    return vec![];
-                };
+                let mut element = self
+                    .render_context_menu(line_height, height, y_flipped, window, cx)
+                    .expect("Visible context menu should always render.");
                 let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                 vec![(CursorPopoverType::CodeContextMenu, element, size)]
             },
@@ -3522,7 +3482,7 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn layout_inline_completion_popover(
+    fn layout_edit_prediction_popover(
         &self,
         text_bounds: &Bounds<Pixels>,
         editor_snapshot: &EditorSnapshot,
@@ -3541,51 +3501,106 @@ impl EditorElement {
         const PADDING_X: Pixels = Pixels(24.);
         const PADDING_Y: Pixels = Pixels(2.);
 
-        let active_inline_completion = self.editor.read(cx).active_inline_completion.as_ref()?;
+        let editor = self.editor.read(cx);
+        let active_inline_completion = editor.active_inline_completion.as_ref()?;
+
+        if editor.edit_prediction_visible_in_cursor_popover(true) {
+            return None;
+        }
+
+        // Adjust text origin for horizontal scrolling (in some cases here)
+        let start_point =
+            text_bounds.origin - gpui::Point::new(scroll_pixel_position.x, Pixels(0.0));
+
+        // Clamp left offset after extreme scrollings
+        let clamp_start = |point: gpui::Point<Pixels>| gpui::Point {
+            x: point.x.max(text_bounds.origin.x),
+            y: point.y,
+        };
 
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
-                let previewing = false;
+                if editor.edit_prediction_requires_modifier() {
+                    let cursor_position =
+                        target.to_display_point(&editor_snapshot.display_snapshot);
+
+                    if !editor.edit_prediction_preview.is_active_settled()
+                        || !visible_row_range.contains(&cursor_position.row())
+                    {
+                        return None;
+                    }
+
+                    let accept_keybind = editor.accept_edit_prediction_keybind(window, cx);
+                    let accept_keystroke = accept_keybind.keystroke()?;
+
+                    let mut element = div()
+                        .px_2()
+                        .py_1()
+                        .elevation_2(cx)
+                        .border_color(cx.theme().colors().border)
+                        .rounded_br(px(0.))
+                        .child(Label::new(accept_keystroke.key.clone()).buffer_font(cx))
+                        .into_any();
+
+                    let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+
+                    let cursor_row_layout = &line_layouts
+                        [cursor_position.row().minus(visible_row_range.start) as usize];
+                    let cursor_column = cursor_position.column() as usize;
+
+                    let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
+                    let target_y = (cursor_position.row().as_f32()
+                        - scroll_pixel_position.y / line_height)
+                        * line_height;
+
+                    let offset = point(
+                        cursor_character_x - size.width,
+                        target_y - size.height - PADDING_Y,
+                    );
+
+                    element.prepaint_at(text_bounds.origin + offset, window, cx);
+
+                    return Some(element);
+                }
+
                 let target_display_point = target.to_display_point(editor_snapshot);
                 if target_display_point.row().as_f32() < scroll_top {
                     let mut element = inline_completion_accept_indicator(
                         "Jump to Edit",
                         Some(IconName::ArrowUp),
-                        previewing,
-                        self.editor.focus_handle(cx),
+                        editor,
                         window,
                         cx,
-                    );
+                    )?;
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
+
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
                     Some(element)
                 } else if (target_display_point.row().as_f32() + 1.) > scroll_bottom {
                     let mut element = inline_completion_accept_indicator(
                         "Jump to Edit",
                         Some(IconName::ArrowDown),
-                        previewing,
-                        self.editor.focus_handle(cx),
+                        editor,
                         window,
                         cx,
-                    );
+                    )?;
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point(
                         (text_bounds.size.width - size.width) / 2.,
                         text_bounds.size.height - size.height - PADDING_Y,
                     );
+
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
                     Some(element)
                 } else {
                     let mut element = inline_completion_accept_indicator(
                         "Jump to Edit",
                         None,
-                        previewing,
-                        self.editor.focus_handle(cx),
+                        editor,
                         window,
                         cx,
-                    );
-
+                    )?;
                     let target_line_end = DisplayPoint::new(
                         target_display_point.row(),
                         editor_snapshot.line_len(target_display_point.row()),
@@ -3593,8 +3608,9 @@ impl EditorElement {
                     let origin = self.editor.update(cx, |editor, _cx| {
                         editor.display_to_pixel_point(target_line_end, editor_snapshot, window)
                     })?;
+
                     element.prepaint_as_root(
-                        text_bounds.origin + origin + point(PADDING_X, px(0.)),
+                        clamp_start(start_point + origin + point(PADDING_X, px(0.))),
                         AvailableSpace::min_size(),
                         window,
                         cx,
@@ -3608,7 +3624,7 @@ impl EditorElement {
                 display_mode,
                 snapshot,
             } => {
-                if self.editor.read(cx).has_active_completions_menu() {
+                if self.editor.read(cx).has_visible_completions_menu() {
                     return None;
                 }
 
@@ -3632,8 +3648,7 @@ impl EditorElement {
                 }
 
                 match display_mode {
-                    EditDisplayMode::TabAccept(previewing) => {
-                        let previewing = *previewing;
+                    EditDisplayMode::TabAccept => {
                         let range = &edits.first()?.0;
                         let target_display_point = range.end.to_display_point(editor_snapshot);
 
@@ -3641,26 +3656,25 @@ impl EditorElement {
                             target_display_point.row(),
                             editor_snapshot.line_len(target_display_point.row()),
                         );
-                        let origin = self.editor.update(cx, |editor, _cx| {
-                            editor.display_to_pixel_point(target_line_end, editor_snapshot, window)
+                        let (mut element, origin) = self.editor.update(cx, |editor, cx| {
+                            Some((
+                                inline_completion_accept_indicator(
+                                    "Accept", None, editor, window, cx,
+                                )?,
+                                editor.display_to_pixel_point(
+                                    target_line_end,
+                                    editor_snapshot,
+                                    window,
+                                )?,
+                            ))
                         })?;
 
-                        let mut element = inline_completion_accept_indicator(
-                            "Accept",
-                            None,
-                            previewing,
-                            self.editor.focus_handle(cx),
-                            window,
-                            cx,
-                        );
-
                         element.prepaint_as_root(
-                            text_bounds.origin + origin + point(PADDING_X, px(0.)),
+                            clamp_start(start_point + origin + point(PADDING_X, px(0.))),
                             AvailableSpace::min_size(),
                             window,
                             cx,
                         );
-
                         return Some(element);
                     }
                     EditDisplayMode::Inline => return None,
@@ -3997,8 +4011,10 @@ impl EditorElement {
                 if row_infos[row_ix].diff_status.is_none() {
                     continue;
                 }
-                if row_infos[row_ix].diff_status == Some(DiffHunkStatus::Added)
-                    && *status != DiffHunkStatus::Added
+                if matches!(
+                    row_infos[row_ix].diff_status,
+                    Some(DiffHunkStatus::Added(_))
+                ) && !matches!(*status, DiffHunkStatus::Added(_))
                 {
                     continue;
                 }
@@ -4181,26 +4197,26 @@ impl EditorElement {
                         window.paint_quad(fill(Bounds { origin, size }, color));
                     };
 
-                let mut current_paint: Option<(Hsla, Range<DisplayRow>)> = None;
-                for (&new_row, &new_color) in &layout.highlighted_rows {
+                let mut current_paint: Option<(gpui::Background, Range<DisplayRow>)> = None;
+                for (&new_row, &new_background) in &layout.highlighted_rows {
                     match &mut current_paint {
-                        Some((current_color, current_range)) => {
-                            let current_color = *current_color;
-                            let new_range_started = current_color != new_color
+                        Some((current_background, current_range)) => {
+                            let current_background = *current_background;
+                            let new_range_started = current_background != new_background
                                 || current_range.end.next_row() != new_row;
                             if new_range_started {
                                 paint_highlight(
                                     current_range.start,
                                     current_range.end,
-                                    current_color,
+                                    current_background,
                                 );
-                                current_paint = Some((new_color, new_row..new_row));
+                                current_paint = Some((new_background, new_row..new_row));
                                 continue;
                             } else {
                                 current_range.end = current_range.end.next_row();
                             }
                         }
-                        None => current_paint = Some((new_color, new_row..new_row)),
+                        None => current_paint = Some((new_background, new_row..new_row)),
                     };
                 }
                 if let Some((color, range)) = current_paint {
@@ -4397,6 +4413,7 @@ impl EditorElement {
                             hunk_bounds,
                             cx.theme().status().modified,
                             Corners::all(px(0.)),
+                            &DiffHunkSecondaryStatus::None,
                         ))
                     }
                     DisplayDiffHunk::Unfolded {
@@ -4404,22 +4421,29 @@ impl EditorElement {
                         display_row_range,
                         ..
                     } => hitbox.as_ref().map(|hunk_hitbox| match status {
-                        DiffHunkStatus::Added => (
+                        DiffHunkStatus::Added(secondary_status) => (
                             hunk_hitbox.bounds,
                             cx.theme().status().created,
                             Corners::all(px(0.)),
+                            secondary_status,
                         ),
-                        DiffHunkStatus::Modified => (
+                        DiffHunkStatus::Modified(secondary_status) => (
                             hunk_hitbox.bounds,
                             cx.theme().status().modified,
                             Corners::all(px(0.)),
+                            secondary_status,
                         ),
-                        DiffHunkStatus::Removed if !display_row_range.is_empty() => (
-                            hunk_hitbox.bounds,
-                            cx.theme().status().deleted,
-                            Corners::all(px(0.)),
-                        ),
-                        DiffHunkStatus::Removed => (
+                        DiffHunkStatus::Removed(secondary_status)
+                            if !display_row_range.is_empty() =>
+                        {
+                            (
+                                hunk_hitbox.bounds,
+                                cx.theme().status().deleted,
+                                Corners::all(px(0.)),
+                                secondary_status,
+                            )
+                        }
+                        DiffHunkStatus::Removed(secondary_status) => (
                             Bounds::new(
                                 point(
                                     hunk_hitbox.origin.x - hunk_hitbox.size.width,
@@ -4429,11 +4453,17 @@ impl EditorElement {
                             ),
                             cx.theme().status().deleted,
                             Corners::all(1. * line_height),
+                            secondary_status,
                         ),
                     }),
                 };
 
-                if let Some((hunk_bounds, background_color, corner_radii)) = hunk_to_paint {
+                if let Some((hunk_bounds, mut background_color, corner_radii, secondary_status)) =
+                    hunk_to_paint
+                {
+                    if *secondary_status != DiffHunkSecondaryStatus::None {
+                        background_color.a *= 0.6;
+                    }
                     window.paint_quad(quad(
                         hunk_bounds,
                         corner_radii,
@@ -4469,7 +4499,7 @@ impl EditorElement {
                 status,
                 ..
             } => {
-                if *status == DiffHunkStatus::Removed && display_row_range.is_empty() {
+                if status.is_removed() && display_row_range.is_empty() {
                     let row = display_row_range.start;
 
                     let offset = line_height / 2.;
@@ -4993,9 +5023,9 @@ impl EditorElement {
                                             end_display_row.0 -= 1;
                                         }
                                         let color = match &hunk.status() {
-                                            DiffHunkStatus::Added => theme.status().created,
-                                            DiffHunkStatus::Modified => theme.status().modified,
-                                            DiffHunkStatus::Removed => theme.status().deleted,
+                                            DiffHunkStatus::Added(_) => theme.status().created,
+                                            DiffHunkStatus::Modified(_) => theme.status().modified,
+                                            DiffHunkStatus::Removed(_) => theme.status().deleted,
                                         };
                                         ColoredRange {
                                             start: start_display_row,
@@ -5525,41 +5555,12 @@ fn header_jump_data(
 fn inline_completion_accept_indicator(
     label: impl Into<SharedString>,
     icon: Option<IconName>,
-    previewing: bool,
-    focus_handle: FocusHandle,
-    window: &Window,
+    editor: &Editor,
+    window: &mut Window,
     cx: &App,
-) -> AnyElement {
-    let use_hardcoded_linux_preview_binding;
-
-    #[cfg(target_os = "macos")]
-    {
-        use_hardcoded_linux_preview_binding = false;
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        use_hardcoded_linux_preview_binding = previewing;
-    }
-
-    let accept_keystroke = if use_hardcoded_linux_preview_binding {
-        Keystroke {
-            modifiers: Default::default(),
-            key: "enter".to_string(),
-            key_char: None,
-        }
-    } else {
-        let bindings = window.bindings_for_action_in(&crate::AcceptInlineCompletion, &focus_handle);
-        if let Some(keystroke) = bindings
-            .last()
-            .and_then(|binding| binding.keystrokes().first())
-        {
-            // TODO: clone unnecessary once `use_hardcoded_linux_preview_binding` is removed.
-            keystroke.clone()
-        } else {
-            return div().into_any();
-        }
-    };
+) -> Option<AnyElement> {
+    let accept_binding = editor.accept_edit_prediction_keybind(window, cx);
+    let accept_keystroke = accept_binding.keystroke()?;
 
     let accept_key = h_flex()
         .px_0p5()
@@ -5567,38 +5568,98 @@ fn inline_completion_accept_indicator(
         .text_size(TextSize::XSmall.rems(cx))
         .text_color(cx.theme().colors().text)
         .gap_1()
-        .when(!previewing, |parent| {
+        .when(!editor.edit_prediction_preview.is_active(), |parent| {
             parent.children(ui::render_modifiers(
                 &accept_keystroke.modifiers,
                 PlatformStyle::platform(),
                 Some(Color::Default),
+                None,
                 false,
             ))
         })
         .child(accept_keystroke.key.clone());
 
     let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
+    let accent_color = cx.theme().colors().text_accent;
+    let editor_bg_color = cx.theme().colors().editor_background;
+    let bg_color = editor_bg_color.blend(accent_color.opacity(0.2));
 
-    h_flex()
-        .py_0p5()
-        .pl_1()
-        .pr(padding_right)
-        .gap_1()
-        .bg(cx.theme().colors().text_accent.opacity(0.15))
-        .border_1()
-        .border_color(cx.theme().colors().text_accent.opacity(0.8))
-        .rounded_md()
-        .shadow_sm()
-        .child(accept_key)
-        .child(Label::new(label).size(LabelSize::Small))
-        .when_some(icon, |element, icon| {
-            element.child(
-                div()
-                    .mt(px(1.5))
-                    .child(Icon::new(icon).size(IconSize::Small)),
-            )
-        })
-        .into_any()
+    Some(
+        h_flex()
+            .py_0p5()
+            .pl_1()
+            .pr(padding_right)
+            .gap_1()
+            .bg(bg_color)
+            .border_1()
+            .border_color(cx.theme().colors().text_accent.opacity(0.8))
+            .rounded_md()
+            .shadow_sm()
+            .child(accept_key)
+            .child(Label::new(label).size(LabelSize::Small))
+            .when_some(icon, |element, icon| {
+                element.child(
+                    div()
+                        .mt(px(1.5))
+                        .child(Icon::new(icon).size(IconSize::Small)),
+                )
+            })
+            .into_any(),
+    )
+}
+
+pub struct AcceptEditPredictionBinding(pub(crate) Option<gpui::KeyBinding>);
+
+impl AcceptEditPredictionBinding {
+    pub fn keystroke(&self) -> Option<&Keystroke> {
+        if let Some(binding) = self.0.as_ref() {
+            match &binding.keystrokes() {
+                [keystroke] => Some(keystroke),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+}
+
+struct AcceptEditPredictionsBindingValidator;
+
+inventory::submit! { KeyBindingValidatorRegistration(|| Box::new(AcceptEditPredictionsBindingValidator)) }
+
+impl KeyBindingValidator for AcceptEditPredictionsBindingValidator {
+    fn action_type_id(&self) -> TypeId {
+        TypeId::of::<AcceptEditPrediction>()
+    }
+
+    fn validate(&self, binding: &gpui::KeyBinding) -> Result<(), MarkdownString> {
+        use KeyBindingContextPredicate::*;
+
+        if binding.keystrokes().len() == 1 && binding.keystrokes()[0].modifiers.modified() {
+            return Ok(());
+        }
+        let required_predicate =
+            Not(Identifier(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT.into()).into());
+        match binding.predicate() {
+            Some(predicate) if required_predicate.is_superset(&predicate) => {
+                return Ok(());
+            }
+            _ => {}
+        }
+        Err(MarkdownString(format!(
+            "{} can only be bound to a single keystroke with modifiers, so \
+            that holding down these modifiers can be used to preview \
+            completions inline when the completions menu is open.\n\n\
+            This restriction does not apply when the context requires {}, \
+            since these bindings will not be used when the completions menu \
+            is open.",
+            MarkdownString::inline_code(AcceptEditPrediction.name()),
+            MarkdownString::inline_code(&format!(
+                "!{}",
+                EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT
+            )),
+        )))
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6631,19 +6692,46 @@ impl Element for EditorElement {
                         )
                     };
 
-                    let mut highlighted_rows = self
-                        .editor
-                        .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
+                    let (mut highlighted_rows, distinguish_unstaged_hunks) =
+                        self.editor.update(cx, |editor, cx| {
+                            (
+                                editor.highlighted_display_rows(window, cx),
+                                editor.distinguish_unstaged_diff_hunks,
+                            )
+                        });
 
                     for (ix, row_info) in row_infos.iter().enumerate() {
-                        let color = match row_info.diff_status {
-                            Some(DiffHunkStatus::Added) => style.status.created_background,
-                            Some(DiffHunkStatus::Removed) => style.status.deleted_background,
+                        let background = match row_info.diff_status {
+                            Some(DiffHunkStatus::Added(secondary_status)) => {
+                                let color = style.status.created_background;
+                                match secondary_status {
+                                    DiffHunkSecondaryStatus::HasSecondaryHunk
+                                    | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
+                                        if distinguish_unstaged_hunks =>
+                                    {
+                                        pattern_slash(color, line_height.0 / 4.0)
+                                    }
+                                    _ => color.into(),
+                                }
+                            }
+                            Some(DiffHunkStatus::Removed(secondary_status)) => {
+                                let color = style.status.deleted_background;
+                                match secondary_status {
+                                    DiffHunkSecondaryStatus::HasSecondaryHunk
+                                    | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
+                                        if distinguish_unstaged_hunks =>
+                                    {
+                                        pattern_slash(color, line_height.0 / 4.0)
+                                    }
+                                    _ => color.into(),
+                                }
+                            }
                             _ => continue,
                         };
+
                         highlighted_rows
                             .entry(start_row + DisplayRow(ix as u32))
-                            .or_insert(color);
+                            .or_insert(background);
                     }
 
                     let highlighted_ranges = self.editor.read(cx).background_highlights_in_range(
@@ -7030,6 +7118,7 @@ impl Element for EditorElement {
                         em_width,
                         em_advance,
                         autoscroll_containing_element,
+                        newest_selection_head,
                         window,
                         cx,
                     );
@@ -7181,7 +7270,7 @@ impl Element for EditorElement {
                         );
                     }
 
-                    let inline_completion_popover = self.layout_inline_completion_popover(
+                    let inline_completion_popover = self.layout_edit_prediction_popover(
                         &text_hitbox.bounds,
                         &snapshot,
                         start_row..end_row,
@@ -7463,7 +7552,7 @@ pub struct EditorLayout {
     indent_guides: Option<Vec<IndentGuideLayout>>,
     visible_display_row_range: Range<DisplayRow>,
     active_rows: BTreeMap<DisplayRow, bool>,
-    highlighted_rows: BTreeMap<DisplayRow, Hsla>,
+    highlighted_rows: BTreeMap<DisplayRow, gpui::Background>,
     line_elements: SmallVec<[AnyElement; 1]>,
     line_numbers: Arc<HashMap<MultiBufferRow, LineNumberLayout>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
@@ -8064,6 +8153,7 @@ impl HighlightedRange {
 
         let top_curve_width = curve_width(first_line.start_x, first_line.end_x);
         let mut builder = gpui::PathBuilder::fill();
+        builder.move_to(first_top_right - top_curve_width);
         builder.curve_to(first_top_right + curve_height, first_top_right);
 
         let mut iter = lines.iter().enumerate().peekable();

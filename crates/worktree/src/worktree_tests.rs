@@ -1,6 +1,6 @@
 use crate::{
-    worktree_settings::WorktreeSettings, Entry, EntryKind, Event, PathChange, Snapshot, Worktree,
-    WorktreeModelHandle,
+    worktree_settings::WorktreeSettings, Entry, EntryKind, Event, PathChange, Snapshot,
+    WorkDirectory, Worktree, WorktreeModelHandle,
 };
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
@@ -2200,7 +2200,10 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
     cx.read(|cx| {
         let tree = tree.read(cx);
         let repo = tree.repositories().iter().next().unwrap();
-        assert_eq!(repo.path.as_ref(), Path::new("projects/project1"));
+        assert_eq!(
+            repo.work_directory,
+            WorkDirectory::in_project("projects/project1")
+        );
         assert_eq!(
             tree.status_for_file(Path::new("projects/project1/a")),
             Some(StatusCode::Modified.worktree()),
@@ -2221,7 +2224,10 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
     cx.read(|cx| {
         let tree = tree.read(cx);
         let repo = tree.repositories().iter().next().unwrap();
-        assert_eq!(repo.path.as_ref(), Path::new("projects/project2"));
+        assert_eq!(
+            repo.work_directory,
+            WorkDirectory::in_project("projects/project2")
+        );
         assert_eq!(
             tree.status_for_file(Path::new("projects/project2/a")),
             Some(StatusCode::Modified.worktree()),
@@ -2275,12 +2281,15 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
         assert!(tree.repository_for_path("c.txt".as_ref()).is_none());
 
         let repo = tree.repository_for_path("dir1/src/b.txt".as_ref()).unwrap();
-        assert_eq!(repo.path.as_ref(), Path::new("dir1"));
+        assert_eq!(repo.work_directory, WorkDirectory::in_project("dir1"));
 
         let repo = tree
             .repository_for_path("dir1/deps/dep1/src/a.txt".as_ref())
             .unwrap();
-        assert_eq!(repo.path.as_ref(), Path::new("dir1/deps/dep1"));
+        assert_eq!(
+            repo.work_directory,
+            WorkDirectory::in_project("dir1/deps/dep1")
+        );
 
         let entries = tree.files(false, 0);
 
@@ -2289,7 +2298,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
             .map(|(entry, repo)| {
                 (
                     entry.path.as_ref(),
-                    repo.map(|repo| repo.path.to_path_buf()),
+                    repo.map(|repo| repo.work_directory.clone()),
                 )
             })
             .collect::<Vec<_>>();
@@ -2300,9 +2309,12 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
                 (Path::new("c.txt"), None),
                 (
                     Path::new("dir1/deps/dep1/src/a.txt"),
-                    Some(Path::new("dir1/deps/dep1").into())
+                    Some(WorkDirectory::in_project("dir1/deps/dep1"))
                 ),
-                (Path::new("dir1/src/b.txt"), Some(Path::new("dir1").into())),
+                (
+                    Path::new("dir1/src/b.txt"),
+                    Some(WorkDirectory::in_project("dir1"))
+                ),
             ]
         );
     });
@@ -2408,8 +2420,10 @@ async fn test_file_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(snapshot.repositories().iter().count(), 1);
         let repo_entry = snapshot.repositories().iter().next().unwrap();
-        assert_eq!(repo_entry.path.as_ref(), Path::new("project"));
-        assert!(repo_entry.location_in_repo.is_none());
+        assert_eq!(
+            repo_entry.work_directory,
+            WorkDirectory::in_project("project")
+        );
 
         assert_eq!(
             snapshot.status_for_file(project_path.join(B_TXT)),
@@ -2760,15 +2774,14 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(snapshot.repositories().iter().count(), 1);
         let repo = snapshot.repositories().iter().next().unwrap();
-        // Path is blank because the working directory of
-        // the git repository is located at the root of the project
-        assert_eq!(repo.path.as_ref(), Path::new(""));
-
-        // This is the missing path between the root of the project (sub-folder-2) and its
-        // location relative to the root of the repository.
         assert_eq!(
-            repo.location_in_repo,
-            Some(Arc::from(Path::new("sub-folder-1/sub-folder-2")))
+            repo.work_directory.canonicalize(),
+            WorkDirectory::AboveProject {
+                absolute_path: Arc::from(root.path().join("my-repo").canonicalize().unwrap()),
+                location_in_repo: Arc::from(Path::new(util::separator!(
+                    "sub-folder-1/sub-folder-2"
+                )))
+            }
         );
 
         assert_eq!(snapshot.status_for_file("c.txt"), None);

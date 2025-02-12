@@ -7,6 +7,7 @@ use crate::{
     },
     JoinLines,
 };
+use buffer_diff::{BufferDiff, DiffHunkStatus};
 use futures::StreamExt;
 use gpui::{
     div, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
@@ -26,7 +27,7 @@ use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use multi_buffer::IndentGuide;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
-use project::{buffer_store::BufferChangeSet, FakeFs};
+use project::FakeFs;
 use project::{
     lsp_command::SIGNATURE_HELP_HIGHLIGHT_CURRENT,
     project_settings::{LspSettings, ProjectSettings},
@@ -1158,7 +1159,7 @@ fn test_fold_at_level(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.fold_at_level(&FoldAtLevel { level: 2 }, window, cx);
+        editor.fold_at_level(&FoldAtLevel(2), window, cx);
         assert_eq!(
             editor.display_text(cx),
             "
@@ -1182,7 +1183,7 @@ fn test_fold_at_level(cx: &mut TestAppContext) {
             .unindent(),
         );
 
-        editor.fold_at_level(&FoldAtLevel { level: 1 }, window, cx);
+        editor.fold_at_level(&FoldAtLevel(1), window, cx);
         assert_eq!(
             editor.display_text(cx),
             "
@@ -1197,7 +1198,7 @@ fn test_fold_at_level(cx: &mut TestAppContext) {
         );
 
         editor.unfold_all(&UnfoldAll, window, cx);
-        editor.fold_at_level(&FoldAtLevel { level: 0 }, window, cx);
+        editor.fold_at_level(&FoldAtLevel(0), window, cx);
         assert_eq!(
             editor.display_text(cx),
             "
@@ -5359,6 +5360,21 @@ async fn test_select_previous_with_single_caret(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
     cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndef«abcˇ»\n«abcˇ»");
+}
+
+#[gpui::test]
+async fn test_select_previous_empty_buffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("aˇ");
+
+    cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
+        .unwrap();
+    cx.assert_editor_state("«aˇ»");
+    cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
+        .unwrap();
+    cx.assert_editor_state("«aˇ»");
 }
 
 #[gpui::test]
@@ -9710,7 +9726,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         &r#"
             <!-- ˇ<script> -->
                 // ˇvar x = new Y();
-            // ˇ</script>
+            <!-- ˇ</script> -->
         "#
         .unindent(),
     );
@@ -11988,7 +12004,7 @@ async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row9.2;
                    struct Row9.3;
                    struct Row10;"#},
-        vec![DiffHunkStatus::Added, DiffHunkStatus::Added],
+        vec![DiffHunkStatus::added(), DiffHunkStatus::added()],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row1.1;
@@ -12026,7 +12042,7 @@ async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row8;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::Added, DiffHunkStatus::Added],
+        vec![DiffHunkStatus::added(), DiffHunkStatus::added()],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row2;
@@ -12073,11 +12089,11 @@ async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
                    «ˇ// something on bottom»
                    struct Row10;"#},
         vec![
-            DiffHunkStatus::Added,
-            DiffHunkStatus::Added,
-            DiffHunkStatus::Added,
-            DiffHunkStatus::Added,
-            DiffHunkStatus::Added,
+            DiffHunkStatus::added(),
+            DiffHunkStatus::added(),
+            DiffHunkStatus::added(),
+            DiffHunkStatus::added(),
+            DiffHunkStatus::added(),
         ],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
@@ -12125,7 +12141,7 @@ async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::Modified, DiffHunkStatus::Modified],
+        vec![DiffHunkStatus::modified(), DiffHunkStatus::modified()],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -12152,7 +12168,7 @@ async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::Modified, DiffHunkStatus::Modified],
+        vec![DiffHunkStatus::modified(), DiffHunkStatus::modified()],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -12181,12 +12197,12 @@ async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row9;
                    struct Row1011;ˇ"#},
         vec![
-            DiffHunkStatus::Modified,
-            DiffHunkStatus::Modified,
-            DiffHunkStatus::Modified,
-            DiffHunkStatus::Modified,
-            DiffHunkStatus::Modified,
-            DiffHunkStatus::Modified,
+            DiffHunkStatus::modified(),
+            DiffHunkStatus::modified(),
+            DiffHunkStatus::modified(),
+            DiffHunkStatus::modified(),
+            DiffHunkStatus::modified(),
+            DiffHunkStatus::modified(),
         ],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
@@ -12264,7 +12280,7 @@ struct Row10;"#};
                    ˇ
                    struct Row8;
                    struct Row10;"#},
-        vec![DiffHunkStatus::Removed, DiffHunkStatus::Removed],
+        vec![DiffHunkStatus::removed(), DiffHunkStatus::removed()],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -12287,7 +12303,7 @@ struct Row10;"#};
                    ˇ»
                    struct Row8;
                    struct Row10;"#},
-        vec![DiffHunkStatus::Removed, DiffHunkStatus::Removed],
+        vec![DiffHunkStatus::removed(), DiffHunkStatus::removed()],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -12312,7 +12328,7 @@ struct Row10;"#};
 
                    struct Row8;ˇ
                    struct Row10;"#},
-        vec![DiffHunkStatus::Removed, DiffHunkStatus::Removed],
+        vec![DiffHunkStatus::removed(), DiffHunkStatus::removed()],
         indoc! {r#"struct Row;
                    struct Row1;
                    ˇstruct Row2;
@@ -12337,9 +12353,9 @@ struct Row10;"#};
                    struct Row8;ˇ»
                    struct Row10;"#},
         vec![
-            DiffHunkStatus::Removed,
-            DiffHunkStatus::Removed,
-            DiffHunkStatus::Removed,
+            DiffHunkStatus::removed(),
+            DiffHunkStatus::removed(),
+            DiffHunkStatus::removed(),
         ],
         indoc! {r#"struct Row;
                    struct Row1;
@@ -12440,11 +12456,10 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
             (buffer_2.clone(), base_text_2),
             (buffer_3.clone(), base_text_3),
         ] {
-            let change_set =
-                cx.new(|cx| BufferChangeSet::new_with_base_text(&diff_base, &buffer, cx));
+            let diff = cx.new(|cx| BufferDiff::new_with_base_text(&diff_base, &buffer, cx));
             editor
                 .buffer
-                .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
+                .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
         }
     });
     cx.executor().run_until_parked();
@@ -13134,11 +13149,10 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
                 (buffer_2.clone(), file_2_old),
                 (buffer_3.clone(), file_3_old),
             ] {
-                let change_set =
-                    cx.new(|cx| BufferChangeSet::new_with_base_text(&diff_base, &buffer, cx));
+                let diff = cx.new(|cx| BufferDiff::new_with_base_text(&diff_base, &buffer, cx));
                 editor
                     .buffer
-                    .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
+                    .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
             }
         })
         .unwrap();
@@ -13251,10 +13265,10 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
     });
     editor
         .update(cx, |editor, _window, cx| {
-            let change_set = cx.new(|cx| BufferChangeSet::new_with_base_text(base, &buffer, cx));
+            let diff = cx.new(|cx| BufferDiff::new_with_base_text(base, &buffer, cx));
             editor
                 .buffer
-                .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx))
+                .update(cx, |buffer, cx| buffer.add_diff(diff, cx))
         })
         .unwrap();
 
@@ -14420,11 +14434,10 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut gpui::TestAppContex
 
         editor.buffer().update(cx, |multibuffer, cx| {
             let buffer = multibuffer.as_singleton().unwrap();
-            let change_set =
-                cx.new(|cx| BufferChangeSet::new_with_base_text(base_text, &buffer, cx));
+            let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
 
             multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer.add_change_set(change_set, cx);
+            multibuffer.add_diff(diff, cx);
 
             buffer.read(cx).remote_id()
         })
@@ -14877,7 +14890,7 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/a",
+        path!("/a"),
         json!({
             "first.rs": sample_text_1,
             "second.rs": sample_text_2,
@@ -14885,7 +14898,7 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
         }),
     )
     .await;
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let worktree = project.update(cx, |project, cx| {
@@ -15061,7 +15074,7 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut gpui::TestAppContext
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/a",
+        path!("/a"),
         json!({
             "first.rs": sample_text_1,
             "second.rs": sample_text_2,
@@ -15069,7 +15082,7 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut gpui::TestAppContext
         }),
     )
     .await;
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let worktree = project.update(cx, |project, cx| {
@@ -15208,13 +15221,13 @@ async fn test_multi_buffer_with_single_excerpt_folding(cx: &mut gpui::TestAppCon
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/a",
+        path!("/a"),
         json!({
             "main.rs": sample_text,
         }),
     )
     .await;
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let worktree = project.update(cx, |project, cx| {

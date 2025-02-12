@@ -16,7 +16,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub(crate) struct MoveToNext {
     #[serde(default = "default_true")]
     case_sensitive: bool,
@@ -27,7 +27,7 @@ pub(crate) struct MoveToNext {
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub(crate) struct MoveToPrev {
     #[serde(default = "default_true")]
     case_sensitive: bool,
@@ -38,6 +38,7 @@ pub(crate) struct MoveToPrev {
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Search {
     #[serde(default)]
     backwards: bool,
@@ -46,6 +47,7 @@ pub(crate) struct Search {
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct FindCommand {
     pub query: String,
     pub backwards: bool,
