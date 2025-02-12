@@ -5857,18 +5857,23 @@ impl KeyBindingValidator for AcceptEditPredictionsBindingValidator {
             }
             _ => {}
         }
+        let negated_requires_modifier_key_context = MarkdownString::inline_code(&format!(
+            "!{}",
+            EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT
+        ));
         Err(MarkdownString(format!(
             "{} can only be bound to a single keystroke with modifiers, so \
-            that holding down these modifiers can be used to preview \
-            completions inline when the completions menu is open.\n\n\
+            that pressing these modifiers can be used for prediction \
+            preview.\n\n\
             This restriction does not apply when the context requires {}, \
-            since these bindings will not be used when the completions menu \
-            is open.",
+            since these bindings are not used for prediction preview. For \
+            example, in the default keymap `tab` requires {}, and `alt-tab` \
+            is used otherwise.\n\n\
+            See [the documentation]({}) for more details.",
             MarkdownString::inline_code(AcceptEditPrediction.name()),
-            MarkdownString::inline_code(&format!(
-                "!{}",
-                EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT
-            )),
+            negated_requires_modifier_key_context.clone(),
+            negated_requires_modifier_key_context,
+            "https://zed.dev/docs/completions#edit-predictions",
         )))
     }
 }
