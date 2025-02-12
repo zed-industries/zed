@@ -1291,6 +1291,13 @@ impl GitPanel {
         let active_repository = self.active_repository.as_ref()?;
         let branch = active_repository.read(cx).branch()?;
         let commit = branch.most_recent_commit.as_ref()?;
+        if branch.upstream.is_some_and(|upstream| {
+            upstream
+                .tracking
+                .is_some_and(|tracking| tracking.ahead == 0)
+        }) {
+            return None;
+        }
 
         let _branch_selector = Button::new("branch-selector", branch.name.clone())
             .color(Color::Muted)
