@@ -65,7 +65,6 @@ pub async fn stream_completion(
                             Ok(Some(output)) => Some((Ok(output), stream)),
                             Ok(None) => None,
                             Err(e) => {
-                                println!("Run into err stream.recv(): {:?}", e);
                                 Some((
                                     // Figure out how we can capture Throttling Exceptions
                                     Err(BedrockError::ClientError(anyhow!(
@@ -80,7 +79,6 @@ pub async fn stream_completion(
                     Ok(stream)
                 }
                 Err(e) => {
-                    println!("Failed to stream unfold with this: {:?}", e);
                     Err(anyhow!(
                     "{:?}",
                     aws_sdk_bedrockruntime::error::DisplayErrorContext(e)

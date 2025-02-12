@@ -341,7 +341,7 @@ impl BedrockModel {
         Ok(async move {
             let request = bedrock::stream_completion(runtime_client, request, owned_handle);
             request.await.unwrap_or_else(|e| {
-                futures::stream::once(async move { println!("Failed stream unwrap with this: {:?}", e); Err(BedrockError::ClientError(e)) }).boxed()
+                futures::stream::once(async move { Err(BedrockError::ClientError(e)) }).boxed()
             })
         }
             .boxed())
@@ -400,7 +400,7 @@ impl LanguageModel for BedrockModel {
 
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.map_err(|e| {println!("Failed stream unwrap map_err: {:?}", e); anyhow!(e)}).unwrap().await;
+            let response = request.map_err(|e| { anyhow!(e) }).unwrap().await;
             Ok(map_to_language_model_completion_events(
                 response,
                 owned_handle,
@@ -442,7 +442,7 @@ impl LanguageModel for BedrockModel {
 
         let request = self.stream_completion(request, _cx);
         self.request_limiter.run(async move {
-            let response = request.map_err(|e| {println!("Failed map_err any tool: {:?}", e);anyhow!(e)}).unwrap().await;
+            let response = request.map_err(|e| { anyhow!(e) }).unwrap().await;
             Ok(extract_tool_args_from_events(
                 name,
                 response,
