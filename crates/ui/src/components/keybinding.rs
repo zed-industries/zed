@@ -110,7 +110,7 @@ pub fn render_key(
     let key_icon = icon_for_key(keystroke, platform_style);
     match key_icon {
         Some(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
-        None => Key::new(capitalize(&keystroke.key), color)
+        None => Key::new(util::capitalize(&keystroke.key), color)
             .size(size)
             .into_any_element(),
     }
@@ -402,20 +402,12 @@ pub fn text_for_keystroke(keystroke: &Keystroke, platform_style: PlatformStyle) 
     let key = match keystroke.key.as_str() {
         "pageup" => "PageUp",
         "pagedown" => "PageDown",
-        key => &capitalize(key),
+        key => &util::capitalize(key),
     };
 
     text.push_str(key);
 
     text
-}
-
-fn capitalize(str: &str) -> String {
-    let mut chars = str.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
-    }
 }
 
 #[cfg(test)]

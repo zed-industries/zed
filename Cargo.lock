@@ -14414,6 +14414,7 @@ dependencies = [
  "strum",
  "theme",
  "ui_macros",
+ "util",
  "windows 0.58.0",
 ]
 

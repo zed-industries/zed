@@ -5683,8 +5683,11 @@ impl Editor {
             })
             .when(!is_platform_style_mac, |parent| {
                 parent.child(
-                    Key::new(accept_keystroke.key.clone(), Some(Color::Default))
-                        .size(Some(IconSize::XSmall.rems().into())),
+                    Key::new(
+                        util::capitalize(&accept_keystroke.key),
+                        Some(Color::Default),
+                    )
+                    .size(Some(IconSize::XSmall.rems().into())),
                 )
             })
             .into()
