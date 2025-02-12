@@ -185,40 +185,54 @@ impl Render for MigratorBanner {
         let migration_type = self.migration_type;
         h_flex()
             .py_1()
-            .px_2()
+            .pl_2()
+            .pr_1()
+            .flex_wrap()
             .justify_between()
-            .bg(cx.theme().status().info_background)
-            .rounded_md()
-            .gap_2()
+            .bg(cx.theme().status().info_background.opacity(0.6))
+            .border_1()
+            .border_color(cx.theme().colors().border_variant)
+            .rounded_lg()
             .overflow_hidden()
             .child(
-                render_parsed_markdown(&self.message, Some(self.workspace.clone()), window, cx)
-                    .text_ellipsis(),
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Icon::new(IconName::Info)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        render_parsed_markdown(
+                            &self.message,
+                            Some(self.workspace.clone()),
+                            window,
+                            cx,
+                        )
+                        .text_sm(),
+                    ),
             )
             .child(
-                Button::new(
-                    SharedString::from("backup-and-migrate"),
-                    "Backup and Migrate",
-                )
-                .style(ButtonStyle::Filled)
-                .on_click(move |_, _, cx| {
-                    let fs = <dyn Fs>::global(cx);
-                    match migration_type {
-                        Some(MigrationType::Keymap) => {
-                            cx.spawn(
-                                move |_| async move { write_keymap_migration(&fs).await.ok() },
-                            )
-                            .detach();
+                Button::new("backup-and-migrate", "Backup and Migrate").on_click(
+                    move |_, _, cx| {
+                        let fs = <dyn Fs>::global(cx);
+                        match migration_type {
+                            Some(MigrationType::Keymap) => {
+                                cx.spawn(
+                                    move |_| async move { write_keymap_migration(&fs).await.ok() },
+                                )
+                                .detach();
+                            }
+                            Some(MigrationType::Settings) => {
+                                cx.spawn(move |_| async move {
+                                    write_settings_migration(&fs).await.ok()
+                                })
+                                .detach();
+                            }
+                            None => unreachable!(),
                         }
-                        Some(MigrationType::Settings) => {
-                            cx.spawn(
-                                move |_| async move { write_settings_migration(&fs).await.ok() },
-                            )
-                            .detach();
-                        }
-                        None => unreachable!(),
-                    }
-                }),
+                    },
+                ),
             )
             .into_any_element()
     }
