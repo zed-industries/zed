@@ -1,6 +1,6 @@
 use crate::{
     black, fill, point, px, size, App, Bounds, Half, Hsla, LineLayout, Pixels, Point, Result,
-    SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary,
+    SharedString, StrikethroughStyle, TextAlign, TextStyle, UnderlineStyle, Window, WrapBoundary,
     WrappedLineLayout,
 };
 use derive_more::{Deref, DerefMut};
@@ -75,6 +75,7 @@ impl ShapedLine {
             None,
             &self.decoration_runs,
             &[],
+            None,
             window,
             cx,
         )?;
@@ -102,12 +103,14 @@ impl WrappedLine {
     }
 
     /// Paint this line of text to the window.
+    #[allow(clippy::too_many_arguments)]
     pub fn paint(
         &self,
         origin: Point<Pixels>,
         line_height: Pixels,
-        align: TextAlign,
+        text_align: TextAlign,
         bounds: Option<Bounds<Pixels>>,
+        interactive_text_style: Option<&TextStyle>,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<()> {
@@ -120,10 +123,11 @@ impl WrappedLine {
             origin,
             &self.layout.unwrapped_layout,
             line_height,
-            align,
+            text_align,
             align_width,
             &self.decoration_runs,
             &self.wrap_boundaries,
+            interactive_text_style,
             window,
             cx,
         )?;
@@ -137,10 +141,11 @@ fn paint_line(
     origin: Point<Pixels>,
     layout: &LineLayout,
     line_height: Pixels,
-    align: TextAlign,
+    text_align: TextAlign,
     align_width: Option<Pixels>,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
+    interactive_text_style: Option<&TextStyle>,
     window: &mut Window,
     cx: &mut App,
 ) -> Result<()> {
@@ -151,6 +156,12 @@ fn paint_line(
             line_height * (wrap_boundaries.len() as f32 + 1.),
         ),
     );
+
+    let mut text_align = text_align;
+    if let Some(style) = interactive_text_style {
+        text_align = style.text_align;
+    }
+
     window.paint_layer(line_bounds, |window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
@@ -167,7 +178,7 @@ fn paint_line(
                 origin,
                 align_width.unwrap_or(layout.width),
                 px(0.0),
-                &align,
+                &text_align,
                 layout,
                 wraps.peek(),
             ),
@@ -185,6 +196,12 @@ fn paint_line(
                     wraps.next();
                     if let Some((background_origin, background_color)) = current_background.as_mut()
                     {
+                        if let Some(text_style) = &interactive_text_style {
+                            if let Some(val) = text_style.background_color {
+                                *background_color = val;
+                            }
+                        }
+
                         if glyph_origin.x == background_origin.x {
                             background_origin.x -= max_glyph_size.width.half()
                         }
@@ -199,6 +216,12 @@ fn paint_line(
                         background_origin.y += line_height;
                     }
                     if let Some((underline_origin, underline_style)) = current_underline.as_mut() {
+                        if let Some(text_style) = &interactive_text_style {
+                            if let Some(val) = text_style.underline {
+                                *underline_style = val;
+                            }
+                        }
+
                         if glyph_origin.x == underline_origin.x {
                             underline_origin.x -= max_glyph_size.width.half();
                         };
@@ -213,6 +236,12 @@ fn paint_line(
                     if let Some((strikethrough_origin, strikethrough_style)) =
                         current_strikethrough.as_mut()
                     {
+                        if let Some(text_style) = &interactive_text_style {
+                            if let Some(val) = text_style.strikethrough {
+                                *strikethrough_style = val;
+                            }
+                        }
+
                         if glyph_origin.x == strikethrough_origin.x {
                             strikethrough_origin.x -= max_glyph_size.width.half();
                         };
@@ -229,7 +258,7 @@ fn paint_line(
                         origin,
                         align_width.unwrap_or(layout.width),
                         glyph.position.x,
-                        &align,
+                        &text_align,
                         layout,
                         wraps.peek(),
                     );
@@ -303,7 +332,11 @@ fn paint_line(
                         }
 
                         run_end += style_run.len as usize;
-                        color = style_run.color;
+                        if let Some(text_style) = &interactive_text_style {
+                            color = text_style.color;
+                        } else {
+                            color = style_run.color;
+                        }
                     } else {
                         run_end = layout.len;
                         finished_background = current_background.take();

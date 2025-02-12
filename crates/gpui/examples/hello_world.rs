@@ -1,6 +1,6 @@
 use gpui::{
-    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, SharedString, Window,
-    WindowBounds, WindowOptions,
+    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, FontWeight, SharedString,
+    Window, WindowBounds, WindowOptions,
 };
 
 struct HelloWorld {
@@ -17,7 +17,6 @@ impl Render for HelloWorld {
             .bg(gpui::white())
             .child(
                 div()
-                    .id("hello")
                     .flex()
                     .flex_col()
                     .gap_3()
@@ -29,9 +28,27 @@ impl Render for HelloWorld {
                     .border_1()
                     .border_color(rgb(0x0000ff))
                     .text_xl()
-                    .text_color(rgb(0xffffff))
-                    .hover(|this| this.text_color(gpui::blue()))
-                    .child(format!("Hello, {}!", &self.text))
+                    .child(
+                        div()
+                            .id("hello")
+                            .w_64()
+                            .p_2()
+                            .text_center()
+                            .text_decoration_2()
+                            .text_decoration_color(gpui::yellow())
+                            .text_color(rgb(0xffffff))
+                            .active(|this| {
+                                this.text_color(gpui::red())
+                                    .text_decoration_color(gpui::red())
+                                    .bg(rgb(0xA0A0A0))
+                            })
+                            .hover(|this| {
+                                this.text_color(gpui::blue())
+                                    .text_decoration_color(gpui::blue())
+                                    .bg(rgb(0xA0A0A0))
+                            })
+                            .child(format!("Hello, {}!", &self.text)),
+                    )
                     .child(
                         div()
                             .flex()
