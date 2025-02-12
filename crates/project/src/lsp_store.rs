@@ -1937,8 +1937,7 @@ impl LocalLspStore {
                     version: 0,
                     snapshot: initial_snapshot.clone(),
                 };
-                let old_snapshots = self
-                    .buffer_snapshots
+                self.buffer_snapshots
                     .entry(buffer_id)
                     .or_default()
                     .insert(server.server_id(), vec![snapshot]);
