@@ -3807,33 +3807,34 @@ impl EditorElement {
 
                 let styled_text = highlighted_edits.to_styled_text(&style.text);
 
+                const ACCEPT_INDICATOR_HEIGHT: Pixels = px(24.);
+
                 let mut element = v_flex()
                     .items_end()
+                    .shadow_sm()
                     .child(
                         h_flex()
-                            .bg(cx.theme().colors().editor_background)
-                            .border_1()
-                            .border_color(cx.theme().colors().border)
-                            .rounded_t_md()
-                            .py_1()
-                            .px_2()
+                            .h(ACCEPT_INDICATOR_HEIGHT)
+                            .mb(px(-1.))
+                            .px_1p5()
                             .gap_1()
-                            .children(editor.render_edit_prediction_accept_keybind(window, cx))
-                            .child(Label::new("Accept").size(LabelSize::Small)),
+                            .bg(Editor::edit_prediction_line_popover_bg_color(cx))
+                            .border_1()
+                            .border_b_0()
+                            .border_color(cx.theme().colors().border)
+                            .rounded_t_lg()
+                            .children(editor.render_edit_prediction_accept_keybind(window, cx)),
                     )
                     .child(
                         div()
                             .bg(cx.theme().colors().editor_background)
                             .border_1()
-                            .mt_neg_1()
                             .border_color(cx.theme().colors().border)
-                            .rounded_md()
+                            .rounded_lg()
                             .rounded_tr(Pixels::ZERO)
                             .child(styled_text),
                     )
                     .into_any();
-
-                // todo!: Fix positioning so diff is positioned the same way
 
                 let line_count = highlighted_edits.text.lines().count();
 
@@ -3870,7 +3871,7 @@ impl EditorElement {
                 let is_fully_visible = x_after_longest < text_bounds.right()
                     && x_after_longest + element_bounds.width < viewport_bounds.right();
 
-                let origin = if is_fully_visible {
+                let mut origin = if is_fully_visible {
                     point(
                         x_after_longest,
                         text_bounds.origin.y + edit_start.row().as_f32() * line_height
@@ -3914,6 +3915,8 @@ impl EditorElement {
                             row_target.as_f32() * line_height - scroll_pixel_position.y,
                         )
                 };
+
+                origin.y -= ACCEPT_INDICATOR_HEIGHT;
 
                 window.defer_draw(element, origin, 1);
 
@@ -5810,73 +5813,6 @@ fn header_jump_data(
         anchor: jump_anchor,
         position: jump_position,
         line_offset_from_top,
-    }
-}
-
-impl Editor {
-    fn render_edit_prediction_accept_keybind(
-        &self,
-        window: &mut Window,
-        cx: &App,
-    ) -> Option<AnyElement> {
-        let accept_binding = self.accept_edit_prediction_keybind(window, cx);
-        let accept_keystroke = accept_binding.keystroke()?;
-
-        h_flex()
-            .px_0p5()
-            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-            .text_size(TextSize::XSmall.rems(cx))
-            .text_color(cx.theme().colors().text)
-            .gap_1()
-            .when(accept_keystroke.modifiers != window.modifiers(), |parent| {
-                parent.children(ui::render_modifiers(
-                    &accept_keystroke.modifiers,
-                    PlatformStyle::platform(),
-                    Some(Color::Default),
-                    None,
-                    false,
-                ))
-            })
-            .child(accept_keystroke.key.clone())
-            .into_any()
-            .into()
-    }
-
-    fn render_edit_prediction_line_popover(
-        &self,
-        label: impl Into<SharedString>,
-        icon: Option<IconName>,
-        window: &mut Window,
-        cx: &App,
-    ) -> Option<Div> {
-        let colors = cx.theme().colors();
-
-        let accent_color = colors.text_accent;
-        let editor_bg_color = colors.editor_background;
-        let bg_color = editor_bg_color.blend(accent_color.opacity(0.2));
-        let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
-
-        let result = h_flex()
-            .gap_1()
-            .border_1()
-            .rounded_md()
-            .shadow_sm()
-            .bg(bg_color)
-            .border_color(colors.text_accent.opacity(0.8))
-            .py_0p5()
-            .pl_1()
-            .pr(padding_right)
-            .children(self.render_edit_prediction_accept_keybind(window, cx))
-            .child(Label::new(label).size(LabelSize::Small))
-            .when_some(icon, |element, icon| {
-                element.child(
-                    div()
-                        .mt(px(1.5))
-                        .child(Icon::new(icon).size(IconSize::Small)),
-                )
-            });
-
-        Some(result)
     }
 }
 
