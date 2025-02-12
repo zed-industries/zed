@@ -610,6 +610,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_stage);
         client.add_entity_request_handler(Self::handle_unstage);
         client.add_entity_request_handler(Self::handle_commit);
+        client.add_entity_request_handler(Self::handle_set_index_text);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
 
         WorktreeStore::init(&client);
@@ -4087,6 +4088,27 @@ impl Project {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.commit(message, name.zip(email))
+            })?
+            .await??;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_set_index_text(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::SetIndexText>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.set_index_text(
+                    &RepoPath::from_str(&envelope.payload.path),
+                    envelope.payload.text,
+                )
             })?
             .await??;
         Ok(proto::Ack {})
