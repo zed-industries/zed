@@ -1,4 +1,5 @@
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -14,7 +15,7 @@ use bedrock::{
     value_to_aws_document, BedrockError, BedrockSpecificTool, BedrockStreamingResponse,
     BedrockTool, BedrockToolChoice, BedrockToolInputSchema, Model,
 };
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
 use gpui::{
@@ -25,7 +26,7 @@ use http_client::HttpClient;
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role, StopReason,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, RateLimiter, Role,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -35,7 +36,7 @@ use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use tokio::runtime::Handle;
 use ui::{prelude::*, Icon, IconName, Tooltip};
-use util::ResultExt;
+use util::{maybe, ResultExt};
 
 use crate::AllLanguageModelSettings;
 
@@ -542,68 +543,115 @@ pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
 ) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+    struct RawToolUse {
+        id: String,
+        name: String,
+        input_json: String,
+    }
+
     struct State {
         events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+        tool_uses_by_index: HashMap<i32, RawToolUse>,
     }
 
     futures::stream::unfold(
         State {
-            events
+            events,
+            tool_uses_by_index: HashMap::default(),
         },
         move |mut state: State| {
             let inner_handle = handle.clone();
             async move {
-                inner_handle.spawn(async {
-                    while let Some(event) = state.events.next().await {
-                        match event {
-                            Ok(event) => match event {
-                                ConverseStreamOutput::ContentBlockDelta(cb_delta) => {
-                                    if let Some(ContentBlockDelta::Text(text_out)) = cb_delta.delta {
-                                        return Some((
-                                            Some(Ok(LanguageModelCompletionEvent::Text(text_out))),
-                                            state,
-                                        ));
-                                    } else if let Some(ContentBlockDelta::ToolUse(_text_out)) = cb_delta.delta {
-                                        return Some((
-                                            Some(Err(anyhow!("The Bedrock provider has not implemented tool use yet"))),
-                                            state,
-                                        ));
-                                    } else if cb_delta.delta.is_none() {
-                                        return Some((None, state));
-                                    }
-                                }
-                                ConverseStreamOutput::ContentBlockStart(cb_start) => {
-                                    if let Some(start) = cb_start.start {
-                                        match start {
-                                            ContentBlockStart::ToolUse(_text_out) => {
-                                                return Some((
-                                                    Some(Err(anyhow!("The Bedrock provider has not implemented tool use yet"))),
-                                                    state,
-                                                ))
-                                            }
-                                            _ => {}
+                inner_handle
+                    .spawn(async {
+                        while let Some(event) = state.events.next().await {
+                            match event {
+                                Ok(event) => match event {
+                                    ConverseStreamOutput::ContentBlockDelta(cb_delta) => {
+                                        if let Some(ContentBlockDelta::Text(text_out)) =
+                                            cb_delta.delta
+                                        {
+                                            return Some((
+                                                Some(Ok(LanguageModelCompletionEvent::Text(
+                                                    text_out,
+                                                ))),
+                                                state,
+                                            ));
+                                        } else if let Some(ContentBlockDelta::ToolUse(text_out)) =
+                                            cb_delta.delta
+                                        {
+                                            if let Some(tool_use) = state
+                                                .tool_uses_by_index
+                                                .get_mut(&cb_delta.content_block_index)
+                                            {
+                                                tool_use.input_json.push_str(text_out.input());
+                                                return Some((None, state));
+                                            };
+
+                                            return Some((None, state));
+                                        } else if cb_delta.delta.is_none() {
+                                            return Some((None, state));
                                         }
                                     }
-                                }
-                                ConverseStreamOutput::ContentBlockStop(_) => {
-                                    return Some((
-                                        Some(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))),
-                                        state,
-                                    ));
-                                }
-                                ConverseStreamOutput::MessageStart(_) |
-                                ConverseStreamOutput::MessageStop(_) |
-                                ConverseStreamOutput::Metadata(_) => {}
-                                _ => {}
-                            },
-                            Err(err) => return Some((Some(Err(anyhow!(err))), state)),
+                                    ConverseStreamOutput::ContentBlockStart(cb_start) => {
+                                        if let Some(start) = cb_start.start {
+                                            match start {
+                                                ContentBlockStart::ToolUse(text_out) => {
+                                                    let tool_use = RawToolUse {
+                                                        id: text_out.tool_use_id,
+                                                        name: text_out.name,
+                                                        input_json: String::new(),
+                                                    };
+
+                                                    state.tool_uses_by_index.insert(
+                                                        cb_start.content_block_index,
+                                                        tool_use,
+                                                    );
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                    ConverseStreamOutput::ContentBlockStop(cb_stop) => {
+                                        if let Some(tool_use) = state
+                                            .tool_uses_by_index
+                                            .remove(&cb_stop.content_block_index)
+                                        {
+                                            return Some((
+                                                Some(maybe!({
+                                                    Ok(LanguageModelCompletionEvent::ToolUse(
+                                                        LanguageModelToolUse {
+                                                            id: tool_use.id.into(),
+                                                            name: tool_use.name,
+                                                            input: if tool_use.input_json.is_empty()
+                                                            {
+                                                                Value::Null
+                                                            } else {
+                                                                serde_json::Value::from_str(
+                                                                    &tool_use.input_json,
+                                                                )
+                                                                .map_err(|err| anyhow!(err))?
+                                                            },
+                                                        },
+                                                    ))
+                                                })),
+                                                state,
+                                            ));
+                                        }
+                                    }
+                                    _ => {}
+                                },
+                                Err(err) => return Some((Some(Err(anyhow!(err))), state)),
+                            }
                         }
-                    }
-                    None
-                }).await.unwrap()
+                        None
+                    })
+                    .await
+                    .unwrap()
             }
         },
-    ).filter_map(|event| async move { event })
+    )
+    .filter_map(|event| async move { event })
 }
 
 struct ConfigurationView {

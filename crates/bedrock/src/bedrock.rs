@@ -12,11 +12,10 @@ pub use aws_sdk_bedrockruntime::types::{
     ToolInputSchema as BedrockToolInputSchema, ToolSpecification as BedrockTool,
 };
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
-use bedrock::types::ConverseOutput as Response;
 pub use bedrock::types::{
     ContentBlock as BedrockRequestContent, ConversationRole as BedrockRole,
-    ConverseStreamOutput as BedrockStreamingResponse, Message as BedrockMessage,
-    ResponseStream as BedrockResponseStream,
+    ConverseOutput as BedrockResponse, ConverseStreamOutput as BedrockStreamingResponse,
+    Message as BedrockMessage, ResponseStream as BedrockResponseStream,
 };
 use futures::stream::BoxStream;
 use futures::{stream, Stream};
@@ -27,7 +26,7 @@ use thiserror::Error;
 pub async fn complete(
     client: &bedrock::Client,
     request: Request,
-) -> Result<Response, BedrockError> {
+) -> Result<BedrockResponse, BedrockError> {
     let response = bedrock::Client::converse(client)
         .model_id(request.model.clone())
         .set_messages(request.messages.into())
