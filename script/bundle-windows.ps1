@@ -1,7 +1,8 @@
 # Inno Setup executable path
 $innoSetupPath = "C:\zjk\apps\Inno Setup 6\ISCC.exe"
-$innoFilePath = ".\crates\zed\resources\windows\installer\zed.iss"
-$signToolPath = "powershell.exe -ExecutionPolicy Bypass -File C:\zjk\projects\zed\crates\zed\resources\windows\installer\sign.ps1"
+$repoDir = "C:\zjk\projects\zed"
+$innoFilePath = "$repoDir\crates\zed\resources\windows\installer\zed.iss"
+$signToolPath = "powershell.exe -ExecutionPolicy Bypass -File $repoDir\crates\zed\resources\windows\installer\sign.ps1"
 
 $product = @{
     "nameLong"         = "Zed"
@@ -12,12 +13,12 @@ $product = @{
     "ShellNameShort"   = "&Zed Editor"
     "MutexName"        = "ZedSetupMutex" # TODO:
     "AppUserModelId"   = "ZedIndustry.Zed"
-    "ResourcesDir"     = "C:\zjk\projects\zed\crates\zed\resources\windows"
+    "ResourcesDir"     = "$repoDir\crates\zed\resources\windows"
     ”AppId"            = "{{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}"
 }
 
-$sourcePath = "C:\zjk\projects\zed"
-$outputPath = "C:\zjk\projects\zed\target\windows"
+$sourcePath = $repoDir
+$outputPath = "$repoDir\target\windows"
 New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 
 $definitions = @{
