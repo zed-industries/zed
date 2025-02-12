@@ -514,6 +514,13 @@
     }
   },
   {
+    "context": "Editor && edit_prediction && !edit_prediction_requires_modifier",
+    "bindings": {
+      "tab": "editor::AcceptEditPrediction",
+      "alt-l": "editor::AcceptEditPrediction"
+    }
+  },
+  {
     "context": "Editor && showing_code_actions",
     "bindings": {
       "enter": "editor::ConfirmCodeAction"
