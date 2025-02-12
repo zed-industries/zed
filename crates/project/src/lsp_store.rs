@@ -168,6 +168,7 @@ pub struct LocalLspStore {
     buffer_snapshots: HashMap<BufferId, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     _subscription: gpui::Subscription,
     lsp_tree: Entity<LanguageServerTree>,
+    registered_buffers: HashMap<BufferId, HashSet<Option<proto::PeerId>>>,
 }
 
 impl LocalLspStore {
@@ -2983,6 +2984,7 @@ impl LspStore {
                     this.as_local_mut().unwrap().shutdown_language_servers(cx)
                 }),
                 lsp_tree: LanguageServerTree::new(project_tree, languages.clone(), cx),
+                registered_buffers: Default::default(),
             }),
             last_formatting_failure: None,
             downstream_client: None,
@@ -3068,19 +3070,23 @@ impl LspStore {
                 self.on_buffer_added(buffer, cx).log_err();
             }
             BufferStoreEvent::BufferChangedFilePath { buffer, old_file } => {
+                let buffer_id = buffer.read(cx).remote_id();
                 if let Some(local) = self.as_local_mut() {
                     if let Some(old_file) = File::from_dyn(old_file.as_ref()) {
                         local.reset_buffer(buffer, old_file, cx);
 
-                        local.unregister_old_buffer_from_language_servers(buffer, old_file, cx);
+                        if local.registered_buffers.contains_key(&buffer_id) {
+                            local.unregister_old_buffer_from_language_servers(buffer, old_file, cx);
+                        }
                     }
                 }
 
                 self.detect_language_for_buffer(buffer, cx);
                 if let Some(local) = self.as_local_mut() {
                     local.initialize_buffer(buffer, cx);
-
-                    local.register_buffer_with_language_servers(buffer, cx);
+                    if local.registered_buffers.contains_key(&buffer_id) {
+                        local.register_buffer_with_language_servers(buffer, cx);
+                    }
                 }
             }
             BufferStoreEvent::BufferDropped(_) => {}
@@ -3205,30 +3211,44 @@ impl LspStore {
 
     pub(crate) fn register_buffer_with_language_servers(
         &mut self,
-        buffer: &Entity<Buffer>,
+        buffer_entity: &Entity<Buffer>,
+        registrant: Option<proto::PeerId>,
         cx: &mut Context<Self>,
     ) -> OpenLspBufferHandle {
-        let handle = cx.new(|_| buffer.clone());
-
+        let handle = cx.new(|_| buffer_entity.clone());
+        let buffer = buffer_entity.read(cx);
+        let buffer_id = buffer.remote_id();
         if let Some(local) = self.as_local_mut() {
-            let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
+            let Some(file) = File::from_dyn(buffer.file()) else {
                 return handle;
             };
             if !file.is_local() {
                 return handle;
             }
 
-            local.register_buffer_with_language_servers(buffer, cx);
+            let existing_registrations = local.registered_buffers.entry(buffer_id).or_default();
+            let was_already_registered = existing_registrations.insert(registrant);
+            if !was_already_registered && existing_registrations.len() == 1 {
+                local.register_buffer_with_language_servers(buffer_entity, cx);
 
-            cx.observe_release(&handle, move |this, buffer, cx| {
-                let local = this.as_local_mut().unwrap();
-                if let Some(file) = File::from_dyn(buffer.read(cx).file()).cloned() {
-                    local.unregister_old_buffer_from_language_servers(&buffer, &file, cx);
-                }
-            })
-            .detach();
+                cx.observe_release(&handle, move |this, buffer, cx| {
+                    let local = this.as_local_mut().unwrap();
+                    let Some(registered_buffers) = local.registered_buffers.get_mut(&buffer_id)
+                    else {
+                        debug_panic!("bad refcounting");
+                        return;
+                    };
+                    let was_registered = registered_buffers.remove(&registrant);
+                    if was_registered && registered_buffers.is_empty() {
+                        if let Some(file) = File::from_dyn(buffer.read(cx).file()).cloned() {
+                            local.unregister_old_buffer_from_language_servers(&buffer, &file, cx);
+                        }
+                    }
+                })
+                .detach();
+            }
         } else if let Some((upstream_client, upstream_project_id)) = self.upstream_client() {
-            let buffer_id = buffer.read(cx).remote_id().to_proto();
+            let buffer_id = buffer_entity.read(cx).remote_id().to_proto();
             cx.background_executor()
                 .spawn(async move {
                     upstream_client
@@ -3269,12 +3289,18 @@ impl LspStore {
                                         if let Some(local) = this.as_local_mut() {
                                             local.reset_buffer(&buffer, &f, cx);
 
-                                            if let Some(file_url) =
-                                                lsp::Url::from_file_path(&f.abs_path(cx)).log_err()
+                                            if local
+                                                .registered_buffers
+                                                .contains_key(&buffer.read(cx).remote_id())
                                             {
-                                                local.unregister_buffer_from_language_servers(
-                                                    &buffer, &file_url, cx,
-                                                );
+                                                if let Some(file_url) =
+                                                    lsp::Url::from_file_path(&f.abs_path(cx))
+                                                        .log_err()
+                                                {
+                                                    local.unregister_buffer_from_language_servers(
+                                                        &buffer, &file_url, cx,
+                                                    );
+                                                }
                                             }
                                         }
                                     }
@@ -3311,7 +3337,12 @@ impl LspStore {
                             this.detect_language_for_buffer(&buffer, cx);
                             if let Some(local) = this.as_local_mut() {
                                 local.initialize_buffer(&buffer, cx);
-                                local.register_buffer_with_language_servers(&buffer, cx);
+                                if local
+                                    .registered_buffers
+                                    .contains_key(&buffer.read(cx).remote_id())
+                                {
+                                    local.register_buffer_with_language_servers(&buffer, cx);
+                                }
                             }
                         }
 
@@ -3356,21 +3387,29 @@ impl LspStore {
 
     pub(crate) fn set_language_for_buffer(
         &mut self,
-        buffer: &Entity<Buffer>,
+        buffer_entity: &Entity<Buffer>,
         new_language: Arc<Language>,
         cx: &mut Context<Self>,
     ) {
-        let buffer_file = buffer.read(cx).file().cloned();
+        let buffer = buffer_entity.read(cx);
+        let buffer_file = buffer.file().cloned();
+        let buffer_id = buffer.remote_id();
         if let Some(local_store) = self.as_local_mut() {
-            if let Some(abs_path) =
-                File::from_dyn(buffer_file.as_ref()).map(|file| file.abs_path(cx))
-            {
-                if let Some(file_url) = lsp::Url::from_file_path(&abs_path).log_err() {
-                    local_store.unregister_buffer_from_language_servers(buffer, &file_url, cx);
+            if local_store.registered_buffers.contains_key(&buffer_id) {
+                if let Some(abs_path) =
+                    File::from_dyn(buffer_file.as_ref()).map(|file| file.abs_path(cx))
+                {
+                    if let Some(file_url) = lsp::Url::from_file_path(&abs_path).log_err() {
+                        local_store.unregister_buffer_from_language_servers(
+                            buffer_entity,
+                            &file_url,
+                            cx,
+                        );
+                    }
                 }
             }
         }
-        buffer.update(cx, |buffer, cx| {
+        buffer_entity.update(cx, |buffer, cx| {
             if buffer.language().map_or(true, |old_language| {
                 !Arc::ptr_eq(old_language, &new_language)
             }) {
@@ -3386,7 +3425,9 @@ impl LspStore {
             let worktree = file.worktree.clone();
 
             if let Some(local) = self.as_local_mut() {
-                local.register_buffer_with_language_servers(buffer, cx);
+                if local.registered_buffers.contains_key(&buffer_id) {
+                    local.register_buffer_with_language_servers(buffer_entity, cx);
+                }
             }
             Some(worktree.read(cx).id())
         } else {
@@ -3410,7 +3451,7 @@ impl LspStore {
         }
 
         cx.emit(LspStoreEvent::LanguageDetected {
-            buffer: buffer.clone(),
+            buffer: buffer_entity.clone(),
             new_language: Some(new_language),
         })
     }
@@ -5897,7 +5938,11 @@ impl LspStore {
                 anyhow::bail!("buffer is not open");
             };
 
-            let handle = this.register_buffer_with_language_servers(&buffer, cx);
+            let handle = this.register_buffer_with_language_servers(
+                &buffer,
+                Some(envelope.original_sender_id.unwrap_or(envelope.sender_id)),
+                cx,
+            );
             this.buffer_store().update(cx, |buffer_store, _| {
                 buffer_store.register_shared_lsp_handle(peer_id, buffer_id, handle);
             });
@@ -6840,7 +6885,11 @@ impl LspStore {
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |this, cx| {
             let buffers = this.buffer_ids_to_buffers(envelope.payload.buffer_ids.into_iter(), cx);
-            this.restart_language_servers_for_buffers(buffers, cx);
+            this.restart_language_servers_for_buffers(
+                buffers,
+                Some(envelope.original_sender_id.unwrap_or(envelope.sender_id)),
+                cx,
+            );
         })?;
 
         Ok(proto::Ack {})
@@ -7236,6 +7285,7 @@ impl LspStore {
     pub fn restart_language_servers_for_buffers(
         &mut self,
         buffers: Vec<Entity<Buffer>>,
+        registrant: Option<proto::PeerId>,
         cx: &mut Context<Self>,
     ) {
         if let Some((client, project_id)) = self.upstream_client() {
@@ -7275,7 +7325,7 @@ impl LspStore {
                     .await;
                 this.update(&mut cx, |this, cx| {
                     for buffer in buffers {
-                        this.register_buffer_with_language_servers(&buffer, cx);
+                        this.register_buffer_with_language_servers(&buffer, registrant, cx);
                     }
                 })
                 .ok()
@@ -7518,35 +7568,36 @@ impl LspStore {
 
                 let local = self.as_local_mut().unwrap();
 
-                let versions = local
-                    .buffer_snapshots
-                    .entry(buffer.remote_id())
-                    .or_default()
-                    .entry(server_id)
-                    .and_modify(|_| {
-                        assert!(
+                if local.registered_buffers.contains_key(&buffer.remote_id()) {
+                    let versions = local
+                        .buffer_snapshots
+                        .entry(buffer.remote_id())
+                        .or_default()
+                        .entry(server_id)
+                        .and_modify(|_| {
+                            assert!(
                             false,
                             "There should not be an existing snapshot for a newly inserted buffer"
                         )
-                    })
-                    .or_insert_with(|| {
-                        vec![LspBufferSnapshot {
-                            version: 0,
-                            snapshot: buffer.text_snapshot(),
-                        }]
-                    });
+                        })
+                        .or_insert_with(|| {
+                            vec![LspBufferSnapshot {
+                                version: 0,
+                                snapshot: buffer.text_snapshot(),
+                            }]
+                        });
 
-                let snapshot = versions.last().unwrap();
-                let version = snapshot.version;
-                let initial_snapshot = &snapshot.snapshot;
-                let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
-                language_server.register_buffer(
-                    uri,
-                    adapter.language_id(&language.name()),
-                    version,
-                    initial_snapshot.text(),
-                );
-
+                    let snapshot = versions.last().unwrap();
+                    let version = snapshot.version;
+                    let initial_snapshot = &snapshot.snapshot;
+                    let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
+                    language_server.register_buffer(
+                        uri,
+                        adapter.language_id(&language.name()),
+                        version,
+                        initial_snapshot.text(),
+                    );
+                }
                 buffer_handle.update(cx, |buffer, cx| {
                     buffer.set_completion_triggers(
                         server_id,
