@@ -95,7 +95,10 @@ use task_store::TaskStore;
 use terminals::Terminals;
 use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
-use util::{paths::compare_paths, ResultExt as _};
+use util::{
+    paths::{compare_paths, SanitizedPath},
+    ResultExt as _,
+};
 use worktree::{CreatedEntry, Snapshot, Traversal};
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
@@ -1484,22 +1487,37 @@ impl Project {
             .and_then(|worktree| worktree.read(cx).status_for_file(&project_path.path))
     }
 
-    pub fn visibility_for_paths(&self, paths: &[PathBuf], cx: &App) -> Option<bool> {
+    pub fn visibility_for_paths(
+        &self,
+        paths: &[PathBuf],
+        metadatas: &[Metadata],
+        exclude_sub_dirs: bool,
+        cx: &App,
+    ) -> Option<bool> {
         paths
             .iter()
-            .map(|path| self.visibility_for_path(path, cx))
+            .zip(metadatas)
+            .map(|(path, metadata)| self.visibility_for_path(path, metadata, exclude_sub_dirs, cx))
             .max()
             .flatten()
     }
 
-    pub fn visibility_for_path(&self, path: &Path, cx: &App) -> Option<bool> {
+    pub fn visibility_for_path(
+        &self,
+        path: &Path,
+        metadata: &Metadata,
+        exclude_sub_dirs: bool,
+        cx: &App,
+    ) -> Option<bool> {
+        let sanitized_path = SanitizedPath::from(path);
+        let path = sanitized_path.as_path();
         self.worktrees(cx)
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);
-                worktree
-                    .as_local()?
-                    .contains_abs_path(path)
-                    .then(|| worktree.is_visible())
+                let abs_path = worktree.as_local()?.abs_path();
+                let contains = path == abs_path
+                    || (path.starts_with(abs_path) && (!exclude_sub_dirs || !metadata.is_dir));
+                contains.then(|| worktree.is_visible())
             })
             .max()
     }

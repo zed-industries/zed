@@ -1335,11 +1335,6 @@ impl LocalWorktree {
         &self.fs
     }
 
-    pub fn contains_abs_path(&self, path: &Path) -> bool {
-        let path = SanitizedPath::from(path);
-        path.starts_with(&self.abs_path)
-    }
-
     pub fn is_path_private(&self, path: &Path) -> bool {
         !self.share_private_files && self.settings.is_path_private(path)
     }
