@@ -4939,13 +4939,14 @@ async fn test_split_selection_into_lines(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestAppContext) {
+async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(&sample_text(9, 5, 'a'), cx);
         build_editor(buffer, window, cx)
     });
+
     // setup
     _ = editor.update(cx, |editor, window, cx| {
         editor.fold_creases(
@@ -4958,6 +4959,13 @@ fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestAppCont
             window,
             cx,
         );
+        assert_eq!(
+            editor.display_text(cx),
+            "aa⋯bbb\nccc⋯eeee\nfffff\nggggg\n⋯i"
+        );
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(None, window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
@@ -4966,28 +4974,15 @@ fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestAppCont
                 DisplayPoint::new(DisplayRow(4), 4)..DisplayPoint::new(DisplayRow(4), 4),
             ])
         });
-        assert_eq!(
-            editor.display_text(cx),
-            "aa⋯bbb\nccc⋯eeee\nfffff\nggggg\n⋯i"
-        );
-    });
-
-    _ = editor.update(cx, |editor, window, cx| {
         editor.split_selection_into_lines(&SplitSelectionIntoLines, window, cx);
         assert_eq!(
             editor.display_text(cx),
             "aaaaa\nbbbbb\nccc⋯eeee\nfffff\nggggg\n⋯i"
         );
-        assert_eq!(
-            editor.selections.display_ranges(cx),
-            [
-                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
-                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
-                DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 0),
-                DisplayPoint::new(DisplayRow(5), 4)..DisplayPoint::new(DisplayRow(5), 4)
-            ]
-        );
     });
+    EditorTestContext::for_editor(editor, cx)
+        .await
+        .assert_editor_state("aˇaˇaaa\nbbbbb\nˇccccc\nddddd\neeeee\nfffff\nggggg\nhhhhh\niiiiiˇ");
 
     _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(None, window, cx, |s| {
@@ -5013,6 +5008,11 @@ fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestAppCont
             ]
         );
     });
+    EditorTestContext::for_editor(editor, cx)
+        .await
+        .assert_editor_state(
+            "aaaaaˇ\nbbbbbˇ\ncccccˇ\ndddddˇ\neeeeeˇ\nfffffˇ\ngggggˇ\nhhhhhˇ\niiiiiˇ",
+        );
 }
 
 #[gpui::test]
