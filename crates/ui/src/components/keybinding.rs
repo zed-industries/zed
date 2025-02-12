@@ -220,7 +220,7 @@ pub fn render_modifiers(
     let platform_keys = itertools::intersperse(platform_keys, separator.clone());
 
     platform_keys
-        .chain(if trailing_separator {
+        .chain(if modifiers.modified() && trailing_separator {
             Some(separator)
         } else {
             None
