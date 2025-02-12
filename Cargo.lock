@@ -16852,9 +16852,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "614669bead4741b2fc352ae1967318be16949cf46f59013e548c6dbfdfc01252"
+checksum = "1bf21350eced858d129840589158a8f6895c4fa4327ae56dd8c7d6a98495bed4"
 dependencies = [
  "serde",
  "serde_json",
@@ -17076,6 +17076,7 @@ dependencies = [
  "postage",
  "project",
  "regex",
+ "release_channel",
  "reqwest_client",
  "rpc",
  "serde",
@@ -17085,6 +17086,7 @@ dependencies = [
  "telemetry",
  "telemetry_events",
  "theme",
+ "thiserror 1.0.69",
  "tree-sitter-go",
  "tree-sitter-rust",
  "ui",
