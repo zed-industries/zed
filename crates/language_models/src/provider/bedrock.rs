@@ -42,11 +42,15 @@ use crate::AllLanguageModelSettings;
 const PROVIDER_ID: &str = "amazon-bedrock";
 const PROVIDER_NAME: &str = "Amazon Bedrock";
 
-#[derive(Default, Clone, Debug, PartialEq)]
-pub struct AmazonBedrockSettings {
+#[derive(Default, Clone, Deserialize, Serialize, PartialEq, Debug)]
+pub struct BedrockCredentials {
     pub region: String,
     pub access_key_id: String,
     pub secret_access_key: String,
+}
+
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct AmazonBedrockSettings {
     pub session_token: Option<String>,
     pub available_models: Vec<AvailableModel>,
 }
@@ -65,10 +69,10 @@ pub struct AvailableModel {
 const ZED_BEDROCK_AAID: &str = "ZED_ACCESS_KEY_ID";
 const ZED_BEDROCK_SK: &str = "ZED_SECRET_ACCESS_KEY";
 const ZED_BEDROCK_REGION: &str = "ZED_AWS_REGION";
+const ZED_AWS_CREDENTIALS: &str = "ZED_AWS_CREDENTIALS";
 
 pub struct State {
-    aa_id: Option<String>,
-    sk: Option<String>,
+    credentials: Option<BedrockCredentials>,
     credentials_from_env: bool,
     region: Option<String>,
     _subscription: Subscription,
@@ -76,26 +80,12 @@ pub struct State {
 
 impl State {
     fn reset_credentials(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let delete_aa_id = cx.delete_credentials(
-            &AllLanguageModelSettings::get_global(cx)
-                .bedrock
-                .access_key_id,
-        );
-        let delete_sk: Task<Result<()>> = cx.delete_credentials(
-            &AllLanguageModelSettings::get_global(cx)
-                .bedrock
-                .secret_access_key,
-        );
-        let delete_region =
-            cx.delete_credentials(&AllLanguageModelSettings::get_global(cx).bedrock.region);
+        let delete_credentials = cx.delete_credentials(ZED_AWS_CREDENTIALS);
+
         cx.spawn(|this, mut cx| async move {
-            delete_aa_id.await.ok();
-            delete_sk.await.ok();
-            delete_region.await.ok();
+            delete_credentials.await.ok();
             this.update(&mut cx, |this, cx| {
-                this.aa_id = None;
-                this.sk = None;
-                this.region = None;
+                this.credentials = None;
                 this.credentials_from_env = false;
                 cx.notify();
             })
@@ -104,85 +94,57 @@ impl State {
 
     fn set_credentials(
         &mut self,
-        access_key_id: String,
-        secret_key: String,
-        region: String,
+        credentials: BedrockCredentials,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let write_aa_id = cx.write_credentials(
-            ZED_BEDROCK_AAID, // TODO: GET THIS REVIEWED, MAKE SURE IT DOESN'T BREAK STUFF LONG TERM
-            "Bearer",
-            access_key_id.as_bytes(),
-        );
-        let write_sk = cx.write_credentials(
-            ZED_BEDROCK_SK, // TODO: GET THIS REVIEWED, MAKE SURE IT DOESN'T BREAK STUFF LONG TERM
-            "Bearer",
-            secret_key.as_bytes(),
-        );
-        let write_region = cx.write_credentials(ZED_BEDROCK_REGION, "Bearer", region.as_bytes());
-        cx.spawn(|this, mut cx| async move {
-            write_aa_id.await?;
-            write_sk.await?;
-            write_region.await?;
+        let binding = serde_json::to_vec(&credentials);
+        let serialized_creds = match binding {
+            Ok(creds) => creds,
+            Err(err) => {
+                return Task::ready(Err(anyhow!("Failed to serialize credentials: {}", err)));
+            }
+        };
 
+        let write_credentials =
+            cx.write_credentials(ZED_AWS_CREDENTIALS, "Bearer", &(serialized_creds.clone()));
+
+        cx.spawn(|this, mut cx| async move {
+            write_credentials.await?;
             this.update(&mut cx, |this, cx| {
-                this.aa_id = Some(access_key_id);
-                this.sk = Some(secret_key);
-                this.region = Some(region);
+                this.credentials = Some(credentials);
                 cx.notify();
             })
         })
     }
 
     fn is_authenticated(&self) -> bool {
-        self.aa_id.is_some() && self.sk.is_some()
+        self.credentials.is_some()
     }
 
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        // just hit the sdk-bedrock list models to check if the credentials are valid
         if self.is_authenticated() {
-            Task::ready(Ok(()))
-        } else {
-            // TODO: Figure out how to only enter the pw once,
-            // perhaps serde it
-            cx.spawn(|this, mut cx| async move {
-                let (aa_id, sk, region, from_env) = if let (Ok(aa_id), Ok(sk), Ok(region)) = (
-                    std::env::var(ZED_BEDROCK_AAID),
-                    std::env::var(ZED_BEDROCK_SK),
-                    std::env::var(ZED_BEDROCK_REGION),
-                ) {
-                    (aa_id, sk, region, true)
-                } else {
-                    let (_, aa_id) = cx
-                        .update(|cx| cx.read_credentials(ZED_BEDROCK_AAID))?
-                        .await?
-                        .ok_or_else(|| anyhow!("Access key ID not found"))?;
-                    let (_, sk) = cx
-                        .update(|cx| cx.read_credentials(ZED_BEDROCK_SK))?
-                        .await?
-                        .ok_or_else(|| anyhow!("Secret access key not found"))?;
-                    let (_, region) = cx
-                        .update(|cx| cx.read_credentials(ZED_BEDROCK_REGION))?
-                        .await?
-                        .ok_or_else(|| anyhow!("Region not found"))?;
+            return Task::ready(Ok(()));
+        }
 
-                    (
-                        String::from_utf8(aa_id)?,
-                        String::from_utf8(sk)?,
-                        String::from_utf8(region)?,
-                        false,
-                    )
+        cx.spawn(|this, mut cx| async move {
+            let (credentials, from_env) =
+                if let Ok(credentials) = std::env::var(ZED_AWS_CREDENTIALS) {
+                    (credentials, true)
+                } else {
+                    let (_, credentials) = cx
+                        .update(|cx| cx.read_credentials(ZED_AWS_CREDENTIALS))?
+                        .await?
+                        .ok_or_else(|| anyhow!("credentials not found"))?;
+                    (String::from_utf8(credentials)?, false)
                 };
 
-                this.update(&mut cx, |this, cx| {
-                    this.credentials_from_env = from_env;
-                    this.aa_id = Some(aa_id);
-                    this.sk = Some(sk);
-                    this.region = Some(region);
-                    cx.notify();
-                })
+            this.update(&mut cx, |this, cx| {
+                let credentials: BedrockCredentials = serde_json::from_str(&credentials).unwrap();
+                this.credentials = Some(credentials);
+                this.credentials_from_env = from_env;
+                cx.notify();
             })
-        }
+        })
     }
 }
 
@@ -196,8 +158,7 @@ impl BedrockLanguageModelProvider {
     // This has to succeed
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         let state = cx.new(|cx| State {
-            aa_id: None,
-            sk: None,
+            credentials: None,
             region: Some(String::from("us-east-1")),
             credentials_from_env: false,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
@@ -312,9 +273,16 @@ impl BedrockModel {
     ) -> Result<
         BoxFuture<'static, BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
     > {
-        let Ok((aa_id, sk, region)) = cx.read_entity(&self.state, |state, cx| {
-            let _settings = &AllLanguageModelSettings::get_global(cx).bedrock;
-            (state.aa_id.clone(), state.sk.clone(), state.region.clone())
+        let Ok(Ok((aa_id, sk, region))) = cx.read_entity(&self.state, |state, _cx| {
+            if let Some(credentials) = &state.credentials {
+                Ok((
+                    credentials.access_key_id.clone(),
+                    credentials.secret_access_key.clone(),
+                    state.region.clone(),
+                ))
+            } else {
+                return Err(anyhow!("Failed to read credentials"));
+            }
         }) else {
             return Err(anyhow!("App state dropped"));
         };
@@ -325,13 +293,7 @@ impl BedrockModel {
         let runtime_client = bedrock_client::Client::from_conf(
             Config::builder()
                 .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
-                .credentials_provider(Credentials::new(
-                    aa_id.unwrap(),
-                    sk.unwrap(),
-                    None,
-                    None,
-                    "Keychain",
-                ))
+                .credentials_provider(Credentials::new(aa_id, sk, None, None, "Keychain"))
                 .region(Region::new(region.unwrap()))
                 .http_client(self.http_client.clone())
                 .build(),
@@ -707,15 +669,39 @@ impl ConfigurationView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let access_key_id = self.access_key_id_editor.read(cx).text(cx).to_string();
-        let secret_access_key = self.secret_access_key_editor.read(cx).text(cx).to_string();
-        let region = self.region_editor.read(cx).text(cx).to_string();
+        let access_key_id = self
+            .access_key_id_editor
+            .read(cx)
+            .text(cx)
+            .to_string()
+            .trim()
+            .to_string();
+        let secret_access_key = self
+            .secret_access_key_editor
+            .read(cx)
+            .text(cx)
+            .to_string()
+            .trim()
+            .to_string();
+        let region = self
+            .region_editor
+            .read(cx)
+            .text(cx)
+            .to_string()
+            .trim()
+            .to_string();
 
         let state = self.state.clone();
         cx.spawn(|_, mut cx| async move {
             state
                 .update(&mut cx, |state, cx| {
-                    state.set_credentials(access_key_id, secret_access_key, region, cx)
+                    let credentials: BedrockCredentials = BedrockCredentials {
+                        access_key_id: access_key_id.clone(),
+                        secret_access_key: secret_access_key.clone(),
+                        region: region.clone(),
+                    };
+
+                    state.set_credentials(credentials, cx)
                 })?
                 .await
         })
