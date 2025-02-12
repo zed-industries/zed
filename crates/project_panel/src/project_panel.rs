@@ -3994,7 +3994,7 @@ impl ProjectPanel {
                                                     .when(
                                                         index == active_index
                                                             && (is_active || is_marked),
-                                                        |this| this.underline(true),
+                                                        |this| this.underline(),
                                                     ),
                                             );
 

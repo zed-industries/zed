@@ -104,7 +104,7 @@ impl Render for QuickActionBar {
                 editor.git_blame_inline_enabled(),
                 editor.show_git_blame_gutter(),
                 editor.auto_signature_help_enabled(cx),
-                editor.should_show_inline_completions(cx),
+                editor.edit_predictions_enabled(),
                 editor.inline_completions_enabled(cx),
             )
         });

@@ -1,5 +1,8 @@
 //! # panel
-use gpui::actions;
+use editor::{Editor, EditorElement, EditorStyle};
+use gpui::{actions, Entity, TextStyle};
+use settings::Settings;
+use theme::ThemeSettings;
 use ui::{prelude::*, Tab};
 
 actions!(panel, [NextPanelTab, PreviousPanelTab]);
@@ -46,7 +49,8 @@ pub fn panel_button(label: impl Into<SharedString>) -> ui::Button {
     let id = ElementId::Name(label.clone().to_lowercase().replace(' ', "_").into());
     ui::Button::new(id, label)
         .label_size(ui::LabelSize::Small)
-        .layer(ui::ElevationIndex::Surface)
+        // TODO: Change this once we use on_surface_bg in button_like
+        .layer(ui::ElevationIndex::ModalSurface)
         .size(ui::ButtonSize::Compact)
 }
 
@@ -57,10 +61,65 @@ pub fn panel_filled_button(label: impl Into<SharedString>) -> ui::Button {
 pub fn panel_icon_button(id: impl Into<SharedString>, icon: IconName) -> ui::IconButton {
     let id = ElementId::Name(id.into());
     ui::IconButton::new(id, icon)
-        .layer(ui::ElevationIndex::Surface)
+        // TODO: Change this once we use on_surface_bg in button_like
+        .layer(ui::ElevationIndex::ModalSurface)
         .size(ui::ButtonSize::Compact)
 }
 
 pub fn panel_filled_icon_button(id: impl Into<SharedString>, icon: IconName) -> ui::IconButton {
     panel_icon_button(id, icon).style(ui::ButtonStyle::Filled)
+}
+
+pub fn panel_editor_container(_window: &mut Window, cx: &mut App) -> Div {
+    v_flex()
+        .size_full()
+        .gap(px(8.))
+        .p_2()
+        .bg(cx.theme().colors().editor_background)
+}
+
+pub fn panel_editor_style(monospace: bool, window: &mut Window, cx: &mut App) -> EditorStyle {
+    let settings = ThemeSettings::get_global(cx);
+
+    let font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
+
+    let (font_family, font_features, font_weight, line_height) = if monospace {
+        (
+            settings.buffer_font.family.clone(),
+            settings.buffer_font.features.clone(),
+            settings.buffer_font.weight,
+            font_size * settings.buffer_line_height.value(),
+        )
+    } else {
+        (
+            settings.ui_font.family.clone(),
+            settings.ui_font.features.clone(),
+            settings.ui_font.weight,
+            window.line_height(),
+        )
+    };
+
+    EditorStyle {
+        background: cx.theme().colors().editor_background,
+        local_player: cx.theme().players().local(),
+        text: TextStyle {
+            color: cx.theme().colors().text,
+            font_family,
+            font_features,
+            font_size: TextSize::Small.rems(cx).into(),
+            font_weight,
+            line_height: line_height.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+pub fn panel_editor_element(
+    editor: &Entity<Editor>,
+    monospace: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> EditorElement {
+    EditorElement::new(editor, panel_editor_style(monospace, window, cx))
 }

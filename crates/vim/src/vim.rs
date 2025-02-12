@@ -23,7 +23,6 @@ use anyhow::Result;
 use collections::HashMap;
 use editor::{
     movement::{self, FindRange},
-    scroll::Autoscroll,
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
@@ -649,20 +648,24 @@ impl Vim {
                 vim.push_count_digit(n.0, window, cx);
             });
             Vim::action(editor, cx, |vim, _: &Tab, window, cx| {
-                let Some(anchor) = vim
-                    .editor()
-                    .and_then(|editor| editor.read(cx).inline_completion_start_anchor())
-                else {
-                    return;
-                };
-
-                vim.update_editor(window, cx, |_, editor, window, cx| {
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                        s.select_anchor_ranges([anchor..anchor])
-                    });
-                });
-                vim.switch_mode(Mode::Insert, true, window, cx);
+                vim.input_ignored(" ".into(), window, cx)
             });
+            Vim::action(
+                editor,
+                cx,
+                |vim, action: &editor::AcceptEditPrediction, window, cx| {
+                    vim.update_editor(window, cx, |_, editor, window, cx| {
+                        editor.accept_edit_prediction(action, window, cx);
+                    });
+                    // In non-insertion modes, predictions will be hidden and instead a jump will be
+                    // displayed (and performed by `accept_edit_prediction`). This switches to
+                    // insert mode so that the prediction is displayed after the jump.
+                    match vim.mode {
+                        Mode::Replace => {}
+                        _ => vim.switch_mode(Mode::Insert, true, window, cx),
+                    };
+                },
+            );
             Vim::action(editor, cx, |vim, _: &Enter, window, cx| {
                 vim.input_ignored("\n".into(), window, cx)
             });

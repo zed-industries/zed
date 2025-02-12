@@ -199,12 +199,13 @@ impl RenderOnce for KeybindingHint {
                         blur_radius: px(0.),
                         spread_radius: px(0.),
                     }])
-                    .child(self.keybinding.size(kb_size)),
+                    .child(self.keybinding.size(rems_from_px(kb_size.0))),
             )
             .children(self.suffix)
     }
 }
 
+// View this component preview using `workspace: open component-preview`
 impl ComponentPreview for KeybindingHint {
     fn preview(window: &mut Window, _cx: &App) -> AnyElement {
         let enter_fallback = gpui::KeyBinding::new("enter", menu::Confirm, None);
