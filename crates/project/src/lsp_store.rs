@@ -1599,6 +1599,7 @@ impl LocalLspStore {
         }
 
         let worktree_id = file.worktree_id(cx);
+        let language = buffer.language().cloned();
 
         if let Some(diagnostics) = self.diagnostics.get(&worktree_id) {
             for (server_id, diagnostics) in
@@ -1606,6 +1607,50 @@ impl LocalLspStore {
             {
                 self.update_buffer_diagnostics(buffer_handle, server_id, None, diagnostics, cx)
                     .log_err();
+            }
+        }
+        let Some(language) = language else {
+            return;
+        };
+        for adapter in self.languages.lsp_adapters(&language.name()) {
+            let servers = self
+                .language_server_ids
+                .get(&(worktree_id, adapter.name.clone()));
+            if let Some(server_ids) = servers {
+                for server_id in server_ids {
+                    let server = self
+                        .language_servers
+                        .get(server_id)
+                        .and_then(|server_state| {
+                            if let LanguageServerState::Running { server, .. } = server_state {
+                                Some(server.clone())
+                            } else {
+                                None
+                            }
+                        });
+                    let server = match server {
+                        Some(server) => server,
+                        None => continue,
+                    };
+
+                    buffer_handle.update(cx, |buffer, cx| {
+                        buffer.set_completion_triggers(
+                            server.server_id(),
+                            server
+                                .capabilities()
+                                .completion_provider
+                                .as_ref()
+                                .and_then(|provider| {
+                                    provider
+                                        .trigger_characters
+                                        .as_ref()
+                                        .map(|characters| characters.iter().cloned().collect())
+                                })
+                                .unwrap_or_default(),
+                            cx,
+                        );
+                    });
+                }
             }
         }
     }
