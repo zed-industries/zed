@@ -2072,10 +2072,10 @@ impl EditorElement {
         let mut icon_size = editor_font_size.round();
 
         // Ensure icon size will be odd, so the center line won't be blurry
-        if icon_size.0.round() % 2.0 == 0.0 {
-            // todo: + or -?
-            icon_size += px(1.0);
-        };
+        // if icon_size.0.round() % 2.0 == 0.0 {
+        //     // todo: + or -?
+        //     icon_size += px(1.0);
+        // };
 
         //                      button size (18px)
         // | <----------> | <---------------------------------> |
@@ -2085,22 +2085,18 @@ impl EditorElement {
         //                      7/15th     1/15
 
         let mut line_scale = icon_size / 15.0;
-        let mut line_width = line_scale.round().max(px(1.));
+        let mut line_width = line_scale;
         let mut line_color = cx
             .theme()
             .colors()
             .editor_line_number
             .opacity(line_scale / line_width);
-        let button_h_padding = (icon_size - px(1.0)) / 2.0;
+        let button_h_padding = ((icon_size - px(1.0)) / 2.0).round();
         let left_margin = px(0.);
 
         let mut start_line = None;
         let line_y_spacing = 8.0;
-        let line_x = (gutter_hitbox.origin.x
-            + left_margin
-            + button_h_padding
-            + (icon_size - line_scale) / 2.)
-            .round();
+        let line_x = (gutter_hitbox.origin.x + left_margin + button_h_padding + icon_size / 2.);
         dbg!(
             line_x - gutter_hitbox.origin.x,
             line_width,
@@ -4431,7 +4427,11 @@ impl EditorElement {
         cx: &mut App,
     ) {
         for excerpt_line in &layout.excerpt_lines {
-            window.paint_quad(fill(excerpt_line.bounds, excerpt_line.color));
+            let mut path = gpui::PathBuilder::stroke(excerpt_line.bounds.size.width);
+            let offset = point(excerpt_line.bounds.size.width / 2., px(0.));
+            path.move_to(excerpt_line.bounds.origin + offset);
+            path.line_to(excerpt_line.bounds.bottom_left() + offset);
+            window.paint_path(path.build().unwrap(), excerpt_line.color);
         }
     }
 
