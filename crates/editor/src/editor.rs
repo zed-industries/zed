@@ -12686,22 +12686,17 @@ impl Editor {
                 || Rope::from(""),
                 |snapshot| snapshot.text.as_rope().clone(),
             );
-            let new_index_text = if edits.len() == 1
-                && edits[0].0.end - edits[0].0.start == index_base.len()
-                && edits[0].1.is_empty()
-                && diff.base_text().is_none()
-            {
-                // This file doesn't exist in HEAD and we're discarding its only staged hunk,
-                // so remove it from the index too.
+            let index_buffer = cx.new(|cx| {
+                Buffer::local_normalized(index_base.clone(), text::LineEnding::default(), cx)
+            });
+            let new_index_text = index_buffer.update(cx, |index_buffer, cx| {
+                index_buffer.edit(edits, None, cx);
+                index_buffer.snapshot().as_rope().to_string()
+            });
+            let new_index_text = if new_index_text.is_empty() && diff.base_text().is_none() {
                 None
             } else {
-                let index_buffer = cx.new(|cx| {
-                    Buffer::local_normalized(index_base.clone(), text::LineEnding::default(), cx)
-                });
-                index_buffer.update(cx, |index_buffer, cx| {
-                    index_buffer.edit(edits, None, cx);
-                    Some(index_buffer.snapshot().as_rope().to_string())
-                })
+                Some(new_index_text)
             };
 
             let _ = repo.read(cx).set_index_text(&path, new_index_text);
