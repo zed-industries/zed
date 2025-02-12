@@ -12621,7 +12621,10 @@ impl Editor {
         snapshot: &MultiBufferSnapshot,
     ) -> bool {
         let mut hunks = self.diff_hunks_in_ranges(ranges, &snapshot);
-        hunks.any(|hunk| hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk)
+        hunks.any(|hunk| {
+            log::debug!("considering {hunk:?}");
+            hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk
+        })
     }
 
     pub fn toggle_staged_selected_diff_hunks(

@@ -187,7 +187,7 @@ impl GitRepository for RealGitRepository {
 
             let status = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
-                .args(["update-index", "--cacheinfo", "100644", &sha])
+                .args(["update-index", "--add", "--cacheinfo", "100644", &sha])
                 .arg(path.as_ref())
                 .status()?;
 
