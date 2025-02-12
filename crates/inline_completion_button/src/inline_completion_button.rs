@@ -573,37 +573,41 @@ impl InlineCompletionButton {
             language::EditPredictionsMode::Auto => false,
             language::EditPredictionsMode::EagerPreview => true,
         };
-        menu = menu.separator().toggleable_entry(
-            "Eager Preview Mode",
-            is_eager_preview_enabled,
-            IconPosition::Start,
-            None,
-            {
-                let fs = fs.clone();
-                move |_window, cx| {
-                    update_settings_file::<AllLanguageSettings>(
-                        fs.clone(),
-                        cx,
-                        move |settings, _cx| {
-                            let new_mode = match is_eager_preview_enabled {
-                                true => language::EditPredictionsMode::Auto,
-                                false => language::EditPredictionsMode::EagerPreview,
-                            };
+        menu = if cx.is_staff() {
+            menu.separator().toggleable_entry(
+                "Eager Preview Mode",
+                is_eager_preview_enabled,
+                IconPosition::Start,
+                None,
+                {
+                    let fs = fs.clone();
+                    move |_window, cx| {
+                        update_settings_file::<AllLanguageSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _cx| {
+                                let new_mode = match is_eager_preview_enabled {
+                                    true => language::EditPredictionsMode::Auto,
+                                    false => language::EditPredictionsMode::EagerPreview,
+                                };
 
-                            if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
-                                edit_predictions.mode = new_mode;
-                            } else {
-                                settings.edit_predictions =
-                                    Some(language_settings::EditPredictionSettingsContent {
-                                        mode: new_mode,
-                                        ..Default::default()
-                                    });
-                            }
-                        },
-                    );
-                }
-            },
-        );
+                                if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
+                                    edit_predictions.mode = new_mode;
+                                } else {
+                                    settings.edit_predictions =
+                                        Some(language_settings::EditPredictionSettingsContent {
+                                            mode: new_mode,
+                                            ..Default::default()
+                                        });
+                                }
+                            },
+                        );
+                    }
+                },
+            )
+        } else {
+            menu
+        };
 
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
             menu = menu
