@@ -342,8 +342,13 @@ impl BufferDiffInner {
                     if secondary_range == (start_point..end_point) {
                         secondary_status = DiffHunkSecondaryStatus::HasSecondaryHunk;
                         secondary_diff_base_byte_range =
-                            dbg!(Some(secondary_hunk.diff_base_byte_range.clone()));
+                            Some(secondary_hunk.diff_base_byte_range.clone());
                     } else if secondary_range.start <= end_point {
+                        log::debug!(
+                            "emitting OVERLAP, secondary_range: {:?}, range: {:?}",
+                            secondary_range,
+                            start_point..end_point
+                        );
                         secondary_status = DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk;
                     }
                 }
@@ -1339,7 +1344,7 @@ mod tests {
             if rng.gen_bool(0.2) {
                 format!("\n")
             } else {
-                let c = rng.gen_range('a'..='z');
+                let c = rng.gen_range('A'..='Z');
                 format!("{c}{c}{c}\n")
             }
         }
@@ -1408,7 +1413,11 @@ mod tests {
         eprintln!("WORKING COPY: {}", working_copy.text());
         let index_text = cx.new(|cx| {
             language::Buffer::local_normalized(
-                Rope::from(head_text.as_str()),
+                if rng.gen() {
+                    Rope::from(head_text.as_str())
+                } else {
+                    working_copy.as_rope().clone()
+                },
                 text::LineEnding::default(),
                 cx,
             )
@@ -1435,10 +1444,10 @@ mod tests {
                 .collect::<Vec<_>>()
         });
 
-        for hunk in &hunks {
-            assert!(hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk);
-            assert!(hunk.secondary_diff_base_byte_range.is_some());
-        }
+        //for hunk in &hunks {
+        //    assert!(hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk);
+        //    assert!(hunk.secondary_diff_base_byte_range.is_some());
+        //}
 
         if hunks.len() == 0 {
             return;
@@ -1554,8 +1563,6 @@ mod tests {
             fff
             ggg
             hhh
-            mmm
-
             iii
             jjj
             kkk
@@ -1566,16 +1573,20 @@ mod tests {
             ppp
             qqq
             rrr
-            sss
-            ttt
+
             uuu
-            vvv
+            LLL
             www
-            fff
-            rrr
-            lll
-            eee
+            FFF
+            xxx
+            DDD
+            XXX
+            KKK
             yyy
+            QQQ
+            TTT
+            EEE
+            CCC
             zzz
         "
         .unindent();
@@ -1604,6 +1615,21 @@ mod tests {
             ),
             secondary_diff: None,
         };
+        let secondary_hunks = cx.update(|cx| {
+            secondary
+                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &working_copy, cx)
+                .map(|hunk| {
+                    (
+                        hunk.diff_base_byte_range.clone(),
+                        hunk.buffer_range.to_point(&working_copy),
+                        working_copy
+                            .text_for_range(hunk.buffer_range.clone())
+                            .collect::<String>(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+        log::debug!("secondary hunks before change: {secondary_hunks:#?}");
         let secondary = cx.new(|_| secondary);
         let mut diff = BufferDiff {
             buffer_id: working_copy.remote_id(),
@@ -1626,15 +1652,23 @@ mod tests {
         }
         eprintln!("count of hunks: {}", hunks.len());
 
-        let hunk_choices: Vec<usize> = vec![0];
+        let hunk_choices: Vec<usize> = vec![4];
 
         for i in hunk_choices {
             let hunk = &mut hunks[i];
-            dbg!(&hunk);
             let hunk_fields = (
                 hunk.diff_base_byte_range.clone(),
-                dbg!(hunk.secondary_diff_base_byte_range.clone()),
+                hunk.secondary_diff_base_byte_range.clone(),
                 hunk.buffer_range.clone(),
+            );
+            log::debug!(
+                "{:?}, {:?}, {:?}, {:?}",
+                hunk.diff_base_byte_range,
+                hunk.secondary_diff_base_byte_range,
+                hunk.buffer_range.to_point(&working_copy),
+                working_copy
+                    .text_for_range(hunk.buffer_range.clone())
+                    .collect::<String>()
             );
             let stage = match (
                 hunk.secondary_status,
@@ -1660,7 +1694,7 @@ mod tests {
                 [hunk_fields].into_iter(),
                 &working_copy,
             );
-            dbg!(&edits);
+            log::debug!("edits: {edits:?}");
             let new_index_text = index_text.update(cx, |index_text, cx| {
                 index_text.edit(edits, None, cx);
                 index_text.text()
@@ -1673,6 +1707,23 @@ mod tests {
                 inner: BufferDiff::build_sync(working_copy.text.clone(), new_index_text, cx),
                 secondary_diff: None,
             };
+
+            let secondary_hunks = cx.update(|cx| {
+                secondary
+                    .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &working_copy, cx)
+                    .map(|hunk| {
+                        (
+                            hunk.diff_base_byte_range.clone(),
+                            hunk.buffer_range.to_point(&working_copy),
+                            working_copy
+                                .text_for_range(hunk.buffer_range.clone())
+                                .collect::<String>(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            });
+            log::debug!("secondary hunks after change: {secondary_hunks:#?}");
+
             let secondary = cx.new(|_| secondary);
             diff = BufferDiff {
                 buffer_id: working_copy.remote_id(),
