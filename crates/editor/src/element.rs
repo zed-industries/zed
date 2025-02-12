@@ -3601,7 +3601,7 @@ impl EditorElement {
 
                         let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
 
-                        const PADDING_Y: Pixels = px(24.);
+                        const PADDING_Y: Pixels = px(12.);
 
                         let origin = start_point + point(cursor_character_x, PADDING_Y);
 
@@ -3625,7 +3625,7 @@ impl EditorElement {
                         let cursor_column = cursor.column() as usize;
 
                         let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
-                        const PADDING_Y: Pixels = px(24.);
+                        const PADDING_Y: Pixels = px(12.);
 
                         let origin = start_point
                             + point(
@@ -3636,29 +3636,21 @@ impl EditorElement {
                         element.prepaint_at(origin, window, cx);
                         return Some(element);
                     } else {
-                        const POLE_WIDTH: Pixels = px(1.5);
+                        const POLE_WIDTH: Pixels = px(2.);
 
                         let mut element = v_flex()
                             .child(
                                 inline_completion_accept_indicator(
                                     "Jump", None, editor, window, cx,
                                 )?
-                                .rounded_br(px(0.)),
+                                .rounded_br(px(0.))
+                                .rounded_tr(px(0.))
+                                .border_r_2(),
                             )
                             .child(
                                 div()
                                     .w(POLE_WIDTH)
-                                    .bg(linear_gradient(
-                                        180.,
-                                        linear_color_stop(
-                                            cx.theme().colors().text_accent.opacity(0.8),
-                                            0.5,
-                                        ),
-                                        linear_color_stop(
-                                            cx.theme().colors().text_accent.opacity(0.),
-                                            1.,
-                                        ),
-                                    ))
+                                    .bg(cx.theme().colors().text_accent.opacity(0.8))
                                     .h(line_height),
                             )
                             .items_end()
