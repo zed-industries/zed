@@ -3583,14 +3583,14 @@ impl EditorElement {
                     }
 
                     if target_display_point.row() < visible_row_range.start {
-                        let mut element = inline_completion_accept_indicator(
-                            "Scroll",
-                            Some(IconName::ArrowUp),
-                            editor,
-                            window,
-                            cx,
-                        )?
-                        .into_any();
+                        let mut element = editor
+                            .render_edit_prediction_line_popover(
+                                "Scroll",
+                                Some(IconName::ArrowUp),
+                                window,
+                                cx,
+                            )?
+                            .into_any();
 
                         element.layout_as_root(AvailableSpace::min_size(), window, cx);
 
@@ -3608,14 +3608,14 @@ impl EditorElement {
                         element.prepaint_at(origin, window, cx);
                         return Some(element);
                     } else if target_display_point.row() >= visible_row_range.end {
-                        let mut element = inline_completion_accept_indicator(
-                            "Scroll",
-                            Some(IconName::ArrowDown),
-                            editor,
-                            window,
-                            cx,
-                        )?
-                        .into_any();
+                        let mut element = editor
+                            .render_edit_prediction_line_popover(
+                                "Scroll",
+                                Some(IconName::ArrowDown),
+                                window,
+                                cx,
+                            )?
+                            .into_any();
 
                         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
 
@@ -3640,12 +3640,11 @@ impl EditorElement {
 
                         let mut element = v_flex()
                             .child(
-                                inline_completion_accept_indicator(
-                                    "Jump", None, editor, window, cx,
-                                )?
-                                .rounded_br(px(0.))
-                                .rounded_tr(px(0.))
-                                .border_r_2(),
+                                editor
+                                    .render_edit_prediction_line_popover("Jump", None, window, cx)?
+                                    .rounded_br(px(0.))
+                                    .rounded_tr(px(0.))
+                                    .border_r_2(),
                             )
                             .child(
                                 div()
@@ -3680,28 +3679,30 @@ impl EditorElement {
                 }
 
                 if target_display_point.row().as_f32() < scroll_top {
-                    let mut element = inline_completion_accept_indicator(
-                        "Jump to Edit",
-                        Some(IconName::ArrowUp),
-                        editor,
-                        window,
-                        cx,
-                    )?
-                    .into_any();
+                    let mut element = editor
+                        .render_edit_prediction_line_popover(
+                            "Jump to Edit",
+                            Some(IconName::ArrowUp),
+                            window,
+                            cx,
+                        )?
+                        .into_any();
+
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
 
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
                     Some(element)
                 } else if (target_display_point.row().as_f32() + 1.) > scroll_bottom {
-                    let mut element = inline_completion_accept_indicator(
-                        "Jump to Edit",
-                        Some(IconName::ArrowDown),
-                        editor,
-                        window,
-                        cx,
-                    )?
-                    .into_any();
+                    let mut element = editor
+                        .render_edit_prediction_line_popover(
+                            "Jump to Edit",
+                            Some(IconName::ArrowDown),
+                            window,
+                            cx,
+                        )?
+                        .into_any();
+
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point(
                         (text_bounds.size.width - size.width) / 2.,
@@ -3711,14 +3712,9 @@ impl EditorElement {
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
                     Some(element)
                 } else {
-                    let mut element = inline_completion_accept_indicator(
-                        "Jump to Edit",
-                        None,
-                        editor,
-                        window,
-                        cx,
-                    )?
-                    .into_any();
+                    let mut element = editor
+                        .render_edit_prediction_line_popover("Jump to Edit", None, window, cx)?
+                        .into_any();
                     let target_line_end = DisplayPoint::new(
                         target_display_point.row(),
                         editor_snapshot.line_len(target_display_point.row()),
@@ -3776,10 +3772,11 @@ impl EditorElement {
                         );
                         let (mut element, origin) = self.editor.update(cx, |editor, cx| {
                             Some((
-                                inline_completion_accept_indicator(
-                                    "Accept", None, editor, window, cx,
-                                )?
-                                .into_any(),
+                                editor
+                                    .render_edit_prediction_line_popover(
+                                        "Accept", None, window, cx,
+                                    )?
+                                    .into_any(),
                                 editor.display_to_pixel_point(
                                     target_line_end,
                                     editor_snapshot,
@@ -3808,6 +3805,37 @@ impl EditorElement {
                     cx,
                 );
 
+                let styled_text = highlighted_edits.to_styled_text(&style.text);
+
+                const ACCEPT_INDICATOR_HEIGHT: Pixels = px(24.);
+
+                let mut element = v_flex()
+                    .items_end()
+                    .shadow_sm()
+                    .child(
+                        h_flex()
+                            .h(ACCEPT_INDICATOR_HEIGHT)
+                            .mb(px(-1.))
+                            .px_1p5()
+                            .gap_1()
+                            .bg(Editor::edit_prediction_line_popover_bg_color(cx))
+                            .border_1()
+                            .border_b_0()
+                            .border_color(cx.theme().colors().border)
+                            .rounded_t_lg()
+                            .children(editor.render_edit_prediction_accept_keybind(window, cx)),
+                    )
+                    .child(
+                        div()
+                            .bg(cx.theme().colors().editor_background)
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
+                            .rounded_lg()
+                            .rounded_tr(Pixels::ZERO)
+                            .child(styled_text),
+                    )
+                    .into_any();
+
                 let line_count = highlighted_edits.text.lines().count();
 
                 let longest_row =
@@ -3827,16 +3855,6 @@ impl EditorElement {
                     .width
                 };
 
-                let styled_text = highlighted_edits.to_styled_text(&style.text);
-
-                let mut element = div()
-                    .bg(cx.theme().colors().editor_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .rounded_md()
-                    .child(styled_text)
-                    .into_any();
-
                 let viewport_bounds = Bounds::new(Default::default(), window.viewport_size())
                     .extend(Edges {
                         right: -Self::SCROLLBAR_WIDTH,
@@ -3853,7 +3871,7 @@ impl EditorElement {
                 let is_fully_visible = x_after_longest < text_bounds.right()
                     && x_after_longest + element_bounds.width < viewport_bounds.right();
 
-                let origin = if is_fully_visible {
+                let mut origin = if is_fully_visible {
                     point(
                         x_after_longest,
                         text_bounds.origin.y + edit_start.row().as_f32() * line_height
@@ -3897,6 +3915,8 @@ impl EditorElement {
                             row_target.as_f32() * line_height - scroll_pixel_position.y,
                         )
                 };
+
+                origin.y -= ACCEPT_INDICATOR_HEIGHT;
 
                 window.defer_draw(element, origin, 1);
 
@@ -5794,63 +5814,6 @@ fn header_jump_data(
         position: jump_position,
         line_offset_from_top,
     }
-}
-
-fn inline_completion_accept_indicator(
-    label: impl Into<SharedString>,
-    icon: Option<IconName>,
-    editor: &Editor,
-    window: &mut Window,
-    cx: &App,
-) -> Option<Div> {
-    let accept_binding = editor.accept_edit_prediction_keybind(window, cx);
-    let accept_keystroke = accept_binding.keystroke()?;
-
-    let accept_key = h_flex()
-        .px_0p5()
-        .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-        .text_size(TextSize::XSmall.rems(cx))
-        .text_color(cx.theme().colors().text)
-        .gap_1()
-        .when(!editor.edit_prediction_preview_is_active(), |parent| {
-            parent.children(ui::render_modifiers(
-                &accept_keystroke.modifiers,
-                PlatformStyle::platform(),
-                Some(Color::Default),
-                None,
-                false,
-            ))
-        })
-        .child(accept_keystroke.key.clone());
-
-    let colors = cx.theme().colors();
-
-    let accent_color = colors.text_accent;
-    let editor_bg_color = colors.editor_background;
-    let bg_color = editor_bg_color.blend(accent_color.opacity(0.2));
-    let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
-
-    let result = h_flex()
-        .gap_1()
-        .border_1()
-        .rounded_md()
-        .shadow_sm()
-        .bg(bg_color)
-        .border_color(colors.text_accent.opacity(0.8))
-        .py_0p5()
-        .pl_1()
-        .pr(padding_right)
-        .child(accept_key)
-        .child(Label::new(label).size(LabelSize::Small))
-        .when_some(icon, |element, icon| {
-            element.child(
-                div()
-                    .mt(px(1.5))
-                    .child(Icon::new(icon).size(IconSize::Small)),
-            )
-        });
-
-    Some(result)
 }
 
 pub struct AcceptEditPredictionBinding(pub(crate) Option<gpui::KeyBinding>);

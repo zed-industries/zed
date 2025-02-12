@@ -5648,6 +5648,77 @@ impl Editor {
         }
     }
 
+    fn render_edit_prediction_accept_keybind(&self, window: &mut Window, cx: &App) -> Option<Div> {
+        let accept_binding = self.accept_edit_prediction_keybind(window, cx);
+        let accept_keystroke = accept_binding.keystroke()?;
+        let colors = cx.theme().colors();
+        let accent_color = colors.text_accent;
+        let editor_bg_color = colors.editor_background;
+        let bg_color = editor_bg_color.blend(accent_color.opacity(0.1));
+
+        h_flex()
+            .px_0p5()
+            .gap_1()
+            .bg(bg_color)
+            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+            .text_size(TextSize::XSmall.rems(cx))
+            .when(!self.edit_prediction_preview_is_active(), |parent| {
+                parent.children(ui::render_modifiers(
+                    &accept_keystroke.modifiers,
+                    PlatformStyle::platform(),
+                    Some(if accept_keystroke.modifiers == window.modifiers() {
+                        Color::Accent
+                    } else {
+                        Color::Muted
+                    }),
+                    Some(IconSize::XSmall.rems().into()),
+                    false,
+                ))
+            })
+            .child(accept_keystroke.key.clone())
+            .into()
+    }
+
+    fn render_edit_prediction_line_popover(
+        &self,
+        label: impl Into<SharedString>,
+        icon: Option<IconName>,
+        window: &mut Window,
+        cx: &App,
+    ) -> Option<Div> {
+        let bg_color = Self::edit_prediction_line_popover_bg_color(cx);
+
+        let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
+
+        let result = h_flex()
+            .gap_1()
+            .border_1()
+            .rounded_lg()
+            .shadow_sm()
+            .bg(bg_color)
+            .border_color(cx.theme().colors().text_accent.opacity(0.4))
+            .py_0p5()
+            .pl_1()
+            .pr(padding_right)
+            .children(self.render_edit_prediction_accept_keybind(window, cx))
+            .child(Label::new(label).size(LabelSize::Small))
+            .when_some(icon, |element, icon| {
+                element.child(
+                    div()
+                        .mt(px(1.5))
+                        .child(Icon::new(icon).size(IconSize::Small)),
+                )
+            });
+
+        Some(result)
+    }
+
+    fn edit_prediction_line_popover_bg_color(cx: &App) -> Hsla {
+        let accent_color = cx.theme().colors().text_accent;
+        let editor_bg_color = cx.theme().colors().editor_background;
+        editor_bg_color.blend(accent_color.opacity(0.1))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_cursor_popover(
         &self,
@@ -5788,18 +5859,26 @@ impl Editor {
                 .min_w(min_width)
                 .max_w(max_width)
                 .flex_1()
-                .px_2()
                 .elevation_2(cx)
                 .border_color(cx.theme().colors().border)
-                .child(div().py_1().overflow_hidden().child(completion))
+                .child(
+                    div()
+                        .flex_1()
+                        .py_1()
+                        .px_2()
+                        .overflow_hidden()
+                        .child(completion),
+                )
                 .child(
                     h_flex()
                         .h_full()
                         .border_l_1()
+                        .rounded_r_lg()
                         .border_color(cx.theme().colors().border)
+                        .bg(Self::edit_prediction_line_popover_bg_color(cx))
                         .gap_1()
                         .py_1()
-                        .pl_2()
+                        .px_2()
                         .child(
                             h_flex()
                                 .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
@@ -14548,6 +14627,7 @@ impl Editor {
         }
 
         self.hide_context_menu(window, cx);
+        self.discard_inline_completion(false, cx);
         cx.emit(EditorEvent::Blurred);
         cx.notify();
     }

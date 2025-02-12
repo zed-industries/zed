@@ -237,9 +237,9 @@ pub struct EditPredictionSettings {
 pub enum EditPredictionsMode {
     /// If provider supports it, display inline when holding modifier key (e.g., alt).
     /// Otherwise, eager preview is used.
-    #[default]
     Auto,
     /// Display inline when there are no language server completions available.
+    #[default]
     EagerPreview,
 }
 
