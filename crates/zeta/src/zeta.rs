@@ -834,8 +834,9 @@ and then another
         offset: usize,
         snapshot: &BufferSnapshot,
     ) -> Vec<(Range<Anchor>, String)> {
-        let diff = similar::TextDiff::from_words(old_text.as_str(), new_text);
-
+        let diff = similar::TextDiffConfig::default()
+            .algorithm(similar::Algorithm::Patience)
+            .diff_words(old_text.as_str(), new_text);
         let mut edits: Vec<(Range<usize>, String)> = Vec::new();
         let mut old_start = offset;
         for change in diff.iter_all_changes() {
