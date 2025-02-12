@@ -9,6 +9,7 @@ mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
 use db::kvp::KEY_VALUE_STORE;
+use editor::Editor;
 pub use init::*;
 use inline_completion::DataCollectionState;
 pub use license_detection::is_license_eligible_for_data_collection;
@@ -20,7 +21,6 @@ use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayVec;
 use client::{Client, UserStore};
 use collections::{HashMap, HashSet, VecDeque};
-use feature_flags::FeatureFlagAppExt as _;
 use futures::AsyncReadExt;
 use gpui::{
     actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, SemanticVersion,
@@ -51,8 +51,11 @@ use std::{
     time::{Duration, Instant},
 };
 use telemetry_events::InlineCompletionRating;
+use thiserror::Error;
 use util::ResultExt;
 use uuid::Uuid;
+use workspace::notifications::{ErrorMessagePrompt, NotificationId};
+use workspace::Workspace;
 use worktree::Worktree;
 use zed_llm_client::{
     PredictEditsBody, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME,
@@ -184,6 +187,7 @@ impl std::fmt::Debug for InlineCompletion {
 }
 
 pub struct Zeta {
+    editor: Option<Entity<Editor>>,
     client: Arc<Client>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
@@ -204,13 +208,14 @@ impl Zeta {
     }
 
     pub fn register(
+        editor: Option<Entity<Editor>>,
         worktree: Option<Entity<Worktree>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
         cx: &mut App,
     ) -> Entity<Self> {
         let this = Self::global(cx).unwrap_or_else(|| {
-            let entity = cx.new(|cx| Self::new(client, user_store, cx));
+            let entity = cx.new(|cx| Self::new(editor, client, user_store, cx));
             cx.set_global(ZetaGlobal(entity.clone()));
             entity
         });
@@ -232,13 +237,19 @@ impl Zeta {
         self.events.clear();
     }
 
-    fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
+    fn new(
+        editor: Option<Entity<Editor>>,
+        client: Arc<Client>,
+        user_store: Entity<UserStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let refresh_llm_token_listener = language_models::RefreshLlmTokenListener::global(cx);
 
         let data_collection_choice = Self::load_data_collection_choices();
         let data_collection_choice = cx.new(|_| data_collection_choice);
 
         Self {
+            editor,
             client,
             events: VecDeque::new(),
             shown_completions: VecDeque::new(),
@@ -341,8 +352,9 @@ impl Zeta {
         }
     }
 
-    pub fn request_completion_impl<F, R>(
+    fn request_completion_impl<F, R>(
         &mut self,
+        workspace: Option<Entity<Workspace>>,
         project: Option<&Entity<Project>>,
         buffer: &Entity<Buffer>,
         cursor: language::Anchor,
@@ -351,7 +363,7 @@ impl Zeta {
         perform_predict_edits: F,
     ) -> Task<Result<Option<InlineCompletion>>>
     where
-        F: FnOnce(Arc<Client>, LlmApiToken, bool, SemanticVersion, PredictEditsBody) -> R + 'static,
+        F: FnOnce(PerformPredictEditsParams) -> R + 'static,
         R: Future<Output = Result<PredictEditsResponse>> + Send + 'static,
     {
         let snapshot = self.report_changes_for_buffer(&buffer, cx);
@@ -366,7 +378,6 @@ impl Zeta {
 
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
-        let is_staff = cx.is_staff();
         let app_version = AppVersion::global(cx);
 
         let buffer = buffer.clone();
@@ -454,8 +465,42 @@ impl Zeta {
                 }),
             };
 
-            let response =
-                perform_predict_edits(client, llm_token, is_staff, app_version, body).await?;
+            let response = perform_predict_edits(PerformPredictEditsParams {
+                client,
+                llm_token,
+                app_version,
+                body,
+            })
+            .await;
+            let response = match response {
+                Ok(response) => response,
+                Err(err) => {
+                    if err.is::<ZedUpdateRequiredError>() {
+                        if let Some(workspace) = workspace {
+                            cx.update(|cx| {
+                                workspace.update(cx, |workspace, cx| {
+                                    workspace.show_notification(
+                                        NotificationId::unique::<ZedUpdateRequiredError>(),
+                                        cx,
+                                        |cx| {
+                                            cx.new(|_| {
+                                                ErrorMessagePrompt::new(err.to_string())
+                                                    .with_link_button(
+                                                        "Update Zed",
+                                                        "https://zed.dev/releases",
+                                                    )
+                                            })
+                                        },
+                                    );
+                                })
+                            })
+                            .ok();
+                        }
+                    }
+
+                    return Err(err);
+                }
+            };
 
             log::debug!("completion response: {}", &response.output_excerpt);
 
@@ -640,14 +685,9 @@ and then another
     ) -> Task<Result<Option<InlineCompletion>>> {
         use std::future::ready;
 
-        self.request_completion_impl(
-            project,
-            buffer,
-            position,
-            false,
-            cx,
-            |_, _, _is_staff, _app_version, _| ready(Ok(response)),
-        )
+        self.request_completion_impl(None, project, buffer, position, false, cx, |_params| {
+            ready(Ok(response))
+        })
     }
 
     pub fn request_completion(
@@ -658,7 +698,12 @@ and then another
         can_collect_data: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<InlineCompletion>>> {
+        let workspace = self
+            .editor
+            .as_ref()
+            .and_then(|editor| editor.read(cx).workspace());
         self.request_completion_impl(
+            workspace,
             project,
             buffer,
             position,
@@ -669,13 +714,17 @@ and then another
     }
 
     fn perform_predict_edits(
-        client: Arc<Client>,
-        llm_token: LlmApiToken,
-        _is_staff: bool,
-        app_version: SemanticVersion,
-        body: PredictEditsBody,
+        params: PerformPredictEditsParams,
     ) -> impl Future<Output = Result<PredictEditsResponse>> {
         async move {
+            let PerformPredictEditsParams {
+                client,
+                llm_token,
+                app_version,
+                body,
+                ..
+            } = params;
+
             let http_client = client.http_client();
             let mut token = llm_token.acquire(&client).await?;
             let mut did_retry = false;
@@ -707,7 +756,9 @@ and then another
                     })
                 {
                     if app_version < minimum_required_version {
-                        return Err(anyhow!("you must upgrade to Zed version {minimum_required_version} or higher to continue using edit predictions"));
+                        return Err(anyhow!(ZedUpdateRequiredError {
+                            minimum_version: minimum_required_version
+                        }));
                     }
                 }
 
@@ -1035,6 +1086,21 @@ and then another
             None => DataCollectionChoice::NotAnswered,
         }
     }
+}
+
+struct PerformPredictEditsParams {
+    pub client: Arc<Client>,
+    pub llm_token: LlmApiToken,
+    pub app_version: SemanticVersion,
+    pub body: PredictEditsBody,
+}
+
+#[derive(Error, Debug)]
+#[error(
+    "You must update to Zed version {minimum_version} or higher to continue using edit predictions."
+)]
+pub struct ZedUpdateRequiredError {
+    minimum_version: SemanticVersion,
 }
 
 struct LicenseDetectionWatcher {
@@ -1863,7 +1929,7 @@ mod tests {
         });
         let server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(client, user_store, cx));
+        let zeta = cx.new(|cx| Zeta::new(None, client, user_store, cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
@@ -1916,7 +1982,7 @@ mod tests {
         });
         let server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(client, user_store, cx));
+        let zeta = cx.new(|cx| Zeta::new(None, client, user_store, cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());

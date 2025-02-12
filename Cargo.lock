@@ -17083,6 +17083,7 @@ dependencies = [
  "telemetry",
  "telemetry_events",
  "theme",
+ "thiserror 1.0.69",
  "tree-sitter-go",
  "tree-sitter-rust",
  "ui",
