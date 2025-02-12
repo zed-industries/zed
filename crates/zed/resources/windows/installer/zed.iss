@@ -14,9 +14,9 @@ Compression=lzma
 SolidCompression=yes
 AppMutex={#AppMutex}
 SetupMutex={#AppMutex}Setup
-; WizardImageFile="{#RepoDir}\resources\inno-100.bmp,{#RepoDir}\resources\inno-125.bmp,{#RepoDir}\resources\inno-150.bmp,{#RepoDir}\resources\inno-175.bmp,{#RepoDir}\resources\inno-200.bmp,{#RepoDir}\resources\inno-225.bmp,{#RepoDir}\resources\inno-250.bmp"
-; WizardSmallImageFile="{#RepoDir}\resources\inno-small-100.bmp,{#RepoDir}\resources\inno-small-125.bmp,{#RepoDir}\resources\inno-small-150.bmp,{#RepoDir}\resources\inno-small-175.bmp,{#RepoDir}\resources\inno-small-200.bmp,{#RepoDir}\resources\inno-small-225.bmp,{#RepoDir}\resources\inno-small-250.bmp"
-SetupIconFile=C:\zjk\projects\zed\crates\zed\resources\windows\app-icon.ico
+; WizardImageFile="{#ResourcesDir}\inno-100.bmp,{#ResourcesDir}\inno-125.bmp,{#ResourcesDir}\inno-150.bmp,{#ResourcesDir}\inno-175.bmp,{#ResourcesDir}\inno-200.bmp,{#ResourcesDir}\inno-225.bmp,{#ResourcesDir}\inno-250.bmp"
+; WizardSmallImageFile="{#ResourcesDir}\inno-small-100.bmp,{#ResourcesDir}\inno-small-125.bmp,{#ResourcesDir}\inno-small-150.bmp,{#ResourcesDir}\inno-small-175.bmp,{#ResourcesDir}\inno-small-200.bmp,{#ResourcesDir}\inno-small-225.bmp,{#ResourcesDir}\inno-small-250.bmp"
+SetupIconFile={#ResourcesDir}\app-icon.ico
 UninstallDisplayIcon={app}\{#ExeBasename}.exe
 ChangesEnvironment=true
 ChangesAssociations=true
@@ -35,8 +35,8 @@ DefaultDirName={autopf}\{#DirName}
 PrivilegesRequired=lowest
 
 [Languages]
-Name: "english"; MessagesFile: "compiler:Default.isl,{#ResourcesDir}\installer\messages\en.isl"; LicenseFile: "C:\zjk\projects\zed\script\terms\terms.rtf"
-Name: "simplifiedChinese"; MessagesFile: "{#ResourcesDir}\installer\messages\Default.zh-cn.isl,{#ResourcesDir}\installer\messages\zh-cn.isl"; LicenseFile: "C:\zjk\projects\zed\script\terms\terms.rtf"
+Name: "english"; MessagesFile: "compiler:Default.isl,{#ResourcesDir}\installer\messages\en.isl"; LicenseFile: "script\terms\terms.rtf"
+Name: "simplifiedChinese"; MessagesFile: "{#ResourcesDir}\installer\messages\Default.zh-cn.isl,{#ResourcesDir}\installer\messages\zh-cn.isl"; LicenseFile: "script\terms\terms.rtf"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked

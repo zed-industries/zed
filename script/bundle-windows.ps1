@@ -1,7 +1,7 @@
 # Inno Setup executable path
 $innoSetupPath = "C:\zjk\apps\Inno Setup 6\ISCC.exe"
 $innoFilePath = ".\crates\zed\resources\windows\installer\zed.iss"
-$signToolPath = "powershell.exe -ExecutionPolicy Bypass -File C:\zjk\projects\zed\crates\zed\resources\windows\installer\new-sign.ps1"
+$signToolPath = "powershell.exe -ExecutionPolicy Bypass -File C:\zjk\projects\zed\crates\zed\resources\windows\installer\sign.ps1"
 
 $product = @{
     "nameLong"         = "Zed"
