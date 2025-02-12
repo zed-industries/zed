@@ -5158,6 +5158,7 @@ mod tests {
     use project::FakeFs;
     use search::project_search::{self, perform_project_search};
     use serde_json::json;
+    use util::path;
     use workspace::OpenVisible;
 
     use super::*;
@@ -5927,7 +5928,7 @@ struct OutlineEntryExcerpt {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), [path!(root).as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [root.as_ref()], cx).await;
         project.read_with(cx, |project, _| {
             project.languages().add(Arc::new(
                 rust_lang()
