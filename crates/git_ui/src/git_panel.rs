@@ -1344,7 +1344,7 @@ impl GitPanel {
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .h_full()
-            .flex_1()
+            .flex_grow()
             .justify_center()
             .items_center()
             .child(
