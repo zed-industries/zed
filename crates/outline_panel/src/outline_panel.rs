@@ -5581,7 +5581,7 @@ mod tests {
                     );
                 });
         });
-        let root_path = format!("{}{}", path!("/rust-analyzer"), std::path::MAIN_SEPARATOR);
+        let root_path = format!("{}/", path!("/rust-analyzer"));
         let all_matches = format!(
             r#"{root_path}
   crates/
