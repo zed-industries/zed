@@ -1,6 +1,6 @@
 use crate::{
-    blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
+    commit_tooltip::{blame_entry_relative_timestamp, CommitTooltip, ParsedCommitMessage},
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
     },
@@ -8,7 +8,7 @@ use crate::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ScrollBeyondLastLine,
         ScrollbarDiagnostics, ShowScrollbar,
     },
-    git::blame::{CommitDetails, GitBlame},
+    git::blame::GitBlame,
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
@@ -5939,7 +5939,8 @@ fn render_inline_blame_entry(
 
     let details = blame.read(cx).details_for_entry(&blame_entry);
 
-    let tooltip = cx.new(|_| BlameEntryTooltip::new(blame_entry, details, style, workspace));
+    let tooltip =
+        cx.new(|_| CommitTooltip::blame_entry(blame_entry, details, style.clone(), workspace));
 
     h_flex()
         .id("inline-blame")
@@ -5989,8 +5990,14 @@ fn render_blame_entry(
 
     let workspace = editor.read(cx).workspace.as_ref().map(|(w, _)| w.clone());
 
-    let tooltip =
-        cx.new(|_| BlameEntryTooltip::new(blame_entry.clone(), details.clone(), style, workspace));
+    let tooltip = cx.new(|_| {
+        CommitTooltip::blame_entry(
+            blame_entry.clone(),
+            details.clone(),
+            style.clone(),
+            workspace,
+        )
+    });
 
     h_flex()
         .w_full()
@@ -6040,7 +6047,7 @@ fn render_blame_entry(
 
 fn deploy_blame_entry_context_menu(
     blame_entry: &BlameEntry,
-    details: Option<&CommitDetails>,
+    details: Option<&ParsedCommitMessage>,
     editor: Entity<Editor>,
     position: gpui::Point<Pixels>,
     window: &mut Window,

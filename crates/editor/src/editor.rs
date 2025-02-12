@@ -13,10 +13,10 @@
 //!
 //! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behavior.
 pub mod actions;
-mod blame_entry_tooltip;
 mod blink_manager;
 mod clangd_ext;
 mod code_context_menus;
+pub mod commit_tooltip;
 pub mod display_map;
 mod editor_settings;
 mod editor_settings_controls;

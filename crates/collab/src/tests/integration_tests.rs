@@ -2895,7 +2895,10 @@ async fn test_git_branch_name(
         assert_eq!(worktrees.len(), 1);
         let worktree = worktrees[0].clone();
         let root_entry = worktree.read(cx).snapshot().root_git_entry().unwrap();
-        assert_eq!(root_entry.branch(), branch_name.map(Into::into));
+        assert_eq!(
+            root_entry.branch().map(|branch| branch.name.to_string()),
+            branch_name
+        );
     }
 
     // Smoke test branch reading
@@ -6783,7 +6786,7 @@ async fn test_remote_git_branches(
         })
     });
 
-    assert_eq!(host_branch.as_ref(), branches[2]);
+    assert_eq!(host_branch.name, branches[2]);
 
     // Also try creating a new branch
     cx_b.update(|cx| {
@@ -6804,5 +6807,5 @@ async fn test_remote_git_branches(
         })
     });
 
-    assert_eq!(host_branch.as_ref(), "totally-new-branch");
+    assert_eq!(host_branch.name, "totally-new-branch");
 }

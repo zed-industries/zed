@@ -27,7 +27,7 @@ use git::Repository;
 pub mod search_history;
 mod yarn;
 
-use crate::git::GitState;
+use crate::git::GitStore;
 use anyhow::{anyhow, Context as _, Result};
 use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
@@ -161,7 +161,7 @@ pub struct Project {
     fs: Arc<dyn Fs>,
     ssh_client: Option<Entity<SshRemoteClient>>,
     client_state: ProjectClientState,
-    git_state: Entity<GitState>,
+    git_store: Entity<GitStore>,
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     worktree_store: Entity<WorktreeStore>,
@@ -610,15 +610,10 @@ impl Project {
         client.add_entity_request_handler(Self::handle_open_new_buffer);
         client.add_entity_message_handler(Self::handle_create_buffer_for_peer);
 
-        client.add_entity_request_handler(Self::handle_stage);
-        client.add_entity_request_handler(Self::handle_unstage);
-        client.add_entity_request_handler(Self::handle_commit);
-        client.add_entity_request_handler(Self::handle_set_index_text);
-        client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
-
         WorktreeStore::init(&client);
         BufferStore::init(&client);
         LspStore::init(&client);
+        GitStore::init(&client);
         SettingsObserver::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
@@ -705,7 +700,8 @@ impl Project {
                 )
             });
 
-            let git_state = cx.new(|cx| GitState::new(&worktree_store, None, None, cx));
+            let git_store =
+                cx.new(|cx| GitStore::new(&worktree_store, buffer_store.clone(), None, None, cx));
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -718,7 +714,7 @@ impl Project {
                 lsp_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
-                git_state,
+                git_store,
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![cx.on_release(Self::release)],
                 active_entry: None,
@@ -825,9 +821,10 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let git_state = cx.new(|cx| {
-                GitState::new(
+            let git_store = cx.new(|cx| {
+                GitStore::new(
                     &worktree_store,
+                    buffer_store.clone(),
                     Some(ssh_proto.clone()),
                     Some(ProjectId(SSH_PROJECT_ID)),
                     cx,
@@ -846,7 +843,7 @@ impl Project {
                 lsp_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
-                git_state,
+                git_store,
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![
                     cx.on_release(Self::release),
@@ -896,6 +893,7 @@ impl Project {
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.git_store);
 
             ssh_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
             ssh_proto.add_entity_message_handler(Self::handle_update_worktree);
@@ -909,6 +907,7 @@ impl Project {
             SettingsObserver::init(&ssh_proto);
             TaskStore::init(Some(&ssh_proto));
             ToolchainStore::init(&ssh_proto);
+            GitStore::init(&ssh_proto);
 
             this
         })
@@ -1030,9 +1029,10 @@ impl Project {
             SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
         })?;
 
-        let git_state = cx.new(|cx| {
-            GitState::new(
+        let git_store = cx.new(|cx| {
+            GitStore::new(
                 &worktree_store,
+                buffer_store.clone(),
                 Some(client.clone().into()),
                 Some(ProjectId(remote_id)),
                 cx,
@@ -1089,7 +1089,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
-                git_state,
+                git_store,
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -1675,6 +1675,9 @@ impl Project {
             self.client
                 .subscribe_to_entity(project_id)?
                 .set_entity(&self.settings_observer, &mut cx.to_async()),
+            self.client
+                .subscribe_to_entity(project_id)?
+                .set_entity(&self.git_store, &mut cx.to_async()),
         ]);
 
         self.buffer_store.update(cx, |buffer_store, cx| {
@@ -4038,142 +4041,6 @@ impl Project {
         Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
     }
 
-    async fn handle_stage(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::Stage>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
-        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle =
-            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
-
-        let entries = envelope
-            .payload
-            .paths
-            .into_iter()
-            .map(PathBuf::from)
-            .map(RepoPath::new)
-            .collect();
-
-        repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.stage_entries(entries)
-            })?
-            .await??;
-        Ok(proto::Ack {})
-    }
-
-    async fn handle_unstage(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::Unstage>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
-        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle =
-            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
-
-        let entries = envelope
-            .payload
-            .paths
-            .into_iter()
-            .map(PathBuf::from)
-            .map(RepoPath::new)
-            .collect();
-
-        repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.unstage_entries(entries)
-            })?
-            .await??;
-        Ok(proto::Ack {})
-    }
-
-    async fn handle_commit(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::Commit>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
-        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle =
-            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
-
-        let message = SharedString::from(envelope.payload.message);
-        let name = envelope.payload.name.map(SharedString::from);
-        let email = envelope.payload.email.map(SharedString::from);
-        repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.commit(message, name.zip(email))
-            })?
-            .await??;
-        Ok(proto::Ack {})
-    }
-
-    async fn handle_set_index_text(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::SetIndexText>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
-        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle =
-            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
-
-        repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.set_index_text(
-                    &RepoPath::from_str(&envelope.payload.path),
-                    envelope.payload.text,
-                )
-            })?
-            .await??;
-        Ok(proto::Ack {})
-    }
-
-    async fn handle_open_commit_message_buffer(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::OpenCommitMessageBuffer>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::OpenBufferResponse> {
-        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle =
-            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
-        let buffer = repository_handle
-            .update(&mut cx, |repository_handle, cx| {
-                repository_handle.open_commit_buffer(None, this.read(cx).buffer_store.clone(), cx)
-            })?
-            .await?;
-
-        let peer_id = envelope.original_sender_id()?;
-        Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
-    }
-
-    fn repository_for_request(
-        this: &Entity<Self>,
-        worktree_id: WorktreeId,
-        work_directory_id: ProjectEntryId,
-        cx: &mut AsyncApp,
-    ) -> Result<Entity<Repository>> {
-        this.update(cx, |project, cx| {
-            let repository_handle = project
-                .git_state()
-                .read(cx)
-                .all_repositories()
-                .into_iter()
-                .find(|repository_handle| {
-                    let repository_handle = repository_handle.read(cx);
-                    repository_handle.worktree_id == worktree_id
-                        && repository_handle.repository_entry.work_directory_id()
-                            == work_directory_id
-                })
-                .context("missing repository handle")?;
-            anyhow::Ok(repository_handle)
-        })?
-    }
-
     fn respond_to_open_buffer_request(
         this: Entity<Self>,
         buffer: Entity<Buffer>,
@@ -4365,16 +4232,16 @@ impl Project {
         &self.buffer_store
     }
 
-    pub fn git_state(&self) -> &Entity<GitState> {
-        &self.git_state
+    pub fn git_store(&self) -> &Entity<GitStore> {
+        &self.git_store
     }
 
     pub fn active_repository(&self, cx: &App) -> Option<Entity<Repository>> {
-        self.git_state.read(cx).active_repository()
+        self.git_store.read(cx).active_repository()
     }
 
     pub fn all_repositories(&self, cx: &App) -> Vec<Entity<Repository>> {
-        self.git_state.read(cx).all_repositories()
+        self.git_store.read(cx).all_repositories()
     }
 
     pub fn repository_and_path_for_buffer_id(
@@ -4386,7 +4253,7 @@ impl Project {
             .buffer_for_id(buffer_id, cx)?
             .read(cx)
             .project_path(cx)?;
-        self.git_state
+        self.git_store
             .read(cx)
             .all_repositories()
             .into_iter()
