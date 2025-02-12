@@ -4166,7 +4166,7 @@ impl EditorElement {
                     let y = display_row_range.start.as_f32() * line_height
                         + text_hitbox.bounds.top()
                         - scroll_pixel_position.y;
-                    let x = text_hitbox.bounds.right() - px(133.);
+                    let x = text_hitbox.bounds.right() - px(100.);
 
                     let mut element = diff_hunk_controls(
                         display_row_range.start.0,
@@ -9029,22 +9029,6 @@ fn diff_hunk_controls(
                             let snapshot = editor.snapshot(window, cx);
                             let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
                             editor.revert_hunks_in_ranges([point..point].into_iter(), window, cx);
-                        });
-                    }
-                }),
-        )
-        .child(
-            IconButton::new("stage-unstage", IconName::Book)
-                .shape(IconButtonShape::Square)
-                .icon_size(IconSize::Small)
-                .on_click({
-                    let editor = editor.clone();
-                    move |_event, _window, cx| {
-                        editor.update(cx, |editor, cx| {
-                            editor.stage_or_unstage_diff_hunks(
-                                &[hunk_range.start..hunk_range.start],
-                                cx,
-                            );
                         });
                     }
                 }),
