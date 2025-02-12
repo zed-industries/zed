@@ -3585,7 +3585,7 @@ impl EditorElement {
                     if target_display_point.row() < visible_row_range.start {
                         let mut element = inline_completion_accept_indicator(
                             "Scroll",
-                            Some(IconName::ZedPredictUp),
+                            Some(IconName::ArrowUp),
                             editor,
                             window,
                             cx,
@@ -3601,7 +3601,7 @@ impl EditorElement {
 
                         let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
 
-                        const PADDING_Y: Pixels = px(24.);
+                        const PADDING_Y: Pixels = px(12.);
 
                         let origin = start_point + point(cursor_character_x, PADDING_Y);
 
@@ -3610,7 +3610,7 @@ impl EditorElement {
                     } else if target_display_point.row() >= visible_row_range.end {
                         let mut element = inline_completion_accept_indicator(
                             "Scroll",
-                            Some(IconName::ZedPredictDown),
+                            Some(IconName::ArrowDown),
                             editor,
                             window,
                             cx,
@@ -3625,7 +3625,7 @@ impl EditorElement {
                         let cursor_column = cursor.column() as usize;
 
                         let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
-                        const PADDING_Y: Pixels = px(24.);
+                        const PADDING_Y: Pixels = px(12.);
 
                         let origin = start_point
                             + point(
@@ -3643,12 +3643,14 @@ impl EditorElement {
                                 inline_completion_accept_indicator(
                                     "Jump", None, editor, window, cx,
                                 )?
-                                .rounded_br(px(0.)),
+                                .rounded_br(px(0.))
+                                .rounded_tr(px(0.))
+                                .border_r_2(),
                             )
                             .child(
                                 div()
                                     .w(POLE_WIDTH)
-                                    .bg(cx.theme().colors().border)
+                                    .bg(cx.theme().colors().text_accent.opacity(0.8))
                                     .h(line_height),
                             )
                             .items_end()
@@ -5821,11 +5823,23 @@ fn inline_completion_accept_indicator(
         })
         .child(accept_keystroke.key.clone());
 
+    let colors = cx.theme().colors();
+
+    let accent_color = colors.text_accent;
+    let editor_bg_color = colors.editor_background;
+    let bg_color = editor_bg_color.blend(accent_color.opacity(0.2));
+    let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
+
     let result = h_flex()
         .gap_1()
         .border_1()
         .rounded_md()
         .shadow_sm()
+        .bg(bg_color)
+        .border_color(colors.text_accent.opacity(0.8))
+        .py_0p5()
+        .pl_1()
+        .pr(padding_right)
         .child(accept_key)
         .child(Label::new(label).size(LabelSize::Small))
         .when_some(icon, |element, icon| {
@@ -5835,28 +5849,6 @@ fn inline_completion_accept_indicator(
                     .child(Icon::new(icon).size(IconSize::Small)),
             )
         });
-
-    let colors = cx.theme().colors();
-
-    let result = if editor.edit_prediction_requires_modifier() {
-        result
-            .py_1()
-            .px_2()
-            .elevation_2(cx)
-            .border_color(colors.border)
-    } else {
-        let accent_color = colors.text_accent;
-        let editor_bg_color = colors.editor_background;
-        let bg_color = editor_bg_color.blend(accent_color.opacity(0.2));
-        let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
-
-        result
-            .bg(bg_color)
-            .border_color(colors.text_accent.opacity(0.8))
-            .py_0p5()
-            .pl_1()
-            .pr(padding_right)
-    };
 
     Some(result)
 }

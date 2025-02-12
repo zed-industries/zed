@@ -1567,6 +1567,7 @@ impl Editor {
         if has_active_edit_prediction {
             key_context.add("copilot_suggestion");
             key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
+
             if showing_completions || self.edit_prediction_requires_modifier() {
                 key_context.add(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT);
             }
@@ -4793,12 +4794,10 @@ impl Editor {
     }
 
     pub fn edit_prediction_preview_is_active(&self) -> bool {
-        match self.edit_prediction_preview {
-            EditPredictionPreview::Inactive => false,
-            EditPredictionPreview::Active { .. } => {
-                self.edit_prediction_requires_modifier() || self.has_visible_completions_menu()
-            }
-        }
+        matches!(
+            self.edit_prediction_preview,
+            EditPredictionPreview::Active { .. }
+        )
     }
 
     pub fn inline_completions_enabled(&self, cx: &App) -> bool {
@@ -4971,7 +4970,7 @@ impl Editor {
                     if position_map
                         .visible_row_range
                         .contains(&target.to_display_point(&position_map.snapshot).row())
-                        || !self.edit_prediction_preview_is_active()
+                        || !self.edit_prediction_requires_modifier()
                     {
                         // Note that this is also done in vim's handler of the Tab action.
                         self.change_selections(
@@ -5218,7 +5217,10 @@ impl Editor {
         };
 
         if &accept_keystroke.modifiers == modifiers {
-            if !self.edit_prediction_preview_is_active() {
+            if matches!(
+                self.edit_prediction_preview,
+                EditPredictionPreview::Inactive
+            ) {
                 self.edit_prediction_preview = EditPredictionPreview::Active {
                     previous_scroll_position: None,
                 };
@@ -5795,15 +5797,16 @@ impl Editor {
                 .max_w(max_width)
                 .flex_1()
                 .px_2()
-                .py_1()
                 .elevation_2(cx)
                 .border_color(cx.theme().colors().border)
-                .child(completion)
-                .child(ui::Divider::vertical())
+                .child(div().py_1().overflow_hidden().child(completion))
                 .child(
                     h_flex()
                         .h_full()
+                        .border_l_1()
+                        .border_color(cx.theme().colors().border)
                         .gap_1()
+                        .py_1()
                         .pl_2()
                         .child(
                             h_flex()
