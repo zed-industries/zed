@@ -5657,11 +5657,6 @@ impl Editor {
     fn render_edit_prediction_accept_keybind(&self, window: &mut Window, cx: &App) -> Option<Div> {
         let accept_binding = self.accept_edit_prediction_keybind(window, cx);
         let accept_keystroke = accept_binding.keystroke()?;
-        let colors = cx.theme().colors();
-        let accent_color = colors.text_accent;
-        let editor_bg_color = colors.editor_background;
-        // TODO use shared function
-        let bg_color = editor_bg_color.blend(accent_color.opacity(0.1));
 
         let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
 
@@ -5671,33 +5666,18 @@ impl Editor {
             Color::Muted
         };
 
-        let gen_plus_icon_on_non_mac = || {
-            if !is_platform_style_mac {
-                Label::new("+").color(modifiers_color).into_any_element()
-            } else {
-                gpui::Empty.into_any_element()
-            }
-        };
-
         h_flex()
             .px_0p5()
             .when(is_platform_style_mac, |parent| parent.gap_0p5())
-            .bg(bg_color)
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
             .text_size(TextSize::XSmall.rems(cx))
-            .child(h_flex().children(itertools::intersperse_with(
-                ui::render_modifiers(
-                    &accept_keystroke.modifiers,
-                    PlatformStyle::platform(),
-                    Some(modifiers_color),
-                    Some(IconSize::XSmall.rems().into()),
-                    true,
-                ),
-                gen_plus_icon_on_non_mac,
+            .child(h_flex().children(ui::render_modifiers(
+                &accept_keystroke.modifiers,
+                PlatformStyle::platform(),
+                Some(modifiers_color),
+                Some(IconSize::XSmall.rems().into()),
+                true,
             )))
-            .when(accept_keystroke.modifiers.modified(), |parent| {
-                parent.child(gen_plus_icon_on_non_mac())
-            })
             .when(is_platform_style_mac, |parent| {
                 parent.child(accept_keystroke.key.clone())
             })
