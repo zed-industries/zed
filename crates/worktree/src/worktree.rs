@@ -340,7 +340,7 @@ pub fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
             .map(|commit| proto::CommitSummary {
                 sha: commit.sha.to_string(),
                 subject: commit.subject.to_string(),
-                commit_timestamp: commit.commit_timestamp.into(),
+                commit_timestamp: commit.commit_timestamp,
             }),
     }
 }
