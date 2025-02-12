@@ -103,6 +103,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_stage);
         client.add_entity_request_handler(Self::handle_unstage);
         client.add_entity_request_handler(Self::handle_commit);
+        client.add_entity_request_handler(Self::handle_reset);
+        client.add_entity_request_handler(Self::handle_show);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
     }
 
@@ -410,6 +412,53 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.commit(message, name.zip(email))
+            })?
+            .await??;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_show(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitShow>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitCommitDetails> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        let commit = repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.show(&envelope.payload.commit, cx)
+            })?
+            .await?;
+        Ok(proto::GitCommitDetails {
+            sha: commit.sha.into(),
+            message: commit.message.into(),
+            commit_timestamp: commit.commit_timestamp,
+            committer_email: commit.committer_email.into(),
+            committer_name: commit.committer_name.into(),
+        })
+    }
+
+    async fn handle_reset(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitReset>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        let mode = match envelope.payload.mode() {
+            git_reset::ResetMode::Soft => ResetMode::Soft,
+            git_reset::ResetMode::Mixed => ResetMode::Mixed,
+        };
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.reset(&envelope.payload.commit, mode)
             })?
             .await??;
         Ok(proto::Ack {})

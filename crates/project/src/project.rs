@@ -47,7 +47,7 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 
 use ::git::{
     blame::Blame,
-    repository::{Branch, GitRepository, RepoPath},
+    repository::{Branch, GitRepository},
     status::FileStatus,
 };
 use gpui::{
@@ -890,6 +890,7 @@ impl Project {
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.git_store);
 
             ssh_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
             ssh_proto.add_entity_message_handler(Self::handle_update_worktree);
@@ -903,6 +904,7 @@ impl Project {
             SettingsObserver::init(&ssh_proto);
             TaskStore::init(Some(&ssh_proto));
             ToolchainStore::init(&ssh_proto);
+            GitStore::init(&ssh_proto);
 
             this
         })
@@ -1655,6 +1657,9 @@ impl Project {
             self.client
                 .subscribe_to_entity(project_id)?
                 .set_entity(&self.settings_observer, &mut cx.to_async()),
+            self.client
+                .subscribe_to_entity(project_id)?
+                .set_entity(&self.git_store, &mut cx.to_async()),
         ]);
 
         self.buffer_store.update(cx, |buffer_store, cx| {
