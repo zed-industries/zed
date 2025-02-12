@@ -1,16 +1,13 @@
 use anyhow::{Context as _, Result};
 use editor::Editor;
 use fs::Fs;
-use markdown_preview::markdown_elements::ParsedMarkdown;
-use markdown_preview::markdown_renderer::render_parsed_markdown;
 use migrator::{migrate_keymap, migrate_settings};
 use settings::{KeymapFile, SettingsStore};
-use util::markdown::MarkdownString;
 use util::ResultExt;
 
 use std::sync::Arc;
 
-use gpui::{Entity, EventEmitter, Global, WeakEntity};
+use gpui::{Entity, EventEmitter, Global};
 use ui::prelude::*;
 use workspace::item::ItemHandle;
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace};
@@ -23,8 +20,6 @@ pub enum MigrationType {
 
 pub struct MigratorBanner {
     migration_type: Option<MigrationType>,
-    message: ParsedMarkdown,
-    workspace: WeakEntity<Workspace>,
 }
 
 pub enum MigratorEvent {
@@ -54,7 +49,7 @@ struct GlobalMigratorNotification(Entity<MigratorNotification>);
 impl Global for GlobalMigratorNotification {}
 
 impl MigratorBanner {
-    pub fn new(workspace: &Workspace, cx: &mut Context<'_, Self>) -> Self {
+    pub fn new(_: &Workspace, cx: &mut Context<'_, Self>) -> Self {
         if let Some(notifier) = MigratorNotification::try_global(cx) {
             cx.subscribe(
                 &notifier,
@@ -66,10 +61,25 @@ impl MigratorBanner {
         }
         Self {
             migration_type: None,
-            message: ParsedMarkdown { children: vec![] },
-            workspace: workspace.weak_handle(),
         }
     }
+
+    fn backup_file_name(&self) -> String {
+        match self.migration_type {
+            Some(MigrationType::Keymap) => paths::keymap_backup_file()
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            Some(MigrationType::Settings) => paths::settings_backup_file()
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            None => String::new(),
+        }
+    }
+
     fn handle_notification(&mut self, event: &MigratorEvent, cx: &mut Context<'_, Self>) {
         match event {
             MigratorEvent::ContentChanged {
@@ -141,84 +151,83 @@ impl ToolbarItemView for MigratorBanner {
             .detach();
         }
 
-        if let Some(migration_type) = self.migration_type {
-            cx.spawn_in(window, |this, mut cx| async move {
-                let message = MarkdownString(format!(
-                    "Your {} require migration to support this version of Zed. A backup will be saved to {}.",
-                    match migration_type {
-                        MigrationType::Keymap => "keymap",
-                        MigrationType::Settings => "settings",
-                    },
-                    match migration_type {
-                        MigrationType::Keymap => paths::keymap_backup_file().to_string_lossy(),
-                        MigrationType::Settings => paths::settings_backup_file().to_string_lossy(),
-                    },
-                ));
-                let parsed_markdown = cx
-                    .background_executor()
-                    .spawn(async move {
-                        let file_location_directory = None;
-                        let language_registry = None;
-                        markdown_preview::markdown_parser::parse_markdown(
-                            &message.0,
-                            file_location_directory,
-                            language_registry,
-                        )
-                        .await
-                    })
-                    .await;
-                this
-                    .update(&mut cx, |this, _| {
-                        this.message = parsed_markdown;
-                    })
-                    .log_err();
-            })
-            .detach();
-        }
-
         return ToolbarItemLocation::Hidden;
     }
 }
 
 impl Render for MigratorBanner {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let migration_type = self.migration_type;
+        let file_type = match migration_type {
+            Some(MigrationType::Keymap) => "keymap",
+            Some(MigrationType::Settings) => "settings",
+            None => "",
+        };
+        let backup_file_name = self.backup_file_name();
+
         h_flex()
             .py_1()
-            .px_2()
+            .pl_2()
+            .pr_1()
+            .flex_wrap()
             .justify_between()
-            .bg(cx.theme().status().info_background)
+            .bg(cx.theme().status().info_background.opacity(0.6))
+            .border_1()
+            .border_color(cx.theme().colors().border_variant)
             .rounded_md()
-            .gap_2()
             .overflow_hidden()
             .child(
-                render_parsed_markdown(&self.message, Some(self.workspace.clone()), window, cx)
-                    .text_ellipsis(),
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Icon::new(IconName::Warning)
+                            .size(IconSize::XSmall)
+                            .color(Color::Warning),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .child(
+                                Label::new(format!(
+                                    "Your {} file requires migration to support this version of Zed. A backup will be saved to",
+                                    file_type
+                                ))
+                                .color(Color::Default)
+                            )
+                            .child(
+                                div()
+                                    .px_1()
+                                    .bg(cx.theme().colors().background)
+                                    .rounded_sm()
+                                    .child(
+                                        Label::new(backup_file_name)
+                                            .buffer_font(cx)
+                                            .size(LabelSize::Small)
+                                    ),
+                            )
+                    )
             )
             .child(
-                Button::new(
-                    SharedString::from("backup-and-migrate"),
-                    "Backup and Migrate",
-                )
-                .style(ButtonStyle::Filled)
-                .on_click(move |_, _, cx| {
-                    let fs = <dyn Fs>::global(cx);
-                    match migration_type {
-                        Some(MigrationType::Keymap) => {
-                            cx.spawn(
-                                move |_| async move { write_keymap_migration(&fs).await.ok() },
-                            )
-                            .detach();
+                Button::new("backup-and-migrate", "Backup and Migrate").on_click(
+                    move |_, _, cx| {
+                        let fs = <dyn Fs>::global(cx);
+                        match migration_type {
+                            Some(MigrationType::Keymap) => {
+                                cx.spawn(
+                                    move |_| async move { write_keymap_migration(&fs).await.ok() },
+                                )
+                                .detach();
+                            }
+                            Some(MigrationType::Settings) => {
+                                cx.spawn(move |_| async move {
+                                    write_settings_migration(&fs).await.ok()
+                                })
+                                .detach();
+                            }
+                            None => unreachable!(),
                         }
-                        Some(MigrationType::Settings) => {
-                            cx.spawn(
-                                move |_| async move { write_settings_migration(&fs).await.ok() },
-                            )
-                            .detach();
-                        }
-                        None => unreachable!(),
-                    }
-                }),
+                    },
+                ),
             )
             .into_any_element()
     }
