@@ -709,11 +709,12 @@ pub struct Editor {
     /// Used to prevent flickering as the user types while the menu is open
     stale_inline_completion_in_menu: Option<InlineCompletionState>,
     edit_prediction_settings: EditPredictionSettings,
-    edit_prediction_cursor_on_leading_whitespace: bool,
     inline_completions_hidden_for_vim_mode: bool,
     show_inline_completions_override: Option<bool>,
     menu_inline_completions_policy: MenuInlineCompletionsPolicy,
     edit_prediction_preview: EditPredictionPreview,
+    edit_prediction_cursor_on_leading_whitespace: bool,
+    edit_prediction_requires_modifier_in_leading_space: bool,
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
@@ -1425,6 +1426,7 @@ impl Editor {
             menu_inline_completions_policy: MenuInlineCompletionsPolicy::ByProvider,
             edit_prediction_settings: EditPredictionSettings::Disabled,
             edit_prediction_cursor_on_leading_whitespace: false,
+            edit_prediction_requires_modifier_in_leading_space: true,
             custom_context_menu: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
@@ -1573,7 +1575,7 @@ impl Editor {
                 || self.edit_prediction_requires_modifier()
                 // Require modifier key when the cursor is on leading whitespace, to allow `tab`
                 // bindings to insert tab characters.
-                || self.edit_prediction_cursor_on_leading_whitespace
+                || (self.edit_prediction_requires_modifier_in_leading_space && self.edit_prediction_cursor_on_leading_whitespace)
             {
                 key_context.add(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT);
             }
@@ -2137,6 +2139,7 @@ impl Editor {
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, window, cx);
             self.update_visible_inline_completion(window, cx);
+            self.edit_prediction_requires_modifier_in_leading_space = true;
             linked_editing_ranges::refresh_linked_ranges(self, window, cx);
             if self.git_blame_inline_enabled {
                 self.start_inline_blame_timer(window, cx);
@@ -5013,6 +5016,8 @@ impl Editor {
                 cx.notify();
             }
         }
+
+        self.edit_prediction_requires_modifier_in_leading_space = false;
     }
 
     pub fn accept_partial_inline_completion(
@@ -5662,19 +5667,17 @@ impl Editor {
             .bg(bg_color)
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
             .text_size(TextSize::XSmall.rems(cx))
-            .when(!self.edit_prediction_preview_is_active(), |parent| {
-                parent.children(ui::render_modifiers(
-                    &accept_keystroke.modifiers,
-                    PlatformStyle::platform(),
-                    Some(if accept_keystroke.modifiers == window.modifiers() {
-                        Color::Accent
-                    } else {
-                        Color::Muted
-                    }),
-                    Some(IconSize::XSmall.rems().into()),
-                    false,
-                ))
-            })
+            .children(ui::render_modifiers(
+                &accept_keystroke.modifiers,
+                PlatformStyle::platform(),
+                Some(if accept_keystroke.modifiers == window.modifiers() {
+                    Color::Accent
+                } else {
+                    Color::Muted
+                }),
+                Some(IconSize::XSmall.rems().into()),
+                false,
+            ))
             .child(accept_keystroke.key.clone())
             .into()
     }

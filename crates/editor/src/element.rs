@@ -3811,13 +3811,13 @@ impl EditorElement {
 
                 let mut element = v_flex()
                     .items_end()
-                    .shadow_sm()
                     .child(
                         h_flex()
                             .h(ACCEPT_INDICATOR_HEIGHT)
                             .mb(px(-1.))
                             .px_1p5()
                             .gap_1()
+                            .shadow_sm()
                             .bg(Editor::edit_prediction_line_popover_bg_color(cx))
                             .border_1()
                             .border_b_0()
@@ -3829,6 +3829,7 @@ impl EditorElement {
                         div()
                             .bg(cx.theme().colors().editor_background)
                             .border_1()
+                            .shadow_sm()
                             .border_color(cx.theme().colors().border)
                             .rounded_lg()
                             .rounded_tr(Pixels::ZERO)
