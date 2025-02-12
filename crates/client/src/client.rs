@@ -146,8 +146,6 @@ pub fn init_settings(cx: &mut App) {
 }
 
 pub fn init(client: &Arc<Client>, cx: &mut App) {
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-
     let client = Arc::downgrade(client);
     cx.on_action({
         let client = client.clone();
@@ -1126,24 +1124,11 @@ impl Client {
 
             match url_scheme {
                 Https => {
-                    let client_config = {
-                        let mut root_store = rustls::RootCertStore::empty();
-
-                        let root_certs = rustls_native_certs::load_native_certs();
-                        for error in root_certs.errors {
-                            log::warn!("error loading native certs: {:?}", error);
-                        }
-                        root_store.add_parsable_certificates(root_certs.certs);
-                        rustls::ClientConfig::builder()
-                            .with_root_certificates(root_store)
-                            .with_no_client_auth()
-                    };
-
                     let (stream, _) =
                         async_tungstenite::async_tls::client_async_tls_with_connector(
                             request,
                             stream,
-                            Some(client_config.into()),
+                            Some(http_client::tls_config().into()),
                         )
                         .await?;
                     Ok(Connection::new(

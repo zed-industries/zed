@@ -406,7 +406,7 @@ impl InlineCompletionButton {
 
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
             menu = menu.toggleable_entry(
-                "This File",
+                "This Buffer",
                 self.editor_show_predictions,
                 IconPosition::Start,
                 Some(Box::new(ToggleEditPrediction)),
@@ -438,13 +438,10 @@ impl InlineCompletionButton {
 
         let settings = AllLanguageSettings::get_global(cx);
         let globally_enabled = settings.show_inline_completions(None, cx);
-        menu = menu.toggleable_entry(
-            "All Files",
-            globally_enabled,
-            IconPosition::Start,
-            None,
-            move |_, cx| toggle_inline_completions_globally(fs.clone(), cx),
-        );
+        menu = menu.toggleable_entry("All Files", globally_enabled, IconPosition::Start, None, {
+            let fs = fs.clone();
+            move |_, cx| toggle_inline_completions_globally(fs.clone(), cx)
+        });
         menu = menu.separator().header("Privacy Settings");
 
         if let Some(provider) = &self.edit_prediction_provider {
@@ -454,33 +451,41 @@ impl InlineCompletionButton {
                 let enabled = data_collection.is_enabled();
                 let is_open_source = data_collection.is_project_open_source();
                 let is_collecting = data_collection.is_enabled();
+                let (icon_name, icon_color) = if is_open_source && is_collecting {
+                    (IconName::Check, Color::Success)
+                } else {
+                    (IconName::Check, Color::Accent)
+                };
 
                 menu = menu.item(
-                    ContextMenuEntry::new("Share Training Data")
+                    ContextMenuEntry::new("Training Data Collection")
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
-                        .icon_color(if is_open_source && is_collecting {
-                            Color::Success
-                        } else {
-                            Color::Accent
-                        })
+                        .icon(icon_name)
+                        .icon_color(icon_color)
                         .documentation_aside(move |cx| {
                             let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                 (true, true) => (
-                                    "Project identified as open-source, and you're sharing data.",
+                                    "Project identified as open source, and you're sharing data.",
                                     Color::Default,
                                     IconName::Check,
                                     Color::Success,
                                 ),
                                 (true, false) => (
-                                    "Project identified as open-source, but you're not sharing data.",
+                                    "Project identified as open source, but you're not sharing data.",
                                     Color::Muted,
-                                    IconName::XCircle,
+                                    IconName::Close,
                                     Color::Muted,
                                 ),
-                                (false, _) => (
-                                    "Project not identified as open-source. No data captured.",
+                                (false, true) => (
+                                    "Project not identified as open source. No data captured.",
                                     Color::Muted,
-                                    IconName::XCircle,
+                                    IconName::Close,
+                                    Color::Muted,
+                                ),
+                                (false, false) => (
+                                    "Project not identified as open source, and setting turned off.",
+                                    Color::Muted,
+                                    IconName::Close,
                                     Color::Muted,
                                 ),
                             };
@@ -488,7 +493,7 @@ impl InlineCompletionButton {
                                 .gap_2()
                                 .child(
                                     Label::new(indoc!{
-                                        "Help us improve our open model by sharing data from open source repositories. \
+                                        "Help us improve our open dataset model by sharing data from open source repositories. \
                                         Zed must detect a license file in your repo for this setting to take effect."
                                     })
                                 )
@@ -519,6 +524,16 @@ impl InlineCompletionButton {
                             }
                         })
                 );
+
+                if is_collecting && !is_open_source {
+                    menu = menu.item(
+                        ContextMenuEntry::new("No data captured.")
+                            .disabled(true)
+                            .icon(IconName::Close)
+                            .icon_color(Color::Error)
+                            .icon_size(IconSize::Small),
+                    );
+                }
             }
         }
 
@@ -553,6 +568,46 @@ impl InlineCompletionButton {
                     .icon_size(IconSize::Small),
             );
         }
+
+        let is_eager_preview_enabled = match settings.edit_predictions_mode() {
+            language::EditPredictionsMode::Auto => false,
+            language::EditPredictionsMode::EagerPreview => true,
+        };
+        menu = if cx.is_staff() {
+            menu.separator().toggleable_entry(
+                "Eager Preview Mode",
+                is_eager_preview_enabled,
+                IconPosition::Start,
+                None,
+                {
+                    let fs = fs.clone();
+                    move |_window, cx| {
+                        update_settings_file::<AllLanguageSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _cx| {
+                                let new_mode = match is_eager_preview_enabled {
+                                    true => language::EditPredictionsMode::Auto,
+                                    false => language::EditPredictionsMode::EagerPreview,
+                                };
+
+                                if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
+                                    edit_predictions.mode = new_mode;
+                                } else {
+                                    settings.edit_predictions =
+                                        Some(language_settings::EditPredictionSettingsContent {
+                                            mode: new_mode,
+                                            ..Default::default()
+                                        });
+                                }
+                            },
+                        );
+                    }
+                },
+            )
+        } else {
+            menu
+        };
 
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
             menu = menu

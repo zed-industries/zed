@@ -789,7 +789,14 @@ impl GitPanel {
                 let email = participant.user.email.clone().unwrap();
 
                 if !existing_co_authors.contains(&email.as_ref()) {
-                    new_co_authors.push((participant.user.github_login.clone(), email))
+                    new_co_authors.push((
+                        participant
+                            .user
+                            .name
+                            .clone()
+                            .unwrap_or_else(|| participant.user.github_login.clone()),
+                        email,
+                    ))
                 }
             }
         }
@@ -797,7 +804,12 @@ impl GitPanel {
             if let Some(user) = room.local_participant_user(cx) {
                 if let Some(email) = user.email.clone() {
                     if !existing_co_authors.contains(&email.as_ref()) {
-                        new_co_authors.push((user.github_login.clone(), email.clone()))
+                        new_co_authors.push((
+                            user.name
+                                .clone()
+                                .unwrap_or_else(|| user.github_login.clone()),
+                            email.clone(),
+                        ))
                     }
                 }
             }
@@ -1657,9 +1669,7 @@ impl GitPanel {
                                 if !parent_str.is_empty() {
                                     this.child(
                                         self.entry_label(format!("{}/", parent_str), path_color)
-                                            .when(status.is_deleted(), |this| {
-                                                this.strikethrough(true)
-                                            }),
+                                            .when(status.is_deleted(), |this| this.strikethrough()),
                                     )
                                 } else {
                                     this
@@ -1667,7 +1677,7 @@ impl GitPanel {
                             })
                             .child(
                                 self.entry_label(display_name.clone(), label_color)
-                                    .when(status.is_deleted(), |this| this.strikethrough(true)),
+                                    .when(status.is_deleted(), |this| this.strikethrough()),
                             ),
                     ),
             )

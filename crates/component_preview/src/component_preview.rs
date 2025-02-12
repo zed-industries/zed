@@ -41,11 +41,21 @@ impl ComponentPreview {
         let components = components().all_sorted();
         let sorted_components = components.clone();
 
-        v_flex().gap_px().p_1().children(
-            sorted_components
-                .into_iter()
-                .map(|component| self.render_sidebar_entry(&component, _cx)),
-        )
+        v_flex()
+            .max_w_48()
+            .gap_px()
+            .p_1()
+            .children(
+                sorted_components
+                    .into_iter()
+                    .map(|component| self.render_sidebar_entry(&component, _cx)),
+            )
+            .child(
+                Label::new("These will be clickable once the layout is moved to a gpui::List.")
+                    .color(Color::Muted)
+                    .size(LabelSize::XSmall)
+                    .italic(),
+            )
     }
 
     fn render_sidebar_entry(
@@ -56,7 +66,8 @@ impl ComponentPreview {
         h_flex()
             .w_40()
             .px_1p5()
-            .py_1()
+            .py_0p5()
+            .text_sm()
             .child(component.name().clone())
     }
 
@@ -71,18 +82,19 @@ impl ComponentPreview {
 
         let description = component.description();
 
-        v_group()
+        v_flex()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
             .w_full()
-            .gap_4()
-            .p_8()
-            .rounded_md()
+            .gap_3()
+            .py_6()
             .child(
                 v_flex()
                     .gap_1()
                     .child(
                         h_flex()
                             .gap_1()
-                            .text_xl()
+                            .text_2xl()
                             .child(div().child(name))
                             .when_some(scope, |this, scope| {
                                 this.child(div().opacity(0.5).child(format!("({})", scope)))
@@ -110,7 +122,7 @@ impl ComponentPreview {
             .size_full()
             .overflow_y_scroll()
             .p_4()
-            .gap_2()
+            .gap_4()
             .children(
                 components()
                     .all_previews_sorted()

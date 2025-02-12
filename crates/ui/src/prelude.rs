@@ -2,8 +2,9 @@
 
 pub use gpui::prelude::*;
 pub use gpui::{
-    div, px, relative, rems, AbsoluteLength, App, Context, DefiniteLength, Div, Element, ElementId,
-    InteractiveElement, ParentElement, Pixels, Rems, RenderOnce, SharedString, Styled, Window,
+    div, px, relative, rems, AbsoluteLength, AnyElement, App, Context, DefiniteLength, Div,
+    Element, ElementId, InteractiveElement, ParentElement, Pixels, Rems, RenderOnce, SharedString,
+    Styled, Window,
 };
 
 pub use component::{example_group, example_group_with_title, single_example, ComponentPreview};

@@ -227,19 +227,20 @@ pub struct EditPredictionSettings {
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
     pub disabled_globs: Vec<GlobMatcher>,
-    /// When to show edit predictions previews in buffer.
-    pub inline_preview: InlineCompletionPreviewMode,
+    /// Configures how edit predictions are displayed in the buffer.
+    pub mode: EditPredictionsMode,
 }
 
 /// The mode in which edit predictions should be displayed.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum InlineCompletionPreviewMode {
+pub enum EditPredictionsMode {
+    /// If provider supports it, display inline when holding modifier key (e.g., alt).
+    /// Otherwise, eager preview is used.
+    Auto,
     /// Display inline when there are no language server completions available.
     #[default]
-    Auto,
-    /// Display inline when holding modifier key (alt by default).
-    WhenHoldingModifier,
+    EagerPreview,
 }
 
 /// The settings for all languages.
@@ -250,7 +251,7 @@ pub struct AllLanguageSettingsContent {
     pub features: Option<FeaturesContent>,
     /// The edit prediction settings.
     #[serde(default)]
-    pub edit_predictions: Option<InlineCompletionSettingsContent>,
+    pub edit_predictions: Option<EditPredictionSettingsContent>,
     /// The default language settings.
     #[serde(flatten)]
     pub defaults: LanguageSettingsContent,
@@ -428,15 +429,16 @@ pub struct LanguageSettingsContent {
 
 /// The contents of the edit prediction settings.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct InlineCompletionSettingsContent {
+pub struct EditPredictionSettingsContent {
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
     #[serde(default)]
     pub disabled_globs: Option<Vec<String>>,
-    /// When to show edit predictions previews in buffer.
+    /// The mode used to display edit predictions in the buffer.
+    /// Provider support required.
     #[serde(default)]
-    pub inline_preview: InlineCompletionPreviewMode,
+    pub mode: EditPredictionsMode,
 }
 
 /// The settings for enabling/disabling features.
@@ -923,8 +925,8 @@ impl AllLanguageSettings {
     }
 
     /// Returns the edit predictions preview mode for the given language and path.
-    pub fn inline_completions_preview_mode(&self) -> InlineCompletionPreviewMode {
-        self.edit_predictions.inline_preview
+    pub fn edit_predictions_mode(&self) -> EditPredictionsMode {
+        self.edit_predictions.mode
     }
 }
 
@@ -1023,10 +1025,10 @@ impl settings::Settings for AllLanguageSettings {
             .features
             .as_ref()
             .and_then(|f| f.edit_prediction_provider);
-        let mut inline_completions_preview = default_value
+        let mut edit_predictions_mode = default_value
             .edit_predictions
             .as_ref()
-            .map(|inline_completions| inline_completions.inline_preview)
+            .map(|edit_predictions| edit_predictions.mode)
             .ok_or_else(Self::missing_default)?;
 
         let mut completion_globs: HashSet<&String> = default_value
@@ -1060,10 +1062,10 @@ impl settings::Settings for AllLanguageSettings {
                 edit_prediction_provider = Some(provider);
             }
 
-            if let Some(inline_completions) = user_settings.edit_predictions.as_ref() {
-                inline_completions_preview = inline_completions.inline_preview;
+            if let Some(edit_predictions) = user_settings.edit_predictions.as_ref() {
+                edit_predictions_mode = edit_predictions.mode;
 
-                if let Some(disabled_globs) = inline_completions.disabled_globs.as_ref() {
+                if let Some(disabled_globs) = edit_predictions.disabled_globs.as_ref() {
                     completion_globs.extend(disabled_globs.iter());
                 }
             }
@@ -1118,7 +1120,7 @@ impl settings::Settings for AllLanguageSettings {
                     .iter()
                     .filter_map(|g| Some(globset::Glob::new(g).ok()?.compile_matcher()))
                     .collect(),
-                inline_preview: inline_completions_preview,
+                mode: edit_predictions_mode,
             },
             defaults,
             languages,

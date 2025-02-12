@@ -104,7 +104,7 @@ impl Render for WelcomePage {
                                 h_flex().w_full().justify_center().child(
                                     Label::new("The editor for what's next")
                                         .color(Color::Muted)
-                                        .italic(true),
+                                        .italic(),
                                 ),
                             ),
                     )
