@@ -5373,7 +5373,6 @@ dependencies = [
  "settings",
  "theme",
  "time",
- "time_format",
  "ui",
  "util",
  "windows 0.58.0",
