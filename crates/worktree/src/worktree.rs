@@ -4760,14 +4760,17 @@ impl BackgroundScanner {
             let child_path: Arc<Path> = job.path.join(child_name).into();
 
             if child_name == *DOT_GIT {
-                let repo = self.state.lock().insert_git_repository(
-                    child_path.clone(),
-                    self.fs.as_ref(),
-                    self.watcher.as_ref(),
-                );
-
-                if let Some(local_repo) = repo {
-                    git_status_update_jobs.push(self.schedule_git_statuses_update(local_repo));
+                {
+                    let mut state = self.state.lock();
+                    let repo = state.insert_git_repository(
+                        child_path.clone(),
+                        self.fs.as_ref(),
+                        self.watcher.as_ref(),
+                    );
+                    if let Some(local_repo) = repo {
+                        git_status_update_jobs
+                            .push(self.schedule_git_statuses_update(&mut state, local_repo));
+                    }
                 }
             } else if child_name == *GITIGNORE {
                 match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
@@ -5299,7 +5302,7 @@ impl BackgroundScanner {
     fn update_git_repositories(&self, dot_git_paths: Vec<PathBuf>) -> Task<()> {
         log::debug!("reloading repositories: {dot_git_paths:?}");
 
-        let mut repos_to_update = Vec::new();
+        let mut status_updates = Vec::new();
         {
             let mut state = self.state.lock();
             let scan_id = state.snapshot.scan_id;
@@ -5352,7 +5355,8 @@ impl BackgroundScanner {
                     }
                 };
 
-                repos_to_update.push(local_repository);
+                status_updates
+                    .push(self.schedule_git_statuses_update(&mut state, local_repository));
             }
 
             // Remove any git repositories whose .git entry no longer exists.
@@ -5383,10 +5387,6 @@ impl BackgroundScanner {
             });
         }
 
-        let mut status_updates = Vec::new();
-        for local_repository in repos_to_update {
-            status_updates.push(self.schedule_git_statuses_update(local_repository));
-        }
         self.executor.spawn(async move {
             let _updates_finished: Vec<Result<(), oneshot::Canceled>> =
                 join_all(status_updates).await;
@@ -5415,15 +5415,16 @@ impl BackgroundScanner {
     /// Update the git statuses for a given batch of entries.
     fn schedule_git_statuses_update(
         &self,
+        state: &mut BackgroundScannerState,
         local_repository: LocalRepositoryEntry,
     ) -> oneshot::Receiver<()> {
         let repository_name = local_repository.work_directory.display_name();
         let path_key = local_repository.work_directory.path_key();
 
-        let state = self.state.clone();
+        let job_state = self.state.clone();
         let (tx, rx) = oneshot::channel();
 
-        self.state.lock().repository_scans.insert(
+        state.repository_scans.insert(
             path_key.clone(),
             self.executor.spawn(async move {
                 log::trace!("updating git statuses for repo {repository_name}",);
@@ -5441,7 +5442,7 @@ impl BackgroundScanner {
 
                 let t0 = Instant::now();
                 let mut changed_paths = Vec::new();
-                let snapshot = state.lock().snapshot.snapshot.clone();
+                let snapshot = job_state.lock().snapshot.snapshot.clone();
 
                 let mut repository = snapshot.repository(path_key) .context(
                         "Tried to update git statuses for a repository that isn't in the snapshot"
@@ -5470,7 +5471,7 @@ impl BackgroundScanner {
                 }
 
                 repository.statuses_by_path = new_entries_by_path;
-                let mut state = state.lock();
+                let mut state = job_state.lock();
                 state
                     .snapshot
                     .repositories
