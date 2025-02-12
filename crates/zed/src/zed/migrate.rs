@@ -189,10 +189,11 @@ impl Render for MigratorBanner {
                             .gap_0p5()
                             .child(
                                 Label::new(format!(
-                                    "Your {} file requires migration to support this version of Zed. A backup will be saved to",
+                                    "Your {} file uses deprecated settings which can be \
+                                    automatically updated. A backup will be saved to",
                                     file_type
                                 ))
-                                .color(Color::Default)
+                                .color(Color::Default),
                             )
                             .child(
                                 div()
@@ -202,32 +203,30 @@ impl Render for MigratorBanner {
                                     .child(
                                         Label::new(backup_file_name)
                                             .buffer_font(cx)
-                                            .size(LabelSize::Small)
+                                            .size(LabelSize::Small),
                                     ),
-                            )
-                    )
+                            ),
+                    ),
             )
             .child(
-                Button::new("backup-and-migrate", "Backup and Migrate").on_click(
-                    move |_, _, cx| {
-                        let fs = <dyn Fs>::global(cx);
-                        match migration_type {
-                            Some(MigrationType::Keymap) => {
-                                cx.spawn(
-                                    move |_| async move { write_keymap_migration(&fs).await.ok() },
-                                )
-                                .detach();
-                            }
-                            Some(MigrationType::Settings) => {
-                                cx.spawn(move |_| async move {
-                                    write_settings_migration(&fs).await.ok()
-                                })
-                                .detach();
-                            }
-                            None => unreachable!(),
+                Button::new("backup-and-migrate", "Backup and Update").on_click(move |_, _, cx| {
+                    let fs = <dyn Fs>::global(cx);
+                    match migration_type {
+                        Some(MigrationType::Keymap) => {
+                            cx.spawn(
+                                move |_| async move { write_keymap_migration(&fs).await.ok() },
+                            )
+                            .detach();
                         }
-                    },
-                ),
+                        Some(MigrationType::Settings) => {
+                            cx.spawn(
+                                move |_| async move { write_settings_migration(&fs).await.ok() },
+                            )
+                            .detach();
+                        }
+                        None => unreachable!(),
+                    }
+                }),
             )
             .into_any_element()
     }
