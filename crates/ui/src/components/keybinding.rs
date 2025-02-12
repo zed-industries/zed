@@ -227,7 +227,6 @@ pub fn render_modifiers_for_edit_prediction(
     platform_style: PlatformStyle,
     color: Option<Color>,
     size: Option<AbsoluteLength>,
-    standalone: bool,
 ) -> impl Iterator<Item = AnyElement> {
     enum KeyOrIcon {
         Key(String),
@@ -282,21 +281,13 @@ pub fn render_modifiers_for_edit_prediction(
         .into_iter()
         .filter(|modifier| modifier.enabled)
         .collect::<Vec<_>>();
-    let last_ix = filtered.len().saturating_sub(1);
 
     filtered
         .into_iter()
-        .enumerate()
-        .map(move |(ix, modifier)| match platform_style {
+        .map(move |modifier| match platform_style {
             PlatformStyle::Mac => modifier.mac,
-            PlatformStyle::Linux if standalone && ix == last_ix => {
-                KeyOrIcon::Key(modifier.linux.to_string())
-            }
-            PlatformStyle::Linux => KeyOrIcon::Key(format!("{}+", modifier.linux)),
-            PlatformStyle::Windows if standalone && ix == last_ix => {
-                KeyOrIcon::Key(modifier.windows.to_string())
-            }
-            PlatformStyle::Windows => KeyOrIcon::Key(format!("{}+", modifier.windows)),
+            PlatformStyle::Linux => KeyOrIcon::Key(modifier.linux.to_string()),
+            PlatformStyle::Windows => KeyOrIcon::Key(modifier.windows.to_string()),
         })
         .map(move |key_or_icon| match key_or_icon {
             KeyOrIcon::Key(key) => Key::new(key, color).size(size).into_any_element(),

@@ -71,8 +71,8 @@ use sum_tree::Bias;
 use text::BufferId;
 use theme::{ActiveTheme, Appearance, PlayerColor};
 use ui::{
-    h_flex, prelude::*, ButtonLike, ButtonStyle, ContextMenu, IconButtonShape, KeyBinding, Tooltip,
-    POPOVER_Y_PADDING,
+    h_flex, prelude::*, ButtonLike, ButtonStyle, ContextMenu, IconButtonShape, Key, KeyBinding,
+    Tooltip, POPOVER_Y_PADDING,
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::{markdown::MarkdownString, RangeExt, ResultExt};
@@ -5806,22 +5806,45 @@ fn inline_completion_accept_indicator(
     let accept_binding = editor.accept_edit_prediction_keybind(window, cx);
     let accept_keystroke = accept_binding.keystroke()?;
 
+    let key_size = TextSize::XSmall.rems(cx);
+    let gen_plus_icon_on_non_mac = || {
+        if PlatformStyle::platform() != PlatformStyle::Mac {
+            // Icon::new(IconName::Plus).size(icon_size).into_any_element()
+            "+".into_any_element()
+        } else {
+            gpui::Empty.into_any_element()
+        }
+    };
     let accept_key = h_flex()
         .px_0p5()
         .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-        .text_size(TextSize::XSmall.rems(cx))
+        .text_size(key_size)
         .text_color(cx.theme().colors().text)
-        .gap_1()
-        .when(!editor.edit_prediction_preview_is_active(), |parent| {
-            parent.children(ui::render_modifiers_for_edit_prediction(
-                &accept_keystroke.modifiers,
-                PlatformStyle::platform(),
-                Some(Color::Default),
-                None,
-                false,
-            ))
+        .when(PlatformStyle::platform() == PlatformStyle::Mac, |parent| {
+            parent.gap_1()
         })
-        .child(accept_keystroke.key.clone());
+        .when(!editor.edit_prediction_preview_is_active(), |parent| {
+            parent
+                .children(itertools::intersperse_with(
+                    ui::render_modifiers_for_edit_prediction(
+                        &accept_keystroke.modifiers,
+                        PlatformStyle::platform(),
+                        Some(Color::Default),
+                        Some(key_size.into()),
+                    ),
+                    gen_plus_icon_on_non_mac,
+                ))
+                .child(gen_plus_icon_on_non_mac())
+        })
+        .when(PlatformStyle::platform() != PlatformStyle::Mac, |parent| {
+            parent.child(
+                Key::new(accept_keystroke.key.clone(), Some(Color::Default))
+                    .size(Some(key_size.into())),
+            )
+        })
+        .when(PlatformStyle::platform() == PlatformStyle::Mac, |parent| {
+            parent.child(accept_keystroke.key.clone())
+        });
 
     let colors = cx.theme().colors();
 

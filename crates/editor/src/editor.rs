@@ -5741,13 +5741,21 @@ impl Editor {
                                 },
                             )
                             .child(Label::new("Hold").size(LabelSize::Small))
-                            .children(ui::render_modifiers_for_edit_prediction(
-                                &accept_keystroke.modifiers,
-                                PlatformStyle::platform(),
-                                Some(Color::Default),
-                                Some(IconSize::Small.rems().into()),
-                                true,
-                            ))
+                            .child(h_flex().children(itertools::intersperse_with(
+                                ui::render_modifiers_for_edit_prediction(
+                                    &accept_keystroke.modifiers,
+                                    PlatformStyle::platform(),
+                                    Some(Color::Default),
+                                    Some(IconSize::Small.rems().into()),
+                                ),
+                                || {
+                                    if PlatformStyle::platform() != PlatformStyle::Mac {
+                                        "+".into_any_element()
+                                    } else {
+                                        gpui::Empty.into_any_element()
+                                    }
+                                },
+                            )))
                             .into_any(),
                     );
                 }
@@ -5811,17 +5819,27 @@ impl Editor {
                         .child(
                             h_flex()
                                 .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                                .gap_1()
-                                .children(ui::render_modifiers_for_edit_prediction(
-                                    &accept_keystroke.modifiers,
-                                    PlatformStyle::platform(),
-                                    Some(if !has_completion {
-                                        Color::Muted
-                                    } else {
-                                        Color::Default
-                                    }),
-                                    None,
-                                    true,
+                                .when(PlatformStyle::platform() == PlatformStyle::Mac, |parent| {
+                                    parent.gap_1()
+                                })
+                                .children(itertools::intersperse_with(
+                                    ui::render_modifiers_for_edit_prediction(
+                                        &accept_keystroke.modifiers,
+                                        PlatformStyle::platform(),
+                                        Some(if !has_completion {
+                                            Color::Muted
+                                        } else {
+                                            Color::Default
+                                        }),
+                                        None,
+                                    ),
+                                    || {
+                                        if PlatformStyle::platform() != PlatformStyle::Mac {
+                                            "+".into_any_element()
+                                        } else {
+                                            gpui::Empty.into_any_element()
+                                        }
+                                    },
                                 )),
                         )
                         .child(Label::new("Preview").into_any_element())
