@@ -29,7 +29,7 @@ use gpui::{
     WindowOptions,
 };
 use image_viewer::ImageInfo;
-use migrate::MigratorBanner;
+use migrate::{MigrationType, MigratorBanner, MigratorEvent, MigratorNotification};
 use migrator::{migrate_keymap, migrate_settings};
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
@@ -858,7 +858,6 @@ fn initialize_pane(
             toolbar.add_item(breadcrumbs, window, cx);
             let buffer_search_bar = cx.new(|cx| search::BufferSearchBar::new(window, cx));
             toolbar.add_item(buffer_search_bar.clone(), window, cx);
-
             let proposed_change_bar = cx.new(|_| ProposedChangesEditorToolbar::new());
             toolbar.add_item(proposed_change_bar, window, cx);
             let quick_action_bar =
@@ -872,7 +871,7 @@ fn initialize_pane(
             toolbar.add_item(lsp_log_item, window, cx);
             let syntax_tree_item = cx.new(|_| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, window, cx);
-            let migrator_banner = cx.new(|_| MigratorBanner::new(workspace));
+            let migrator_banner = cx.new(|cx| MigratorBanner::new(workspace, cx));
             toolbar.add_item(migrator_banner, window, cx);
         })
     });
@@ -1107,6 +1106,7 @@ pub fn handle_settings_file_changes(
     cx: &mut App,
     settings_changed: impl Fn(Option<anyhow::Error>, &mut App) + 'static,
 ) {
+    MigratorNotification::set_global(cx.new(|_| MigratorNotification), cx);
     let content = cx
         .background_executor()
         .block(user_settings_file_rx.next())
@@ -1121,13 +1121,20 @@ pub fn handle_settings_file_changes(
     });
     cx.spawn(move |cx| async move {
         while let Some(content) = user_settings_file_rx.next().await {
-            let user_settings_content = if let Some(migrated_content) = migrate_settings(&content) {
-                migrated_content
-                // if not shown, show the banner
-            } else {
-                content
-                // if show, remove the banner
-            };
+            let migrated_content = migrate_settings(&content);
+            let content_migrated = migrated_content.is_some();
+            let user_settings_content = migrated_content.unwrap_or(content);
+            cx.update(|cx| {
+                if let Some(notifier) = MigratorNotification::try_global(cx) {
+                    notifier.update(cx, |_, cx| {
+                        cx.emit(MigratorEvent::ContentChanged {
+                            migration_type: MigrationType::Settings,
+                            migrated: content_migrated,
+                        });
+                    });
+                }
+            })
+            .ok();
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
                 let result = store.set_user_settings(&user_settings_content, cx);
                 if let Err(err) = &result {
@@ -1184,23 +1191,28 @@ pub fn handle_keymap_file_changes(
 
     cx.spawn(move |cx| async move {
         let mut user_keymap_content = String::new();
+        let mut content_migrated = false;
         loop {
             select_biased! {
                 _ = base_keymap_rx.next() => {},
                 _ = keyboard_layout_rx.next() => {},
                 content = user_keymap_file_rx.next() => {
                     if let Some(content) = content {
-                        if let Some(migrated_content) = migrate_keymap(&content) {
-                            user_keymap_content = migrated_content;
-                            // show notification if doesnt exists
-                        } else {
-                            user_keymap_content = content;
-                            // remove notifiction if exists
-                        }
+                        let migrated_content = migrate_keymap(&content);
+                        content_migrated = migrated_content.is_some();
+                        user_keymap_content = migrated_content.unwrap_or(content);
                     }
                 }
             };
             cx.update(|cx| {
+                if let Some(notifier) = MigratorNotification::try_global(cx) {
+                    notifier.update(cx, |_, cx| {
+                        cx.emit(MigratorEvent::ContentChanged {
+                            migration_type: MigrationType::Keymap,
+                            migrated: content_migrated,
+                        });
+                    });
+                }
                 let load_result = KeymapFile::load(&user_keymap_content, cx);
                 match load_result {
                     KeymapFileLoadResult::Success { key_bindings } => {

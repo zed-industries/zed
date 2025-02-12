@@ -10,13 +10,13 @@ use util::ResultExt;
 
 use std::sync::Arc;
 
-use gpui::{AsyncWindowContext, EventEmitter, WeakEntity};
+use gpui::{Entity, EventEmitter, Global, WeakEntity};
 use ui::prelude::*;
 use workspace::item::ItemHandle;
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace};
 
-#[derive(Debug, Copy, Clone)]
-enum MigrationType {
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum MigrationType {
     Keymap,
     Settings,
 }
@@ -27,55 +27,68 @@ pub struct MigratorBanner {
     workspace: WeakEntity<Workspace>,
 }
 
+pub enum MigratorEvent {
+    ContentChanged {
+        migration_type: MigrationType,
+        migrated: bool,
+    },
+}
+
+pub struct MigratorNotification;
+
+impl EventEmitter<MigratorEvent> for MigratorNotification {}
+
+impl MigratorNotification {
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<GlobalMigratorNotification>()
+            .map(|notifier| notifier.0.clone())
+    }
+
+    pub fn set_global(notifier: Entity<Self>, cx: &mut App) {
+        cx.set_global(GlobalMigratorNotification(notifier));
+    }
+}
+
+struct GlobalMigratorNotification(Entity<MigratorNotification>);
+
+impl Global for GlobalMigratorNotification {}
+
 impl MigratorBanner {
-    pub fn new(workspace: &Workspace) -> Self {
+    pub fn new(workspace: &Workspace, cx: &mut Context<'_, Self>) -> Self {
+        if let Some(notifier) = MigratorNotification::try_global(cx) {
+            cx.subscribe(
+                &notifier,
+                move |migrator_banner, _, event: &MigratorEvent, cx| {
+                    migrator_banner.handle_notification(event, cx);
+                },
+            )
+            .detach();
+        }
         Self {
             migration_type: None,
             message: ParsedMarkdown { children: vec![] },
             workspace: workspace.weak_handle(),
         }
     }
-
-    async fn set_migration_type(
-        migration_type: MigrationType,
-        migrator_banner: WeakEntity<MigratorBanner>,
-        mut cx: AsyncWindowContext,
-    ) {
-        let message = MarkdownString(format!(
-            "Your {} require migration to support this version of Zed. A backup will be saved to {}.",
-            match migration_type {
-                MigrationType::Keymap => "keymap",
-                MigrationType::Settings => "settings",
-            },
-            MarkdownString::inline_code(&paths::keymap_backup_file().to_string_lossy())
-        ));
-        let parsed_markdown = cx
-            .background_executor()
-            .spawn(async move {
-                let file_location_directory = None;
-                let language_registry = None;
-                markdown_preview::markdown_parser::parse_markdown(
-                    &message.0,
-                    file_location_directory,
-                    language_registry,
-                )
-                .await
-            })
-            .await;
-        migrator_banner
-            .update(&mut cx, |this, cx| {
-                this.migration_type = Some(migration_type);
-                this.message = parsed_markdown;
-                cx.emit(ToolbarItemEvent::ChangeLocation(
-                    ToolbarItemLocation::Secondary,
-                ));
-                cx.notify();
-            })
-            .log_err();
+    fn handle_notification(&mut self, event: &MigratorEvent, cx: &mut Context<'_, Self>) {
+        match event {
+            MigratorEvent::ContentChanged {
+                migration_type,
+                migrated,
+            } => {
+                if self.migration_type == Some(*migration_type) {
+                    let location = if *migrated {
+                        ToolbarItemLocation::Secondary
+                    } else {
+                        ToolbarItemLocation::Hidden
+                    };
+                    cx.emit(ToolbarItemEvent::ChangeLocation(location));
+                    cx.notify();
+                }
+            }
+        }
     }
 }
-
-impl MigratorBanner {}
 
 impl EventEmitter<ToolbarItemEvent> for MigratorBanner {}
 
@@ -93,24 +106,76 @@ impl ToolbarItemView for MigratorBanner {
         else {
             return ToolbarItemLocation::Hidden;
         };
-        let fs = <dyn Fs>::global(cx);
+
         if &target == paths::keymap_file() {
+            self.migration_type = Some(MigrationType::Keymap);
+            let fs = <dyn Fs>::global(cx);
             let should_migrate = should_migrate_keymap(fs);
-            cx.spawn_in(window, |migrator_banner, cx| async move {
+            cx.spawn_in(window, |this, mut cx| async move {
                 if let Ok(true) = should_migrate.await {
-                    Self::set_migration_type(MigrationType::Keymap, migrator_banner, cx).await
+                    this.update(&mut cx, |_, cx| {
+                        cx.emit(ToolbarItemEvent::ChangeLocation(
+                            ToolbarItemLocation::Secondary,
+                        ));
+                        cx.notify();
+                    })
+                    .log_err();
                 }
             })
             .detach();
         } else if &target == paths::settings_file() {
+            self.migration_type = Some(MigrationType::Settings);
+            let fs = <dyn Fs>::global(cx);
             let should_migrate = should_migrate_settings(fs);
-            cx.spawn_in(window, |migrator_banner, cx| async move {
+            cx.spawn_in(window, |this, mut cx| async move {
                 if let Ok(true) = should_migrate.await {
-                    Self::set_migration_type(MigrationType::Settings, migrator_banner, cx).await
+                    this.update(&mut cx, |_, cx| {
+                        cx.emit(ToolbarItemEvent::ChangeLocation(
+                            ToolbarItemLocation::Secondary,
+                        ));
+                        cx.notify();
+                    })
+                    .log_err();
                 }
             })
             .detach();
         }
+
+        if let Some(migration_type) = self.migration_type {
+            cx.spawn_in(window, |this, mut cx| async move {
+                let message = MarkdownString(format!(
+                    "Your {} require migration to support this version of Zed. A backup will be saved to {}.",
+                    match migration_type {
+                        MigrationType::Keymap => "keymap",
+                        MigrationType::Settings => "settings",
+                    },
+                    match migration_type {
+                        MigrationType::Keymap => paths::keymap_backup_file().to_string_lossy(),
+                        MigrationType::Settings => paths::settings_backup_file().to_string_lossy(),
+                    },
+                ));
+                let parsed_markdown = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let file_location_directory = None;
+                        let language_registry = None;
+                        markdown_preview::markdown_parser::parse_markdown(
+                            &message.0,
+                            file_location_directory,
+                            language_registry,
+                        )
+                        .await
+                    })
+                    .await;
+                this
+                    .update(&mut cx, |this, _| {
+                        this.message = parsed_markdown;
+                    })
+                    .log_err();
+            })
+            .detach();
+        }
+
         return ToolbarItemLocation::Hidden;
     }
 }
