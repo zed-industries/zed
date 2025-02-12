@@ -3830,10 +3830,16 @@ impl EditorElement {
                             .h(line_height + BORDER_WIDTH * px(2.))
                             .px_1p5()
                             .gap_1()
-                            .shadow_sm()
+                            // Workaround: For some reason, there's a gap if we don't do this
+                            .ml(-BORDER_WIDTH)
+                            .shadow(smallvec![gpui::BoxShadow {
+                                color: gpui::black().opacity(0.05),
+                                offset: point(px(1.), px(1.)),
+                                blur_radius: px(2.),
+                                spread_radius: px(0.),
+                            }])
                             .bg(Editor::edit_prediction_line_popover_bg_color(cx))
                             .border(BORDER_WIDTH)
-                            .border_l_0()
                             .border_color(cx.theme().colors().border)
                             .rounded_r_lg()
                             .children(editor.render_edit_prediction_accept_keybind(window, cx)),
