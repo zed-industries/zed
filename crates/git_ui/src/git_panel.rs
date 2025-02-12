@@ -1291,10 +1291,12 @@ impl GitPanel {
         let active_repository = self.active_repository.as_ref()?;
         let branch = active_repository.read(cx).branch()?;
         let commit = branch.most_recent_commit.as_ref()?;
-        if branch.upstream.is_some_and(|upstream| {
-            upstream
-                .tracking
-                .is_some_and(|tracking| tracking.ahead == 0)
+        if branch.upstream.as_ref().is_some_and(|upstream| {
+            if let Some(tracking) = &upstream.tracking {
+                tracking.ahead == 0
+            } else {
+                true
+            }
         }) {
             return None;
         }

@@ -818,7 +818,10 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
 
 fn parse_upstream_track(upstream_track: &str) -> Result<Option<UpstreamTracking>> {
     if upstream_track == "" {
-        return Ok(None);
+        return Ok(Some(UpstreamTracking {
+            ahead: 0,
+            behind: 0,
+        }));
     }
 
     let upstream_track = upstream_track
@@ -830,7 +833,7 @@ fn parse_upstream_track(upstream_track: &str) -> Result<Option<UpstreamTracking>
     let mut ahead: u32 = 0;
     let mut behind: u32 = 0;
     for component in upstream_track.split(", ") {
-        if component == "Gone" {
+        if component == "gone" {
             return Ok(None);
         }
         if let Some(ahead_num) = component.strip_prefix("ahead ") {
