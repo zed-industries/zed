@@ -18,42 +18,42 @@ pub enum MigrationType {
     Settings,
 }
 
-pub struct MigratorBanner {
+pub struct MigrationBanner {
     migration_type: Option<MigrationType>,
 }
 
-pub enum MigratorEvent {
+pub enum MigrationEvent {
     ContentChanged {
         migration_type: MigrationType,
         migrated: bool,
     },
 }
 
-pub struct MigratorNotification;
+pub struct MigrationNotification;
 
-impl EventEmitter<MigratorEvent> for MigratorNotification {}
+impl EventEmitter<MigrationEvent> for MigrationNotification {}
 
-impl MigratorNotification {
+impl MigrationNotification {
     pub fn try_global(cx: &App) -> Option<Entity<Self>> {
-        cx.try_global::<GlobalMigratorNotification>()
+        cx.try_global::<GlobalMigrationNotification>()
             .map(|notifier| notifier.0.clone())
     }
 
     pub fn set_global(notifier: Entity<Self>, cx: &mut App) {
-        cx.set_global(GlobalMigratorNotification(notifier));
+        cx.set_global(GlobalMigrationNotification(notifier));
     }
 }
 
-struct GlobalMigratorNotification(Entity<MigratorNotification>);
+struct GlobalMigrationNotification(Entity<MigrationNotification>);
 
-impl Global for GlobalMigratorNotification {}
+impl Global for GlobalMigrationNotification {}
 
-impl MigratorBanner {
+impl MigrationBanner {
     pub fn new(_: &Workspace, cx: &mut Context<'_, Self>) -> Self {
-        if let Some(notifier) = MigratorNotification::try_global(cx) {
+        if let Some(notifier) = MigrationNotification::try_global(cx) {
             cx.subscribe(
                 &notifier,
-                move |migrator_banner, _, event: &MigratorEvent, cx| {
+                move |migrator_banner, _, event: &MigrationEvent, cx| {
                     migrator_banner.handle_notification(event, cx);
                 },
             )
@@ -80,9 +80,9 @@ impl MigratorBanner {
         }
     }
 
-    fn handle_notification(&mut self, event: &MigratorEvent, cx: &mut Context<'_, Self>) {
+    fn handle_notification(&mut self, event: &MigrationEvent, cx: &mut Context<'_, Self>) {
         match event {
-            MigratorEvent::ContentChanged {
+            MigrationEvent::ContentChanged {
                 migration_type,
                 migrated,
             } => {
@@ -100,9 +100,9 @@ impl MigratorBanner {
     }
 }
 
-impl EventEmitter<ToolbarItemEvent> for MigratorBanner {}
+impl EventEmitter<ToolbarItemEvent> for MigrationBanner {}
 
-impl ToolbarItemView for MigratorBanner {
+impl ToolbarItemView for MigrationBanner {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
@@ -155,7 +155,7 @@ impl ToolbarItemView for MigratorBanner {
     }
 }
 
-impl Render for MigratorBanner {
+impl Render for MigrationBanner {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let migration_type = self.migration_type;
         let file_type = match migration_type {
