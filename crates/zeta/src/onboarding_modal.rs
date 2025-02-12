@@ -3,7 +3,6 @@ use std::{sync::Arc, time::Duration};
 use crate::{onboarding_event, ZED_PREDICT_DATA_COLLECTION_CHOICE};
 use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
-use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
     ease_in_out, svg, Animation, AnimationExt as _, ClickEvent, DismissEvent, Entity, EventEmitter,
@@ -66,7 +65,7 @@ impl ZedPredictModal {
     }
 
     fn view_blog(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/blog/"); // TODO Add the link when live
+        cx.open_url("https://zed.dev/blog/edit-predictions");
         cx.notify();
 
         onboarding_event!("Blog Link clicked");
@@ -272,19 +271,12 @@ impl Render for ZedPredictModal {
                 )),
             ));
 
-        let blog_post_button = if cx.is_staff() {
-            Some(
-                Button::new("view-blog", "Read the Blog Post")
-                    .full_width()
-                    .icon(IconName::ArrowUpRight)
-                    .icon_size(IconSize::Indicator)
-                    .icon_color(Color::Muted)
-                    .on_click(cx.listener(Self::view_blog)),
-            )
-        } else {
-            // TODO: put back when blog post is published
-            None
-        };
+        let blog_post_button = Button::new("view-blog", "Read the Blog Post")
+            .full_width()
+            .icon(IconName::ArrowUpRight)
+            .icon_size(IconSize::Indicator)
+            .icon_color(Color::Muted)
+            .on_click(cx.listener(Self::view_blog));
 
         if self.user_store.read(cx).current_user().is_some() {
             let copy = match self.sign_in_status {
@@ -434,7 +426,7 @@ impl Render for ZedPredictModal {
                                 .full_width()
                                 .on_click(cx.listener(Self::accept_and_enable)),
                         )
-                        .children(blog_post_button),
+                        .child(blog_post_button),
                 )
         } else {
             base.child(
@@ -453,7 +445,7 @@ impl Render for ZedPredictModal {
                             .full_width()
                             .on_click(cx.listener(Self::sign_in)),
                     )
-                    .children(blog_post_button),
+                    .child(blog_post_button),
             )
         }
     }
