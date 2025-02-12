@@ -1250,6 +1250,29 @@ impl GitPanel {
             cx.listener(move |this, _, _, cx| this.toggle_auto_coauthors(cx)),
         );
 
+        let branch = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.read(cx).branch().map(|b| b.name.clone()))
+            .unwrap_or_else(|| "<no branch>".into());
+
+        let branch_selector = Button::new("branch-selector", branch)
+            .color(Color::Muted)
+            .style(ButtonStyle::Subtle)
+            .icon(IconName::GitBranch)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .size(ButtonSize::Compact)
+            .icon_position(IconPosition::Start)
+            .tooltip(Tooltip::for_action_title(
+                "Switch Branch",
+                &zed_actions::git::Branch,
+            ))
+            .on_click(cx.listener(|_, _, window, cx| {
+                window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
+            }))
+            .style(ButtonStyle::Transparent);
+
         let footer_size = px(32.);
         let gap = px(16.0);
 
@@ -1274,7 +1297,7 @@ impl GitPanel {
                     .left_2()
                     .h(footer_size)
                     .flex_none()
-                    .child(enable_coauthors),
+                    .child(branch_selector),
             )
             .child(
                 h_flex()
@@ -1301,32 +1324,6 @@ impl GitPanel {
         }) {
             return None;
         }
-
-        let _branch_selector = Button::new("branch-selector", branch.name.clone())
-            .color(Color::Muted)
-            .style(ButtonStyle::Subtle)
-            .icon(IconName::GitBranch)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .size(ButtonSize::Compact)
-            .icon_position(IconPosition::Start)
-            .tooltip(Tooltip::for_action_title(
-                "Switch Branch",
-                &zed_actions::git::Branch,
-            ))
-            .on_click(cx.listener(|_, _, window, cx| {
-                window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
-            }))
-            .style(ButtonStyle::Transparent);
-
-        let _timestamp = Label::new(time_format::format_local_timestamp(
-            OffsetDateTime::from_unix_timestamp(commit.commit_timestamp).log_err()?,
-            OffsetDateTime::now_utc(),
-            time_format::TimestampFormat::Relative,
-        ))
-        .size(LabelSize::Small)
-        .color(Color::Muted);
-
         let tooltip = if self.has_staged_changes() {
             "git reset HEAD^ --soft"
         } else {
@@ -1374,13 +1371,6 @@ impl GitPanel {
                         .icon_position(IconPosition::Start)
                         .tooltip(Tooltip::for_action_title(tooltip, &git::Uncommit))
                         .on_click(cx.listener(|this, _, window, cx| this.uncommit(window, cx))),
-                    // .child(
-                    //     panel_filled_button("Push")
-                    //         .icon(IconName::ArrowUp)
-                    //         .icon_size(IconSize::Small)
-                    //         .icon_color(Color::Muted)
-                    //         .icon_position(IconPosition::Start), // .disabled(true),
-                    // ),
                 ),
         )
     }
