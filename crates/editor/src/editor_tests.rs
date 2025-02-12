@@ -5301,24 +5301,39 @@ async fn test_select_all_matches(cx: &mut gpui::TestAppContext) {
 
     // Test caret-only selections
     cx.set_state("abc\nˇabc abc\ndefabc\nabc");
-
     cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
         .unwrap();
     cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
 
     // Test left-to-right selections
     cx.set_state("abc\n«abcˇ»\nabc");
-
     cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
         .unwrap();
     cx.assert_editor_state("«abcˇ»\n«abcˇ»\n«abcˇ»");
 
     // Test right-to-left selections
     cx.set_state("abc\n«ˇabc»\nabc");
-
     cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
         .unwrap();
     cx.assert_editor_state("«ˇabc»\n«ˇabc»\n«ˇabc»");
+
+    // Test selecting whitespace with caret selection
+    cx.set_state("abc\nˇ   abc\nabc");
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("abc\n«   ˇ»abc\nabc");
+
+    // Test selecting whitespace with left-to-right selection
+    cx.set_state("abc\n«ˇ  »abc\nabc");
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("abc\n«ˇ  »abc\nabc");
+
+    // Test no matches with right-to-left selection
+    cx.set_state("abc\n«  ˇ»abc\nabc");
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("abc\n«  ˇ»abc\nabc");
 }
 
 #[gpui::test]
