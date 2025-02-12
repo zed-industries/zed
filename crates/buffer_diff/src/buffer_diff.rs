@@ -42,21 +42,6 @@ pub enum DiffHunkSecondaryStatus {
     None,
 }
 
-// to stage a hunk:
-// - assume hunk starts out as not staged
-// - hunk exists with the same buffer range in the unstaged diff and the uncommitted diff
-// - we want to construct a "version" of the file that
-//   - starts from the index base text
-//   - has the single hunk applied to it
-//     - the hunk is the one from the UNSTAGED diff, so that the diff base offset range is correct to apply to that diff base
-// - write that new version of the file into the index
-
-// to unstage a hunk
-// - no hunk in the unstaged diff intersects this hunk from the uncommitted diff
-// - we want to compute the hunk that
-//   - we can apply to the index text
-//   - at the end of applying it,
-
 /// A diff hunk resolved to rows in the buffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffHunk {
@@ -175,7 +160,6 @@ impl BufferDiffSnapshot {
         buffer_range: Range<Anchor>,
         buffer: &text::BufferSnapshot,
     ) -> Option<Range<usize>> {
-        // FIXME seek hunks instead of naively iterating
         let mut hunks = self.inner.hunks.iter();
         let mut start = 0;
         let mut pos = buffer.anchor_before(0);
@@ -1019,6 +1003,13 @@ mod tests {
     use rand::{rngs::StdRng, Rng as _};
     use text::{Buffer, BufferId, Rope};
     use unindent::Unindent as _;
+
+    #[ctor::ctor]
+    fn init_logger() {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::init();
+        }
+    }
 
     #[gpui::test]
     async fn test_buffer_diff_simple(cx: &mut gpui::TestAppContext) {

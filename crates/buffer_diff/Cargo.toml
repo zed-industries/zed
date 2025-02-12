@@ -27,6 +27,8 @@ text.workspace = true
 util.workspace = true
 
 [dev-dependencies]
+ctor.workspace = true
+env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 rand.workspace = true
