@@ -1292,6 +1292,7 @@ impl ExtensionStore {
 
                 this.wasm_extensions.extend(wasm_extensions);
                 this.proxy.reload_current_theme(cx);
+                this.proxy.reload_current_icon_theme(cx);
             })
             .ok();
         })

@@ -5,14 +5,14 @@ use feature_flags::{
     FeatureFlagAppExt as _, PredictEditsFeatureFlag, PredictEditsRateCompletionsFeatureFlag,
 };
 use gpui::actions;
-use language::language_settings::{AllLanguageSettings, InlineCompletionProvider};
+use language::language_settings::{AllLanguageSettings, EditPredictionProvider};
 use settings::update_settings_file;
 use ui::App;
 use workspace::Workspace;
 
-use crate::{onboarding_modal::ZedPredictModal, RateCompletionModal, RateCompletions};
+use crate::{onboarding_modal::ZedPredictModal, RateCompletionModal};
 
-actions!(edit_predictions, [ResetOnboarding]);
+actions!(edit_prediction, [ResetOnboarding, RateCompletions]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
@@ -44,7 +44,7 @@ pub fn init(cx: &mut App) {
                 move |file, _| {
                     file.features
                         .get_or_insert(Default::default())
-                        .inline_completion_provider = Some(InlineCompletionProvider::None)
+                        .edit_prediction_provider = Some(EditPredictionProvider::None)
                 },
             );
 

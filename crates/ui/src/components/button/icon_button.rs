@@ -1,8 +1,8 @@
 #![allow(missing_docs)]
-use gpui::{AnyView, DefiniteLength};
+use gpui::{AnyView, DefiniteLength, Hsla};
 
 use super::button_like::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle};
-use crate::{prelude::*, ElevationIndex, SelectableButton};
+use crate::{prelude::*, ElevationIndex, Indicator, SelectableButton};
 use crate::{IconName, IconSize};
 
 use super::button_icon::ButtonIcon;
@@ -22,6 +22,9 @@ pub struct IconButton {
     icon_size: IconSize,
     icon_color: Color,
     selected_icon: Option<IconName>,
+    selected_icon_color: Option<Color>,
+    indicator: Option<Indicator>,
+    indicator_border_color: Option<Hsla>,
     alpha: Option<f32>,
 }
 
@@ -34,6 +37,9 @@ impl IconButton {
             icon_size: IconSize::default(),
             icon_color: Color::Default,
             selected_icon: None,
+            selected_icon_color: None,
+            indicator: None,
+            indicator_border_color: None,
             alpha: None,
         };
         this.base.base = this.base.base.debug_selector(|| format!("ICON-{:?}", icon));
@@ -62,6 +68,22 @@ impl IconButton {
 
     pub fn selected_icon(mut self, icon: impl Into<Option<IconName>>) -> Self {
         self.selected_icon = icon.into();
+        self
+    }
+
+    /// Sets the icon color used when the button is in a selected state.
+    pub fn selected_icon_color(mut self, color: impl Into<Option<Color>>) -> Self {
+        self.selected_icon_color = color.into();
+        self
+    }
+
+    pub fn indicator(mut self, indicator: Indicator) -> Self {
+        self.indicator = Some(indicator);
+        self
+    }
+
+    pub fn indicator_border_color(mut self, color: Option<Hsla>) -> Self {
+        self.indicator_border_color = color;
         self
     }
 }
@@ -167,7 +189,12 @@ impl RenderOnce for IconButton {
                     .disabled(is_disabled)
                     .toggle_state(is_selected)
                     .selected_icon(self.selected_icon)
+                    .selected_icon_color(self.selected_icon_color)
                     .when_some(selected_style, |this, style| this.selected_style(style))
+                    .when_some(self.indicator, |this, indicator| {
+                        this.indicator(indicator)
+                            .indicator_border_color(self.indicator_border_color)
+                    })
                     .size(self.icon_size)
                     .color(Color::Custom(color)),
             )

@@ -162,12 +162,14 @@ struct EntryDetails {
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct Delete {
     #[serde(default)]
     pub skip_prompt: bool,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct Trash {
     #[serde(default)]
     pub skip_prompt: bool,
@@ -731,7 +733,9 @@ impl ProjectPanel {
                             .action("Copy Path", Box::new(CopyPath))
                             .action("Copy Relative Path", Box::new(CopyRelativePath))
                             .separator()
-                            .action("Rename", Box::new(Rename))
+                            .when(!is_root || !cfg!(target_os = "windows"), |menu| {
+                                menu.action("Rename", Box::new(Rename))
+                            })
                             .when(!is_root & !is_remote, |menu| {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))
                             })
@@ -1346,6 +1350,10 @@ impl ProjectPanel {
             if let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) {
                 let sub_entry_id = self.unflatten_entry_id(entry_id);
                 if let Some(entry) = worktree.read(cx).entry_for_id(sub_entry_id) {
+                    #[cfg(target_os = "windows")]
+                    if Some(entry) == worktree.read(cx).root_entry() {
+                        return;
+                    }
                     self.edit_state = Some(EditState {
                         worktree_id,
                         entry_id: sub_entry_id,
@@ -1866,7 +1874,7 @@ impl ProjectPanel {
     ) {
         let selection = self.find_entry(
             self.selection.as_ref(),
-            true,
+            false,
             |entry, worktree_id| {
                 (self.selection.is_none()
                     || self.selection.is_some_and(|selection| {
@@ -3986,7 +3994,7 @@ impl ProjectPanel {
                                                     .when(
                                                         index == active_index
                                                             && (is_active || is_marked),
-                                                        |this| this.underline(true),
+                                                        |this| this.underline(),
                                                     ),
                                             );
 
@@ -6727,6 +6735,286 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
+        use git::status::{FileStatus, StatusCode, TrackedStatus};
+        use std::path::Path;
+
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "tree1": {
+                    ".git": {},
+                    "dir1": {
+                        "modified1.txt": "",
+                        "unmodified1.txt": "",
+                        "modified2.txt": "",
+                    },
+                    "dir2": {
+                        "modified3.txt": "",
+                        "unmodified2.txt": "",
+                    },
+                    "modified4.txt": "",
+                    "unmodified3.txt": "",
+                },
+                "tree2": {
+                    ".git": {},
+                    "dir3": {
+                        "modified5.txt": "",
+                        "unmodified4.txt": "",
+                    },
+                    "modified6.txt": "",
+                    "unmodified5.txt": "",
+                }
+            }),
+        )
+        .await;
+
+        // Mark files as git modified
+        let tree1_modified_files = [
+            "dir1/modified1.txt",
+            "dir1/modified2.txt",
+            "modified4.txt",
+            "dir2/modified3.txt",
+        ];
+
+        let tree2_modified_files = ["dir3/modified5.txt", "modified6.txt"];
+
+        let root1_dot_git = Path::new("/root/tree1/.git");
+        let root2_dot_git = Path::new("/root/tree2/.git");
+        let set_value = FileStatus::Tracked(TrackedStatus {
+            index_status: StatusCode::Modified,
+            worktree_status: StatusCode::Modified,
+        });
+
+        fs.with_git_state(&root1_dot_git, true, |git_repo_state| {
+            for file_path in tree1_modified_files {
+                git_repo_state.statuses.insert(file_path.into(), set_value);
+            }
+        });
+
+        fs.with_git_state(&root2_dot_git, true, |git_repo_state| {
+            for file_path in tree2_modified_files {
+                git_repo_state.statuses.insert(file_path.into(), set_value);
+            }
+        });
+
+        let project = Project::test(
+            fs.clone(),
+            ["/root/tree1".as_ref(), "/root/tree2".as_ref()],
+            cx,
+        )
+        .await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        // Check initial state
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v tree1",
+                "    > .git",
+                "    > dir1",
+                "    > dir2",
+                "      modified4.txt",
+                "      unmodified3.txt",
+                "v tree2",
+                "    > .git",
+                "    > dir3",
+                "      modified6.txt",
+                "      unmodified5.txt"
+            ],
+        );
+
+        // Test selecting next modified entry
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..6, cx),
+            &[
+                "v tree1",
+                "    > .git",
+                "    v dir1",
+                "          modified1.txt  <== selected",
+                "          modified2.txt",
+                "          unmodified1.txt",
+            ],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..6, cx),
+            &[
+                "v tree1",
+                "    > .git",
+                "    v dir1",
+                "          modified1.txt",
+                "          modified2.txt  <== selected",
+                "          unmodified1.txt",
+            ],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 6..9, cx),
+            &[
+                "    v dir2",
+                "          modified3.txt  <== selected",
+                "          unmodified2.txt",
+            ],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 9..11, cx),
+            &["      modified4.txt  <== selected", "      unmodified3.txt",],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 13..16, cx),
+            &[
+                "    v dir3",
+                "          modified5.txt  <== selected",
+                "          unmodified4.txt",
+            ],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 16..18, cx),
+            &["      modified6.txt  <== selected", "      unmodified5.txt",],
+        );
+
+        // Wraps around to first modified file
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..18, cx),
+            &[
+                "v tree1",
+                "    > .git",
+                "    v dir1",
+                "          modified1.txt  <== selected",
+                "          modified2.txt",
+                "          unmodified1.txt",
+                "    v dir2",
+                "          modified3.txt",
+                "          unmodified2.txt",
+                "      modified4.txt",
+                "      unmodified3.txt",
+                "v tree2",
+                "    > .git",
+                "    v dir3",
+                "          modified5.txt",
+                "          unmodified4.txt",
+                "      modified6.txt",
+                "      unmodified5.txt",
+            ],
+        );
+
+        // Wraps around again to last modified file
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 16..18, cx),
+            &["      modified6.txt  <== selected", "      unmodified5.txt",],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 13..16, cx),
+            &[
+                "    v dir3",
+                "          modified5.txt  <== selected",
+                "          unmodified4.txt",
+            ],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 9..11, cx),
+            &["      modified4.txt  <== selected", "      unmodified3.txt",],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 6..9, cx),
+            &[
+                "    v dir2",
+                "          modified3.txt  <== selected",
+                "          unmodified2.txt",
+            ],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..6, cx),
+            &[
+                "v tree1",
+                "    > .git",
+                "    v dir1",
+                "          modified1.txt",
+                "          modified2.txt  <== selected",
+                "          unmodified1.txt",
+            ],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..6, cx),
+            &[
+                "v tree1",
+                "    > .git",
+                "    v dir1",
+                "          modified1.txt  <== selected",
+                "          modified2.txt",
+                "          unmodified1.txt",
+            ],
+        );
+    }
+
+    #[gpui::test]
     async fn test_select_directory(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
@@ -6995,6 +7283,84 @@ mod tests {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &["v root", "      newer  <== selected"]
+        );
+    }
+
+    #[gpui::test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                "dir1": {
+                    "file1.txt": "content 1",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        toggle_expand_dir(&panel, "root1/dir1", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &["v root1", "    v dir1  <== selected", "          file1.txt",],
+            "Initial state with worktrees"
+        );
+
+        select_path(&panel, "root1", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &["v root1  <== selected", "    v dir1", "          file1.txt",],
+        );
+
+        // Rename root1 to new_root1
+        panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v [EDITOR: 'root1']  <== selected",
+                "    v dir1",
+                "          file1.txt",
+            ],
+        );
+
+        let confirm = panel.update_in(cx, |panel, window, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("new_root1", window, cx));
+            panel.confirm_edit(window, cx).unwrap()
+        });
+        confirm.await.unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v new_root1  <== selected",
+                "    v dir1",
+                "          file1.txt",
+            ],
+            "Should update worktree name"
+        );
+
+        // Ensure internal paths have been updated
+        select_path(&panel, "new_root1/dir1/file1.txt", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v new_root1",
+                "    v dir1",
+                "          file1.txt  <== selected",
+            ],
+            "Files in renamed worktree are selectable"
         );
     }
 

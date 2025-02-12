@@ -13,20 +13,21 @@ use gpui::{
     App, AppContext, Context, Entity, EventEmitter, SharedString, Subscription, Task, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
+use rpc::proto::ToProto;
 use rpc::{proto, AnyProtoClient};
 use settings::WorktreeId;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use text::BufferId;
 use util::{maybe, ResultExt};
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
 
 pub struct GitState {
-    project_id: Option<ProjectId>,
-    client: Option<AnyProtoClient>,
+    pub(super) project_id: Option<ProjectId>,
+    pub(super) client: Option<AnyProtoClient>,
+    pub update_sender: mpsc::UnboundedSender<(Message, oneshot::Sender<anyhow::Result<()>>)>,
     repositories: Vec<Entity<Repository>>,
     active_index: Option<usize>,
-    update_sender: mpsc::UnboundedSender<(Message, oneshot::Sender<anyhow::Result<()>>)>,
     _subscription: Subscription,
 }
 
@@ -50,7 +51,7 @@ pub enum GitRepo {
     },
 }
 
-enum Message {
+pub enum Message {
     Commit {
         git_repo: GitRepo,
         message: SharedString,
@@ -58,6 +59,7 @@ enum Message {
     },
     Stage(GitRepo, Vec<RepoPath>),
     Unstage(GitRepo, Vec<RepoPath>),
+    SetIndexText(GitRepo, RepoPath, Option<String>),
 }
 
 pub enum GitEvent {
@@ -222,7 +224,7 @@ impl GitState {
                                 work_directory_id: work_directory_id.to_proto(),
                                 paths: paths
                                     .into_iter()
-                                    .map(|repo_path| repo_path.to_proto())
+                                    .map(|repo_path| repo_path.as_ref().to_proto())
                                     .collect(),
                             })
                             .await
@@ -247,7 +249,7 @@ impl GitState {
                                 work_directory_id: work_directory_id.to_proto(),
                                 paths: paths
                                     .into_iter()
-                                    .map(|repo_path| repo_path.to_proto())
+                                    .map(|repo_path| repo_path.as_ref().to_proto())
                                     .collect(),
                             })
                             .await
@@ -290,28 +292,55 @@ impl GitState {
                 }
                 Ok(())
             }
+            Message::SetIndexText(git_repo, path, text) => match git_repo {
+                GitRepo::Local(repo) => repo.set_index_text(&path, text),
+                GitRepo::Remote {
+                    project_id,
+                    client,
+                    worktree_id,
+                    work_directory_id,
+                } => client.send(proto::SetIndexText {
+                    project_id: project_id.0,
+                    worktree_id: worktree_id.to_proto(),
+                    work_directory_id: work_directory_id.to_proto(),
+                    path: path.as_ref().to_proto(),
+                    text,
+                }),
+            },
         }
     }
 }
 
+impl GitRepo {}
+
 impl Repository {
+    pub fn git_state(&self) -> Option<Entity<GitState>> {
+        self.git_state.upgrade()
+    }
+
     fn id(&self) -> (WorktreeId, ProjectEntryId) {
         (self.worktree_id, self.repository_entry.work_directory_id())
     }
 
+    pub fn branch(&self) -> Option<Arc<str>> {
+        self.repository_entry.branch()
+    }
+
     pub fn display_name(&self, project: &Project, cx: &App) -> SharedString {
         maybe!({
-            let path = self.repo_path_to_project_path(&"".into())?;
-            Some(
-                project
-                    .absolute_path(&path, cx)?
-                    .file_name()?
-                    .to_string_lossy()
-                    .to_string()
-                    .into(),
-            )
+            let project_path = self.repo_path_to_project_path(&"".into())?;
+            let worktree_name = project
+                .worktree_for_id(project_path.worktree_id, cx)?
+                .read(cx)
+                .root_name();
+
+            let mut path = PathBuf::new();
+            path = path.join(worktree_name);
+            path = path.join(project_path.path);
+            Some(path.to_string_lossy().to_string())
         })
-        .unwrap_or("".into())
+        .unwrap_or_else(|| self.repository_entry.work_directory.display_name())
+        .into()
     }
 
     pub fn activate(&self, cx: &mut Context<Self>) {
@@ -510,6 +539,21 @@ impl Repository {
                     message,
                     name_and_email,
                 },
+                result_tx,
+            ))
+            .ok();
+        result_rx
+    }
+
+    pub fn set_index_text(
+        &self,
+        path: &RepoPath,
+        content: Option<String>,
+    ) -> oneshot::Receiver<anyhow::Result<()>> {
+        let (result_tx, result_rx) = futures::channel::oneshot::channel();
+        self.update_sender
+            .unbounded_send((
+                Message::SetIndexText(self.git_repo.clone(), path.clone(), content),
                 result_tx,
             ))
             .ok();

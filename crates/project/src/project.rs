@@ -21,7 +21,7 @@ mod project_tests;
 
 mod direnv;
 mod environment;
-use diff::BufferDiff;
+use buffer_diff::BufferDiff;
 pub use environment::EnvironmentErrorMessage;
 use git::Repository;
 pub mod search_history;
@@ -73,7 +73,7 @@ pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 use remote::{SshConnectionOptions, SshRemoteClient};
 use rpc::{
-    proto::{LanguageServerPromptResponse, SSH_PROJECT_ID},
+    proto::{FromProto, LanguageServerPromptResponse, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, ErrorCode,
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
@@ -297,14 +297,14 @@ impl ProjectPath {
     pub fn from_proto(p: proto::ProjectPath) -> Self {
         Self {
             worktree_id: WorktreeId::from_proto(p.worktree_id),
-            path: Arc::from(PathBuf::from(p.path)),
+            path: Arc::<Path>::from_proto(p.path),
         }
     }
 
     pub fn to_proto(&self) -> proto::ProjectPath {
         proto::ProjectPath {
             worktree_id: self.worktree_id.to_proto(),
-            path: self.path.to_string_lossy().to_string(),
+            path: self.path.as_ref().to_proto(),
         }
     }
 
@@ -610,6 +610,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_stage);
         client.add_entity_request_handler(Self::handle_unstage);
         client.add_entity_request_handler(Self::handle_commit);
+        client.add_entity_request_handler(Self::handle_set_index_text);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
 
         WorktreeStore::init(&client);
@@ -1535,6 +1536,10 @@ impl Project {
         })
     }
 
+    /// Renames the project entry with given `entry_id`.
+    ///
+    /// `new_path` is a relative path to worktree root.
+    /// If root entry is renamed then its new root name is used instead.
     pub fn rename_entry(
         &mut self,
         entry_id: ProjectEntryId,
@@ -1551,12 +1556,18 @@ impl Project {
         };
 
         let worktree_id = worktree.read(cx).id();
+        let is_root_entry = self.entry_is_worktree_root(entry_id, cx);
 
         let lsp_store = self.lsp_store().downgrade();
         cx.spawn(|_, mut cx| async move {
             let (old_abs_path, new_abs_path) = {
                 let root_path = worktree.update(&mut cx, |this, _| this.abs_path())?;
-                (root_path.join(&old_path), root_path.join(&new_path))
+                let new_abs_path = if is_root_entry {
+                    root_path.parent().unwrap().join(&new_path)
+                } else {
+                    root_path.join(&new_path)
+                };
+                (root_path.join(&old_path), new_abs_path)
             };
             LspStore::will_rename_entry(
                 lsp_store.clone(),
@@ -3350,18 +3361,19 @@ impl Project {
                 })
             })
         } else if let Some(ssh_client) = self.ssh_client.as_ref() {
+            let request_path = Path::new(path);
             let request = ssh_client
                 .read(cx)
                 .proto_client()
                 .request(proto::GetPathMetadata {
                     project_id: SSH_PROJECT_ID,
-                    path: path.to_string(),
+                    path: request_path.to_proto(),
                 });
             cx.background_executor().spawn(async move {
                 let response = request.await.log_err()?;
                 if response.exists {
                     Some(ResolvedPath::AbsPath {
-                        path: PathBuf::from(response.path),
+                        path: PathBuf::from_proto(response.path),
                         is_dir: response.is_dir,
                     })
                 } else {
@@ -3431,9 +3443,10 @@ impl Project {
         if self.is_local() {
             DirectoryLister::Local(self.fs.clone()).list_directory(query, cx)
         } else if let Some(session) = self.ssh_client.as_ref() {
+            let path_buf = PathBuf::from(query);
             let request = proto::ListRemoteDirectory {
                 dev_server_id: SSH_PROJECT_ID,
-                path: query,
+                path: path_buf.to_proto(),
             };
 
             let response = session.read(cx).proto_client().request(request);
@@ -3984,7 +3997,7 @@ impl Project {
             this.open_buffer(
                 ProjectPath {
                     worktree_id,
-                    path: PathBuf::from(envelope.payload.path).into(),
+                    path: Arc::<Path>::from_proto(envelope.payload.path),
                 },
                 cx,
             )
@@ -4075,6 +4088,27 @@ impl Project {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.commit(message, name.zip(email))
+            })?
+            .await??;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_set_index_text(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::SetIndexText>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.set_index_text(
+                    &RepoPath::from_str(&envelope.payload.path),
+                    envelope.payload.text,
+                )
             })?
             .await??;
         Ok(proto::Ack {})
@@ -4323,6 +4357,27 @@ impl Project {
 
     pub fn all_repositories(&self, cx: &App) -> Vec<Entity<Repository>> {
         self.git_state.read(cx).all_repositories()
+    }
+
+    pub fn repository_and_path_for_buffer_id(
+        &self,
+        buffer_id: BufferId,
+        cx: &App,
+    ) -> Option<(Entity<Repository>, RepoPath)> {
+        let path = self
+            .buffer_for_id(buffer_id, cx)?
+            .read(cx)
+            .project_path(cx)?;
+        self.git_state
+            .read(cx)
+            .all_repositories()
+            .into_iter()
+            .find_map(|repo| {
+                Some((
+                    repo.clone(),
+                    repo.read(cx).repository_entry.relativize(&path.path).ok()?,
+                ))
+            })
     }
 }
 

@@ -26,6 +26,7 @@ actions!(picker, [ConfirmCompletion]);
 /// ConfirmInput is an alternative editor action which - instead of selecting active picker entry - treats pickers editor input literally,
 /// performing some kind of action on it.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ConfirmInput {
     pub secondary: bool,
 }

@@ -44,6 +44,7 @@ use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
 #[derive(PartialEq, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Deploy {
     #[serde(default = "util::serde::default_true")]
     pub focus: bool,

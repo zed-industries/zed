@@ -60,7 +60,7 @@ pub fn all_language_settings<'a>(
 #[derive(Debug, Clone)]
 pub struct AllLanguageSettings {
     /// The edit prediction settings.
-    pub inline_completions: InlineCompletionSettings,
+    pub edit_predictions: EditPredictionSettings,
     defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
     pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
@@ -110,11 +110,11 @@ pub struct LanguageSettings {
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
     pub language_servers: Vec<String>,
     /// Controls whether edit predictions are shown immediately (true)
-    /// or manually by triggering `editor::ShowInlineCompletion` (false).
-    pub show_inline_completions: bool,
+    /// or manually by triggering `editor::ShowEditPrediction` (false).
+    pub show_edit_predictions: bool,
     /// Controls whether edit predictions are shown in the given language
     /// scopes.
-    pub inline_completions_disabled_in: Vec<String>,
+    pub edit_predictions_disabled_in: Vec<String>,
     /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: ShowWhitespaceSetting,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
@@ -198,7 +198,7 @@ impl LanguageSettings {
 /// The provider that supplies edit predictions.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum InlineCompletionProvider {
+pub enum EditPredictionProvider {
     None,
     #[default]
     Copilot,
@@ -206,13 +206,13 @@ pub enum InlineCompletionProvider {
     Zed,
 }
 
-impl InlineCompletionProvider {
+impl EditPredictionProvider {
     pub fn is_zed(&self) -> bool {
         match self {
-            InlineCompletionProvider::Zed => true,
-            InlineCompletionProvider::None
-            | InlineCompletionProvider::Copilot
-            | InlineCompletionProvider::Supermaven => false,
+            EditPredictionProvider::Zed => true,
+            EditPredictionProvider::None
+            | EditPredictionProvider::Copilot
+            | EditPredictionProvider::Supermaven => false,
         }
     }
 }
@@ -220,24 +220,27 @@ impl InlineCompletionProvider {
 /// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot)
 /// or [Supermaven](https://supermaven.com).
 #[derive(Clone, Debug, Default)]
-pub struct InlineCompletionSettings {
+pub struct EditPredictionSettings {
     /// The provider that supplies edit predictions.
-    pub provider: InlineCompletionProvider,
+    pub provider: EditPredictionProvider,
     /// A list of globs representing files that edit predictions should be disabled for.
+    /// This list adds to a pre-existing, sensible default set of globs.
+    /// Any additional ones you add are combined with them.
     pub disabled_globs: Vec<GlobMatcher>,
-    /// When to show edit predictions previews in buffer.
-    pub inline_preview: InlineCompletionPreviewMode,
+    /// Configures how edit predictions are displayed in the buffer.
+    pub mode: EditPredictionsMode,
 }
 
 /// The mode in which edit predictions should be displayed.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum InlineCompletionPreviewMode {
+pub enum EditPredictionsMode {
+    /// If provider supports it, display inline when holding modifier key (e.g., alt).
+    /// Otherwise, eager preview is used.
+    Auto,
     /// Display inline when there are no language server completions available.
     #[default]
-    Auto,
-    /// Display inline when holding modifier key (alt by default).
-    WhenHoldingModifier,
+    EagerPreview,
 }
 
 /// The settings for all languages.
@@ -248,7 +251,7 @@ pub struct AllLanguageSettingsContent {
     pub features: Option<FeaturesContent>,
     /// The edit prediction settings.
     #[serde(default)]
-    pub inline_completions: Option<InlineCompletionSettingsContent>,
+    pub edit_predictions: Option<EditPredictionSettingsContent>,
     /// The default language settings.
     #[serde(flatten)]
     pub defaults: LanguageSettingsContent,
@@ -347,11 +350,11 @@ pub struct LanguageSettingsContent {
     #[serde(default)]
     pub language_servers: Option<Vec<String>>,
     /// Controls whether edit predictions are shown immediately (true)
-    /// or manually by triggering `editor::ShowInlineCompletion` (false).
+    /// or manually by triggering `editor::ShowEditPrediction` (false).
     ///
     /// Default: true
     #[serde(default)]
-    pub show_inline_completions: Option<bool>,
+    pub show_edit_predictions: Option<bool>,
     /// Controls whether edit predictions are shown in the given language
     /// scopes.
     ///
@@ -359,7 +362,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: []
     #[serde(default)]
-    pub inline_completions_disabled_in: Option<Vec<String>>,
+    pub edit_predictions_disabled_in: Option<Vec<String>>,
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
@@ -426,13 +429,16 @@ pub struct LanguageSettingsContent {
 
 /// The contents of the edit prediction settings.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct InlineCompletionSettingsContent {
+pub struct EditPredictionSettingsContent {
     /// A list of globs representing files that edit predictions should be disabled for.
+    /// This list adds to a pre-existing, sensible default set of globs.
+    /// Any additional ones you add are combined with them.
     #[serde(default)]
     pub disabled_globs: Option<Vec<String>>,
-    /// When to show edit predictions previews in buffer.
+    /// The mode used to display edit predictions in the buffer.
+    /// Provider support required.
     #[serde(default)]
-    pub inline_preview: InlineCompletionPreviewMode,
+    pub mode: EditPredictionsMode,
 }
 
 /// The settings for enabling/disabling features.
@@ -442,7 +448,7 @@ pub struct FeaturesContent {
     /// Whether the GitHub Copilot feature is enabled.
     pub copilot: Option<bool>,
     /// Determines which edit prediction provider to use.
-    pub inline_completion_provider: Option<InlineCompletionProvider>,
+    pub edit_prediction_provider: Option<EditPredictionProvider>,
 }
 
 /// Controls the soft-wrapping behavior in the editor.
@@ -906,7 +912,7 @@ impl AllLanguageSettings {
     /// Returns whether edit predictions are enabled for the given path.
     pub fn inline_completions_enabled_for_path(&self, path: &Path) -> bool {
         !self
-            .inline_completions
+            .edit_predictions
             .disabled_globs
             .iter()
             .any(|glob| glob.is_match(path))
@@ -915,12 +921,12 @@ impl AllLanguageSettings {
     /// Returns whether edit predictions are enabled for the given language and path.
     pub fn show_inline_completions(&self, language: Option<&Arc<Language>>, cx: &App) -> bool {
         self.language(None, language.map(|l| l.name()).as_ref(), cx)
-            .show_inline_completions
+            .show_edit_predictions
     }
 
     /// Returns the edit predictions preview mode for the given language and path.
-    pub fn inline_completions_preview_mode(&self) -> InlineCompletionPreviewMode {
-        self.inline_completions.inline_preview
+    pub fn edit_predictions_mode(&self) -> EditPredictionsMode {
+        self.edit_predictions.mode
     }
 }
 
@@ -1015,18 +1021,18 @@ impl settings::Settings for AllLanguageSettings {
         }
 
         let mut copilot_enabled = default_value.features.as_ref().and_then(|f| f.copilot);
-        let mut inline_completion_provider = default_value
+        let mut edit_prediction_provider = default_value
             .features
             .as_ref()
-            .and_then(|f| f.inline_completion_provider);
-        let mut inline_completions_preview = default_value
-            .inline_completions
+            .and_then(|f| f.edit_prediction_provider);
+        let mut edit_predictions_mode = default_value
+            .edit_predictions
             .as_ref()
-            .map(|inline_completions| inline_completions.inline_preview)
+            .map(|edit_predictions| edit_predictions.mode)
             .ok_or_else(Self::missing_default)?;
 
         let mut completion_globs: HashSet<&String> = default_value
-            .inline_completions
+            .edit_predictions
             .as_ref()
             .and_then(|c| c.disabled_globs.as_ref())
             .map(|globs| globs.iter().collect())
@@ -1051,15 +1057,15 @@ impl settings::Settings for AllLanguageSettings {
             if let Some(provider) = user_settings
                 .features
                 .as_ref()
-                .and_then(|f| f.inline_completion_provider)
+                .and_then(|f| f.edit_prediction_provider)
             {
-                inline_completion_provider = Some(provider);
+                edit_prediction_provider = Some(provider);
             }
 
-            if let Some(inline_completions) = user_settings.inline_completions.as_ref() {
-                inline_completions_preview = inline_completions.inline_preview;
+            if let Some(edit_predictions) = user_settings.edit_predictions.as_ref() {
+                edit_predictions_mode = edit_predictions.mode;
 
-                if let Some(disabled_globs) = inline_completions.disabled_globs.as_ref() {
+                if let Some(disabled_globs) = edit_predictions.disabled_globs.as_ref() {
                     completion_globs.extend(disabled_globs.iter());
                 }
             }
@@ -1102,19 +1108,19 @@ impl settings::Settings for AllLanguageSettings {
         }
 
         Ok(Self {
-            inline_completions: InlineCompletionSettings {
-                provider: if let Some(provider) = inline_completion_provider {
+            edit_predictions: EditPredictionSettings {
+                provider: if let Some(provider) = edit_prediction_provider {
                     provider
                 } else if copilot_enabled.unwrap_or(true) {
-                    InlineCompletionProvider::Copilot
+                    EditPredictionProvider::Copilot
                 } else {
-                    InlineCompletionProvider::None
+                    EditPredictionProvider::None
                 },
                 disabled_globs: completion_globs
                     .iter()
                     .filter_map(|g| Some(globset::Glob::new(g).ok()?.compile_matcher()))
                     .collect(),
-                inline_preview: inline_completions_preview,
+                mode: edit_predictions_mode,
             },
             defaults,
             languages,
@@ -1219,12 +1225,12 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     );
     merge(&mut settings.language_servers, src.language_servers.clone());
     merge(
-        &mut settings.show_inline_completions,
-        src.show_inline_completions,
+        &mut settings.show_edit_predictions,
+        src.show_edit_predictions,
     );
     merge(
-        &mut settings.inline_completions_disabled_in,
-        src.inline_completions_disabled_in.clone(),
+        &mut settings.edit_predictions_disabled_in,
+        src.edit_predictions_disabled_in.clone(),
     );
     merge(&mut settings.show_whitespaces, src.show_whitespaces);
     merge(
