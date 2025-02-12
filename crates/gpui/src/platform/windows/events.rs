@@ -1235,7 +1235,23 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
         VK_DELETE => "delete",
-        _ => return basic_vkcode_to_string(vk_code, modifiers),
+        _ => {
+            let basic_key = basic_vkcode_to_string(vk_code, modifiers);
+            if basic_key.is_some() {
+                return basic_key;
+            } else {
+                if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
+                    let offset = vk_code - VK_F1.0;
+                    return Some(Keystroke {
+                        modifiers,
+                        key: format!("f{}", offset + 1),
+                        key_char: None,
+                    });
+                } else {
+                    return None;
+                }
+            }
+        }
     }
     .to_owned();
 
