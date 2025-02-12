@@ -316,14 +316,11 @@ message Envelope {
 
         OpenUncommittedDiff open_uncommitted_diff = 297;
         OpenUncommittedDiffResponse open_uncommitted_diff_response = 298;
-<<<<<<< HEAD
-        GitShow git_show = 299;
-        GitReset git_reset = 300; // current max
-        GitCommitDetails git_commit_details = 301; // current max
-=======
+        GitShow git_show = 300;
+        GitReset git_reset = 301;
+        GitCommitDetails git_commit_details = 302;
 
         SetIndexText set_index_text = 299; // current max
->>>>>>> @{-1}
     }
 
     reserved 87 to 88;
