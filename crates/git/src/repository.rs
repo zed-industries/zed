@@ -41,6 +41,7 @@ pub trait GitRepository: Send + Sync {
     /// Note that for symlink entries, this will return the contents of the symlink, not the target.
     fn load_committed_text(&self, path: &RepoPath) -> Option<String>;
 
+
     fn set_index_text(&self, path: &RepoPath, content: Option<String>) -> anyhow::Result<()>;
 
     /// Returns the URL of the remote with the given name.

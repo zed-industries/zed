@@ -23,7 +23,8 @@ use collections::{HashMap, HashSet, VecDeque};
 use feature_flags::FeatureFlagAppExt as _;
 use futures::AsyncReadExt;
 use gpui::{
-    actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, Subscription, Task,
+    actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, SemanticVersion,
+    Subscription, Task,
 };
 use http_client::{HttpClient, Method};
 use input_excerpt::excerpt_for_cursor_position;
@@ -34,7 +35,9 @@ use language::{
 use language_models::LlmApiToken;
 use postage::watch;
 use project::Project;
+use release_channel::AppVersion;
 use settings::WorktreeId;
+use std::str::FromStr;
 use std::{
     borrow::Cow,
     cmp,
@@ -51,7 +54,10 @@ use telemetry_events::InlineCompletionRating;
 use util::ResultExt;
 use uuid::Uuid;
 use worktree::Worktree;
-use zed_llm_client::{PredictEditsBody, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME};
+use zed_llm_client::{
+    PredictEditsBody, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME,
+    MINIMUM_REQUIRED_VERSION_HEADER_NAME,
+};
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
 const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
@@ -345,7 +351,7 @@ impl Zeta {
         perform_predict_edits: F,
     ) -> Task<Result<Option<InlineCompletion>>>
     where
-        F: FnOnce(Arc<Client>, LlmApiToken, bool, PredictEditsBody) -> R + 'static,
+        F: FnOnce(Arc<Client>, LlmApiToken, bool, SemanticVersion, PredictEditsBody) -> R + 'static,
         R: Future<Output = Result<PredictEditsResponse>> + Send + 'static,
     {
         let snapshot = self.report_changes_for_buffer(&buffer, cx);
@@ -361,6 +367,7 @@ impl Zeta {
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
         let is_staff = cx.is_staff();
+        let app_version = AppVersion::global(cx);
 
         let buffer = buffer.clone();
 
@@ -447,7 +454,8 @@ impl Zeta {
                 }),
             };
 
-            let response = perform_predict_edits(client, llm_token, is_staff, body).await?;
+            let response =
+                perform_predict_edits(client, llm_token, is_staff, app_version, body).await?;
 
             log::debug!("completion response: {}", &response.output_excerpt);
 
@@ -632,9 +640,14 @@ and then another
     ) -> Task<Result<Option<InlineCompletion>>> {
         use std::future::ready;
 
-        self.request_completion_impl(project, buffer, position, false, cx, |_, _, _, _| {
-            ready(Ok(response))
-        })
+        self.request_completion_impl(
+            project,
+            buffer,
+            position,
+            false,
+            cx,
+            |_, _, _is_staff, _app_version, _| ready(Ok(response)),
+        )
     }
 
     pub fn request_completion(
@@ -659,6 +672,7 @@ and then another
         client: Arc<Client>,
         llm_token: LlmApiToken,
         _is_staff: bool,
+        app_version: SemanticVersion,
         body: PredictEditsBody,
     ) -> impl Future<Output = Result<PredictEditsResponse>> {
         async move {
@@ -684,6 +698,18 @@ and then another
                     .body(serde_json::to_string(&body)?.into())?;
 
                 let mut response = http_client.send(request).await?;
+
+                if let Some(minimum_required_version) = response
+                    .headers()
+                    .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
+                    .and_then(|version| {
+                        Some(SemanticVersion::from_str(version.to_str().ok()?).ok()?)
+                    })
+                {
+                    if app_version < minimum_required_version {
+                        return Err(anyhow!("you must upgrade to Zed version {minimum_required_version} or higher to continue using edit predictions"));
+                    }
+                }
 
                 if response.status().is_success() {
                     let mut body = String::new();
