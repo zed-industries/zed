@@ -198,6 +198,8 @@ pub struct Zeta {
     _llm_token_subscription: Subscription,
     /// Whether the terms of service have been accepted.
     tos_accepted: bool,
+    /// Whether an update to a newer version of Zed is required to continue using Zeta.
+    update_required: bool,
     _user_store_subscription: Subscription,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
 }
@@ -273,6 +275,7 @@ impl Zeta {
                 .read(cx)
                 .current_user_has_accepted_terms()
                 .unwrap_or(false),
+            update_required: false,
             _user_store_subscription: cx.subscribe(&user_store, |this, user_store, event, cx| {
                 match event {
                     client::user::Event::PrivateUserInfoUpdated => {
@@ -376,6 +379,7 @@ impl Zeta {
             .map(|f| Arc::from(f.full_path(cx).as_path()))
             .unwrap_or_else(|| Arc::from(Path::new("untitled")));
 
+        let zeta = cx.entity();
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
@@ -476,8 +480,12 @@ impl Zeta {
                 Ok(response) => response,
                 Err(err) => {
                     if err.is::<ZedUpdateRequiredError>() {
-                        if let Some(workspace) = workspace {
-                            cx.update(|cx| {
+                        cx.update(|cx| {
+                            zeta.update(cx, |zeta, _cx| {
+                                zeta.update_required = true;
+                            });
+
+                            if let Some(workspace) = workspace {
                                 workspace.update(cx, |workspace, cx| {
                                     workspace.show_notification(
                                         NotificationId::unique::<ZedUpdateRequiredError>(),
@@ -492,10 +500,10 @@ impl Zeta {
                                             })
                                         },
                                     );
-                                })
-                            })
-                            .ok();
-                        }
+                                });
+                            }
+                        })
+                        .ok();
                     }
 
                     return Err(err);
@@ -1495,6 +1503,10 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         cx: &mut Context<Self>,
     ) {
         if !self.zeta.read(cx).tos_accepted {
+            return;
+        }
+
+        if self.zeta.read(cx).update_required {
             return;
         }
 
