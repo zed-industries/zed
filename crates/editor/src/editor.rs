@@ -12696,7 +12696,8 @@ impl Editor {
                 index_buffer.edit(edits, None, cx);
                 index_buffer.snapshot().as_rope().to_string()
             });
-            let new_index_text = if new_index_text.is_empty() && diff.base_text().is_none() {
+            let new_index_text = if new_index_text.is_empty() && diff.is_single_insertion {
+                log::debug!("removing from index");
                 None
             } else {
                 Some(new_index_text)

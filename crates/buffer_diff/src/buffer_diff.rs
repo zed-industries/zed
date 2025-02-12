@@ -15,10 +15,11 @@ pub struct BufferDiff {
     secondary_diff: Option<Entity<BufferDiff>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BufferDiffSnapshot {
     inner: BufferDiffInner,
     secondary_diff: Option<Box<BufferDiffSnapshot>>,
+    pub is_single_insertion: bool,
 }
 
 #[derive(Clone)]
@@ -244,6 +245,7 @@ impl BufferDiffSnapshot {
                 }
                 (index_byte_range, replacement_text)
             } else {
+                log::debug!("unstaging");
                 let mut replacement_text = String::new();
                 let Some(index_byte_range) = secondary_diff
                     .buffer_range_to_unchanged_diff_base_range(buffer_range.clone(), &buffer)
@@ -258,6 +260,7 @@ impl BufferDiffSnapshot {
             };
             edits.push((index_byte_range, replacement_text));
         }
+        log::debug!("edits: {edits:?}");
         edits
     }
 }
@@ -672,6 +675,7 @@ impl BufferDiff {
 
     pub fn build_with_single_insertion(
         insertion_present_in_secondary_diff: bool,
+        buffer: language::BufferSnapshot,
         cx: &mut App,
     ) -> BufferDiffSnapshot {
         let base_text = language::Buffer::build_empty_snapshot(cx);
@@ -687,17 +691,23 @@ impl BufferDiff {
                 hunks: hunks.clone(),
                 base_text: Some(base_text.clone()),
             },
-            secondary_diff: if insertion_present_in_secondary_diff {
-                Some(Box::new(BufferDiffSnapshot {
-                    inner: BufferDiffInner {
-                        hunks,
-                        base_text: Some(base_text),
+            secondary_diff: Some(Box::new(BufferDiffSnapshot {
+                inner: BufferDiffInner {
+                    hunks: if insertion_present_in_secondary_diff {
+                        hunks
+                    } else {
+                        SumTree::new(&buffer.text)
                     },
-                    secondary_diff: None,
-                }))
-            } else {
-                None
-            },
+                    base_text: Some(if insertion_present_in_secondary_diff {
+                        base_text
+                    } else {
+                        buffer
+                    }),
+                },
+                secondary_diff: None,
+                is_single_insertion: true,
+            })),
+            is_single_insertion: true,
         }
     }
 
@@ -802,6 +812,7 @@ impl BufferDiff {
                 .secondary_diff
                 .as_ref()
                 .map(|diff| Box::new(diff.read(cx).snapshot(cx))),
+            is_single_insertion: false,
         }
     }
 

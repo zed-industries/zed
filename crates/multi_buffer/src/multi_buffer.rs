@@ -2192,7 +2192,11 @@ impl MultiBuffer {
             let secondary_diff_insertion = new_diff
                 .secondary_diff()
                 .map_or(true, |secondary_diff| secondary_diff.base_text().is_none());
-            new_diff = BufferDiff::build_with_single_insertion(secondary_diff_insertion, cx);
+            new_diff = BufferDiff::build_with_single_insertion(
+                secondary_diff_insertion,
+                buffer.snapshot(),
+                cx,
+            );
         }
 
         let mut snapshot = self.snapshot.borrow_mut();
