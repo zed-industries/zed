@@ -1,44 +1,42 @@
 # Inno Setup executable path
 $innoSetupPath = "C:\zjk\apps\Inno Setup 6\ISCC.exe"
 $innoFilePath = ".\crates\zed\resources\windows\installer\zed.iss"
-$signToolPath = "C:\zjk\projects\zed\crates\zed\resources\windows\installer\sign.cmd"
+$signToolPath = "powershell.exe -ExecutionPolicy Bypass -File C:\zjk\projects\zed\crates\zed\resources\windows\installer\new-sign.ps1"
 
 $product = @{
-    "nameLong"        = "zed"
-    "nameShort"       = "zed"
-    "DirName"         = "zed"
-    "RegValueName"    = "zed"
-    "ShellNameShort"  = "&Zed Editor"
-    "MutexName"       = "ZedSetupMutex" # TODO:
-    "applicationName" = "Zed"
-    "AppUserModelId"  = "ZedIndustry.Zed"
-    # "RepoDir"         = ".\crates\zed\resources\windows\installer"
-    "RepoDir"         = "C:\zjk\projects\zed\crates\zed\resources\windows\installer"
-    ”AppId"           = "{{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}"
+    "nameLong"         = "Zed"
+    "nameShort"        = "zed"
+    "DirName"          = "Zed"
+    "RegValueName"     = "ZedEditor"
+    "RegValueNameLong" = "Zed Editor (User)"
+    "ShellNameShort"   = "&Zed Editor"
+    "MutexName"        = "ZedSetupMutex" # TODO:
+    "AppUserModelId"   = "ZedIndustry.Zed"
+    "ResourcesDir"     = "C:\zjk\projects\zed\crates\zed\resources\windows"
+    ”AppId"            = "{{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}"
 }
 
-$sourcePath = ".\crates\zed\resources\windows\installer\"
+$sourcePath = "C:\zjk\projects\zed"
 $outputPath = "C:\zjk\projects\zed\target\windows"
 New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 
 $definitions = @{
-    "NameLong"        = $product.nameLong
-    "NameShort"       = $product.nameShort
-    "DirName"         = $product.DirName
-    "Version"         = "1.0.0"
-    "RawVersion"      = "1.0.0"
-    "ExeBasename"     = $product.nameShort
-    "RegValueName"    = $product.RegValueName
-    "ShellNameShort"  = $product.ShellNameShort
-    "AppMutex"        = $product.MutexName
-    "ApplicationName" = $product.applicationName
-    "SourceDir"       = $sourcePath
-    "OutputDir"       = $outputPath
-    "RepoDir"         = $product.RepoDir
-    "AppId"           = $product.AppId
-    "AppUserId"       = $product.AppUserModelId
-    "InstallTarget"   = "user"
-    "signToolPath"    = $signToolPath
+    "NameLong"         = $product.nameLong
+    "NameShort"        = $product.nameShort
+    "DirName"          = $product.DirName
+    "Version"          = "1.0.0"
+    "RawVersion"       = "1.0.0"
+    "ExeBasename"      = $product.nameShort
+    "RegValueName"     = $product.RegValueName
+    "RegValueNameLong" = $product.RegValueNameLong
+    "ShellNameShort"   = $product.ShellNameShort
+    "AppMutex"         = $product.MutexName
+    "SourceDir"        = $sourcePath
+    "OutputDir"        = $outputPath
+    "ResourcesDir"     = $product.ResourcesDir
+    "AppId"            = $product.AppId
+    "AppUserId"        = $product.AppUserModelId
+    "signToolPath"     = $signToolPath
 }
 
 $defs = @()
