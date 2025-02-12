@@ -3262,6 +3262,7 @@ impl LspStore {
                 };
                 *refcount -= 1;
                 if *refcount == 0 {
+                    local.registered_buffers.remove(&buffer_id);
                     if let Some(file) = File::from_dyn(buffer.read(cx).file()).cloned() {
                         local.unregister_old_buffer_from_language_servers(&buffer, &file, cx);
                     }
