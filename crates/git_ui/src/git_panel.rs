@@ -1259,15 +1259,20 @@ impl GitPanel {
         } else {
             Some(
                 IconButton::new("co-authors", IconName::Person)
-                    .icon_color(Color::Default)
+                    .icon_color(Color::Disabled)
                     .selected_icon_color(Color::Selected)
                     .toggle_state(self.add_coauthors)
                     .tooltip(move |_, cx| {
                         let title = format!(
-                            "Add co-authored-by for:\n{}",
+                            "Add co-authored-by:{}{}",
+                            if potential_co_authors.len() == 1 {
+                                ""
+                            } else {
+                                "\n"
+                            },
                             potential_co_authors
                                 .iter()
-                                .map(|(name, email)| format!("- {} <{}>", name, email))
+                                .map(|(name, email)| format!(" {} <{}>", name, email))
                                 .join("\n")
                         );
                         Tooltip::simple(title, cx)
