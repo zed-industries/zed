@@ -59,7 +59,7 @@ pub enum Message {
     },
     Stage(GitRepo, Vec<RepoPath>),
     Unstage(GitRepo, Vec<RepoPath>),
-    SetIndexText(GitRepo, RepoPath, Rope),
+    SetIndexText(GitRepo, RepoPath, Option<Rope>),
 }
 
 pub enum GitEvent {
@@ -300,7 +300,7 @@ impl GitState {
     }
 
     // FIXME channel
-    pub fn set_index_text(&self, git_repo: GitRepo, path: RepoPath, content: Rope) {
+    pub fn set_index_text(&self, git_repo: GitRepo, path: RepoPath, content: Option<Rope>) {
         self.update_sender
             .unbounded_send((
                 Message::SetIndexText(git_repo, path, content),

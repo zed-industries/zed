@@ -12689,16 +12689,17 @@ impl Editor {
             let index_buffer = cx.new(|cx| {
                 Buffer::local_normalized(index_base.clone(), text::LineEnding::default(), cx)
             });
+            // FIXME see whether to write None
             let new_index_text = index_buffer.update(cx, |index_buffer, cx| {
                 index_buffer.edit(edits, None, cx);
                 index_buffer.snapshot().as_rope().clone()
             });
 
-            project
-                .read(cx)
-                .git_state()
-                .read(cx)
-                .set_index_text(git_repo, path, new_index_text);
+            project.read(cx).git_state().read(cx).set_index_text(
+                git_repo,
+                path,
+                Some(new_index_text),
+            );
         }
     }
 
