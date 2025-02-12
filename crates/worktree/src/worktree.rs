@@ -5413,30 +5413,11 @@ impl BackgroundScanner {
         })
     }
 
-    fn update_branches(&self, job: &UpdateGitRepoJob) -> Result<()> {
-        let branches = job.local_repository.repo().branches()?;
-        let snapshot = self.state.lock().snapshot.snapshot.clone();
-
-        let mut repository = snapshot
-            .repository(job.local_repository.work_directory.path_key())
-            .context("Missing repository")?;
-
-        repository.branch = branches.into_iter().find(|branch| branch.is_head);
-
-        let mut state = self.state.lock();
-        state
-            .snapshot
-            .repositories
-            .insert_or_replace(repository, &());
-
-        Ok(())
-    }
-
     /// Update the git statuses for a given batch of entries.
     fn schedule_git_statuses_update(
         &self,
         state: &mut BackgroundScannerState,
-        local_repository: LocalRepositoryEntry,
+        mut local_repository: LocalRepositoryEntry,
     ) -> oneshot::Receiver<()> {
         let repository_name = local_repository.work_directory.display_name();
         let path_key = local_repository.work_directory.path_key();
@@ -5447,13 +5428,17 @@ impl BackgroundScanner {
         state.repository_scans.insert(
             path_key.clone(),
             self.executor.spawn(async move {
+                update_branches(&job_state, &mut local_repository).log_err();
                 log::trace!("updating git statuses for repo {repository_name}",);
                 let t0 = Instant::now();
 
-                let statuses = local_repository
+                let Some(statuses) = local_repository
                     .repo()
                     .status(&[git::WORK_DIRECTORY_REPO_PATH.clone()])
-                    ?;
+                    .log_err()
+                else {
+                    return;
+                };
 
                 log::trace!(
                     "computed git statuses for repo {repository_name} in {:?}",
@@ -5464,9 +5449,15 @@ impl BackgroundScanner {
                 let mut changed_paths = Vec::new();
                 let snapshot = job_state.lock().snapshot.snapshot.clone();
 
-                let mut repository = snapshot.repository(path_key) .context(
-                        "Tried to update git statuses for a repository that isn't in the snapshot"
-                    )?;
+                let Some(mut repository) = snapshot
+                    .repository(path_key)
+                    .context(
+                        "Tried to update git statuses for a repository that isn't in the snapshot",
+                    )
+                    .log_err()
+                else {
+                    return;
+                };
 
                 let merge_head_shas = local_repository.repo().merge_head_shas();
                 if merge_head_shas != local_repository.current_merge_head_shas {
@@ -5521,12 +5512,6 @@ impl BackgroundScanner {
         rx
     }
 
-    /// Update the git statuses for a given batch of entries.
-    fn update_git_repository(&self, job: UpdateGitRepoJob) {
-        self.update_branches(&job).log_err();
-        self.update_statuses(&job).log_err();
-    }
-
     async fn progress_timer(&self, running: bool) {
         if !running {
             return futures::future::pending().await;
@@ -5579,6 +5564,26 @@ fn send_status_update_inner(
             barrier,
         })
         .is_ok()
+}
+
+fn update_branches(
+    state: &Mutex<BackgroundScannerState>,
+    repository: &mut LocalRepositoryEntry,
+) -> Result<()> {
+    let branches = repository.repo().branches()?;
+    let snapshot = state.lock().snapshot.snapshot.clone();
+    let mut repository = snapshot
+        .repository(repository.work_directory.path_key())
+        .context("Missing repository")?;
+    repository.branch = branches.into_iter().find(|branch| branch.is_head);
+
+    let mut state = state.lock();
+    state
+        .snapshot
+        .repositories
+        .insert_or_replace(repository, &());
+
+    Ok(())
 }
 
 fn build_diff(
@@ -5748,10 +5753,6 @@ struct UpdateIgnoreStatusJob {
     ignore_stack: Arc<IgnoreStack>,
     ignore_queue: Sender<UpdateIgnoreStatusJob>,
     scan_queue: Sender<ScanJob>,
-}
-
-struct UpdateGitRepoJob {
-    local_repository: LocalRepositoryEntry,
 }
 
 pub trait WorktreeModelHandle {
