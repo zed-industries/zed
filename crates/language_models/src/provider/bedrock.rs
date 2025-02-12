@@ -2,20 +2,21 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use aws_config::Region;
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
+use aws_config::Region;
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
-use bedrock::bedrock_client::types::{ContentBlockDelta, ContentBlockStart, ContentBlockStartEvent, ConverseStreamOutput};
+use bedrock::bedrock_client::types::{
+    ContentBlockDelta, ContentBlockStart, ContentBlockStartEvent, ConverseStreamOutput,
+};
 use bedrock::bedrock_client::{self, Config};
-use bedrock::{value_to_aws_document, BedrockError, BedrockSpecificTool, BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolInputSchema, Model};
+use bedrock::{
+    value_to_aws_document, BedrockError, BedrockSpecificTool, BedrockStreamingResponse,
+    BedrockTool, BedrockToolChoice, BedrockToolInputSchema, Model,
+};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{
-    future::{BoxFuture},
-    stream::BoxStream,
-    FutureExt, Stream, StreamExt,
-};
+use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
@@ -344,7 +345,7 @@ impl BedrockModel {
                 futures::stream::once(async move { Err(BedrockError::ClientError(e)) }).boxed()
             })
         }
-            .boxed())
+        .boxed())
     }
 }
 
@@ -400,7 +401,7 @@ impl LanguageModel for BedrockModel {
 
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.map_err(|e| { anyhow!(e) }).unwrap().await;
+            let response = request.map_err(|e| anyhow!(e)).unwrap().await;
             Ok(map_to_language_model_completion_events(
                 response,
                 owned_handle,
@@ -427,28 +428,27 @@ impl LanguageModel for BedrockModel {
             BedrockSpecificTool::builder()
                 .name(name.clone())
                 .build()
-                .unwrap()
+                .unwrap(),
         ));
 
-        request.tools = vec![
-            BedrockTool::builder()
-                .name(name.clone())
-                .description(description.clone())
-                .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(&schema)))
-                .build().unwrap()
-        ];
+        request.tools = vec![BedrockTool::builder()
+            .name(name.clone())
+            .description(description.clone())
+            .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(&schema)))
+            .build()
+            .unwrap()];
 
         let handle = self.handler.clone();
 
         let request = self.stream_completion(request, _cx);
-        self.request_limiter.run(async move {
-            let response = request.map_err(|e| { anyhow!(e) }).unwrap().await;
-            Ok(extract_tool_args_from_events(
-                name,
-                response,
-                handle,
-            ).await?.boxed())
-        }).boxed()
+        self.request_limiter
+            .run(async move {
+                let response = request.map_err(|e| anyhow!(e)).unwrap().await;
+                Ok(extract_tool_args_from_events(name, response, handle)
+                    .await?
+                    .boxed())
+            })
+            .boxed()
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
@@ -514,23 +514,24 @@ pub fn get_bedrock_tokens(
 
 pub async fn extract_tool_args_from_events(
     name: String,
-    mut events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+    mut events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
 ) -> Result<impl Send + Stream<Item = Result<String>>> {
-    handle.spawn(async move {
-        let mut tool_use_index = None;
-        while let Some(event) = events.next().await {
-            if let BedrockStreamingResponse::ContentBlockStart(ContentBlockStartEvent {
-               content_block_index,
-               start,
-               ..
-            }) = event? {
-                match start {
-                    None => {
-                        continue;
-                    }
-                    Some(start) => {
-                        match start.as_tool_use() {
+    handle
+        .spawn(async move {
+            let mut tool_use_index = None;
+            while let Some(event) = events.next().await {
+                if let BedrockStreamingResponse::ContentBlockStart(ContentBlockStartEvent {
+                    content_block_index,
+                    start,
+                    ..
+                }) = event?
+                {
+                    match start {
+                        None => {
+                            continue;
+                        }
+                        Some(start) => match start.as_tool_use() {
                             Ok(tool_use) => {
                                 if name == tool_use.name {
                                     tool_use_index = Some(content_block_index);
@@ -540,21 +541,19 @@ pub async fn extract_tool_args_from_events(
                             Err(err) => {
                                 return Err(anyhow!("Failed to parse tool use event: {:?}", err));
                             }
-                        }
+                        },
                     }
                 }
             }
-        }
 
-        let Some(tool_use_index) = tool_use_index else {
-            return Err(anyhow!("Tool is not used"));
-        };
+            let Some(tool_use_index) = tool_use_index else {
+                return Err(anyhow!("Tool is not used"));
+            };
 
-        Ok(events.filter_map(move |event| {
-            let result = match event {
-                Err(_err) => { None }
-                Ok(output) => {
-                    match output.clone() {
+            Ok(events.filter_map(move |event| {
+                let result = match event {
+                    Err(_err) => None,
+                    Ok(output) => match output.clone() {
                         BedrockStreamingResponse::ContentBlockDelta(inner) => {
                             match inner.clone().delta {
                                 Some(ContentBlockDelta::ToolUse(tool_use)) => {
@@ -564,27 +563,25 @@ pub async fn extract_tool_args_from_events(
                                         None
                                     }
                                 }
-                                _ => { None }
+                                _ => None,
                             }
                         }
-                        _ => {
-                            None
-                        }
-                    }
-                }
-            };
+                        _ => None,
+                    },
+                };
 
-            async move { result }
-        }))
-    }).await?
+                async move { result }
+            }))
+        })
+        .await?
 }
 
 pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
-) -> impl Stream<Item=Result<LanguageModelCompletionEvent>> {
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
     struct State {
-        events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
     }
 
     futures::stream::unfold(
@@ -663,7 +660,7 @@ impl ConfigurationView {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
-            .detach();
+        .detach();
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
@@ -679,7 +676,7 @@ impl ConfigurationView {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
-                    .log_err();
+                .log_err();
             }
         }));
 
@@ -722,7 +719,7 @@ impl ConfigurationView {
                 })?
                 .await
         })
-            .detach_and_log_err(cx);
+        .detach_and_log_err(cx);
     }
 
     fn reset_credentials(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -739,7 +736,7 @@ impl ConfigurationView {
                 .update(&mut cx, |state, cx| state.reset_credentials(cx))?
                 .await
         })
-            .detach_and_log_err(cx);
+        .detach_and_log_err(cx);
     }
 
     fn make_text_style(&self, cx: &Context<Self>) -> TextStyle {

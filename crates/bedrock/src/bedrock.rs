@@ -7,7 +7,10 @@ use anyhow::{anyhow, Context, Error, Result};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
 pub use aws_sdk_bedrockruntime::types::ContentBlock as BedrockInnerContent;
-pub use aws_sdk_bedrockruntime::types::{ToolSpecification as BedrockTool, ToolChoice as BedrockToolChoice, SpecificToolChoice as BedrockSpecificTool, ToolInputSchema as BedrockToolInputSchema};
+pub use aws_sdk_bedrockruntime::types::{
+    SpecificToolChoice as BedrockSpecificTool, ToolChoice as BedrockToolChoice,
+    ToolInputSchema as BedrockToolInputSchema, ToolSpecification as BedrockTool,
+};
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
 use bedrock::types::ConverseOutput as Response;
 pub use bedrock::types::{
@@ -15,7 +18,7 @@ pub use bedrock::types::{
     ConverseStreamOutput as BedrockStreamingResponse, Message as BedrockMessage,
     ResponseStream as BedrockResponseStream,
 };
-use futures::stream::{BoxStream};
+use futures::stream::BoxStream;
 use futures::{stream, Stream};
 pub use models::*;
 use serde::{Deserialize, Serialize};
@@ -68,53 +71,45 @@ pub async fn stream_completion(
                                 Some((
                                     // Figure out how we can capture Throttling Exceptions
                                     Err(BedrockError::ClientError(anyhow!(
-                                    "{:?}",
-                                    aws_sdk_bedrockruntime::error::DisplayErrorContext(e)
-                                ))),
+                                        "{:?}",
+                                        aws_sdk_bedrockruntime::error::DisplayErrorContext(e)
+                                    ))),
                                     stream,
                                 ))
-                            },
+                            }
                         }
                     }));
                     Ok(stream)
                 }
-                Err(e) => {
-                    Err(anyhow!(
+                Err(e) => Err(anyhow!(
                     "{:?}",
                     aws_sdk_bedrockruntime::error::DisplayErrorContext(e)
-                ))
-                },
+                )),
             }
         })
         .await
         .map_err(|e| anyhow!("Failed to spawn task: {:?}", e))?
 }
 
-use serde_json::{Value, Number};
 use aws_smithy_types::Document;
 use aws_smithy_types::Number as AwsNumber;
+use serde_json::{Number, Value};
 
 pub fn aws_document_to_value(doc: &Document) -> Value {
     match doc {
         Document::Null => Value::Null,
         Document::Bool(b) => Value::Bool(*b),
-        Document::Number(n) => {
-            match n {
-                AwsNumber::PosInt(i) => Value::Number(Number::from(*i)),
-                AwsNumber::NegInt(i) => Value::Number(Number::from(*i)),
-                AwsNumber::Float(f) => Value::Number(Number::from_f64(*f).unwrap()),
-            }
+        Document::Number(n) => match n {
+            AwsNumber::PosInt(i) => Value::Number(Number::from(*i)),
+            AwsNumber::NegInt(i) => Value::Number(Number::from(*i)),
+            AwsNumber::Float(f) => Value::Number(Number::from_f64(*f).unwrap()),
         },
         Document::String(s) => Value::String(s.clone()),
-        Document::Array(arr) => Value::Array(
-            arr.iter()
-                .map(aws_document_to_value)
-                .collect()
-        ),
+        Document::Array(arr) => Value::Array(arr.iter().map(aws_document_to_value).collect()),
         Document::Object(map) => Value::Object(
             map.iter()
                 .map(|(k, v)| (k.clone(), aws_document_to_value(v)))
-                .collect()
+                .collect(),
         ),
     }
 }
@@ -133,17 +128,13 @@ pub fn value_to_aws_document(value: &Value) -> Document {
             } else {
                 Document::Null
             }
-        },
+        }
         Value::String(s) => Document::String(s.clone()),
-        Value::Array(arr) => Document::Array(
-            arr.iter()
-                .map(value_to_aws_document)
-                .collect()
-        ),
+        Value::Array(arr) => Document::Array(arr.iter().map(value_to_aws_document).collect()),
         Value::Object(map) => Document::Object(
             map.iter()
                 .map(|(k, v)| (k.clone(), value_to_aws_document(v)))
-                .collect()
+                .collect(),
         ),
     }
 }
