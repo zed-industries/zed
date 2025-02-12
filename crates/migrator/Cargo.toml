@@ -13,6 +13,7 @@ path = "src/migrator.rs"
 doctest = false
 
 [dependencies]
+anyhow.workspace = true
 collections.workspace = true
 convert_case.workspace = true
 log.workspace = true

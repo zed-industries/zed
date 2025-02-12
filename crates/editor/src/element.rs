@@ -16,12 +16,12 @@ use crate::{
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
     AcceptEditPrediction, BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint,
-    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode,
-    EditPredictionPreview, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    ExpandExcerpts, FocusedBlock, GoToHunk, GoToPrevHunk, GutterDimensions, HalfPageDown,
-    HalfPageUp, HandleInput, HoveredCursor, InlineCompletion, JumpData, LineDown, LineUp,
-    OpenExcerpts, PageDown, PageUp, Point, RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase,
-    Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR,
+    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk,
+    GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
+    InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
+    RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
+    StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR,
     EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
@@ -417,7 +417,9 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_git_blame);
         register_action(editor, window, Editor::toggle_git_blame_inline);
         register_action(editor, window, Editor::toggle_selected_diff_hunks);
+        register_action(editor, window, Editor::toggle_staged_selected_diff_hunks);
         register_action(editor, window, Editor::expand_all_diff_hunks);
+
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.format(action, window, cx) {
                 task.detach_and_notify_err(window, cx);
@@ -1116,7 +1118,6 @@ impl EditorElement {
         em_width: Pixels,
         em_advance: Pixels,
         autoscroll_containing_element: bool,
-        newest_selection_head: Option<DisplayPoint>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<CursorLayout> {
@@ -1124,29 +1125,7 @@ impl EditorElement {
         let cursor_layouts = self.editor.update(cx, |editor, cx| {
             let mut cursors = Vec::new();
 
-            let previewing_move =
-                if let Some((target, preview)) = editor.previewing_edit_prediction_move() {
-                    cursors.extend(self.layout_edit_prediction_preview_cursor(
-                        snapshot,
-                        visible_display_row_range.clone(),
-                        line_layouts,
-                        content_origin,
-                        scroll_pixel_position,
-                        line_height,
-                        em_advance,
-                        preview,
-                        target,
-                        newest_selection_head,
-                        window,
-                        cx,
-                    ));
-
-                    true
-                } else {
-                    false
-                };
-
-            let show_local_cursors = !previewing_move && editor.show_local_cursors(window, cx);
+            let show_local_cursors = editor.show_local_cursors(window, cx);
 
             for (player_color, selections) in selections {
                 for selection in selections {
@@ -1286,50 +1265,6 @@ impl EditorElement {
         }
 
         cursor_layouts
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn layout_edit_prediction_preview_cursor(
-        &self,
-        snapshot: &EditorSnapshot,
-        visible_row_range: Range<DisplayRow>,
-        line_layouts: &[LineWithInvisibles],
-        content_origin: gpui::Point<Pixels>,
-        scroll_pixel_position: gpui::Point<Pixels>,
-        line_height: Pixels,
-        em_advance: Pixels,
-        preview: &mut EditPredictionPreview,
-        target: Anchor,
-        cursor: Option<DisplayPoint>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<CursorLayout> {
-        let state = preview.move_state(
-            snapshot,
-            visible_row_range,
-            line_layouts,
-            scroll_pixel_position,
-            line_height,
-            target,
-            cursor,
-        )?;
-
-        if !state.is_animation_completed() {
-            window.request_animation_frame();
-        }
-
-        let mut cursor = CursorLayout {
-            color: self.style.local_player.cursor,
-            block_width: em_advance,
-            origin: state.position,
-            line_height,
-            shape: CursorShape::Bar,
-            block_text: None,
-            cursor_name: None,
-        };
-
-        cursor.layout(content_origin, None, window, cx);
-        Some(cursor)
     }
 
     fn layout_scrollbars(
@@ -3485,6 +3420,7 @@ impl EditorElement {
     fn layout_edit_prediction_popover(
         &self,
         text_bounds: &Bounds<Pixels>,
+        content_origin: gpui::Point<Pixels>,
         editor_snapshot: &EditorSnapshot,
         visible_row_range: Range<DisplayRow>,
         scroll_top: f32,
@@ -3509,82 +3445,144 @@ impl EditorElement {
         }
 
         // Adjust text origin for horizontal scrolling (in some cases here)
-        let start_point =
-            text_bounds.origin - gpui::Point::new(scroll_pixel_position.x, Pixels(0.0));
+        let start_point = content_origin - gpui::Point::new(scroll_pixel_position.x, Pixels(0.0));
 
         // Clamp left offset after extreme scrollings
         let clamp_start = |point: gpui::Point<Pixels>| gpui::Point {
-            x: point.x.max(text_bounds.origin.x),
+            x: point.x.max(content_origin.x),
             y: point.y,
         };
 
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
-                if editor.edit_prediction_requires_modifier() {
-                    let cursor_position =
-                        target.to_display_point(&editor_snapshot.display_snapshot);
+                let target_display_point = target.to_display_point(editor_snapshot);
 
-                    if !editor.edit_prediction_preview.is_active_settled()
-                        || !visible_row_range.contains(&cursor_position.row())
-                    {
+                if editor.edit_prediction_requires_modifier() {
+                    if !editor.edit_prediction_preview_is_active() {
                         return None;
                     }
 
-                    let accept_keybind = editor.accept_edit_prediction_keybind(window, cx);
-                    let accept_keystroke = accept_keybind.keystroke()?;
+                    if target_display_point.row() < visible_row_range.start {
+                        let mut element = editor
+                            .render_edit_prediction_line_popover(
+                                "Scroll",
+                                Some(IconName::ArrowUp),
+                                window,
+                                cx,
+                            )?
+                            .into_any();
 
-                    let mut element = div()
-                        .px_2()
-                        .py_1()
-                        .elevation_2(cx)
-                        .border_color(cx.theme().colors().border)
-                        .rounded_br(px(0.))
-                        .child(Label::new(accept_keystroke.key.clone()).buffer_font(cx))
-                        .into_any();
+                        element.layout_as_root(AvailableSpace::min_size(), window, cx);
 
-                    let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+                        let cursor = newest_selection_head?;
+                        let cursor_row_layout = line_layouts
+                            .get(cursor.row().minus(visible_row_range.start) as usize)?;
+                        let cursor_column = cursor.column() as usize;
 
-                    let cursor_row_layout = &line_layouts
-                        [cursor_position.row().minus(visible_row_range.start) as usize];
-                    let cursor_column = cursor_position.column() as usize;
+                        let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
 
-                    let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
-                    let target_y = (cursor_position.row().as_f32()
-                        - scroll_pixel_position.y / line_height)
-                        * line_height;
+                        const PADDING_Y: Pixels = px(12.);
 
-                    let offset = point(
-                        cursor_character_x - size.width,
-                        target_y - size.height - PADDING_Y,
-                    );
+                        let origin = start_point + point(cursor_character_x, PADDING_Y);
 
-                    element.prepaint_at(text_bounds.origin + offset, window, cx);
+                        element.prepaint_at(origin, window, cx);
+                        return Some(element);
+                    } else if target_display_point.row() >= visible_row_range.end {
+                        let mut element = editor
+                            .render_edit_prediction_line_popover(
+                                "Scroll",
+                                Some(IconName::ArrowDown),
+                                window,
+                                cx,
+                            )?
+                            .into_any();
 
-                    return Some(element);
+                        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+
+                        let cursor = newest_selection_head?;
+                        let cursor_row_layout = line_layouts
+                            .get(cursor.row().minus(visible_row_range.start) as usize)?;
+                        let cursor_column = cursor.column() as usize;
+
+                        let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
+                        const PADDING_Y: Pixels = px(12.);
+
+                        let origin = start_point
+                            + point(
+                                cursor_character_x,
+                                text_bounds.size.height - size.height - PADDING_Y,
+                            );
+
+                        element.prepaint_at(origin, window, cx);
+                        return Some(element);
+                    } else {
+                        const POLE_WIDTH: Pixels = px(2.);
+
+                        let mut element = v_flex()
+                            .child(
+                                editor
+                                    .render_edit_prediction_line_popover("Jump", None, window, cx)?
+                                    .rounded_br(px(0.))
+                                    .rounded_tr(px(0.))
+                                    .border_r_2(),
+                            )
+                            .child(
+                                div()
+                                    .w(POLE_WIDTH)
+                                    .bg(cx.theme().colors().text_accent.opacity(0.8))
+                                    .h(line_height),
+                            )
+                            .items_end()
+                            .into_any();
+
+                        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+
+                        let line_layout =
+                            line_layouts
+                                .get(target_display_point.row().minus(visible_row_range.start)
+                                    as usize)?;
+                        let target_column = target_display_point.column() as usize;
+
+                        let target_x = line_layout.x_for_index(target_column);
+                        let target_y = (target_display_point.row().as_f32() * line_height)
+                            - scroll_pixel_position.y;
+
+                        let origin = clamp_start(
+                            start_point + point(target_x, target_y)
+                                - point(size.width - POLE_WIDTH, size.height - line_height),
+                        );
+
+                        element.prepaint_at(origin, window, cx);
+
+                        return Some(element);
+                    }
                 }
 
-                let target_display_point = target.to_display_point(editor_snapshot);
                 if target_display_point.row().as_f32() < scroll_top {
-                    let mut element = inline_completion_accept_indicator(
-                        "Jump to Edit",
-                        Some(IconName::ArrowUp),
-                        editor,
-                        window,
-                        cx,
-                    )?;
+                    let mut element = editor
+                        .render_edit_prediction_line_popover(
+                            "Jump to Edit",
+                            Some(IconName::ArrowUp),
+                            window,
+                            cx,
+                        )?
+                        .into_any();
+
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
 
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
                     Some(element)
                 } else if (target_display_point.row().as_f32() + 1.) > scroll_bottom {
-                    let mut element = inline_completion_accept_indicator(
-                        "Jump to Edit",
-                        Some(IconName::ArrowDown),
-                        editor,
-                        window,
-                        cx,
-                    )?;
+                    let mut element = editor
+                        .render_edit_prediction_line_popover(
+                            "Jump to Edit",
+                            Some(IconName::ArrowDown),
+                            window,
+                            cx,
+                        )?
+                        .into_any();
+
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point(
                         (text_bounds.size.width - size.width) / 2.,
@@ -3594,13 +3592,9 @@ impl EditorElement {
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
                     Some(element)
                 } else {
-                    let mut element = inline_completion_accept_indicator(
-                        "Jump to Edit",
-                        None,
-                        editor,
-                        window,
-                        cx,
-                    )?;
+                    let mut element = editor
+                        .render_edit_prediction_line_popover("Jump to Edit", None, window, cx)?
+                        .into_any();
                     let target_line_end = DisplayPoint::new(
                         target_display_point.row(),
                         editor_snapshot.line_len(target_display_point.row()),
@@ -3658,9 +3652,11 @@ impl EditorElement {
                         );
                         let (mut element, origin) = self.editor.update(cx, |editor, cx| {
                             Some((
-                                inline_completion_accept_indicator(
-                                    "Accept", None, editor, window, cx,
-                                )?,
+                                editor
+                                    .render_edit_prediction_line_popover(
+                                        "Accept", None, window, cx,
+                                    )?
+                                    .into_any(),
                                 editor.display_to_pixel_point(
                                     target_line_end,
                                     editor_snapshot,
@@ -3689,7 +3685,38 @@ impl EditorElement {
                     cx,
                 );
 
+                let styled_text = highlighted_edits.to_styled_text(&style.text);
                 let line_count = highlighted_edits.text.lines().count();
+
+                const BORDER_WIDTH: Pixels = px(1.);
+
+                let mut element = h_flex()
+                    .items_start()
+                    .child(
+                        div()
+                            .bg(cx.theme().colors().editor_background)
+                            .border(BORDER_WIDTH)
+                            .shadow_sm()
+                            .border_color(cx.theme().colors().border)
+                            .rounded_l_lg()
+                            .when(line_count > 1, |el| el.rounded_br_lg())
+                            .pr_1()
+                            .child(styled_text),
+                    )
+                    .child(
+                        h_flex()
+                            .h(line_height + BORDER_WIDTH * px(2.))
+                            .px_1p5()
+                            .gap_1()
+                            .shadow_sm()
+                            .bg(Editor::edit_prediction_line_popover_bg_color(cx))
+                            .border(BORDER_WIDTH)
+                            .border_l_0()
+                            .border_color(cx.theme().colors().border)
+                            .rounded_r_lg()
+                            .children(editor.render_edit_prediction_accept_keybind(window, cx)),
+                    )
+                    .into_any();
 
                 let longest_row =
                     editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
@@ -3708,16 +3735,6 @@ impl EditorElement {
                     .width
                 };
 
-                let styled_text = highlighted_edits.to_styled_text(&style.text);
-
-                let mut element = div()
-                    .bg(cx.theme().colors().editor_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .rounded_md()
-                    .child(styled_text)
-                    .into_any();
-
                 let viewport_bounds = Bounds::new(Default::default(), window.viewport_size())
                     .extend(Edges {
                         right: -Self::SCROLLBAR_WIDTH,
@@ -3731,53 +3748,50 @@ impl EditorElement {
 
                 // Fully visible if it can be displayed within the window (allow overlapping other
                 // panes). However, this is only allowed if the popover starts within text_bounds.
-                let is_fully_visible = x_after_longest < text_bounds.right()
+                let can_position_to_the_right = x_after_longest < text_bounds.right()
                     && x_after_longest + element_bounds.width < viewport_bounds.right();
 
-                let origin = if is_fully_visible {
+                let mut origin = if can_position_to_the_right {
                     point(
                         x_after_longest,
                         text_bounds.origin.y + edit_start.row().as_f32() * line_height
                             - scroll_pixel_position.y,
                     )
                 } else {
-                    // Avoid overlapping both the edited rows and the user's cursor.
-                    let target_above = DisplayRow(
-                        edit_start
-                            .row()
-                            .0
-                            .min(
-                                newest_selection_head
-                                    .map_or(u32::MAX, |cursor_row| cursor_row.row().0),
-                            )
-                            .saturating_sub(line_count as u32),
-                    );
-                    let mut row_target;
-                    if visible_row_range.contains(&DisplayRow(target_above.0.saturating_sub(1))) {
-                        row_target = target_above;
-                    } else {
-                        row_target = DisplayRow(
-                            edit_end.row().0.max(
-                                newest_selection_head.map_or(0, |cursor_row| cursor_row.row().0),
-                            ) + 1,
-                        );
-                        if !visible_row_range.contains(&row_target) {
-                            // Not visible, so fallback on displaying immediately below the cursor.
-                            if let Some(cursor) = newest_selection_head {
-                                row_target = DisplayRow(cursor.row().0 + 1);
-                            } else {
-                                // Not visible and no cursor visible, so fallback on displaying at the top of the editor.
-                                row_target = DisplayRow(0);
-                            }
-                        }
-                    };
+                    let cursor_row = newest_selection_head.map(|head| head.row());
+                    let above_edit = edit_start
+                        .row()
+                        .0
+                        .checked_sub(line_count as u32)
+                        .map(DisplayRow);
+                    let below_edit = Some(edit_end.row() + 1);
+                    let above_cursor = cursor_row
+                        .and_then(|row| row.0.checked_sub(line_count as u32).map(DisplayRow));
+                    let below_cursor = cursor_row.map(|cursor_row| cursor_row + 1);
 
-                    text_bounds.origin
+                    // Place the edit popover adjacent to the edit if there is a location
+                    // available that is onscreen and does not obscure the cursor. Otherwise,
+                    // place it adjacent to the cursor.
+                    let row_target = [above_edit, below_edit, above_cursor, below_cursor]
+                        .into_iter()
+                        .flatten()
+                        .find(|&start_row| {
+                            let end_row = start_row + line_count as u32;
+                            visible_row_range.contains(&start_row)
+                                && visible_row_range.contains(&end_row)
+                                && cursor_row.map_or(true, |cursor_row| {
+                                    !((start_row..end_row).contains(&cursor_row))
+                                })
+                        })?;
+
+                    content_origin
                         + point(
                             -scroll_pixel_position.x,
                             row_target.as_f32() * line_height - scroll_pixel_position.y,
                         )
                 };
+
+                origin.x -= BORDER_WIDTH;
 
                 window.defer_draw(element, origin, 1);
 
@@ -5552,62 +5566,6 @@ fn header_jump_data(
     }
 }
 
-fn inline_completion_accept_indicator(
-    label: impl Into<SharedString>,
-    icon: Option<IconName>,
-    editor: &Editor,
-    window: &mut Window,
-    cx: &App,
-) -> Option<AnyElement> {
-    let accept_binding = editor.accept_edit_prediction_keybind(window, cx);
-    let accept_keystroke = accept_binding.keystroke()?;
-
-    let accept_key = h_flex()
-        .px_0p5()
-        .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-        .text_size(TextSize::XSmall.rems(cx))
-        .text_color(cx.theme().colors().text)
-        .gap_1()
-        .when(!editor.edit_prediction_preview.is_active(), |parent| {
-            parent.children(ui::render_modifiers(
-                &accept_keystroke.modifiers,
-                PlatformStyle::platform(),
-                Some(Color::Default),
-                None,
-                false,
-            ))
-        })
-        .child(accept_keystroke.key.clone());
-
-    let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
-    let accent_color = cx.theme().colors().text_accent;
-    let editor_bg_color = cx.theme().colors().editor_background;
-    let bg_color = editor_bg_color.blend(accent_color.opacity(0.2));
-
-    Some(
-        h_flex()
-            .py_0p5()
-            .pl_1()
-            .pr(padding_right)
-            .gap_1()
-            .bg(bg_color)
-            .border_1()
-            .border_color(cx.theme().colors().text_accent.opacity(0.8))
-            .rounded_md()
-            .shadow_sm()
-            .child(accept_key)
-            .child(Label::new(label).size(LabelSize::Small))
-            .when_some(icon, |element, icon| {
-                element.child(
-                    div()
-                        .mt(px(1.5))
-                        .child(Icon::new(icon).size(IconSize::Small)),
-                )
-            })
-            .into_any(),
-    )
-}
-
 pub struct AcceptEditPredictionBinding(pub(crate) Option<gpui::KeyBinding>);
 
 impl AcceptEditPredictionBinding {
@@ -6564,7 +6522,8 @@ impl Element for EditorElement {
                         .unwrap_or_default();
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
-                    let editor_width = text_width - gutter_dimensions.margin - em_width;
+                    let editor_width =
+                        text_width - gutter_dimensions.margin - em_width - style.scrollbar_width;
 
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
@@ -6897,6 +6856,7 @@ impl Element for EditorElement {
                         size(longest_line_width, max_row.as_f32() * line_height),
                         longest_line_blame_width,
                         style.scrollbar_width,
+                        editor_width,
                         EditorSettings::get_global(cx),
                     );
 
@@ -7102,7 +7062,7 @@ impl Element for EditorElement {
                     let visible_row_range = start_row..end_row;
                     let non_visible_cursors = cursors
                         .iter()
-                        .any(move |c| !visible_row_range.contains(&c.0.row()));
+                        .any(|c| !visible_row_range.contains(&c.0.row()));
 
                     let visible_cursors = self.layout_visible_cursors(
                         &snapshot,
@@ -7118,7 +7078,6 @@ impl Element for EditorElement {
                         em_width,
                         em_advance,
                         autoscroll_containing_element,
-                        newest_selection_head,
                         window,
                         cx,
                     );
@@ -7272,6 +7231,7 @@ impl Element for EditorElement {
 
                     let inline_completion_popover = self.layout_edit_prediction_popover(
                         &text_hitbox.bounds,
+                        content_origin,
                         &snapshot,
                         start_row..end_row,
                         scroll_position.y,
@@ -7343,6 +7303,7 @@ impl Element for EditorElement {
 
                     let position_map = Rc::new(PositionMap {
                         size: bounds.size,
+                        visible_row_range,
                         scroll_pixel_position,
                         scroll_max,
                         line_layouts,
@@ -7508,6 +7469,7 @@ impl ScrollbarLayoutInformation {
         document_size: Size<Pixels>,
         longest_line_blame_width: Pixels,
         scrollbar_width: Pixels,
+        editor_width: Pixels,
         settings: &EditorSettings,
     ) -> Self {
         let vertical_overscroll = match settings.scroll_beyond_last_line {
@@ -7518,10 +7480,13 @@ impl ScrollbarLayoutInformation {
             }
         };
 
-        let overscroll = size(
-            scrollbar_width + (glyph_grid_cell.width / 2.0) + longest_line_blame_width,
-            vertical_overscroll,
-        );
+        let right_margin = if document_size.width + longest_line_blame_width >= editor_width {
+            glyph_grid_cell.width + scrollbar_width
+        } else {
+            px(0.0)
+        };
+
+        let overscroll = size(right_margin + longest_line_blame_width, vertical_overscroll);
 
         let scroll_range = document_size + overscroll;
 
@@ -7857,6 +7822,7 @@ pub(crate) struct PositionMap {
     pub scroll_max: gpui::Point<f32>,
     pub em_width: Pixels,
     pub em_advance: Pixels,
+    pub visible_row_range: Range<DisplayRow>,
     pub line_layouts: Vec<LineWithInvisibles>,
     pub snapshot: EditorSnapshot,
     pub text_hitbox: Hitbox,
