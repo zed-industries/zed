@@ -5588,10 +5588,10 @@ mod tests {
     ide/src/
       inlay_hints/
         fn_lifetime_fn.rs
-          search: match config.param_names_for_lifetime_elision_hints {
-          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
-          search: Some(it) if config.param_names_for_lifetime_elision_hints => {
-          search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
+          search: match config.param_names_for_lifetime_elision_hints {{
+          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {{
+          search: Some(it) if config.param_names_for_lifetime_elision_hints => {{
+          search: InlayHintsConfig {{ param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG }},
       inlay_hints.rs
         search: pub param_names_for_lifetime_elision_hints: bool,
         search: param_names_for_lifetime_elision_hints: self

@@ -22,8 +22,8 @@ use language::{
     LspAdapterDelegate,
 };
 use lsp::LanguageServerName;
-use once_cell::sync::OnceCell;
 use settings::{Settings, SettingsLocation, WorktreeId};
+use std::sync::OnceLock;
 
 use crate::{project_settings::LspSettings, LanguageServerId, ProjectPath};
 
@@ -99,7 +99,7 @@ impl From<Weak<InnerTreeNode>> for LanguageServerTreeNode {
 
 #[derive(Debug)]
 struct InnerTreeNode {
-    id: OnceCell<LanguageServerId>,
+    id: OnceLock<LanguageServerId>,
     name: LanguageServerName,
     attach: Attach,
     path: ProjectPath,
