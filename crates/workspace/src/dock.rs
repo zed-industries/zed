@@ -778,6 +778,8 @@ impl Render for Dock {
             div()
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle(cx))
+                // This is a workaround to ensure the key binding hints are visible.
+                .child(deferred(gpui::Empty))
         }
     }
 }
