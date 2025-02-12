@@ -958,7 +958,7 @@ impl WorktreeStore {
                                 git::repository::CommitSummary {
                                     sha: commit.sha.into(),
                                     subject: commit.subject.into(),
-                                    commit_timestamp: commit.commit_timestamp.into(),
+                                    commit_timestamp: commit.commit_timestamp,
                                 }
                             }),
                         })

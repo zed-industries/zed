@@ -703,7 +703,7 @@ impl Repository {
                         project_id: project_id.0,
                         worktree_id: worktree_id.to_proto(),
                         work_directory_id: work_directory_id.to_proto(),
-                        commit: commit.into(),
+                        commit,
                     })
                     .await?;
 
