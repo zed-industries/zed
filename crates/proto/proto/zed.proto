@@ -2090,7 +2090,11 @@ message OpenUncommittedDiffResponse {
 }
 
 message SetIndexText {
-    optional string text = 1;
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string path = 4;
+    optional string text = 5;
 }
 
 message GetNotifications {

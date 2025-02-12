@@ -18,7 +18,7 @@ use rpc::{proto, AnyProtoClient};
 use settings::WorktreeId;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use text::{BufferId, Rope};
+use text::BufferId;
 use util::{maybe, ResultExt};
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
 
@@ -59,7 +59,7 @@ pub enum Message {
     },
     Stage(GitRepo, Vec<RepoPath>),
     Unstage(GitRepo, Vec<RepoPath>),
-    SetIndexText(GitRepo, RepoPath, Option<Rope>),
+    SetIndexText(GitRepo, RepoPath, Option<String>),
 }
 
 pub enum GitEvent {
@@ -298,21 +298,15 @@ impl GitState {
             },
         }
     }
-
-    // FIXME channel
-    pub fn set_index_text(&self, git_repo: GitRepo, path: RepoPath, content: Option<Rope>) {
-        self.update_sender
-            .unbounded_send((
-                Message::SetIndexText(git_repo, path, content),
-                oneshot::channel().0,
-            ))
-            .ok();
-    }
 }
 
 impl GitRepo {}
 
 impl Repository {
+    pub fn git_state(&self) -> Option<Entity<GitState>> {
+        self.git_state.upgrade()
+    }
+
     fn id(&self) -> (WorktreeId, ProjectEntryId) {
         (self.worktree_id, self.repository_entry.work_directory_id())
     }
@@ -534,6 +528,21 @@ impl Repository {
                     message,
                     name_and_email,
                 },
+                result_tx,
+            ))
+            .ok();
+        result_rx
+    }
+
+    pub fn set_index_text(
+        &self,
+        path: &RepoPath,
+        content: Option<String>,
+    ) -> oneshot::Receiver<anyhow::Result<()>> {
+        let (result_tx, result_rx) = futures::channel::oneshot::channel();
+        self.update_sender
+            .unbounded_send((
+                Message::SetIndexText(self.git_repo.clone(), path.clone(), content),
                 result_tx,
             ))
             .ok();

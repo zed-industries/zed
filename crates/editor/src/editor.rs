@@ -12654,9 +12654,9 @@ impl Editor {
                 continue;
             };
             let buffer = buffer.read(cx).snapshot();
-            let Some((git_repo, path)) = project
+            let Some((repo, path)) = project
                 .read(cx)
-                .git_repo_and_path_for_buffer_id(buffer_id, cx)
+                .repository_and_path_for_buffer_id(buffer_id, cx)
             else {
                 log::debug!("no git repo for buffer id");
                 continue;
@@ -12692,14 +12692,11 @@ impl Editor {
             // FIXME see whether to write None
             let new_index_text = index_buffer.update(cx, |index_buffer, cx| {
                 index_buffer.edit(edits, None, cx);
-                index_buffer.snapshot().as_rope().clone()
+                index_buffer.snapshot().as_rope().to_string()
             });
 
-            project.read(cx).git_state().read(cx).set_index_text(
-                git_repo,
-                path,
-                Some(new_index_text),
-            );
+            // FIXME error toast?
+            let _ = repo.read(cx).set_index_text(&path, Some(new_index_text));
         }
     }
 

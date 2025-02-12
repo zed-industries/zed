@@ -23,7 +23,7 @@ mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
 pub use environment::EnvironmentErrorMessage;
-use git::{GitRepo, Repository};
+use git::Repository;
 pub mod search_history;
 mod yarn;
 
@@ -4337,31 +4337,25 @@ impl Project {
         self.git_state.read(cx).all_repositories()
     }
 
-    pub fn git_repo_and_path_for_buffer_id(
+    pub fn repository_and_path_for_buffer_id(
         &self,
         buffer_id: BufferId,
         cx: &App,
-    ) -> Option<(GitRepo, RepoPath)> {
-        let buffer = self.buffer_store.read(cx).get(buffer_id)?;
-        let file = buffer.read(cx).file()?;
-        let worktree = self.worktree_for_id(file.worktree_id(cx), cx)?;
-        let worktree = worktree.read(cx);
-        let repo = worktree.repository_for_path(file.path())?;
-        let project_path = buffer.read(cx).project_path(cx)?;
-        let repo_path = repo.relativize(&project_path.path).ok()?;
-        let git_repo = if let Some(local_worktree) = worktree.as_local() {
-            let local_repo = local_worktree.get_local_repo(repo)?;
-            GitRepo::Local(local_repo.repo().clone())
-        } else {
-            let git_state = self.git_state.read(cx);
-            GitRepo::Remote {
-                project_id: git_state.project_id?,
-                client: git_state.client.clone()?,
-                worktree_id: worktree.id(),
-                work_directory_id: repo.work_directory_id(),
-            }
-        };
-        Some((git_repo, repo_path))
+    ) -> Option<(Entity<Repository>, RepoPath)> {
+        let path = self
+            .buffer_for_id(buffer_id, cx)?
+            .read(cx)
+            .project_path(cx)?;
+        self.git_state
+            .read(cx)
+            .all_repositories()
+            .into_iter()
+            .find_map(|repo| {
+                Some((
+                    repo.clone(),
+                    repo.read(cx).repository_entry.relativize(&path.path).ok()?,
+                ))
+            })
     }
 }
 
