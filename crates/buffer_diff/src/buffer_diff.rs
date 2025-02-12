@@ -332,17 +332,16 @@ impl BufferDiffInner {
                 }
 
                 if let Some(secondary_hunk) = secondary_cursor.item() {
-                    let secondary_range = secondary_hunk.buffer_range.to_point(buffer);
+                    let mut secondary_range = secondary_hunk.buffer_range.to_point(buffer);
+                    if secondary_range.end.column > 0 {
+                        secondary_range.end.row += 1;
+                        secondary_range.end.column = 0;
+                    }
                     if secondary_range == (start_point..end_point) {
                         secondary_status = DiffHunkSecondaryStatus::HasSecondaryHunk;
                         secondary_diff_base_byte_range =
                             Some(secondary_hunk.diff_base_byte_range.clone());
                     } else if secondary_range.start <= end_point {
-                        log::debug!(
-                            "emitting OVERLAP, secondary_range: {:?}, range: {:?}",
-                            secondary_range,
-                            start_point..end_point
-                        );
                         secondary_status = DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk;
                     }
                 }
