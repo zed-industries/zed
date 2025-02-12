@@ -920,7 +920,10 @@ fn test_branches_parsing() {
             name: "zed-patches".into(),
             upstream: Some(Upstream {
                 ref_name: "refs/remotes/origin/zed-patches".into(),
-                tracking: None
+                tracking: Some(UpstreamTracking {
+                    ahead: 0,
+                    behind: 0
+                })
             }),
             most_recent_commit: Some(CommitSummary {
                 sha: "060964da10574cd9bf06463a53bf6e0769c5c45e".into(),
