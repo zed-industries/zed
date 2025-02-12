@@ -781,6 +781,52 @@ impl GitPanel {
         self.pending_commit = Some(task);
     }
 
+    fn potential_co_authors(&self, cx: &Context<Self>) -> Vec<(String, String)> {
+        let project = self.project.read(cx);
+        let room = room.read(cx);
+
+        for (peer_id, collaborator) in project.collaborators() {
+            if collaborator.is_host {
+                continue;
+            }
+
+            let Some(participant) = room.remote_participant_for_peer_id(*peer_id) else {
+                continue;
+            };
+            if participant.can_write() && participant.user.email.is_some() {
+                let email = participant.user.email.clone().unwrap();
+
+                if !existing_co_authors.contains(&email.as_ref()) {
+                    new_co_authors.push((
+                        participant
+                            .user
+                            .name
+                            .clone()
+                            .unwrap_or_else(|| participant.user.github_login.clone()),
+                        email,
+                    ))
+                }
+            }
+        }
+        if !project.is_local() && !project.is_read_only(cx) {
+            if let Some(user) = room.local_participant_user(cx) {
+                if let Some(email) = user.email.clone() {
+                    if !existing_co_authors.contains(&email.as_ref()) {
+                        new_co_authors.push((
+                            user.name
+                                .clone()
+                                .unwrap_or_else(|| user.github_login.clone()),
+                            email.clone(),
+                        ))
+                    }
+                }
+            }
+        }
+        if new_co_authors.is_empty() {
+            return;
+        }
+    }
+
     fn fill_co_authors(&mut self, _: &FillCoAuthors, window: &mut Window, cx: &mut Context<Self>) {
         const CO_AUTHOR_PREFIX: &str = "Co-authored-by: ";
 
@@ -1243,11 +1289,15 @@ impl GitPanel {
 
         let enable_coauthors = CheckboxWithLabel::new(
             "enable-coauthors",
-            Label::new("Add Co-authors")
-                .color(Color::Disabled)
-                .size(LabelSize::XSmall),
-            self.enable_auto_coauthors.into(),
-            cx.listener(move |this, _, _, cx| this.toggle_auto_coauthors(cx)),
+            IconButton::new("co-authors", IconName::Person)
+                .icon_color(Color::Default)
+                .selected_icon_color(Color::Selected)
+                .toggle_state(self.enable_auto_coauthors)
+                .tooltip(Tooltip::text("Add\nCo-Authored-By: "))
+                .on_click(cx.listener(|this, _, winfow, cx| {
+                    this.enable_auto_coauthors = !this.enable_auto_coauthors;
+                    cx.notify();
+                })),
         );
 
         let branch = self
