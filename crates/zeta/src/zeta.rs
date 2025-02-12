@@ -355,6 +355,7 @@ impl Zeta {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn request_completion_impl<F, R>(
         &mut self,
         workspace: Option<Entity<Workspace>>,
@@ -759,9 +760,7 @@ and then another
                 if let Some(minimum_required_version) = response
                     .headers()
                     .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
-                    .and_then(|version| {
-                        Some(SemanticVersion::from_str(version.to_str().ok()?).ok()?)
-                    })
+                    .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
                 {
                     if app_version < minimum_required_version {
                         return Err(anyhow!(ZedUpdateRequiredError {
