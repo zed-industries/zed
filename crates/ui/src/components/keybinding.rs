@@ -220,6 +220,81 @@ pub fn render_modifiers(
         })
 }
 
+// TODO: Dedupe with `render_modifiers`. Since this change is close to initial launch, de-risking it
+// by not changing the rendering for all modifiers.
+pub fn render_modifiers_for_edit_prediction(
+    modifiers: &Modifiers,
+    platform_style: PlatformStyle,
+    color: Option<Color>,
+    size: Option<AbsoluteLength>,
+) -> impl Iterator<Item = AnyElement> {
+    enum KeyOrIcon {
+        Key(String),
+        Icon(IconName),
+    }
+
+    struct Modifier {
+        enabled: bool,
+        mac: KeyOrIcon,
+        linux: &'static str,
+        windows: &'static str,
+    }
+
+    let table = {
+        use KeyOrIcon::*;
+
+        [
+            Modifier {
+                enabled: modifiers.function,
+                mac: Icon(IconName::Control),
+                linux: "Fn",
+                windows: "Fn",
+            },
+            Modifier {
+                enabled: modifiers.control,
+                mac: Icon(IconName::Control),
+                linux: "Ctrl",
+                windows: "Ctrl",
+            },
+            Modifier {
+                enabled: modifiers.alt,
+                mac: Icon(IconName::Option),
+                linux: "Alt",
+                windows: "Alt",
+            },
+            Modifier {
+                enabled: modifiers.platform,
+                mac: Icon(IconName::Command),
+                linux: "Super",
+                windows: "Win",
+            },
+            Modifier {
+                enabled: modifiers.shift,
+                mac: Icon(IconName::Shift),
+                linux: "Shift",
+                windows: "Shift",
+            },
+        ]
+    };
+
+    let filtered = table
+        .into_iter()
+        .filter(|modifier| modifier.enabled)
+        .collect::<Vec<_>>();
+
+    filtered
+        .into_iter()
+        .map(move |modifier| match platform_style {
+            PlatformStyle::Mac => modifier.mac,
+            PlatformStyle::Linux => KeyOrIcon::Key(modifier.linux.to_string()),
+            PlatformStyle::Windows => KeyOrIcon::Key(modifier.windows.to_string()),
+        })
+        .map(move |key_or_icon| match key_or_icon {
+            KeyOrIcon::Key(key) => Key::new(key, color).size(size).into_any_element(),
+            KeyOrIcon::Icon(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
+        })
+}
+
 #[derive(IntoElement)]
 pub struct Key {
     key: SharedString,

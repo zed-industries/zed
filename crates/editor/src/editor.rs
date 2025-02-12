@@ -5667,7 +5667,7 @@ impl Editor {
             .bg(bg_color)
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
             .text_size(TextSize::XSmall.rems(cx))
-            .children(ui::render_modifiers(
+            .children(ui::render_modifiers_for_edit_prediction(
                 &accept_keystroke.modifiers,
                 PlatformStyle::platform(),
                 Some(if accept_keystroke.modifiers == window.modifiers() {
@@ -5676,7 +5676,6 @@ impl Editor {
                     Color::Muted
                 }),
                 Some(IconSize::XSmall.rems().into()),
-                false,
             ))
             .child(accept_keystroke.key.clone())
             .into()
@@ -5807,12 +5806,11 @@ impl Editor {
                                 },
                             )
                             .child(Label::new("Hold").size(LabelSize::Small))
-                            .children(ui::render_modifiers(
+                            .children(ui::render_modifiers_for_edit_prediction(
                                 &accept_keystroke.modifiers,
                                 PlatformStyle::platform(),
                                 Some(Color::Default),
                                 Some(IconSize::Small.rems().into()),
-                                true,
                             ))
                             .into_any(),
                     );
@@ -5886,7 +5884,7 @@ impl Editor {
                             h_flex()
                                 .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                                 .gap_1()
-                                .children(ui::render_modifiers(
+                                .children(ui::render_modifiers_for_edit_prediction(
                                     &accept_keystroke.modifiers,
                                     PlatformStyle::platform(),
                                     Some(if !has_completion {
@@ -5895,7 +5893,6 @@ impl Editor {
                                         Color::Default
                                     }),
                                     None,
-                                    true,
                                 )),
                         )
                         .child(Label::new("Preview").into_any_element())
