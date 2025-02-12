@@ -315,7 +315,10 @@ message Envelope {
         OpenCommitMessageBuffer open_commit_message_buffer = 296;
 
         OpenUncommittedDiff open_uncommitted_diff = 297;
-        OpenUncommittedDiffResponse open_uncommitted_diff_response = 298; // current max
+        OpenUncommittedDiffResponse open_uncommitted_diff_response = 298;
+        GitShow git_show = 299;
+        GitReset git_reset = 300; // current max
+        GitCommitDetails git_commit_details = 301; // current max
     }
 
     reserved 87 to 88;
@@ -2644,6 +2647,33 @@ message UpdateGitBranch {
     ProjectPath repository = 3;
 }
 message GetPanicFiles {
+}
+
+message GitShow {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string commit = 4;
+}
+
+message GitCommitDetails {
+    string sha = 1;
+    string message = 2;
+    int64 commit_timestamp = 3;
+    string committer_email = 4;
+    string committer_name = 5;
+}
+
+message GitReset {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string commit = 4;
+    ResetMode mode = 5;
+    enum ResetMode {
+        SOFT = 0;
+        MIXED = 1;
+    }
 }
 
 message GetPanicFilesResponse {

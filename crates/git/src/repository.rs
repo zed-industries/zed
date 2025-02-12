@@ -57,6 +57,26 @@ pub struct CommitSummary {
     pub commit_timestamp: i64,
 }
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct CommitDetails {
+    pub sha: SharedString,
+    pub message: SharedString,
+    pub commit_timestamp: i64,
+    pub committer_email: SharedString,
+    pub committer_name: SharedString,
+}
+
+pub enum ResetMode {
+    // reset the branch pointer, leave index and worktree unchanged
+    // (this will make it look like things that were committed are now
+    // staged)
+    Soft,
+    // reset the branch pointer and index, leave worktree unchanged
+    // (this makes it look as though things that were committed are now
+    // unstaged)
+    Mixed,
+}
+
 pub trait GitRepository: Send + Sync {
     fn reload_index(&self);
 
@@ -85,6 +105,10 @@ pub trait GitRepository: Send + Sync {
     fn change_branch(&self, _: &str) -> Result<()>;
     fn create_branch(&self, _: &str) -> Result<()>;
     fn branch_exits(&self, _: &str) -> Result<bool>;
+
+    fn reset(&self, commit: &str, mode: ResetMode) -> Result<()>;
+
+    fn show(&self, commit: &str) -> Result<CommitDetails>;
 
     fn blame(&self, path: &Path, content: Rope) -> Result<crate::blame::Blame>;
 
@@ -156,6 +180,53 @@ impl GitRepository for RealGitRepository {
     fn main_repository_path(&self) -> PathBuf {
         let repo = self.repository.lock();
         repo.commondir().into()
+    }
+
+    fn show(&self, commit: &str) -> Result<CommitDetails> {
+        let repo = self.repository.lock();
+        let Ok(commit) = repo.revparse_single(commit)?.into_commit() else {
+            anyhow::bail!("{} is not a commit", commit);
+        };
+        let details = CommitDetails {
+            sha: commit.id().to_string().into(),
+            message: String::from_utf8_lossy(commit.message_raw_bytes())
+                .to_string()
+                .into(),
+            commit_timestamp: commit.time().seconds(),
+            committer_email: String::from_utf8_lossy(commit.committer().email_bytes())
+                .to_string()
+                .into(),
+            committer_name: String::from_utf8_lossy(commit.committer().name_bytes())
+                .to_string()
+                .into(),
+        };
+        Ok(details)
+    }
+
+    fn reset(&self, commit: &str, mode: ResetMode) -> Result<()> {
+        let working_directory = self
+            .repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")?
+            .to_path_buf();
+
+        let mode_flag = match mode {
+            ResetMode::Mixed => "--mixed",
+            ResetMode::Soft => "--soft",
+        };
+
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["reset", mode_flag, commit])
+            .output()?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to reset:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(())
     }
 
     fn load_index_text(&self, path: &RepoPath) -> Option<String> {
@@ -474,6 +545,14 @@ impl GitRepository for FakeGitRepository {
 
     fn merge_head_shas(&self) -> Vec<String> {
         vec![]
+    }
+
+    fn show(&self, _: &str) -> Result<CommitDetails> {
+        unimplemented!()
+    }
+
+    fn reset(&self, _: &str, _: ResetMode) -> Result<()> {
+        unimplemented!()
     }
 
     fn path(&self) -> PathBuf {

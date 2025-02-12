@@ -10,6 +10,7 @@ use editor::{
     actions::MoveToEnd, scroll::ScrollbarAutoHide, Editor, EditorElement, EditorMode,
     EditorSettings, MultiBuffer, ShowScrollbar,
 };
+use git::repository::ResetMode;
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
 use gpui::*;
 use language::{Buffer, File};
@@ -211,7 +212,7 @@ impl GitPanel {
     ) -> Entity<Self> {
         let fs = workspace.app_state().fs.clone();
         let project = workspace.project().clone();
-        let git_state = project.read(cx).git_state().clone();
+        let git_store = project.read(cx).git_store().clone();
         let active_repository = project.read(cx).active_repository(cx);
         let workspace = cx.entity().downgrade();
 
@@ -232,14 +233,14 @@ impl GitPanel {
             let scroll_handle = UniformListScrollHandle::new();
 
             cx.subscribe_in(
-                &git_state,
+                &git_store,
                 window,
-                move |this, git_state, event, window, cx| match event {
+                move |this, git_store, event, window, cx| match event {
                     GitEvent::FileSystemUpdated => {
                         this.schedule_update(false, window, cx);
                     }
                     GitEvent::ActiveRepositoryChanged | GitEvent::GitStateUpdated => {
-                        this.active_repository = git_state.read(cx).active_repository();
+                        this.active_repository = git_store.read(cx).active_repository();
                         this.schedule_update(true, window, cx);
                     }
                 },
@@ -745,6 +746,41 @@ impl GitPanel {
         self.pending_commit = Some(task);
     }
 
+    fn uncommit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+
+        let task = cx.spawn(|_, mut cx| async move {
+            let prior_head = repo
+                .update(&mut cx, |repo, cx| repo.show("HEAD", cx))?
+                .await?;
+
+            repo.update(&mut cx, |repo, _| repo.reset("HEAD^", ResetMode::Soft))?
+                .await??;
+
+            Ok(prior_head)
+        });
+
+        let task = cx.spawn_in(window, |this, mut cx| async move {
+            let result = task.await;
+            this.update_in(&mut cx, |this, window, cx| {
+                this.pending_commit.take();
+                match result {
+                    Ok(prior_commit) => {
+                        this.commit_editor.update(cx, |editor, cx| {
+                            editor.set_text(prior_commit.message, window, cx)
+                        });
+                    }
+                    Err(e) => this.show_err_toast(e, cx),
+                }
+            })
+            .ok();
+        });
+
+        self.pending_commit = Some(task);
+    }
+
     fn fill_co_authors(&mut self, _: &FillCoAuthors, window: &mut Window, cx: &mut Context<Self>) {
         const CO_AUTHOR_PREFIX: &str = "Co-authored-by: ";
 
@@ -1101,7 +1137,7 @@ impl GitPanel {
         let all_repositories = self
             .project
             .read(cx)
-            .git_state()
+            .git_store()
             .read(cx)
             .all_repositories();
 
@@ -1258,6 +1294,12 @@ impl GitPanel {
             .unwrap_or(&commit.subject)
             .to_string();
 
+        let tooltip = if self.has_staged_changes() {
+            "git reset HEAD^ --soft"
+        } else {
+            "git reset HEAD^"
+        };
+
         Some(
             h_flex()
                 .items_center()
@@ -1281,18 +1323,20 @@ impl GitPanel {
                 )
                 .child(div().flex_1())
                 .child(
-                    panel_filled_button("Undo")
+                    panel_filled_button("Uncommit")
                         .icon(IconName::Undo)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
-                        .icon_position(IconPosition::Start),
-                )
-                .child(
-                    panel_filled_button("Push")
-                        .icon(IconName::ArrowUp)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .icon_position(IconPosition::Start), // .disabled(true),
+                        .icon_position(IconPosition::Start)
+                        .tooltip(Tooltip::for_action_title(tooltip, &git::Uncommit))
+                        .on_click(cx.listener(|this, _, window, cx| this.uncommit(window, cx))),
+                    // .child(
+                    //     panel_filled_button("Push")
+                    //         .icon(IconName::ArrowUp)
+                    //         .icon_size(IconSize::Small)
+                    //         .icon_color(Color::Muted)
+                    //         .icon_position(IconPosition::Start), // .disabled(true),
+                    // ),
                 ),
         )
     }
