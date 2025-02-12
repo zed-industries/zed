@@ -590,6 +590,7 @@ impl InlineCompletionButton {
                                     true => language::EditPredictionsMode::Auto,
                                     false => language::EditPredictionsMode::EagerPreview,
                                 };
+
                                 if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
                                     edit_predictions.mode = new_mode;
                                 } else {
