@@ -3808,38 +3808,37 @@ impl EditorElement {
                 );
 
                 let styled_text = highlighted_edits.to_styled_text(&style.text);
+                let line_count = highlighted_edits.text.lines().count();
 
-                const ACCEPT_INDICATOR_HEIGHT: Pixels = px(24.);
+                const BORDER_WIDTH: Pixels = px(1.);
 
-                let mut element = v_flex()
-                    .items_end()
+                let mut element = h_flex()
+                    .items_start()
+                    .child(
+                        div()
+                            .bg(cx.theme().colors().editor_background)
+                            .border(BORDER_WIDTH)
+                            .shadow_sm()
+                            .border_color(cx.theme().colors().border)
+                            .rounded_l_lg()
+                            .when(line_count > 1, |el| el.rounded_br_lg())
+                            .pr_1()
+                            .child(styled_text),
+                    )
                     .child(
                         h_flex()
-                            .h(ACCEPT_INDICATOR_HEIGHT)
-                            .mb(px(-1.))
+                            .h(line_height + BORDER_WIDTH * px(2.))
                             .px_1p5()
                             .gap_1()
                             .shadow_sm()
                             .bg(Editor::edit_prediction_line_popover_bg_color(cx))
-                            .border_1()
-                            .border_b_0()
+                            .border(BORDER_WIDTH)
+                            .border_l_0()
                             .border_color(cx.theme().colors().border)
-                            .rounded_t_lg()
+                            .rounded_r_lg()
                             .children(editor.render_edit_prediction_accept_keybind(window, cx)),
                     )
-                    .child(
-                        div()
-                            .bg(cx.theme().colors().editor_background)
-                            .border_1()
-                            .shadow_sm()
-                            .border_color(cx.theme().colors().border)
-                            .rounded_lg()
-                            .rounded_tr(Pixels::ZERO)
-                            .child(styled_text),
-                    )
                     .into_any();
-
-                let line_count = highlighted_edits.text.lines().count();
 
                 let longest_row =
                     editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
@@ -3871,55 +3870,50 @@ impl EditorElement {
 
                 // Fully visible if it can be displayed within the window (allow overlapping other
                 // panes). However, this is only allowed if the popover starts within text_bounds.
-                let is_fully_visible = x_after_longest < text_bounds.right()
+                let can_position_to_the_right = x_after_longest < text_bounds.right()
                     && x_after_longest + element_bounds.width < viewport_bounds.right();
 
-                let mut origin = if is_fully_visible {
+                let mut origin = if can_position_to_the_right {
                     point(
                         x_after_longest,
                         text_bounds.origin.y + edit_start.row().as_f32() * line_height
                             - scroll_pixel_position.y,
                     )
                 } else {
-                    // Avoid overlapping both the edited rows and the user's cursor.
-                    let target_above = DisplayRow(
-                        edit_start
-                            .row()
-                            .0
-                            .min(
-                                newest_selection_head
-                                    .map_or(u32::MAX, |cursor_row| cursor_row.row().0),
-                            )
-                            .saturating_sub(line_count as u32),
-                    );
-                    let mut row_target;
-                    if visible_row_range.contains(&DisplayRow(target_above.0.saturating_sub(1))) {
-                        row_target = target_above;
-                    } else {
-                        row_target = DisplayRow(
-                            edit_end.row().0.max(
-                                newest_selection_head.map_or(0, |cursor_row| cursor_row.row().0),
-                            ) + 1,
-                        );
-                        if !visible_row_range.contains(&row_target) {
-                            // Not visible, so fallback on displaying immediately below the cursor.
-                            if let Some(cursor) = newest_selection_head {
-                                row_target = DisplayRow(cursor.row().0 + 1);
-                            } else {
-                                // Not visible and no cursor visible, so fallback on displaying at the top of the editor.
-                                row_target = DisplayRow(0);
-                            }
-                        }
-                    };
+                    let cursor_row = newest_selection_head.map(|head| head.row());
+                    let above_edit = edit_start
+                        .row()
+                        .0
+                        .checked_sub(line_count as u32)
+                        .map(DisplayRow);
+                    let below_edit = Some(edit_end.row() + 1);
+                    let above_cursor = cursor_row
+                        .and_then(|row| row.0.checked_sub(line_count as u32).map(DisplayRow));
+                    let below_cursor = cursor_row.map(|cursor_row| cursor_row + 1);
 
-                    text_bounds.origin
+                    // Place the edit popover adjacent to the edit if there is a location
+                    // available that is onscreen and does not obscure the cursor. Otherwise,
+                    // place it adjacent to the cursor.
+                    let row_target = [above_edit, below_edit, above_cursor, below_cursor]
+                        .into_iter()
+                        .flatten()
+                        .find(|&start_row| {
+                            let end_row = start_row + line_count as u32;
+                            visible_row_range.contains(&start_row)
+                                && visible_row_range.contains(&end_row)
+                                && cursor_row.map_or(true, |cursor_row| {
+                                    !((start_row..end_row).contains(&cursor_row))
+                                })
+                        })?;
+
+                    content_origin
                         + point(
                             -scroll_pixel_position.x,
                             row_target.as_f32() * line_height - scroll_pixel_position.y,
                         )
                 };
 
-                origin.y -= ACCEPT_INDICATOR_HEIGHT;
+                origin.x -= BORDER_WIDTH;
 
                 window.defer_draw(element, origin, 1);
 
