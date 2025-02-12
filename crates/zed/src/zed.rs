@@ -21,14 +21,16 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::{FeatureFlagAppExt, FeatureFlagViewExt, GitUiFeatureFlag};
-use fs::Fs;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
     actions, point, px, Action, App, AppContext as _, AsyncApp, Context, DismissEvent, Element,
     Entity, Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel,
-    ReadGlobal, SharedString, Styled, Task, TitlebarOptions, Window, WindowKind, WindowOptions,
+    ReadGlobal, SharedString, Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind,
+    WindowOptions,
 };
 use image_viewer::ImageInfo;
+use migrate::{MigrationType, MigratorBanner, MigratorEvent, MigratorNotification};
+use migrator::{migrate_keymap, migrate_settings};
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
@@ -150,6 +152,7 @@ pub fn initialize_workspace(
         let workspace_handle = cx.entity().clone();
         let center_pane = workspace.active_pane().clone();
         initialize_pane(workspace, &center_pane, window, cx);
+
         cx.subscribe_in(&workspace_handle, window, {
             move |workspace, _, event, window, cx| match event {
                 workspace::Event::PaneAdded(pane) => {
@@ -855,7 +858,6 @@ fn initialize_pane(
             toolbar.add_item(breadcrumbs, window, cx);
             let buffer_search_bar = cx.new(|cx| search::BufferSearchBar::new(window, cx));
             toolbar.add_item(buffer_search_bar.clone(), window, cx);
-
             let proposed_change_bar = cx.new(|_| ProposedChangesEditorToolbar::new());
             toolbar.add_item(proposed_change_bar, window, cx);
             let quick_action_bar =
@@ -869,6 +871,8 @@ fn initialize_pane(
             toolbar.add_item(lsp_log_item, window, cx);
             let syntax_tree_item = cx.new(|_| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, window, cx);
+            let migrator_banner = cx.new(|cx| MigratorBanner::new(workspace, cx));
+            toolbar.add_item(migrator_banner, window, cx);
         })
     });
 }
@@ -1097,6 +1101,68 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
         .detach();
 }
 
+pub fn handle_settings_file_changes(
+    mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
+    cx: &mut App,
+    settings_changed: impl Fn(Option<anyhow::Error>, &mut App) + 'static,
+) {
+    MigratorNotification::set_global(cx.new(|_| MigratorNotification), cx);
+    let content = cx
+        .background_executor()
+        .block(user_settings_file_rx.next())
+        .unwrap();
+    let user_settings_content = if let Ok(Some(migrated_content)) = migrate_settings(&content) {
+        migrated_content
+    } else {
+        content
+    };
+    SettingsStore::update_global(cx, |store, cx| {
+        let result = store.set_user_settings(&user_settings_content, cx);
+        if let Err(err) = &result {
+            log::error!("Failed to load user settings: {err}");
+        }
+        settings_changed(result.err(), cx);
+    });
+    cx.spawn(move |cx| async move {
+        while let Some(content) = user_settings_file_rx.next().await {
+            let user_settings_content;
+            let content_migrated;
+
+            if let Ok(Some(migrated_content)) = migrate_settings(&content) {
+                user_settings_content = migrated_content;
+                content_migrated = true;
+            } else {
+                user_settings_content = content;
+                content_migrated = false;
+            }
+
+            cx.update(|cx| {
+                if let Some(notifier) = MigratorNotification::try_global(cx) {
+                    notifier.update(cx, |_, cx| {
+                        cx.emit(MigratorEvent::ContentChanged {
+                            migration_type: MigrationType::Settings,
+                            migrated: content_migrated,
+                        });
+                    });
+                }
+            })
+            .ok();
+            let result = cx.update_global(|store: &mut SettingsStore, cx| {
+                let result = store.set_user_settings(&user_settings_content, cx);
+                if let Err(err) = &result {
+                    log::error!("Failed to load user settings: {err}");
+                }
+                settings_changed(result.err(), cx);
+                cx.refresh_windows();
+            });
+            if result.is_err() {
+                break; // App dropped
+            }
+        }
+    })
+    .detach();
+}
+
 pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut App,
@@ -1137,47 +1203,46 @@ pub fn handle_keymap_file_changes(
 
     cx.spawn(move |cx| async move {
         let mut user_keymap_content = String::new();
+        let mut content_migrated = false;
         loop {
             select_biased! {
                 _ = base_keymap_rx.next() => {},
                 _ = keyboard_layout_rx.next() => {},
                 content = user_keymap_file_rx.next() => {
                     if let Some(content) = content {
-                        user_keymap_content = content;
+                        if let Ok(Some(migrated_content)) = migrate_keymap(&content) {
+                            user_keymap_content = migrated_content;
+                            content_migrated = true;
+                        } else {
+                            user_keymap_content = content;
+                            content_migrated = false;
+                        }
                     }
                 }
             };
             cx.update(|cx| {
+                if let Some(notifier) = MigratorNotification::try_global(cx) {
+                    notifier.update(cx, |_, cx| {
+                        cx.emit(MigratorEvent::ContentChanged {
+                            migration_type: MigrationType::Keymap,
+                            migrated: content_migrated,
+                        });
+                    });
+                }
                 let load_result = KeymapFile::load(&user_keymap_content, cx);
                 match load_result {
-                    KeymapFileLoadResult::Success {
-                        key_bindings,
-                        keymap_file,
-                    } => {
+                    KeymapFileLoadResult::Success { key_bindings } => {
                         reload_keymaps(cx, key_bindings);
-                        dismiss_app_notification(&notification_id, cx);
-                        show_keymap_migration_notification_if_needed(
-                            keymap_file,
-                            notification_id.clone(),
-                            cx,
-                        );
+                        dismiss_app_notification(&notification_id.clone(), cx);
                     }
                     KeymapFileLoadResult::SomeFailedToLoad {
                         key_bindings,
-                        keymap_file,
                         error_message,
                     } => {
                         if !key_bindings.is_empty() {
                             reload_keymaps(cx, key_bindings);
                         }
-                        dismiss_app_notification(&notification_id, cx);
-                        if !show_keymap_migration_notification_if_needed(
-                            keymap_file,
-                            notification_id.clone(),
-                            cx,
-                        ) {
-                            show_keymap_file_load_error(notification_id.clone(), error_message, cx);
-                        }
+                        show_keymap_file_load_error(notification_id.clone(), error_message, cx);
                     }
                     KeymapFileLoadResult::JsonParseFailure { error } => {
                         show_keymap_file_json_error(notification_id.clone(), &error, cx)
@@ -1207,66 +1272,6 @@ fn show_keymap_file_json_error(
                 })
         })
     });
-}
-
-fn show_keymap_migration_notification_if_needed(
-    keymap_file: KeymapFile,
-    notification_id: NotificationId,
-    cx: &mut App,
-) -> bool {
-    if !migrate::should_migrate_keymap(keymap_file) {
-        return false;
-    }
-    let message = MarkdownString(format!(
-        "Keymap migration needed, as the format for some actions has changed. \
-        You can migrate your keymap by clicking below. A backup will be created at {}.",
-        MarkdownString::inline_code(&paths::keymap_backup_file().to_string_lossy())
-    ));
-    show_markdown_app_notification(
-        notification_id,
-        message,
-        "Backup and Migrate Keymap".into(),
-        move |_, cx| {
-            let fs = <dyn Fs>::global(cx);
-            cx.spawn(move |weak_notification, mut cx| async move {
-                migrate::migrate_keymap(fs).await.ok();
-                weak_notification
-                    .update(&mut cx, |_, cx| {
-                        cx.emit(DismissEvent);
-                    })
-                    .ok();
-            })
-            .detach();
-        },
-        cx,
-    );
-    return true;
-}
-
-fn show_settings_migration_notification_if_needed(
-    notification_id: NotificationId,
-    settings: serde_json::Value,
-    cx: &mut App,
-) {
-    if !migrate::should_migrate_settings(&settings) {
-        return;
-    }
-    let message = MarkdownString(format!(
-        "Settings migration needed, as the format for some settings has changed. \
-            You can migrate your settings by clicking below. A backup will be created at {}.",
-        MarkdownString::inline_code(&paths::settings_backup_file().to_string_lossy())
-    ));
-    show_markdown_app_notification(
-        notification_id,
-        message,
-        "Backup and Migrate Settings".into(),
-        move |_, cx| {
-            let fs = <dyn Fs>::global(cx);
-            migrate::migrate_settings(fs, cx);
-            cx.emit(DismissEvent);
-        },
-        cx,
-    );
 }
 
 fn show_keymap_file_load_error(
@@ -1363,12 +1368,12 @@ pub fn load_default_keymap(cx: &mut App) {
     }
 }
 
-pub fn handle_settings_changed(result: Result<serde_json::Value, anyhow::Error>, cx: &mut App) {
+pub fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
     struct SettingsParseErrorNotification;
     let id = NotificationId::unique::<SettingsParseErrorNotification>();
 
-    match result {
-        Err(error) => {
+    match error {
+        Some(error) => {
             if let Some(InvalidSettingsError::LocalSettings { .. }) =
                 error.downcast_ref::<InvalidSettingsError>()
             {
@@ -1387,9 +1392,8 @@ pub fn handle_settings_changed(result: Result<serde_json::Value, anyhow::Error>,
                 })
             });
         }
-        Ok(settings) => {
+        None => {
             dismiss_app_notification(&id, cx);
-            show_settings_migration_notification_if_needed(id, settings, cx);
         }
     }
 }
@@ -1672,7 +1676,7 @@ mod tests {
     use language::{LanguageMatcher, LanguageRegistry};
     use project::{project_settings::ProjectSettings, Project, ProjectPath, WorktreeSettings};
     use serde_json::json;
-    use settings::{handle_settings_file_changes, watch_config_file, SettingsStore};
+    use settings::{watch_config_file, SettingsStore};
     use std::{
         path::{Path, PathBuf},
         time::Duration,

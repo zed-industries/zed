@@ -12827,11 +12827,17 @@ impl Editor {
             .and_then(|f| f.as_local())
     }
 
-    fn target_file_abs_path(&self, cx: &mut Context<Self>) -> Option<PathBuf> {
+    pub fn target_file_abs_path(&self, cx: &mut Context<Self>) -> Option<PathBuf> {
         self.active_excerpt(cx).and_then(|(_, buffer, _)| {
-            let project_path = buffer.read(cx).project_path(cx)?;
-            let project = self.project.as_ref()?.read(cx);
-            project.absolute_path(&project_path, cx)
+            let buffer = buffer.read(cx);
+            if let Some(project_path) = buffer.project_path(cx) {
+                let project = self.project.as_ref()?.read(cx);
+                project.absolute_path(&project_path, cx)
+            } else {
+                buffer
+                    .file()
+                    .and_then(|file| file.as_local().map(|file| file.abs_path(cx)))
+            }
         })
     }
 
