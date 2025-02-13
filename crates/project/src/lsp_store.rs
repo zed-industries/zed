@@ -1679,16 +1679,7 @@ impl LocalLspStore {
             }
         });
     }
-    fn decrement_buffer_lsp_refcount(&mut self, buffer_id: BufferId) {
-        if let std::collections::hash_map::Entry::Occupied(mut entry) =
-            self.registered_buffers.entry(buffer_id)
-        {
-            *entry.get_mut() -= 1;
-            if *entry.get() == 0 {
-                entry.remove();
-            }
-        }
-    }
+
     fn update_buffer_diagnostics(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -3266,6 +3257,7 @@ impl LspStore {
             cx.observe_release(&handle, move |this, buffer, cx| {
                 let local = this.as_local_mut().unwrap();
                 let Some(refcount) = local.registered_buffers.get_mut(&buffer_id) else {
+                    debug_panic!("bad refcounting");
                     return;
                 };
                 *refcount -= 1;
@@ -7388,9 +7380,6 @@ impl LspStore {
                     })
                 })
                 .collect::<BTreeSet<_>>();
-            for buffer in &buffers {
-                local.decrement_buffer_lsp_refcount(buffer.read(cx).remote_id());
-            }
             local.lsp_tree.update(cx, |this, _| {
                 this.remove_nodes(&language_servers_to_stop);
             });
