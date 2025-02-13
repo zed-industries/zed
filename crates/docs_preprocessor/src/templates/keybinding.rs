@@ -29,8 +29,14 @@ impl Template for KeybindingTemplate {
 
     fn render(&self, context: &PreprocessorContext, args: &HashMap<String, String>) -> String {
         let action = args.get("action").map(String::as_str).unwrap_or("");
-        let macos_binding = context.find_binding("macos", action).unwrap_or_default();
-        let linux_binding = context.find_binding("linux", action).unwrap_or_default();
+        let macos_binding = context
+            .find_binding("macos", action)
+            .unwrap_or_default()
+            .replace("\\", "&#92;");
+        let linux_binding = context
+            .find_binding("linux", action)
+            .unwrap_or_default()
+            .replace("\\", "&#92;");
         format!("<kbd class=\"keybinding\">{macos_binding}|{linux_binding}</kbd>")
     }
 }
