@@ -2,31 +2,29 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use anyhow::anyhow;
 use fuzzy::PathMatch;
-use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
+use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, ProjectPath, Worktree, WorktreeId};
+use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
-use workspace::Workspace;
+use workspace::{notifications::NotifyResultExt, Workspace};
 
-use crate::context::ContextKind;
-use crate::context_picker::file_context_picker::codeblock_fence_for_path;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 
 pub struct DirectoryContextPicker {
-    picker: View<Picker<DirectoryContextPickerDelegate>>,
+    picker: Entity<Picker<DirectoryContextPickerDelegate>>,
 }
 
 impl DirectoryContextPicker {
     pub fn new(
-        context_picker: WeakView<ContextPicker>,
-        workspace: WeakView<Workspace>,
-        context_store: WeakModel<ContextStore>,
+        context_picker: WeakEntity<ContextPicker>,
+        workspace: WeakEntity<Workspace>,
+        context_store: WeakEntity<ContextStore>,
         confirm_behavior: ConfirmBehavior,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
         let delegate = DirectoryContextPickerDelegate::new(
             context_picker,
@@ -34,28 +32,28 @@ impl DirectoryContextPicker {
             context_store,
             confirm_behavior,
         );
-        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
     }
 }
 
-impl FocusableView for DirectoryContextPicker {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+impl Focusable for DirectoryContextPicker {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
 impl Render for DirectoryContextPicker {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.picker.clone()
     }
 }
 
 pub struct DirectoryContextPickerDelegate {
-    context_picker: WeakView<ContextPicker>,
-    workspace: WeakView<Workspace>,
-    context_store: WeakModel<ContextStore>,
+    context_picker: WeakEntity<ContextPicker>,
+    workspace: WeakEntity<Workspace>,
+    context_store: WeakEntity<ContextStore>,
     confirm_behavior: ConfirmBehavior,
     matches: Vec<PathMatch>,
     selected_index: usize,
@@ -63,9 +61,9 @@ pub struct DirectoryContextPickerDelegate {
 
 impl DirectoryContextPickerDelegate {
     pub fn new(
-        context_picker: WeakView<ContextPicker>,
-        workspace: WeakView<Workspace>,
-        context_store: WeakModel<ContextStore>,
+        context_picker: WeakEntity<ContextPicker>,
+        workspace: WeakEntity<Workspace>,
+        context_store: WeakEntity<ContextStore>,
         confirm_behavior: ConfirmBehavior,
     ) -> Self {
         Self {
@@ -82,8 +80,8 @@ impl DirectoryContextPickerDelegate {
         &mut self,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
-        workspace: &View<Workspace>,
-        cx: &mut ViewContext<Picker<Self>>,
+        workspace: &Entity<Workspace>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Task<Vec<PathMatch>> {
         if query.is_empty() {
             let workspace = workspace.read(cx);
@@ -149,15 +147,25 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search folders…".into()
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(());
         };
@@ -176,101 +184,42 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(mat) = self.matches.get(self.selected_index) else {
             return;
         };
 
-        let workspace = self.workspace.clone();
-        let Some(project) = workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().clone())
+        let project_path = ProjectPath {
+            worktree_id: WorktreeId::from_usize(mat.worktree_id),
+            path: mat.path.clone(),
+        };
+
+        let Some(task) = self
+            .context_store
+            .update(cx, |context_store, cx| {
+                context_store.add_directory(project_path, cx)
+            })
+            .ok()
         else {
             return;
         };
-        let path = mat.path.clone();
-        let worktree_id = WorktreeId::from_usize(mat.worktree_id);
+
         let confirm_behavior = self.confirm_behavior;
-        cx.spawn(|this, mut cx| async move {
-            let worktree = project.update(&mut cx, |project, cx| {
-                project
-                    .worktree_for_id(worktree_id, cx)
-                    .ok_or_else(|| anyhow!("no worktree found for {worktree_id:?}"))
-            })??;
-
-            let files = worktree.update(&mut cx, |worktree, _cx| {
-                collect_files_in_path(worktree, &path)
-            })?;
-
-            let open_buffer_tasks = project.update(&mut cx, |project, cx| {
-                files
-                    .into_iter()
-                    .map(|file_path| {
-                        project.open_buffer(
-                            ProjectPath {
-                                worktree_id,
-                                path: file_path.clone(),
-                            },
-                            cx,
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            })?;
-
-            let open_all_buffers_tasks = cx.background_executor().spawn(async move {
-                let mut buffers = Vec::with_capacity(open_buffer_tasks.len());
-
-                for open_buffer_task in open_buffer_tasks {
-                    let buffer = open_buffer_task.await?;
-
-                    buffers.push(buffer);
-                }
-
-                anyhow::Ok(buffers)
-            });
-
-            let buffers = open_all_buffers_tasks.await?;
-
-            this.update(&mut cx, |this, cx| {
-                let mut text = String::new();
-
-                for buffer in buffers {
-                    text.push_str(&codeblock_fence_for_path(Some(&path), None));
-                    text.push_str(&buffer.read(cx).text());
-                    if !text.ends_with('\n') {
-                        text.push('\n');
-                    }
-
-                    text.push_str("```\n");
-                }
-
-                this.delegate
-                    .context_store
-                    .update(cx, |context_store, _cx| {
-                        context_store.insert_context(
-                            ContextKind::Directory,
-                            path.to_string_lossy().to_string(),
-                            text,
-                        );
-                    })?;
-
-                match confirm_behavior {
+        cx.spawn_in(window, |this, mut cx| async move {
+            match task.await.notify_async_err(&mut cx) {
+                None => anyhow::Ok(()),
+                Some(()) => this.update_in(&mut cx, |this, window, cx| match confirm_behavior {
                     ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
-                }
-
-                anyhow::Ok(())
-            })??;
-
-            anyhow::Ok(())
+                    ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
+                }),
+            }
         })
-        .detach_and_log_err(cx)
+        .detach_and_log_err(cx);
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.context_picker
-            .update(cx, |this, cx| {
-                this.reset_mode();
+            .update(cx, |_, cx| {
                 cx.emit(DismissEvent);
             })
             .ok();
@@ -280,30 +229,41 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
         let directory_name = path_match.path.to_string_lossy().to_string();
+
+        let added = self.context_store.upgrade().map_or(false, |context_store| {
+            context_store
+                .read(cx)
+                .includes_directory(&path_match.path)
+                .is_some()
+        });
 
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .toggle_state(selected)
-                .child(h_flex().gap_2().child(Label::new(directory_name))),
+                .start_slot(
+                    Icon::new(IconName::Folder)
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted),
+                )
+                .child(Label::new(directory_name))
+                .when(added, |el| {
+                    el.end_slot(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::Small)
+                                    .color(Color::Success),
+                            )
+                            .child(Label::new("Added").size(LabelSize::Small)),
+                    )
+                }),
         )
     }
-}
-
-fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
-    let mut files = Vec::new();
-
-    for entry in worktree.child_entries(path) {
-        if entry.is_dir() {
-            files.extend(collect_files_in_path(worktree, &entry.path));
-        } else if entry.is_file() {
-            files.push(entry.path.clone());
-        }
-    }
-
-    files
 }

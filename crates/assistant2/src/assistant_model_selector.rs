@@ -1,26 +1,30 @@
+use assistant_settings::AssistantSettings;
 use fs::Fs;
-use gpui::View;
+use gpui::{Entity, FocusHandle, SharedString};
 use language_model::LanguageModelRegistry;
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use settings::update_settings_file;
 use std::sync::Arc;
 use ui::{prelude::*, ButtonLike, PopoverMenuHandle, Tooltip};
 
-use crate::{assistant_settings::AssistantSettings, ToggleModelSelector};
+use crate::ToggleModelSelector;
 
 pub struct AssistantModelSelector {
-    selector: View<LanguageModelSelector>,
+    selector: Entity<LanguageModelSelector>,
     menu_handle: PopoverMenuHandle<LanguageModelSelector>,
+    focus_handle: FocusHandle,
 }
 
 impl AssistantModelSelector {
     pub(crate) fn new(
         fs: Arc<dyn Fs>,
         menu_handle: PopoverMenuHandle<LanguageModelSelector>,
-        cx: &mut WindowContext,
+        focus_handle: FocusHandle,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Self {
         Self {
-            selector: cx.new_view(|cx| {
+            selector: cx.new(|cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(
                     move |model, cx| {
@@ -30,18 +34,24 @@ impl AssistantModelSelector {
                             move |settings, _cx| settings.set_model(model.clone()),
                         );
                     },
+                    window,
                     cx,
                 )
             }),
             menu_handle,
+            focus_handle,
         }
     }
 }
 
 impl Render for AssistantModelSelector {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_model = LanguageModelRegistry::read_global(cx).active_model();
-        let focus_handle = self.selector.focus_handle(cx).clone();
+        let focus_handle = self.focus_handle.clone();
+        let model_name = match active_model {
+            Some(model) => model.name().0,
+            _ => SharedString::from("No model selected"),
+        };
 
         LanguageModelSelectorPopoverMenu::new(
             self.selector.clone(),
@@ -49,36 +59,31 @@ impl Render for AssistantModelSelector {
                 .style(ButtonStyle::Subtle)
                 .child(
                     h_flex()
-                        .w_full()
                         .gap_0p5()
                         .child(
-                            div()
-                                .overflow_x_hidden()
-                                .flex_grow()
-                                .whitespace_nowrap()
-                                .child(match active_model {
-                                    Some(model) => h_flex()
-                                        .child(
-                                            Label::new(model.name().0)
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        )
-                                        .into_any_element(),
-                                    _ => Label::new("No model selected")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .into_any_element(),
-                                }),
+                            div().max_w_32().child(
+                                Label::new(model_name)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .text_ellipsis()
+                                    .into_any_element(),
+                            ),
                         )
                         .child(
                             Icon::new(IconName::ChevronDown)
                                 .color(Color::Muted)
                                 .size(IconSize::XSmall),
                         ),
+                ),
+            move |window, cx| {
+                Tooltip::for_action_in(
+                    "Change Model",
+                    &ToggleModelSelector,
+                    &focus_handle,
+                    window,
+                    cx,
                 )
-                .tooltip(move |cx| {
-                    Tooltip::for_action_in("Change Model", &ToggleModelSelector, &focus_handle, cx)
-                }),
+            },
         )
         .with_handle(self.menu_handle.clone())
     }

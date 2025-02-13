@@ -3,7 +3,7 @@ use std::sync::Arc;
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use gpui::Global;
-use gpui::{AppContext, ReadGlobal};
+use gpui::{App, ReadGlobal};
 use parking_lot::RwLock;
 
 use crate::Tool;
@@ -25,14 +25,14 @@ pub struct ToolRegistry {
 
 impl ToolRegistry {
     /// Returns the global [`ToolRegistry`].
-    pub fn global(cx: &AppContext) -> Arc<Self> {
+    pub fn global(cx: &App) -> Arc<Self> {
         GlobalToolRegistry::global(cx).0.clone()
     }
 
     /// Returns the global [`ToolRegistry`].
     ///
     /// Inserts a default [`ToolRegistry`] if one does not yet exist.
-    pub fn default_global(cx: &mut AppContext) -> Arc<Self> {
+    pub fn default_global(cx: &mut App) -> Arc<Self> {
         cx.default_global::<GlobalToolRegistry>().0.clone()
     }
 

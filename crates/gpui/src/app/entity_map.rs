@@ -1,10 +1,12 @@
-use crate::{seal::Sealed, AppContext, Context, Entity, ModelContext};
+use crate::{seal::Sealed, App, AppContext, VisualContext, Window};
 use anyhow::{anyhow, Result};
+use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{KeyData, SecondaryMap, SlotMap};
 use std::{
     any::{type_name, Any, TypeId},
+    cell::RefCell,
     fmt::{self, Display},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -20,8 +22,10 @@ use std::{
 #[cfg(any(test, feature = "test-support"))]
 use collections::HashMap;
 
+use super::Context;
+
 slotmap::new_key_type! {
-    /// A unique identifier for a model or view across the application.
+    /// A unique identifier for a entity across the application.
     pub struct EntityId;
 }
 
@@ -51,6 +55,7 @@ impl Display for EntityId {
 
 pub(crate) struct EntityMap {
     entities: SecondaryMap<EntityId, Box<dyn Any>>,
+    pub accessed_entities: RefCell<FxHashSet<EntityId>>,
     ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
@@ -65,6 +70,7 @@ impl EntityMap {
     pub fn new() -> Self {
         Self {
             entities: SecondaryMap::new(),
+            accessed_entities: RefCell::new(FxHashSet::default()),
             ref_counts: Arc::new(RwLock::new(EntityRefCounts {
                 counts: SlotMap::with_key(),
                 dropped_entity_ids: Vec::new(),
@@ -80,31 +86,37 @@ impl EntityMap {
     /// Reserve a slot for an entity, which you can subsequently use with `insert`.
     pub fn reserve<T: 'static>(&self) -> Slot<T> {
         let id = self.ref_counts.write().counts.insert(1.into());
-        Slot(Model::new(id, Arc::downgrade(&self.ref_counts)))
+        Slot(Entity::new(id, Arc::downgrade(&self.ref_counts)))
     }
 
     /// Insert an entity into a slot obtained by calling `reserve`.
-    pub fn insert<T>(&mut self, slot: Slot<T>, entity: T) -> Model<T>
+    pub fn insert<T>(&mut self, slot: Slot<T>, entity: T) -> Entity<T>
     where
         T: 'static,
     {
-        let model = slot.0;
-        self.entities.insert(model.entity_id, Box::new(entity));
-        model
+        let mut accessed_entities = self.accessed_entities.borrow_mut();
+        accessed_entities.insert(slot.entity_id);
+
+        let handle = slot.0;
+        self.entities.insert(handle.entity_id, Box::new(entity));
+        handle
     }
 
     /// Move an entity to the stack.
     #[track_caller]
-    pub fn lease<'a, T>(&mut self, model: &'a Model<T>) -> Lease<'a, T> {
-        self.assert_valid_context(model);
+    pub fn lease<'a, T>(&mut self, pointer: &'a Entity<T>) -> Lease<'a, T> {
+        self.assert_valid_context(pointer);
+        let mut accessed_entities = self.accessed_entities.borrow_mut();
+        accessed_entities.insert(pointer.entity_id);
+
         let entity = Some(
             self.entities
-                .remove(model.entity_id)
+                .remove(pointer.entity_id)
                 .unwrap_or_else(|| double_lease_panic::<T>("update")),
         );
         Lease {
-            model,
             entity,
+            pointer,
             entity_type: PhantomData,
         }
     }
@@ -112,27 +124,41 @@ impl EntityMap {
     /// Returns an entity after moving it to the stack.
     pub fn end_lease<T>(&mut self, mut lease: Lease<T>) {
         self.entities
-            .insert(lease.model.entity_id, lease.entity.take().unwrap());
+            .insert(lease.pointer.entity_id, lease.entity.take().unwrap());
     }
 
-    pub fn read<T: 'static>(&self, model: &Model<T>) -> &T {
-        self.assert_valid_context(model);
+    pub fn read<T: 'static>(&self, entity: &Entity<T>) -> &T {
+        self.assert_valid_context(entity);
+        let mut accessed_entities = self.accessed_entities.borrow_mut();
+        accessed_entities.insert(entity.entity_id);
+
         self.entities
-            .get(model.entity_id)
+            .get(entity.entity_id)
             .and_then(|entity| entity.downcast_ref())
             .unwrap_or_else(|| double_lease_panic::<T>("read"))
     }
 
-    fn assert_valid_context(&self, model: &AnyModel) {
+    fn assert_valid_context(&self, entity: &AnyEntity) {
         debug_assert!(
-            Weak::ptr_eq(&model.entity_map, &Arc::downgrade(&self.ref_counts)),
-            "used a model with the wrong context"
+            Weak::ptr_eq(&entity.entity_map, &Arc::downgrade(&self.ref_counts)),
+            "used a entity with the wrong context"
         );
+    }
+
+    pub fn extend_accessed(&mut self, entities: &FxHashSet<EntityId>) {
+        self.accessed_entities
+            .borrow_mut()
+            .extend(entities.iter().copied());
+    }
+
+    pub fn clear_accessed(&mut self) {
+        self.accessed_entities.borrow_mut().clear();
     }
 
     pub fn take_dropped(&mut self) -> Vec<(EntityId, Box<dyn Any>)> {
         let mut ref_counts = self.ref_counts.write();
         let dropped_entity_ids = mem::take(&mut ref_counts.dropped_entity_ids);
+        let mut accessed_entities = self.accessed_entities.borrow_mut();
 
         dropped_entity_ids
             .into_iter()
@@ -143,6 +169,7 @@ impl EntityMap {
                     0,
                     "dropped an entity that was referenced"
                 );
+                accessed_entities.remove(&entity_id);
                 // If the EntityId was allocated with `Context::reserve`,
                 // the entity may not have been inserted.
                 Some((entity_id, self.entities.remove(entity_id)?))
@@ -160,7 +187,7 @@ fn double_lease_panic<T>(operation: &str) -> ! {
 
 pub(crate) struct Lease<'a, T> {
     entity: Option<Box<dyn Any>>,
-    pub model: &'a Model<T>,
+    pub pointer: &'a Entity<T>,
     entity_type: PhantomData<T>,
 }
 
@@ -187,10 +214,10 @@ impl<'a, T> Drop for Lease<'a, T> {
 }
 
 #[derive(Deref, DerefMut)]
-pub(crate) struct Slot<T>(Model<T>);
+pub(crate) struct Slot<T>(Entity<T>);
 
-/// A dynamically typed reference to a model, which can be downcast into a `Model<T>`.
-pub struct AnyModel {
+/// A dynamically typed reference to a entity, which can be downcast into a `Entity<T>`.
+pub struct AnyEntity {
     pub(crate) entity_id: EntityId,
     pub(crate) entity_type: TypeId,
     entity_map: Weak<RwLock<EntityRefCounts>>,
@@ -198,7 +225,7 @@ pub struct AnyModel {
     handle_id: HandleId,
 }
 
-impl AnyModel {
+impl AnyEntity {
     fn new(id: EntityId, entity_type: TypeId, entity_map: Weak<RwLock<EntityRefCounts>>) -> Self {
         Self {
             entity_id: id,
@@ -214,31 +241,31 @@ impl AnyModel {
         }
     }
 
-    /// Returns the id associated with this model.
+    /// Returns the id associated with this entity.
     pub fn entity_id(&self) -> EntityId {
         self.entity_id
     }
 
-    /// Returns the [TypeId] associated with this model.
+    /// Returns the [TypeId] associated with this entity.
     pub fn entity_type(&self) -> TypeId {
         self.entity_type
     }
 
-    /// Converts this model handle into a weak variant, which does not prevent it from being released.
-    pub fn downgrade(&self) -> AnyWeakModel {
-        AnyWeakModel {
+    /// Converts this entity handle into a weak variant, which does not prevent it from being released.
+    pub fn downgrade(&self) -> AnyWeakEntity {
+        AnyWeakEntity {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
             entity_ref_counts: self.entity_map.clone(),
         }
     }
 
-    /// Converts this model handle into a strongly-typed model handle of the given type.
-    /// If this model handle is not of the specified type, returns itself as an error variant.
-    pub fn downcast<T: 'static>(self) -> Result<Model<T>, AnyModel> {
+    /// Converts this entity handle into a strongly-typed entity handle of the given type.
+    /// If this entity handle is not of the specified type, returns itself as an error variant.
+    pub fn downcast<T: 'static>(self) -> Result<Entity<T>, AnyEntity> {
         if TypeId::of::<T>() == self.entity_type {
-            Ok(Model {
-                any_model: self,
+            Ok(Entity {
+                any_entity: self,
                 entity_type: PhantomData,
             })
         } else {
@@ -247,16 +274,16 @@ impl AnyModel {
     }
 }
 
-impl Clone for AnyModel {
+impl Clone for AnyEntity {
     fn clone(&self) -> Self {
         if let Some(entity_map) = self.entity_map.upgrade() {
             let entity_map = entity_map.read();
             let count = entity_map
                 .counts
                 .get(self.entity_id)
-                .expect("detected over-release of a model");
+                .expect("detected over-release of a entity");
             let prev_count = count.fetch_add(1, SeqCst);
-            assert_ne!(prev_count, 0, "Detected over-release of a model.");
+            assert_ne!(prev_count, 0, "Detected over-release of a entity.");
         }
 
         Self {
@@ -275,7 +302,7 @@ impl Clone for AnyModel {
     }
 }
 
-impl Drop for AnyModel {
+impl Drop for AnyEntity {
     fn drop(&mut self) {
         if let Some(entity_map) = self.entity_map.upgrade() {
             let entity_map = entity_map.upgradable_read();
@@ -284,7 +311,7 @@ impl Drop for AnyModel {
                 .get(self.entity_id)
                 .expect("detected over-release of a handle.");
             let prev_count = count.fetch_sub(1, SeqCst);
-            assert_ne!(prev_count, 0, "Detected over-release of a model.");
+            assert_ne!(prev_count, 0, "Detected over-release of a entity.");
             if prev_count == 1 {
                 // We were the last reference to this entity, so we can remove it.
                 let mut entity_map = RwLockUpgradableReadGuard::upgrade(entity_map);
@@ -302,29 +329,29 @@ impl Drop for AnyModel {
     }
 }
 
-impl<T> From<Model<T>> for AnyModel {
-    fn from(model: Model<T>) -> Self {
-        model.any_model
+impl<T> From<Entity<T>> for AnyEntity {
+    fn from(entity: Entity<T>) -> Self {
+        entity.any_entity
     }
 }
 
-impl Hash for AnyModel {
+impl Hash for AnyEntity {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.entity_id.hash(state);
     }
 }
 
-impl PartialEq for AnyModel {
+impl PartialEq for AnyEntity {
     fn eq(&self, other: &Self) -> bool {
         self.entity_id == other.entity_id
     }
 }
 
-impl Eq for AnyModel {}
+impl Eq for AnyEntity {}
 
-impl std::fmt::Debug for AnyModel {
+impl std::fmt::Debug for AnyEntity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AnyModel")
+        f.debug_struct("AnyEntity")
             .field("entity_id", &self.entity_id.as_u64())
             .finish()
     }
@@ -333,150 +360,155 @@ impl std::fmt::Debug for AnyModel {
 /// A strong, well typed reference to a struct which is managed
 /// by GPUI
 #[derive(Deref, DerefMut)]
-pub struct Model<T> {
+pub struct Entity<T> {
     #[deref]
     #[deref_mut]
-    pub(crate) any_model: AnyModel,
+    pub(crate) any_entity: AnyEntity,
     pub(crate) entity_type: PhantomData<T>,
 }
 
-unsafe impl<T> Send for Model<T> {}
-unsafe impl<T> Sync for Model<T> {}
-impl<T> Sealed for Model<T> {}
+unsafe impl<T> Send for Entity<T> {}
+unsafe impl<T> Sync for Entity<T> {}
+impl<T> Sealed for Entity<T> {}
 
-impl<T: 'static> Entity<T> for Model<T> {
-    type Weak = WeakModel<T>;
-
-    fn entity_id(&self) -> EntityId {
-        self.any_model.entity_id
-    }
-
-    fn downgrade(&self) -> Self::Weak {
-        WeakModel {
-            any_model: self.any_model.downgrade(),
-            entity_type: self.entity_type,
-        }
-    }
-
-    fn upgrade_from(weak: &Self::Weak) -> Option<Self>
-    where
-        Self: Sized,
-    {
-        Some(Model {
-            any_model: weak.any_model.upgrade()?,
-            entity_type: weak.entity_type,
-        })
-    }
-}
-
-impl<T: 'static> Model<T> {
+impl<T: 'static> Entity<T> {
     fn new(id: EntityId, entity_map: Weak<RwLock<EntityRefCounts>>) -> Self
     where
         T: 'static,
     {
         Self {
-            any_model: AnyModel::new(id, TypeId::of::<T>(), entity_map),
+            any_entity: AnyEntity::new(id, TypeId::of::<T>(), entity_map),
             entity_type: PhantomData,
         }
     }
 
-    /// Downgrade the this to a weak model reference
-    pub fn downgrade(&self) -> WeakModel<T> {
-        // Delegate to the trait implementation to keep behavior in one place.
-        // This method was included to improve method resolution in the presence of
-        // the Model's deref
-        Entity::downgrade(self)
+    /// Get the entity ID associated with this entity
+    pub fn entity_id(&self) -> EntityId {
+        self.any_entity.entity_id
     }
 
-    /// Convert this into a dynamically typed model.
-    pub fn into_any(self) -> AnyModel {
-        self.any_model
+    /// Downgrade this entity pointer to a non-retaining weak pointer
+    pub fn downgrade(&self) -> WeakEntity<T> {
+        WeakEntity {
+            any_entity: self.any_entity.downgrade(),
+            entity_type: self.entity_type,
+        }
+    }
+
+    /// Upgrade the given weak pointer to a retaining pointer, if it still exists
+    pub fn upgrade_from(weak: &WeakEntity<T>) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        Some(Entity {
+            any_entity: weak.any_entity.upgrade()?,
+            entity_type: weak.entity_type,
+        })
+    }
+
+    /// Convert this into a dynamically typed entity.
+    pub fn into_any(self) -> AnyEntity {
+        self.any_entity
     }
 
     /// Grab a reference to this entity from the context.
-    pub fn read<'a>(&self, cx: &'a AppContext) -> &'a T {
+    pub fn read<'a>(&self, cx: &'a App) -> &'a T {
         cx.entities.read(self)
     }
 
-    /// Read the entity referenced by this model with the given function.
-    pub fn read_with<R, C: Context>(
+    /// Read the entity referenced by this handle with the given function.
+    pub fn read_with<R, C: AppContext>(
         &self,
         cx: &C,
-        f: impl FnOnce(&T, &AppContext) -> R,
+        f: impl FnOnce(&T, &App) -> R,
     ) -> C::Result<R> {
-        cx.read_model(self, f)
+        cx.read_entity(self, f)
     }
 
-    /// Updates the entity referenced by this model with the given function.
+    /// Updates the entity referenced by this handle with the given function.
     ///
     /// The update function receives a context appropriate for its environment.
-    /// When updating in an `AppContext`, it receives a `ModelContext`.
-    /// When updating in a `WindowContext`, it receives a `ViewContext`.
+    /// When updating in an `App`, it receives a `Context`.
+    /// When updating in a `Window`, it receives a `Window` and a `Context`.
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
     ) -> C::Result<R>
     where
-        C: Context,
+        C: AppContext,
     {
-        cx.update_model(self, update)
+        cx.update_entity(self, update)
+    }
+
+    /// Updates the entity referenced by this handle with the given function if
+    /// the referenced entity still exists, within a visual context that has a window.
+    /// Returns an error if the entity has been released.
+    pub fn update_in<C, R>(
+        &self,
+        cx: &mut C,
+        update: impl FnOnce(&mut T, &mut Window, &mut Context<'_, T>) -> R,
+    ) -> C::Result<R>
+    where
+        C: VisualContext,
+    {
+        cx.update_window_entity(self, update)
     }
 }
 
-impl<T> Clone for Model<T> {
+impl<T> Clone for Entity<T> {
     fn clone(&self) -> Self {
         Self {
-            any_model: self.any_model.clone(),
+            any_entity: self.any_entity.clone(),
             entity_type: self.entity_type,
         }
     }
 }
 
-impl<T> std::fmt::Debug for Model<T> {
+impl<T> std::fmt::Debug for Entity<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Model")
-            .field("entity_id", &self.any_model.entity_id)
+        f.debug_struct("Entity")
+            .field("entity_id", &self.any_entity.entity_id)
             .field("entity_type", &type_name::<T>())
             .finish()
     }
 }
 
-impl<T> Hash for Model<T> {
+impl<T> Hash for Entity<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.any_model.hash(state);
+        self.any_entity.hash(state);
     }
 }
 
-impl<T> PartialEq for Model<T> {
+impl<T> PartialEq for Entity<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.any_model == other.any_model
+        self.any_entity == other.any_entity
     }
 }
 
-impl<T> Eq for Model<T> {}
+impl<T> Eq for Entity<T> {}
 
-impl<T> PartialEq<WeakModel<T>> for Model<T> {
-    fn eq(&self, other: &WeakModel<T>) -> bool {
-        self.any_model.entity_id() == other.entity_id()
+impl<T> PartialEq<WeakEntity<T>> for Entity<T> {
+    fn eq(&self, other: &WeakEntity<T>) -> bool {
+        self.any_entity.entity_id() == other.entity_id()
     }
 }
 
-/// A type erased, weak reference to a model.
+/// A type erased, weak reference to a entity.
 #[derive(Clone)]
-pub struct AnyWeakModel {
+pub struct AnyWeakEntity {
     pub(crate) entity_id: EntityId,
     entity_type: TypeId,
     entity_ref_counts: Weak<RwLock<EntityRefCounts>>,
 }
 
-impl AnyWeakModel {
+impl AnyWeakEntity {
     /// Get the entity ID associated with this weak reference.
     pub fn entity_id(&self) -> EntityId {
         self.entity_id
     }
 
-    /// Check if this weak handle can be upgraded, or if the model has already been dropped
+    /// Check if this weak handle can be upgraded, or if the entity has already been dropped
     pub fn is_upgradable(&self) -> bool {
         let ref_count = self
             .entity_ref_counts
@@ -486,8 +518,8 @@ impl AnyWeakModel {
         ref_count > 0
     }
 
-    /// Upgrade this weak model reference to a strong reference.
-    pub fn upgrade(&self) -> Option<AnyModel> {
+    /// Upgrade this weak entity reference to a strong reference.
+    pub fn upgrade(&self) -> Option<AnyEntity> {
         let ref_counts = &self.entity_ref_counts.upgrade()?;
         let ref_counts = ref_counts.read();
         let ref_count = ref_counts.counts.get(self.entity_id)?;
@@ -499,7 +531,7 @@ impl AnyWeakModel {
         ref_count.fetch_add(1, SeqCst);
         drop(ref_counts);
 
-        Some(AnyModel {
+        Some(AnyEntity {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
             entity_map: self.entity_ref_counts.clone(),
@@ -514,7 +546,7 @@ impl AnyWeakModel {
         })
     }
 
-    /// Assert that model referenced by this weak handle has been released.
+    /// Assert that entity referenced by this weak handle has been released.
     #[cfg(any(test, feature = "test-support"))]
     pub fn assert_released(&self) {
         self.entity_ref_counts
@@ -537,7 +569,7 @@ impl AnyWeakModel {
     }
 }
 
-impl std::fmt::Debug for AnyWeakModel {
+impl std::fmt::Debug for AnyWeakEntity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct(type_name::<Self>())
             .field("entity_id", &self.entity_id)
@@ -546,115 +578,135 @@ impl std::fmt::Debug for AnyWeakModel {
     }
 }
 
-impl<T> From<WeakModel<T>> for AnyWeakModel {
-    fn from(model: WeakModel<T>) -> Self {
-        model.any_model
+impl<T> From<WeakEntity<T>> for AnyWeakEntity {
+    fn from(entity: WeakEntity<T>) -> Self {
+        entity.any_entity
     }
 }
 
-impl Hash for AnyWeakModel {
+impl Hash for AnyWeakEntity {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.entity_id.hash(state);
     }
 }
 
-impl PartialEq for AnyWeakModel {
+impl PartialEq for AnyWeakEntity {
     fn eq(&self, other: &Self) -> bool {
         self.entity_id == other.entity_id
     }
 }
 
-impl Eq for AnyWeakModel {}
+impl Eq for AnyWeakEntity {}
 
-/// A weak reference to a model of the given type.
+/// A weak reference to a entity of the given type.
 #[derive(Deref, DerefMut)]
-pub struct WeakModel<T> {
+pub struct WeakEntity<T> {
     #[deref]
     #[deref_mut]
-    any_model: AnyWeakModel,
+    any_entity: AnyWeakEntity,
     entity_type: PhantomData<T>,
 }
 
-impl<T> std::fmt::Debug for WeakModel<T> {
+impl<T> std::fmt::Debug for WeakEntity<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct(&type_name::<Self>())
-            .field("entity_id", &self.any_model.entity_id)
+            .field("entity_id", &self.any_entity.entity_id)
             .field("entity_type", &type_name::<T>())
             .finish()
     }
 }
 
-unsafe impl<T> Send for WeakModel<T> {}
-unsafe impl<T> Sync for WeakModel<T> {}
+unsafe impl<T> Send for WeakEntity<T> {}
+unsafe impl<T> Sync for WeakEntity<T> {}
 
-impl<T> Clone for WeakModel<T> {
+impl<T> Clone for WeakEntity<T> {
     fn clone(&self) -> Self {
         Self {
-            any_model: self.any_model.clone(),
+            any_entity: self.any_entity.clone(),
             entity_type: self.entity_type,
         }
     }
 }
 
-impl<T: 'static> WeakModel<T> {
-    /// Upgrade this weak model reference into a strong model reference
-    pub fn upgrade(&self) -> Option<Model<T>> {
+impl<T: 'static> WeakEntity<T> {
+    /// Upgrade this weak entity reference into a strong entity reference
+    pub fn upgrade(&self) -> Option<Entity<T>> {
         // Delegate to the trait implementation to keep behavior in one place.
-        Model::upgrade_from(self)
+        Entity::upgrade_from(self)
     }
 
-    /// Updates the entity referenced by this model with the given function if
+    /// Updates the entity referenced by this handle with the given function if
     /// the referenced entity still exists. Returns an error if the entity has
     /// been released.
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
     ) -> Result<R>
     where
-        C: Context,
+        C: AppContext,
         Result<C::Result<R>>: crate::Flatten<R>,
     {
         crate::Flatten::flatten(
             self.upgrade()
-                .ok_or_else(|| anyhow!("entity release"))
-                .map(|this| cx.update_model(&this, update)),
+                .ok_or_else(|| anyhow!("entity released"))
+                .map(|this| cx.update_entity(&this, update)),
         )
     }
 
-    /// Reads the entity referenced by this model with the given function if
+    /// Updates the entity referenced by this handle with the given function if
+    /// the referenced entity still exists, within a visual context that has a window.
+    /// Returns an error if the entity has been released.
+    pub fn update_in<C, R>(
+        &self,
+        cx: &mut C,
+        update: impl FnOnce(&mut T, &mut Window, &mut Context<'_, T>) -> R,
+    ) -> Result<R>
+    where
+        C: VisualContext,
+        Result<C::Result<R>>: crate::Flatten<R>,
+    {
+        let window = cx.window_handle();
+        let this = self.upgrade().ok_or_else(|| anyhow!("entity released"))?;
+
+        crate::Flatten::flatten(window.update(cx, |_, window, cx| {
+            this.update(cx, |entity, cx| update(entity, window, cx))
+        }))
+    }
+
+    /// Reads the entity referenced by this handle with the given function if
     /// the referenced entity still exists. Returns an error if the entity has
     /// been released.
-    pub fn read_with<C, R>(&self, cx: &C, read: impl FnOnce(&T, &AppContext) -> R) -> Result<R>
+    pub fn read_with<C, R>(&self, cx: &C, read: impl FnOnce(&T, &App) -> R) -> Result<R>
     where
-        C: Context,
+        C: AppContext,
         Result<C::Result<R>>: crate::Flatten<R>,
     {
         crate::Flatten::flatten(
             self.upgrade()
                 .ok_or_else(|| anyhow!("entity release"))
-                .map(|this| cx.read_model(&this, read)),
+                .map(|this| cx.read_entity(&this, read)),
         )
     }
 }
 
-impl<T> Hash for WeakModel<T> {
+impl<T> Hash for WeakEntity<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.any_model.hash(state);
+        self.any_entity.hash(state);
     }
 }
 
-impl<T> PartialEq for WeakModel<T> {
+impl<T> PartialEq for WeakEntity<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.any_model == other.any_model
+        self.any_entity == other.any_entity
     }
 }
 
-impl<T> Eq for WeakModel<T> {}
+impl<T> Eq for WeakEntity<T> {}
 
-impl<T> PartialEq<Model<T>> for WeakModel<T> {
-    fn eq(&self, other: &Model<T>) -> bool {
-        self.entity_id() == other.any_model.entity_id()
+impl<T> PartialEq<Entity<T>> for WeakEntity<T> {
+    fn eq(&self, other: &Entity<T>) -> bool {
+        self.entity_id() == other.any_entity.entity_id()
     }
 }
 

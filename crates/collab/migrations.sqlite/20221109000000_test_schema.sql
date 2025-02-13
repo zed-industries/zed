@@ -3,6 +3,7 @@ CREATE TABLE "users" (
     "github_login" VARCHAR,
     "admin" BOOLEAN,
     "email_address" VARCHAR(255) DEFAULT NULL,
+    "name" TEXT,
     "invite_code" VARCHAR(64),
     "invite_count" INTEGER NOT NULL DEFAULT 0,
     "inviter_id" INTEGER REFERENCES users (id),
@@ -99,6 +100,8 @@ CREATE TABLE "worktree_repositories" (
     "branch" VARCHAR,
     "scan_id" INTEGER NOT NULL,
     "is_deleted" BOOL NOT NULL,
+    "current_merge_conflicts" VARCHAR,
+    "branch_summary" VARCHAR,
     PRIMARY KEY(project_id, worktree_id, work_directory_id),
     FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE,
     FOREIGN KEY(project_id, worktree_id, work_directory_id) REFERENCES worktree_entries (project_id, worktree_id, id) ON DELETE CASCADE
@@ -112,6 +115,9 @@ CREATE TABLE "worktree_repository_statuses" (
     "work_directory_id" INT8 NOT NULL,
     "repo_path" VARCHAR NOT NULL,
     "status" INT8 NOT NULL,
+    "status_kind" INT4 NOT NULL,
+    "first_status" INT4 NULL,
+    "second_status" INT4 NULL,
     "scan_id" INT8 NOT NULL,
     "is_deleted" BOOL NOT NULL,
     PRIMARY KEY(project_id, worktree_id, work_directory_id, repo_path),
@@ -397,6 +403,15 @@ CREATE TABLE extension_versions (
     schema_version INTEGER NOT NULL DEFAULT 0,
     wasm_api_version TEXT,
     download_count INTEGER NOT NULL DEFAULT 0,
+    provides_themes BOOLEAN NOT NULL DEFAULT FALSE,
+    provides_icon_themes BOOLEAN NOT NULL DEFAULT FALSE,
+    provides_languages BOOLEAN NOT NULL DEFAULT FALSE,
+    provides_grammars BOOLEAN NOT NULL DEFAULT FALSE,
+    provides_language_servers BOOLEAN NOT NULL DEFAULT FALSE,
+    provides_context_servers BOOLEAN NOT NULL DEFAULT FALSE,
+    provides_slash_commands BOOLEAN NOT NULL DEFAULT FALSE,
+    provides_indexed_docs_providers BOOLEAN NOT NULL DEFAULT FALSE,
+    provides_snippets BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (extension_id, version)
 );
 
@@ -426,6 +441,7 @@ CREATE TABLE IF NOT EXISTS billing_customers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     user_id INTEGER NOT NULL REFERENCES users(id),
+    has_overdue_invoices BOOLEAN NOT NULL DEFAULT FALSE,
     stripe_customer_id TEXT NOT NULL
 );
 
@@ -438,7 +454,8 @@ CREATE TABLE IF NOT EXISTS billing_subscriptions (
     billing_customer_id INTEGER NOT NULL REFERENCES billing_customers(id),
     stripe_subscription_id TEXT NOT NULL,
     stripe_subscription_status TEXT NOT NULL,
-    stripe_cancel_at TIMESTAMP
+    stripe_cancel_at TIMESTAMP,
+    stripe_cancellation_reason TEXT
 );
 
 CREATE INDEX "ix_billing_subscriptions_on_billing_customer_id" ON billing_subscriptions (billing_customer_id);

@@ -30,6 +30,39 @@ You can configure various [yaml-language-server settings](https://github.com/red
 
 Note, settings keys must be nested, so `yaml.keyOrdering` becomes `{"yaml": { "keyOrdering": true }}`.
 
+## Formatting
+
+By default Zed will use prettier for formatting YAML files.
+
+### Prettier Formatting
+
+You can customize the formatting behavior of Prettier. For example to use single-quotes in yaml files add the following to a `.prettierrc`:
+
+```json
+{
+  "overrides": [
+    {
+      "files": ["*.yaml", "*.yml"]
+      "options": {
+        "singleQuote": false
+      }
+    }
+  ]
+}
+```
+
+### yaml-language-server Formatting
+
+To use `yaml-language-server` instead of Prettier for YAML formatting, add the following to your Zed settings.json:
+
+```json
+  "languages": {
+    "YAML": {
+      "formatter": "language_server"
+    }
+  }
+```
+
 ## Schemas
 
 By default yaml-language-server will attempt to determine the correct schema for a given yaml file and retrieve the appropriate JSON Schema from [Json Schema Store](https://schemastore.org/).

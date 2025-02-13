@@ -3,7 +3,7 @@
 //! application to avoid having to import each trait individually.
 
 pub use crate::{
-    util::FluentBuilder, BorrowAppContext, BorrowWindow, Context as _, Element, FocusableElement,
+    util::FluentBuilder, AppContext as _, BorrowAppContext, Context, Element, FocusableElement,
     InteractiveElement, IntoElement, ParentElement, Refineable, Render, RenderOnce,
     StatefulInteractiveElement, Styled, StyledImage, VisualContext,
 };

@@ -1,19 +1,21 @@
-use std::{sync::Arc, time::Duration};
-
 use anyhow::Result;
 use collections::HashMap;
 use git::{
     blame::{Blame, BlameEntry},
-    parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid, PullRequest,
+    parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid,
 };
-use gpui::{Model, ModelContext, Subscription, Task};
+use gpui::{App, Context, Entity, Subscription, Task};
 use http_client::HttpClient;
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
-use multi_buffer::MultiBufferRow;
+use multi_buffer::RowInfo;
 use project::{Project, ProjectItem};
 use smallvec::SmallVec;
+use std::{sync::Arc, time::Duration};
 use sum_tree::SumTree;
+use ui::SharedString;
 use url::Url;
+
+use crate::commit_tooltip::ParsedCommitMessage;
 
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
@@ -78,7 +80,11 @@ impl GitRemote {
         self.host.supports_avatars()
     }
 
-    pub async fn avatar_url(&self, commit: Oid, client: Arc<dyn HttpClient>) -> Option<Url> {
+    pub async fn avatar_url(
+        &self,
+        commit: SharedString,
+        client: Arc<dyn HttpClient>,
+    ) -> Option<Url> {
         self.host
             .commit_author_avatar_url(&self.owner, &self.repo, commit, client)
             .await
@@ -86,21 +92,11 @@ impl GitRemote {
             .flatten()
     }
 }
-
-#[derive(Clone, Debug)]
-pub struct CommitDetails {
-    pub message: String,
-    pub parsed_message: ParsedMarkdown,
-    pub permalink: Option<Url>,
-    pub pull_request: Option<PullRequest>,
-    pub remote: Option<GitRemote>,
-}
-
 pub struct GitBlame {
-    project: Model<Project>,
-    buffer: Model<Buffer>,
+    project: Entity<Project>,
+    buffer: Entity<Buffer>,
     entries: SumTree<GitBlameEntry>,
-    commit_details: HashMap<Oid, CommitDetails>,
+    commit_details: HashMap<Oid, crate::commit_tooltip::ParsedCommitMessage>,
     buffer_snapshot: BufferSnapshot,
     buffer_edits: text::Subscription,
     task: Task<Result<()>>,
@@ -114,11 +110,11 @@ pub struct GitBlame {
 
 impl GitBlame {
     pub fn new(
-        buffer: Model<Buffer>,
-        project: Model<Project>,
+        buffer: Entity<Buffer>,
+        project: Entity<Project>,
         user_triggered: bool,
         focused: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let entries = SumTree::from_item(
             GitBlameEntry {
@@ -188,26 +184,26 @@ impl GitBlame {
         self.generated
     }
 
-    pub fn details_for_entry(&self, entry: &BlameEntry) -> Option<CommitDetails> {
+    pub fn details_for_entry(&self, entry: &BlameEntry) -> Option<ParsedCommitMessage> {
         self.commit_details.get(&entry.sha).cloned()
     }
 
     pub fn blame_for_rows<'a>(
         &'a mut self,
-        rows: impl 'a + IntoIterator<Item = Option<MultiBufferRow>>,
-        cx: &mut ModelContext<Self>,
+        rows: &'a [RowInfo],
+        cx: &App,
     ) -> impl 'a + Iterator<Item = Option<BlameEntry>> {
         self.sync(cx);
 
         let mut cursor = self.entries.cursor::<u32>(&());
-        rows.into_iter().map(move |row| {
-            let row = row?;
-            cursor.seek_forward(&row.0, Bias::Right, &());
+        rows.into_iter().map(move |info| {
+            let row = info.buffer_row?;
+            cursor.seek_forward(&row, Bias::Right, &());
             cursor.item()?.blame.clone()
         })
     }
 
-    pub fn max_author_length(&mut self, cx: &mut ModelContext<Self>) -> usize {
+    pub fn max_author_length(&mut self, cx: &App) -> usize {
         self.sync(cx);
 
         let mut max_author_length = 0;
@@ -228,11 +224,11 @@ impl GitBlame {
         max_author_length
     }
 
-    pub fn blur(&mut self, _: &mut ModelContext<Self>) {
+    pub fn blur(&mut self, _: &mut Context<Self>) {
         self.focused = false;
     }
 
-    pub fn focus(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn focus(&mut self, cx: &mut Context<Self>) {
         self.focused = true;
         if self.changed_while_blurred {
             self.changed_while_blurred = false;
@@ -240,7 +236,7 @@ impl GitBlame {
         }
     }
 
-    fn sync(&mut self, cx: &mut ModelContext<Self>) {
+    fn sync(&mut self, cx: &App) {
         let edits = self.buffer_edits.consume();
         let new_snapshot = self.buffer.read(cx).snapshot();
 
@@ -343,7 +339,7 @@ impl GitBlame {
     }
 
     #[cfg(test)]
-    fn check_invariants(&mut self, cx: &mut ModelContext<Self>) {
+    fn check_invariants(&mut self, cx: &mut Context<Self>) {
         self.sync(cx);
         assert_eq!(
             self.entries.summary().rows,
@@ -351,7 +347,7 @@ impl GitBlame {
         );
     }
 
-    fn generate(&mut self, cx: &mut ModelContext<Self>) {
+    fn generate(&mut self, cx: &mut Context<Self>) {
         if !self.focused {
             self.changed_while_blurred = true;
             return;
@@ -423,7 +419,7 @@ impl GitBlame {
         });
     }
 
-    fn regenerate_on_edit(&mut self, cx: &mut ModelContext<Self>) {
+    fn regenerate_on_edit(&mut self, cx: &mut Context<Self>) {
         self.regenerate_on_edit_task = cx.spawn(|this, mut cx| async move {
             cx.background_executor()
                 .timer(REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL)
@@ -481,7 +477,7 @@ async fn parse_commit_messages(
     deprecated_permalinks: &HashMap<Oid, Url>,
     provider_registry: Arc<GitHostingProviderRegistry>,
     languages: &Arc<LanguageRegistry>,
-) -> HashMap<Oid, CommitDetails> {
+) -> HashMap<Oid, ParsedCommitMessage> {
     let mut commit_details = HashMap::default();
 
     let parsed_remote_url = remote_url
@@ -520,8 +516,8 @@ async fn parse_commit_messages(
 
         commit_details.insert(
             oid,
-            CommitDetails {
-                message,
+            ParsedCommitMessage {
+                message: message.into(),
                 parsed_message,
                 permalink,
                 remote,
@@ -538,7 +534,7 @@ async fn parse_markdown(text: &str, language_registry: &Arc<LanguageRegistry>) -
 
     markdown::parse_markdown_block(
         text,
-        language_registry,
+        Some(language_registry),
         None,
         &mut parsed_message.text,
         &mut parsed_message.highlights,
@@ -553,7 +549,7 @@ async fn parse_markdown(text: &str, language_registry: &Arc<LanguageRegistry>) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::Context;
+    use gpui::{AppContext as _, Context};
     use language::{Point, Rope};
     use project::FakeFs;
     use rand::prelude::*;
@@ -561,17 +557,40 @@ mod tests {
     use settings::SettingsStore;
     use std::{cmp, env, ops::Range, path::Path};
     use unindent::Unindent as _;
-    use util::RandomCharIter;
+    use util::{path, RandomCharIter};
 
-    macro_rules! assert_blame_rows {
-        ($blame:expr, $rows:expr, $expected:expr, $cx:expr) => {
-            assert_eq!(
-                $blame
-                    .blame_for_rows($rows.map(MultiBufferRow).map(Some), $cx)
-                    .collect::<Vec<_>>(),
-                $expected
-            );
-        };
+    // macro_rules! assert_blame_rows {
+    //     ($blame:expr, $rows:expr, $expected:expr, $cx:expr) => {
+    //         assert_eq!(
+    //             $blame
+    //                 .blame_for_rows($rows.map(MultiBufferRow).map(Some), $cx)
+    //                 .collect::<Vec<_>>(),
+    //             $expected
+    //         );
+    //     };
+    // }
+
+    #[track_caller]
+    fn assert_blame_rows(
+        blame: &mut GitBlame,
+        rows: Range<u32>,
+        expected: Vec<Option<BlameEntry>>,
+        cx: &mut Context<GitBlame>,
+    ) {
+        assert_eq!(
+            blame
+                .blame_for_rows(
+                    &rows
+                        .map(|row| RowInfo {
+                            buffer_row: Some(row),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>(),
+                    cx
+                )
+                .collect::<Vec<_>>(),
+            expected
+        );
     }
 
     fn init_test(cx: &mut gpui::TestAppContext) {
@@ -618,8 +637,7 @@ mod tests {
             .await
             .unwrap();
 
-        let blame =
-            cx.new_model(|cx| GitBlame::new(buffer.clone(), project.clone(), true, true, cx));
+        let blame = cx.new(|cx| GitBlame::new(buffer.clone(), project.clone(), true, true, cx));
 
         let event = project.next_event(cx).await;
         assert_eq!(
@@ -634,7 +652,15 @@ mod tests {
         blame.update(cx, |blame, cx| {
             assert_eq!(
                 blame
-                    .blame_for_rows((0..1).map(MultiBufferRow).map(Some), cx)
+                    .blame_for_rows(
+                        &(0..1)
+                            .map(|row| RowInfo {
+                                buffer_row: Some(row),
+                                ..Default::default()
+                            })
+                            .collect::<Vec<_>>(),
+                        cx
+                    )
                     .collect::<Vec<_>>(),
                 vec![None]
             );
@@ -668,7 +694,7 @@ mod tests {
         fs.set_blame_for_repo(
             Path::new("/my-repo/.git"),
             vec![(
-                Path::new("file.txt"),
+                "file.txt".into(),
                 Blame {
                     entries: vec![
                         blame_entry("1b1b1b", 0..1),
@@ -690,7 +716,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
+        let git_blame = cx.new(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
 
         cx.executor().run_until_parked();
 
@@ -698,7 +724,15 @@ mod tests {
             // All lines
             assert_eq!(
                 blame
-                    .blame_for_rows((0..8).map(MultiBufferRow).map(Some), cx)
+                    .blame_for_rows(
+                        &(0..8)
+                            .map(|buffer_row| RowInfo {
+                                buffer_row: Some(buffer_row),
+                                ..Default::default()
+                            })
+                            .collect::<Vec<_>>(),
+                        cx
+                    )
                     .collect::<Vec<_>>(),
                 vec![
                     Some(blame_entry("1b1b1b", 0..1)),
@@ -714,7 +748,15 @@ mod tests {
             // Subset of lines
             assert_eq!(
                 blame
-                    .blame_for_rows((1..4).map(MultiBufferRow).map(Some), cx)
+                    .blame_for_rows(
+                        &(1..4)
+                            .map(|buffer_row| RowInfo {
+                                buffer_row: Some(buffer_row),
+                                ..Default::default()
+                            })
+                            .collect::<Vec<_>>(),
+                        cx
+                    )
                     .collect::<Vec<_>>(),
                 vec![
                     Some(blame_entry("0d0d0d", 1..2)),
@@ -725,7 +767,17 @@ mod tests {
             // Subset of lines, with some not displayed
             assert_eq!(
                 blame
-                    .blame_for_rows(vec![Some(MultiBufferRow(1)), None, None], cx)
+                    .blame_for_rows(
+                        &[
+                            RowInfo {
+                                buffer_row: Some(1),
+                                ..Default::default()
+                            },
+                            Default::default(),
+                            Default::default(),
+                        ],
+                        cx
+                    )
                     .collect::<Vec<_>>(),
                 vec![Some(blame_entry("0d0d0d", 1..2)), None, None]
             );
@@ -738,7 +790,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/my-repo",
+            path!("/my-repo"),
             json!({
                 ".git": {},
                 "file.txt": r#"
@@ -752,9 +804,9 @@ mod tests {
         .await;
 
         fs.set_blame_for_repo(
-            Path::new("/my-repo/.git"),
+            Path::new(path!("/my-repo/.git")),
             vec![(
-                Path::new("file.txt"),
+                "file.txt".into(),
                 Blame {
                     entries: vec![blame_entry("1b1b1b", 0..4)],
                     ..Default::default()
@@ -762,31 +814,31 @@ mod tests {
             )],
         );
 
-        let project = Project::test(fs, ["/my-repo".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/my-repo").as_ref()], cx).await;
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/my-repo/file.txt", cx)
+                project.open_local_buffer(path!("/my-repo/file.txt"), cx)
             })
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
+        let git_blame = cx.new(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
 
         cx.executor().run_until_parked();
 
         git_blame.update(cx, |blame, cx| {
             // Sanity check before edits: make sure that we get the same blame entry for all
             // lines.
-            assert_blame_rows!(
+            assert_blame_rows(
                 blame,
-                (0..4),
+                0..4,
                 vec![
                     Some(blame_entry("1b1b1b", 0..4)),
                     Some(blame_entry("1b1b1b", 0..4)),
                     Some(blame_entry("1b1b1b", 0..4)),
                     Some(blame_entry("1b1b1b", 0..4)),
                 ],
-                cx
+                cx,
             );
         });
 
@@ -795,11 +847,11 @@ mod tests {
             buffer.edit([(Point::new(0, 0)..Point::new(0, 0), "X")], None, cx);
         });
         git_blame.update(cx, |blame, cx| {
-            assert_blame_rows!(
+            assert_blame_rows(
                 blame,
-                (0..2),
+                0..2,
                 vec![None, Some(blame_entry("1b1b1b", 0..4))],
-                cx
+                cx,
             );
         });
         // Modify a single line, in the middle of the line
@@ -807,21 +859,21 @@ mod tests {
             buffer.edit([(Point::new(1, 2)..Point::new(1, 2), "X")], None, cx);
         });
         git_blame.update(cx, |blame, cx| {
-            assert_blame_rows!(
+            assert_blame_rows(
                 blame,
-                (1..4),
+                1..4,
                 vec![
                     None,
                     Some(blame_entry("1b1b1b", 0..4)),
-                    Some(blame_entry("1b1b1b", 0..4))
+                    Some(blame_entry("1b1b1b", 0..4)),
                 ],
-                cx
+                cx,
             );
         });
 
         // Before we insert a newline at the end, sanity check:
         git_blame.update(cx, |blame, cx| {
-            assert_blame_rows!(blame, (3..4), vec![Some(blame_entry("1b1b1b", 0..4))], cx);
+            assert_blame_rows(blame, 3..4, vec![Some(blame_entry("1b1b1b", 0..4))], cx);
         });
         // Insert a newline at the end
         buffer.update(cx, |buffer, cx| {
@@ -829,17 +881,17 @@ mod tests {
         });
         // Only the new line is marked as edited:
         git_blame.update(cx, |blame, cx| {
-            assert_blame_rows!(
+            assert_blame_rows(
                 blame,
-                (3..5),
+                3..5,
                 vec![Some(blame_entry("1b1b1b", 0..4)), None],
-                cx
+                cx,
             );
         });
 
         // Before we insert a newline at the start, sanity check:
         git_blame.update(cx, |blame, cx| {
-            assert_blame_rows!(blame, (2..3), vec![Some(blame_entry("1b1b1b", 0..4)),], cx);
+            assert_blame_rows(blame, 2..3, vec![Some(blame_entry("1b1b1b", 0..4))], cx);
         });
 
         // Usage example
@@ -849,11 +901,11 @@ mod tests {
         });
         // Only the new line is marked as edited:
         git_blame.update(cx, |blame, cx| {
-            assert_blame_rows!(
+            assert_blame_rows(
                 blame,
-                (2..4),
-                vec![None, Some(blame_entry("1b1b1b", 0..4)),],
-                cx
+                2..4,
+                vec![None, Some(blame_entry("1b1b1b", 0..4))],
+                cx,
             );
         });
     }
@@ -890,7 +942,7 @@ mod tests {
         log::info!("initial buffer text: {:?}", buffer_initial_text);
 
         fs.insert_tree(
-            "/my-repo",
+            path!("/my-repo"),
             json!({
                 ".git": {},
                 "file.txt": buffer_initial_text.to_string()
@@ -901,9 +953,9 @@ mod tests {
         let blame_entries = gen_blame_entries(buffer_initial_text.max_point().row, &mut rng);
         log::info!("initial blame entries: {:?}", blame_entries);
         fs.set_blame_for_repo(
-            Path::new("/my-repo/.git"),
+            Path::new(path!("/my-repo/.git")),
             vec![(
-                Path::new("file.txt"),
+                "file.txt".into(),
                 Blame {
                     entries: blame_entries,
                     ..Default::default()
@@ -911,15 +963,15 @@ mod tests {
             )],
         );
 
-        let project = Project::test(fs.clone(), ["/my-repo".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/my-repo").as_ref()], cx).await;
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/my-repo/file.txt", cx)
+                project.open_local_buffer(path!("/my-repo/file.txt"), cx)
             })
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
+        let git_blame = cx.new(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
         cx.executor().run_until_parked();
         git_blame.update(cx, |blame, cx| blame.check_invariants(cx));
 
@@ -943,9 +995,9 @@ mod tests {
                     log::info!("regenerating blame entries: {:?}", blame_entries);
 
                     fs.set_blame_for_repo(
-                        Path::new("/my-repo/.git"),
+                        Path::new(path!("/my-repo/.git")),
                         vec![(
-                            Path::new("file.txt"),
+                            "file.txt".into(),
                             Blame {
                                 entries: blame_entries,
                                 ..Default::default()

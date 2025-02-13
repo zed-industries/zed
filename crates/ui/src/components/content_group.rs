@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use component::{example_group, single_example, ComponentPreview};
 use gpui::{AnyElement, IntoElement, ParentElement, StyleRefinement, Styled};
 use smallvec::SmallVec;
 
@@ -22,7 +23,8 @@ pub fn h_group() -> ContentGroup {
 }
 
 /// A flexible container component that can hold other elements.
-#[derive(IntoElement)]
+#[derive(IntoElement, IntoComponent)]
+#[component(scope = "layout")]
 pub struct ContentGroup {
     base: Div,
     border: bool,
@@ -31,7 +33,7 @@ pub struct ContentGroup {
 }
 
 impl ContentGroup {
-    /// Creates a new [ContentBox].
+    /// Creates a new [`ContentGroup`].
     pub fn new() -> Self {
         Self {
             base: div(),
@@ -41,13 +43,13 @@ impl ContentGroup {
         }
     }
 
-    /// Removes the border from the [ContentBox].
+    /// Removes the border from the [`ContentGroup`].
     pub fn borderless(mut self) -> Self {
         self.border = false;
         self
     }
 
-    /// Removes the background fill from the [ContentBox].
+    /// Removes the background fill from the [`ContentGroup`].
     pub fn unfilled(mut self) -> Self {
         self.fill = false;
         self
@@ -67,7 +69,7 @@ impl Styled for ContentGroup {
 }
 
 impl RenderOnce for ContentGroup {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         // TODO:
         // Baked in padding will make scrollable views inside of content boxes awkward.
         //
@@ -86,17 +88,10 @@ impl RenderOnce for ContentGroup {
     }
 }
 
+// View this component preview using `workspace: open component-preview`
 impl ComponentPreview for ContentGroup {
-    fn description() -> impl Into<Option<&'static str>> {
-        "A flexible container component that can hold other elements. It can be customized with or without a border and background fill."
-    }
-
-    fn example_label_side() -> ExampleLabelSide {
-        ExampleLabelSide::Bottom
-    }
-
-    fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-        vec![example_group(vec![
+    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+        example_group(vec![
             single_example(
                 "Default",
                 ContentGroup::new()
@@ -104,7 +99,8 @@ impl ComponentPreview for ContentGroup {
                     .items_center()
                     .justify_center()
                     .h_48()
-                    .child(Label::new("Default ContentBox")),
+                    .child(Label::new("Default ContentBox"))
+                    .into_any_element(),
             )
             .grow(),
             single_example(
@@ -115,7 +111,8 @@ impl ComponentPreview for ContentGroup {
                     .justify_center()
                     .h_48()
                     .borderless()
-                    .child(Label::new("Borderless ContentBox")),
+                    .child(Label::new("Borderless ContentBox"))
+                    .into_any_element(),
             )
             .grow(),
             single_example(
@@ -126,10 +123,11 @@ impl ComponentPreview for ContentGroup {
                     .justify_center()
                     .h_48()
                     .unfilled()
-                    .child(Label::new("Unfilled ContentBox")),
+                    .child(Label::new("Unfilled ContentBox"))
+                    .into_any_element(),
             )
             .grow(),
         ])
-        .grow()]
+        .into_any_element()
     }
 }

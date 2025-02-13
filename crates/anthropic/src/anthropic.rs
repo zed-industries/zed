@@ -2,7 +2,7 @@ mod supported_countries;
 
 use std::{pin::Pin, str::FromStr};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use chrono::{DateTime, Utc};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use http_client::http::{HeaderMap, HeaderValue};
@@ -77,8 +77,8 @@ impl Model {
             Model::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
             Model::Claude3_5Haiku => "claude-3-5-haiku-latest",
             Model::Claude3Opus => "claude-3-opus-latest",
-            Model::Claude3Sonnet => "claude-3-sonnet-latest",
-            Model::Claude3Haiku => "claude-3-haiku-latest",
+            Model::Claude3Sonnet => "claude-3-sonnet-20240229",
+            Model::Claude3Haiku => "claude-3-haiku-20240307",
             Self::Custom { name, .. } => name,
         }
     }
@@ -148,8 +148,13 @@ impl Model {
         }
     }
 
+    pub const DEFAULT_BETA_HEADERS: &[&str] = &["prompt-caching-2024-07-31"];
+
     pub fn beta_headers(&self) -> String {
-        let mut headers = vec!["prompt-caching-2024-07-31".to_string()];
+        let mut headers = Self::DEFAULT_BETA_HEADERS
+            .into_iter()
+            .map(|header| header.to_string())
+            .collect::<Vec<_>>();
 
         if let Self::Custom {
             extra_beta_headers, ..
@@ -186,12 +191,14 @@ pub async fn complete(
     request: Request,
 ) -> Result<Response, AnthropicError> {
     let uri = format!("{api_url}/v1/messages");
-    let model = Model::from_id(&request.model)?;
+    let beta_headers = Model::from_id(&request.model)
+        .map(|model| model.beta_headers())
+        .unwrap_or_else(|_err| Model::DEFAULT_BETA_HEADERS.join(","));
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
-        .header("Anthropic-Beta", model.beta_headers())
+        .header("Anthropic-Beta", beta_headers)
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
 
@@ -243,7 +250,7 @@ pub async fn stream_completion(
         .map(|output| output.0)
 }
 
-/// https://docs.anthropic.com/en/api/rate-limits#response-headers
+/// <https://docs.anthropic.com/en/api/rate-limits#response-headers>
 #[derive(Debug)]
 pub struct RateLimitInfo {
     pub requests_limit: usize,
@@ -302,12 +309,14 @@ pub async fn stream_completion_with_rate_limit_info(
         stream: true,
     };
     let uri = format!("{api_url}/v1/messages");
-    let model = Model::from_id(&request.base.model)?;
+    let beta_headers = Model::from_id(&request.base.model)
+        .map(|model| model.beta_headers())
+        .unwrap_or_else(|_err| Model::DEFAULT_BETA_HEADERS.join(","));
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
-        .header("Anthropic-Beta", model.beta_headers())
+        .header("Anthropic-Beta", beta_headers)
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
     let serialized_request =
@@ -617,7 +626,7 @@ pub struct ApiError {
 }
 
 /// An Anthropic API error code.
-/// https://docs.anthropic.com/en/api/errors#http-errors
+/// <https://docs.anthropic.com/en/api/errors#http-errors>
 #[derive(Debug, PartialEq, Eq, Clone, Copy, EnumString)]
 #[strum(serialize_all = "snake_case")]
 pub enum ApiErrorCode {

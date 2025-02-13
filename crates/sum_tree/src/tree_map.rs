@@ -32,7 +32,7 @@ impl<'a, K> Default for MapKeyRef<'a, K> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TreeSet<K>(TreeMap<K, ()>)
 where
     K: Clone + Ord;

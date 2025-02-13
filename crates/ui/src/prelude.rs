@@ -2,14 +2,16 @@
 
 pub use gpui::prelude::*;
 pub use gpui::{
-    div, px, relative, rems, AbsoluteLength, DefiniteLength, Div, Element, ElementId,
-    InteractiveElement, ParentElement, Pixels, Rems, RenderOnce, SharedString, Styled, ViewContext,
-    WindowContext,
+    div, px, relative, rems, AbsoluteLength, AnyElement, App, Context, DefiniteLength, Div,
+    Element, ElementId, InteractiveElement, ParentElement, Pixels, Rems, RenderOnce, SharedString,
+    Styled, Window,
 };
+
+pub use component::{example_group, example_group_with_title, single_example, ComponentPreview};
+pub use ui_macros::IntoComponent;
 
 pub use crate::styles::{rems_from_px, vh, vw, PlatformStyle, StyledTypography, TextSize};
 pub use crate::traits::clickable::*;
-pub use crate::traits::component_preview::*;
 pub use crate::traits::disableable::*;
 pub use crate::traits::fixed::*;
 pub use crate::traits::styled_ext::*;

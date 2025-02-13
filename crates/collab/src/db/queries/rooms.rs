@@ -732,18 +732,31 @@ impl Database {
                             if db_status.is_deleted {
                                 removed_statuses.push(db_status.repo_path);
                             } else {
-                                updated_statuses.push(proto::StatusEntry {
-                                    repo_path: db_status.repo_path,
-                                    status: db_status.status as i32,
-                                });
+                                updated_statuses.push(db_status_to_proto(db_status)?);
                             }
                         }
+
+                        let current_merge_conflicts = db_repository
+                            .current_merge_conflicts
+                            .as_ref()
+                            .map(|conflicts| serde_json::from_str(&conflicts))
+                            .transpose()?
+                            .unwrap_or_default();
+
+                        let branch_summary = db_repository
+                            .branch_summary
+                            .as_ref()
+                            .map(|branch_summary| serde_json::from_str(&branch_summary))
+                            .transpose()?
+                            .unwrap_or_default();
 
                         worktree.updated_repositories.push(proto::RepositoryEntry {
                             work_directory_id: db_repository.work_directory_id as u64,
                             branch: db_repository.branch,
                             updated_statuses,
                             removed_statuses,
+                            current_merge_conflicts,
+                            branch_summary,
                         });
                     }
                 }

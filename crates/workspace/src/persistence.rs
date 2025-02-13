@@ -1088,7 +1088,7 @@ impl WorkspaceDb {
                 .context("Preparing insertion")?;
 
             let toolchain: Vec<(String, String, String)> =
-                select((workspace_id, language_name.0.to_owned(), worktree_id.to_usize()))?;
+                select((workspace_id, language_name.as_ref().to_string(), worktree_id.to_usize()))?;
 
             Ok(toolchain.into_iter().next().and_then(|(name, path, raw_json)| Some(Toolchain {
                 name: name.into(),
@@ -1144,7 +1144,7 @@ impl WorkspaceDb {
             insert((
                 workspace_id,
                 worktree_id.to_usize(),
-                toolchain.language_name.0.as_ref(),
+                toolchain.language_name.as_ref(),
                 toolchain.name.as_ref(),
                 toolchain.path.as_ref(),
             ))?;

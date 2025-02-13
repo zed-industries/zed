@@ -375,61 +375,66 @@ There are two options to choose from:
 1. `shell_hook`: Use the shell hook to load direnv. This relies on direnv to activate upon entering the directory. Supports POSIX shells and fish.
 2. `direct`: Use `direnv export json` to load direnv. This will load direnv directly without relying on the shell hook and might cause some inconsistencies. This allows direnv to work with any shell.
 
-## Inline Completions
+## Edit Predictions
 
-- Description: Settings for inline completions.
-- Setting: `inline_completions`
+- Description: Settings for edit predictions.
+- Setting: `edit_predictions`
 - Default:
 
 ```json
-"inline_completions": {
-  "disabled_globs": [
-    ".env"
-  ]
-}
+  "edit_predictions": {
+    "disabled_globs": [
+      "**/.env*",
+      "**/*.pem",
+      "**/*.key",
+      "**/*.cert",
+      "**/*.crt",
+      "**/secrets.yml"
+    ]
+  }
 ```
 
 **Options**
 
 ### Disabled Globs
 
-- Description: A list of globs representing files that inline completions should be disabled for.
+- Description: A list of globs for which edit predictions should be disabled for. This list adds to a pre-existing, sensible default set of globs. Any additional ones you add are combined with them.
 - Setting: `disabled_globs`
-- Default: `[".env"]`
+- Default: `["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]`
 
 **Options**
 
-List of `string` values
+List of `string` values.
 
-## Inline Completions Disabled in
+## Edit Predictions Disabled in
 
-- Description: A list of language scopes in which inline completions should be disabled.
-- Setting: `inline_completions_disabled_in`
+- Description: A list of language scopes in which edit predictions should be disabled.
+- Setting: `edit_predictions_disabled_in`
 - Default: `[]`
 
 **Options**
 
 List of `string` values
 
-1. Don't show inline completions in comments:
+1. Don't show edit predictions in comments:
 
 ```json
 "disabled_in": ["comment"]
 ```
 
-2. Don't show inline completions in strings and comments:
+2. Don't show edit predictions in strings and comments:
 
 ```json
 "disabled_in": ["comment", "string"]
 ```
 
-3. Only in Go, don't show inline completions in strings and comments:
+3. Only in Go, don't show edit predictions in strings and comments:
 
 ```json
 {
   "languages": {
     "Go": {
-      "inline_completions_disabled_in": ["comment", "string"]
+      "edit_predictions_disabled_in": ["comment", "string"]
     }
   }
 }
@@ -514,12 +519,6 @@ List of `string` values
 ```json
 "cursor_shape": "hollow"
 ```
-
-**Options**
-
-1. Position the dock attached to the bottom of the workspace: `bottom`
-2. Position the dock to the right of the workspace like a side panel: `right`
-3. Position the dock full screen over the entire workspace: `expanded`
 
 ## Editor Scrollbar
 
@@ -714,7 +713,8 @@ List of `string` values
 ```json
 "tab_bar": {
   "show": true,
-  "show_nav_history_buttons": true
+  "show_nav_history_buttons": true,
+  "show_tab_bar_buttons": true
 }
 ```
 
@@ -732,6 +732,16 @@ List of `string` values
 
 - Description: Whether or not to show the navigation history buttons.
 - Setting: `show_nav_history_buttons`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Tab Bar Buttons
+
+- Description: Whether or not to show the tab bar buttons.
+- Setting: `show_tab_bar_buttons`
 - Default: `true`
 
 **Options**
@@ -996,10 +1006,12 @@ WARNING: `{buffer_path}` should not be used to direct your formatter to read fro
 ```json
 {
   "formatter": [
-    {"language_server": {"name": "rust-analyzer"}},
-    {"external": {
-      "command": "sed",
-      "arguments": ["-e", "s/ *$//"]
+    { "language_server": { "name": "rust-analyzer" } },
+    {
+      "external": {
+        "command": "sed",
+        "arguments": ["-e", "s/ *$//"]
+      }
     }
   ]
 }
@@ -1466,7 +1478,7 @@ The following settings can be overridden for each specific language:
 - [`hard_tabs`](#hard-tabs)
 - [`preferred_line_length`](#preferred-line-length)
 - [`remove_trailing_whitespace_on_save`](#remove-trailing-whitespace-on-save)
-- [`show_inline_completions`](#show-inline-completions)
+- [`show_edit_predictions`](#show-edit-predictions)
 - [`show_whitespaces`](#show-whitespaces)
 - [`soft_wrap`](#soft-wrap)
 - [`tab_size`](#tab-size)
@@ -1562,7 +1574,7 @@ Or to set a `socks5` proxy:
 ### Modal Max Width
 
 - Description: Max-width of the file finder modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`.
-- Setting: `max_modal_width`
+- Setting: `modal_max_width`
 - Default: `small`
 
 ## Preferred Line Length
@@ -1640,10 +1652,10 @@ Or to set a `socks5` proxy:
 
 `boolean` values
 
-## Show Inline Completions
+## Show Edit Predictions
 
-- Description: Whether to show inline completions as you type or manually by triggering `editor::ShowInlineCompletion`.
-- Setting: `show_inline_completions`
+- Description: Whether to show edit predictions as you type or manually by triggering `editor::ShowEditPrediction`.
+- Setting: `show_edit_predictions`
 - Default: `true`
 
 **Options**
@@ -1762,7 +1774,10 @@ List of `integer` column numbers
     "toolbar": {
       "breadcrumbs": true
     },
-    "working_directory": "current_project_directory"
+    "working_directory": "current_project_directory",
+    "scrollbar": {
+      "show": null
+    }
   }
 }
 ```
@@ -2262,6 +2277,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "button": true,
     "default_width": 240,
     "dock": "left",
+    "entry_spacing": "comfortable",
     "file_icons": true,
     "folder_icons": true,
     "git_status": true,
@@ -2300,6 +2316,30 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 ```json
 {
   "dock": "right"
+}
+```
+
+### Entry Spacing
+
+- Description: Spacing between worktree entries
+- Setting: `entry_spacing`
+- Default: `comfortable`
+
+**Options**
+
+1. Comfortable entry spacing
+
+```json
+{
+  "entry_spacing": "comfortable"
+}
+```
+
+2. Standard entry spacing
+
+```json
+{
+  "entry_spacing": "standard"
 }
 ```
 

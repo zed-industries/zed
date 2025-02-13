@@ -1,20 +1,18 @@
-use std::{
-    collections::HashMap,
-    env, fs,
-    path::{Path, PathBuf},
-    process::Command,
-    sync::Arc,
-};
+use std::collections::{BTreeSet, HashMap};
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::Arc;
 
 use ::fs::{copy_recursive, CopyOptions, Fs, RealFs};
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
-use extension::{
-    extension_builder::{CompileExtensionOptions, ExtensionBuilder},
-    ExtensionManifest,
-};
+use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
+use extension::ExtensionManifest;
 use language::LanguageConfig;
 use reqwest_client::ReqwestClient;
+use rpc::ExtensionProvides;
 use tree_sitter::{Language, Query, WasmStore};
 
 #[derive(Parser, Debug)]
@@ -99,6 +97,8 @@ async fn main() -> Result<()> {
         );
     }
 
+    let extension_provides = extension_provides(&manifest);
+
     let manifest_json = serde_json::to_string(&rpc::ExtensionApiManifest {
         name: manifest.name,
         version: manifest.version,
@@ -109,11 +109,50 @@ async fn main() -> Result<()> {
             .repository
             .ok_or_else(|| anyhow!("missing repository in extension manifest"))?,
         wasm_api_version: manifest.lib.version.map(|version| version.to_string()),
+        provides: extension_provides,
     })?;
     fs::remove_dir_all(&archive_dir)?;
     fs::write(output_dir.join("manifest.json"), manifest_json.as_bytes())?;
 
     Ok(())
+}
+
+/// Returns the set of features provided by the extension.
+fn extension_provides(manifest: &ExtensionManifest) -> BTreeSet<ExtensionProvides> {
+    let mut provides = BTreeSet::default();
+    if !manifest.themes.is_empty() {
+        provides.insert(ExtensionProvides::Themes);
+    }
+
+    if !manifest.icon_themes.is_empty() {
+        provides.insert(ExtensionProvides::IconThemes);
+    }
+
+    if !manifest.languages.is_empty() {
+        provides.insert(ExtensionProvides::Languages);
+    }
+
+    if !manifest.grammars.is_empty() {
+        provides.insert(ExtensionProvides::Grammars);
+    }
+
+    if !manifest.language_servers.is_empty() {
+        provides.insert(ExtensionProvides::LanguageServers);
+    }
+
+    if !manifest.context_servers.is_empty() {
+        provides.insert(ExtensionProvides::ContextServers);
+    }
+
+    if !manifest.indexed_docs_providers.is_empty() {
+        provides.insert(ExtensionProvides::IndexedDocsProviders);
+    }
+
+    if manifest.snippets.is_some() {
+        provides.insert(ExtensionProvides::Snippets);
+    }
+
+    provides
 }
 
 async fn copy_extension_resources(
@@ -165,6 +204,38 @@ async fn copy_extension_resources(
             )
             .with_context(|| format!("failed to copy theme '{}'", theme_path.display()))?;
         }
+    }
+
+    if !manifest.icon_themes.is_empty() {
+        let output_icon_themes_dir = output_dir.join("icon_themes");
+        fs::create_dir_all(&output_icon_themes_dir)?;
+        for icon_theme_path in &manifest.icon_themes {
+            fs::copy(
+                extension_path.join(icon_theme_path),
+                output_icon_themes_dir.join(
+                    icon_theme_path
+                        .file_name()
+                        .ok_or_else(|| anyhow!("invalid icon theme path"))?,
+                ),
+            )
+            .with_context(|| {
+                format!("failed to copy icon theme '{}'", icon_theme_path.display())
+            })?;
+        }
+
+        let output_icons_dir = output_dir.join("icons");
+        fs::create_dir_all(&output_icons_dir)?;
+        copy_recursive(
+            fs.as_ref(),
+            &extension_path.join("icons"),
+            &output_icons_dir,
+            CopyOptions {
+                overwrite: true,
+                ignore_if_exists: false,
+            },
+        )
+        .await
+        .with_context(|| "failed to copy icons")?;
     }
 
     if !manifest.languages.is_empty() {

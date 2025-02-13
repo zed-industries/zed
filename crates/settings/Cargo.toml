@@ -1,8 +1,8 @@
 [package]
 name = "settings"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -22,6 +22,7 @@ ec4rs.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+inventory.workspace = true
 log.workspace = true
 paths.workspace = true
 release_channel.workspace = true
@@ -32,6 +33,7 @@ serde_derive.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 smallvec.workspace = true
+streaming-iterator.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter.workspace = true
 util.workspace = true

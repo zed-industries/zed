@@ -12,6 +12,7 @@ env:
 jobs:
   style:
     name: Check formatting and Clippy lints
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
       - test
@@ -44,7 +45,7 @@ jobs:
       - name: Install cargo nextest
         shell: bash -euxo pipefail {0}
         run: |
-          cargo install cargo-nextest
+          cargo install cargo-nextest --locked
 
       - name: Limit target directory size
         shell: bash -euxo pipefail {0}

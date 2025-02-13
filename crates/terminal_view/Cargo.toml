@@ -1,12 +1,15 @@
 [package]
 name = "terminal_view"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
 workspace = true
+
+[features]
+test-support = ["editor/test-support", "gpui/test-support"]
 
 [lib]
 path = "src/terminal_view.rs"
@@ -26,6 +29,7 @@ itertools.workspace = true
 language.workspace = true
 project.workspace = true
 task.workspace = true
+schemars.workspace = true
 search.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -55,7 +55,7 @@ impl Indicator {
 }
 
 impl RenderOnce for Indicator {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let container = div().flex_none();
         let container = if let Some(border_color) = self.border_color {
             if matches!(self.kind, IndicatorKind::Dot | IndicatorKind::Bar) {
@@ -81,36 +81,5 @@ impl RenderOnce for Indicator {
                 .rounded_t_md()
                 .bg(self.color.color(cx)),
         }
-    }
-}
-
-impl ComponentPreview for Indicator {
-    fn description() -> impl Into<Option<&'static str>> {
-        "An indicator visually represents a status or state."
-    }
-
-    fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-        vec![
-            example_group_with_title(
-                "Types",
-                vec![
-                    single_example("Dot", Indicator::dot().color(Color::Info)),
-                    single_example("Bar", Indicator::bar().color(Color::Player(2))),
-                    single_example(
-                        "Icon",
-                        Indicator::icon(Icon::new(IconName::Check).color(Color::Success)),
-                    ),
-                ],
-            ),
-            example_group_with_title(
-                "Examples",
-                vec![
-                    single_example("Info", Indicator::dot().color(Color::Info)),
-                    single_example("Success", Indicator::dot().color(Color::Success)),
-                    single_example("Warning", Indicator::dot().color(Color::Warning)),
-                    single_example("Error", Indicator::dot().color(Color::Error)),
-                ],
-            ),
-        ]
     }
 }

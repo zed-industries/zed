@@ -1,23 +1,29 @@
-#![allow(missing_docs)]
-
-use gpui::{relative, AnyElement, FontWeight, StyleRefinement, Styled, UnderlineStyle};
+use crate::prelude::*;
+use gpui::{FontWeight, StyleRefinement, UnderlineStyle};
 use settings::Settings;
 use smallvec::SmallVec;
 use theme::ThemeSettings;
 
-use crate::prelude::*;
-
+/// Sets the size of a label
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum LabelSize {
+    /// The default size of a label.
     #[default]
     Default,
+    /// The large size of a label.
     Large,
+    /// The small size of a label.
     Small,
+    /// The extra small size of a label.
     XSmall,
 }
 
+/// Sets the line height of a label
 #[derive(Default, PartialEq, Copy, Clone)]
 pub enum LineHeightStyle {
+    /// The default line height style of a label,
+    /// set by either the UI's default line height,
+    /// or the developer's default buffer line height.
     #[default]
     TextLabel,
     /// Sets the line height to 1.
@@ -39,13 +45,13 @@ pub trait LabelCommon {
     fn color(self, color: Color) -> Self;
 
     /// Sets the strikethrough property of the label.
-    fn strikethrough(self, strikethrough: bool) -> Self;
+    fn strikethrough(self) -> Self;
 
     /// Sets the italic property of the label.
-    fn italic(self, italic: bool) -> Self;
+    fn italic(self) -> Self;
 
     /// Sets the underline property of the label
-    fn underline(self, underline: bool) -> Self;
+    fn underline(self) -> Self;
 
     /// Sets the alpha property of the label, overwriting the alpha value of the color.
     fn alpha(self, alpha: f32) -> Self;
@@ -55,8 +61,16 @@ pub trait LabelCommon {
 
     /// Sets the label to render as a single line.
     fn single_line(self) -> Self;
+
+    /// Sets the font to the buffer's
+    fn buffer_font(self, cx: &App) -> Self;
 }
 
+/// A label-like element that can be used to create a custom label when
+/// prebuilt labels are not sufficient. Use this sparingly, as it is
+/// unconstrained and may make the UI feel less consistent.
+///
+/// This is also used to build the prebuilt labels.
 #[derive(IntoElement)]
 pub struct LabelLike {
     pub(super) base: Div,
@@ -80,6 +94,8 @@ impl Default for LabelLike {
 }
 
 impl LabelLike {
+    /// Creates a new, fully custom label.
+    /// Prefer using [`Label`] or [`HighlightedLabel`] where possible.
     pub fn new() -> Self {
         Self {
             base: div(),
@@ -130,18 +146,18 @@ impl LabelCommon for LabelLike {
         self
     }
 
-    fn strikethrough(mut self, strikethrough: bool) -> Self {
-        self.strikethrough = strikethrough;
+    fn strikethrough(mut self) -> Self {
+        self.strikethrough = true;
         self
     }
 
-    fn italic(mut self, italic: bool) -> Self {
-        self.italic = italic;
+    fn italic(mut self) -> Self {
+        self.italic = true;
         self
     }
 
-    fn underline(mut self, underline: bool) -> Self {
-        self.underline = underline;
+    fn underline(mut self) -> Self {
+        self.underline = true;
         self
     }
 
@@ -159,6 +175,13 @@ impl LabelCommon for LabelLike {
         self.single_line = true;
         self
     }
+
+    fn buffer_font(mut self, cx: &App) -> Self {
+        self.base = self
+            .base
+            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone());
+        self
+    }
 }
 
 impl ParentElement for LabelLike {
@@ -168,9 +191,7 @@ impl ParentElement for LabelLike {
 }
 
 impl RenderOnce for LabelLike {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let mut color = self.color.color(cx);
         if let Some(alpha) = self.alpha {
             color.fade_out(1.0 - alpha);
@@ -203,7 +224,10 @@ impl RenderOnce for LabelLike {
                 this.overflow_x_hidden().text_ellipsis()
             })
             .text_color(color)
-            .font_weight(self.weight.unwrap_or(settings.ui_font.weight))
+            .font_weight(
+                self.weight
+                    .unwrap_or(ThemeSettings::get_global(cx).ui_font.weight),
+            )
             .children(self.children)
     }
 }

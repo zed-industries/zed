@@ -51,7 +51,10 @@ impl ReqwestClient {
         }) {
             client = client.proxy(proxy);
         }
-        let client = client.build()?;
+
+        let client = client
+            .use_preconfigured_tls(http_client::tls_config())
+            .build()?;
         let mut client: ReqwestClient = client.into();
         client.proxy = proxy;
         Ok(client)
@@ -139,7 +142,7 @@ impl futures::Stream for StreamReader {
     }
 }
 
-/// Implementation from https://docs.rs/tokio-util/0.7.12/src/tokio_util/util/poll_buf.rs.html
+/// Implementation from <https://docs.rs/tokio-util/0.7.12/src/tokio_util/util/poll_buf.rs.html>
 /// Specialized for this use case
 pub fn poll_read_buf(
     io: &mut Pin<Box<dyn futures::AsyncRead + Send + Sync>>,

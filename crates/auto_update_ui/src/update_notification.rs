@@ -1,6 +1,6 @@
 use gpui::{
-    div, DismissEvent, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render,
-    SemanticVersion, StatefulInteractiveElement, Styled, ViewContext, WeakView,
+    div, Context, DismissEvent, EventEmitter, InteractiveElement, IntoElement, ParentElement,
+    Render, SemanticVersion, StatefulInteractiveElement, Styled, WeakEntity, Window,
 };
 use menu::Cancel;
 use release_channel::ReleaseChannel;
@@ -12,13 +12,13 @@ use workspace::{
 
 pub struct UpdateNotification {
     version: SemanticVersion,
-    workspace: WeakView<Workspace>,
+    workspace: WeakEntity<Workspace>,
 }
 
 impl EventEmitter<DismissEvent> for UpdateNotification {}
 
 impl Render for UpdateNotification {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let app_name = ReleaseChannel::global(cx).display_name();
 
         v_flex()
@@ -37,7 +37,9 @@ impl Render for UpdateNotification {
                             .id("cancel")
                             .child(Icon::new(IconName::Close))
                             .cursor_pointer()
-                            .on_click(cx.listener(|this, _, cx| this.dismiss(&menu::Cancel, cx))),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dismiss(&menu::Cancel, window, cx)
+                            })),
                     ),
             )
             .child(
@@ -45,24 +47,24 @@ impl Render for UpdateNotification {
                     .id("notes")
                     .child(Label::new("View the release notes"))
                     .cursor_pointer()
-                    .on_click(cx.listener(|this, _, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
                         this.workspace
                             .update(cx, |workspace, cx| {
-                                crate::view_release_notes_locally(workspace, cx);
+                                crate::view_release_notes_locally(workspace, window, cx);
                             })
                             .log_err();
-                        this.dismiss(&menu::Cancel, cx)
+                        this.dismiss(&menu::Cancel, window, cx)
                     })),
             )
     }
 }
 
 impl UpdateNotification {
-    pub fn new(version: SemanticVersion, workspace: WeakView<Workspace>) -> Self {
+    pub fn new(version: SemanticVersion, workspace: WeakEntity<Workspace>) -> Self {
         Self { version, workspace }
     }
 
-    pub fn dismiss(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+    pub fn dismiss(&mut self, _: &Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
     }
 }

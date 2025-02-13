@@ -46,13 +46,13 @@ impl LabelCommon for HighlightedLabel {
         self
     }
 
-    fn strikethrough(mut self, strikethrough: bool) -> Self {
-        self.base = self.base.strikethrough(strikethrough);
+    fn strikethrough(mut self) -> Self {
+        self.base = self.base.strikethrough();
         self
     }
 
-    fn italic(mut self, italic: bool) -> Self {
-        self.base = self.base.italic(italic);
+    fn italic(mut self) -> Self {
+        self.base = self.base.italic();
         self
     }
 
@@ -61,8 +61,8 @@ impl LabelCommon for HighlightedLabel {
         self
     }
 
-    fn underline(mut self, underline: bool) -> Self {
-        self.base = self.base.underline(underline);
+    fn underline(mut self) -> Self {
+        self.base = self.base.underline();
         self
     }
 
@@ -73,6 +73,11 @@ impl LabelCommon for HighlightedLabel {
 
     fn single_line(mut self) -> Self {
         self.base = self.base.single_line();
+        self
+    }
+
+    fn buffer_font(mut self, cx: &App) -> Self {
+        self.base = self.base.buffer_font(cx);
         self
     }
 }
@@ -107,7 +112,7 @@ pub fn highlight_ranges(
 }
 
 impl RenderOnce for HighlightedLabel {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let highlight_color = cx.theme().colors().text_accent;
 
         let highlights = highlight_ranges(
@@ -119,7 +124,7 @@ impl RenderOnce for HighlightedLabel {
             },
         );
 
-        let mut text_style = cx.text_style();
+        let mut text_style = window.text_style();
         text_style.color = self.base.color.color(cx);
 
         self.base
