@@ -22,8 +22,8 @@ use crate::{
     InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
     RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
     StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR,
-    EDIT_PREDICTION_REQUIRING_MODIFIER_KEY_CONTEXT, FILE_HEADER_HEIGHT,
-    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    EDIT_PREDICTION_CONFLICT_KEY_CONTEXT, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED,
+    MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus};
 use client::ParticipantIndex;
@@ -5830,40 +5830,6 @@ impl AcceptEditPredictionBinding {
             }
         } else {
             None
-        }
-    }
-}
-
-struct AcceptEditPredictionsBindingValidator;
-
-inventory::submit! { KeyBindingValidatorRegistration(|| Box::new(AcceptEditPredictionsBindingValidator)) }
-
-impl KeyBindingValidator for AcceptEditPredictionsBindingValidator {
-    fn action_type_id(&self) -> TypeId {
-        TypeId::of::<AcceptEditPrediction>()
-    }
-
-    fn validate(&self, binding: &gpui::KeyBinding) -> Result<(), MarkdownString> {
-        use KeyBindingContextPredicate::*;
-
-        if binding.keystrokes().len() == 1 && binding.keystrokes()[0].modifiers.modified() {
-            return Ok(());
-        }
-
-        let required_predicate = Identifier(EDIT_PREDICTION_REQUIRING_MODIFIER_KEY_CONTEXT.into());
-        match binding.predicate() {
-            Some(predicate) if required_predicate.is_superset(&predicate) => {
-                Err(MarkdownString(format!(
-                    "when using {} in the context of `{}`, \
-                     the binding must be a single keystroke with modifiers. \n\n \
-                     This ensures that pressing these modifiers can be used for previewing edit predictions.\n\n\
-                     For more information, see the [documentation]({}) on edit predictions.",
-                    MarkdownString::inline_code(AcceptEditPrediction.name()),
-                    EDIT_PREDICTION_REQUIRING_MODIFIER_KEY_CONTEXT,
-                    "https://zed.dev/docs/completions#edit-predictions"
-                )))
-            }
-            _ => Ok(()),
         }
     }
 }

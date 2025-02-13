@@ -515,7 +515,7 @@
     }
   },
   {
-    "context": "Editor && edit_prediction_requiring_modifier",
+    "context": "Editor && edit_prediction_conflict",
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction"
