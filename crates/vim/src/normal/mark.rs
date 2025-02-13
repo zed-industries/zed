@@ -4,7 +4,6 @@ use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
-    tasks::task_context,
     Anchor, Bias, DisplayPoint, Editor, ToOffset,
 };
 use gpui::{Context, Window};
@@ -104,7 +103,7 @@ impl Vim {
             }),
             "." => self.change_list.last().cloned(),
             m if m.starts_with(|c: char| c.is_digit(10)) => {
-                if let Some((path, points)) = self.get_global_mark(text.to_string(), window, cx) {
+                if let Some((path, _points)) = self.get_global_mark(text.to_string(), window, cx) {
                     if let Some(workspace) = self.workspace(window) {
                         workspace.update(cx, |workspace, cx| {
                             let Some(worktree) = workspace.worktrees(cx).next() else {
