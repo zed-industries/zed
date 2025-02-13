@@ -272,6 +272,7 @@ impl VimGlobals {
                     .background_executor()
                     .spawn(async move { DB.get_local_marks(workspace_id) })
                     .await?;
+                println!("local marks is empty: {}", local_marks.is_empty());
                 let global_marks = cx
                     .background_executor()
                     .spawn(async move { DB.get_global_marks(workspace_id) })
@@ -466,12 +467,14 @@ impl VimGlobals {
             async move {
                 cx.background_executor()
                     .spawn(async move {
-                        let a = DB.set_local_mark(
-                            workspace_id,
-                            name,
-                            path.into_os_string().into_vec(),
-                            value,
-                        );
+                        let _ = DB
+                            .set_local_mark(
+                                workspace_id,
+                                name,
+                                path.into_os_string().into_vec(),
+                                value,
+                            )
+                            .log_err();
                     })
                     .await;
             }
@@ -524,6 +527,25 @@ impl VimGlobals {
                 .get_mut(&workspace_id.clone())
                 .and_then(|map| map.insert(name.clone(), (path.clone().into(), points)));
         });
+        cx.spawn(|mut cx| {
+            let value = value.clone();
+            let name = name.clone();
+            async move {
+                cx.background_executor()
+                    .spawn(async move {
+                        let _ = DB
+                            .set_global_mark(
+                                workspace_id,
+                                name,
+                                path.into_os_string().into_vec(),
+                                value,
+                            )
+                            .log_err();
+                    })
+                    .await;
+            }
+        })
+        .detach()
     }
 
     fn load_local_marks(
@@ -772,16 +794,14 @@ impl Operator {
 define_connection! (
     pub static ref DB: VimDb<WorkspaceDb> = &[
         sql! (
-            CREATE TABLE vim_local_marks(
-                workspace_id INTEGER NOT NULL,
-                mark_name TEXT NOT NULL,
-                absolute_path BLOB,
-                value TEXT NOT NULL,
-                PRIMARY KEY(workspace_id, mark_name, absolute_path)
+            CREATE TABLE vim_local_marks (
+              workspace_id INTEGER,
+              mark_name TEXT,
+              absolute_path BLOB,
+              value TEXT
             );
+            CREATE UNIQUE INDEX idx_vim_local_marks ON vim_local_marks (workspace_id, mark_name, absolute_path);
         ),
-        // CREATE UNIQUE INDEX idx_vim_local_marks
-        // ON vim_local_marks(workspace_id, mark_name, absolute_path);
         sql! (
             CREATE TABLE vim_global_marks(
                 workspace_id INTEGER,
