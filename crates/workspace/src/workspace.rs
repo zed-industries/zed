@@ -148,6 +148,7 @@ actions!(
         Open,
         OpenFiles,
         OpenInTerminal,
+        OpenComponentPreview,
         ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
@@ -378,6 +379,7 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     init_settings(cx);
+    component::init();
     theme_preview::init(cx);
 
     cx.on_action(Workspace::close_global);
@@ -1080,6 +1082,7 @@ impl Workspace {
                 *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
 
                 ThemeSettings::reload_current_theme(cx);
+                ThemeSettings::reload_current_icon_theme(cx);
             }),
             cx.on_release(move |this, cx| {
                 this.app_state.workspace_store.update(cx, move |store, _| {
@@ -4440,10 +4443,12 @@ impl Workspace {
         if let Some(focus_on) = focus_on {
             focus_on.update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
         } else {
-            self.panes
-                .last()
-                .unwrap()
-                .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
+            if self.active_pane() == pane {
+                self.panes
+                    .last()
+                    .unwrap()
+                    .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
+            }
         }
         if self.last_active_center_pane == Some(pane.downgrade()) {
             self.last_active_center_pane = None;
@@ -5953,7 +5958,6 @@ pub struct OpenOptions {
     pub replace_window: Option<WindowHandle<Workspace>>,
     pub env: Option<HashMap<String, String>>,
 }
-
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
@@ -5971,58 +5975,65 @@ pub fn open_paths(
     let mut best_match = None;
     let mut open_visible = OpenVisible::All;
 
-    if open_options.open_new_workspace != Some(true) {
-        for window in local_workspace_windows(cx) {
-            if let Ok(workspace) = window.read(cx) {
-                let m = workspace
-                    .project
-                    .read(cx)
-                    .visibility_for_paths(&abs_paths, cx);
-                if m > best_match {
-                    existing = Some(window);
-                    best_match = m;
-                } else if best_match.is_none() && open_options.open_new_workspace == Some(false) {
-                    existing = Some(window)
-                }
-            }
-        }
-    }
-
     cx.spawn(move |mut cx| async move {
-        if open_options.open_new_workspace.is_none() && existing.is_none() {
-            let all_files = abs_paths.iter().map(|path| app_state.fs.metadata(path));
-            if futures::future::join_all(all_files)
+        if open_options.open_new_workspace != Some(true) {
+            let all_paths = abs_paths.iter().map(|path| app_state.fs.metadata(path));
+            let all_metadatas = futures::future::join_all(all_paths)
                 .await
                 .into_iter()
                 .filter_map(|result| result.ok().flatten())
-                .all(|file| !file.is_dir)
-            {
-                cx.update(|cx| {
-                    if let Some(window) = cx
-                        .active_window()
-                        .and_then(|window| window.downcast::<Workspace>())
-                    {
-                        if let Ok(workspace) = window.read(cx) {
-                            let project = workspace.project().read(cx);
-                            if project.is_local() && !project.is_via_collab() {
+                .collect::<Vec<_>>();
+
+            cx.update(|cx| {
+                for window in local_workspace_windows(&cx) {
+                    if let Ok(workspace) = window.read(&cx) {
+                        let m = workspace.project.read(&cx).visibility_for_paths(
+                            &abs_paths,
+                            &all_metadatas,
+                            open_options.open_new_workspace == None,
+                            cx,
+                        );
+                        if m > best_match {
+                            existing = Some(window);
+                            best_match = m;
+                        } else if best_match.is_none()
+                            && open_options.open_new_workspace == Some(false)
+                        {
+                            existing = Some(window)
+                        }
+                    }
+                }
+            })?;
+
+            if open_options.open_new_workspace.is_none() && existing.is_none() {
+                if all_metadatas.iter().all(|file| !file.is_dir) {
+                    cx.update(|cx| {
+                        if let Some(window) = cx
+                            .active_window()
+                            .and_then(|window| window.downcast::<Workspace>())
+                        {
+                            if let Ok(workspace) = window.read(cx) {
+                                let project = workspace.project().read(cx);
+                                if project.is_local() && !project.is_via_collab() {
+                                    existing = Some(window);
+                                    open_visible = OpenVisible::None;
+                                    return;
+                                }
+                            }
+                        }
+                        for window in local_workspace_windows(cx) {
+                            if let Ok(workspace) = window.read(cx) {
+                                let project = workspace.project().read(cx);
+                                if project.is_via_collab() {
+                                    continue;
+                                }
                                 existing = Some(window);
                                 open_visible = OpenVisible::None;
-                                return;
+                                break;
                             }
                         }
-                    }
-                    for window in local_workspace_windows(cx) {
-                        if let Ok(workspace) = window.read(cx) {
-                            let project = workspace.project().read(cx);
-                            if project.is_via_collab() {
-                                continue;
-                            }
-                            existing = Some(window);
-                            open_visible = OpenVisible::None;
-                            break;
-                        }
-                    }
-                })?;
+                    })?;
+                }
             }
         }
 

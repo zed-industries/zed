@@ -506,7 +506,9 @@ impl RenderOnce for ButtonLike {
             .group("")
             .flex_none()
             .h(self.height.unwrap_or(self.size.rems().into()))
-            .when_some(self.width, |this, width| this.w(width).justify_center())
+            .when_some(self.width, |this, width| {
+                this.w(width).justify_center().text_center()
+            })
             .when_some(self.rounding, |this, rounding| match rounding {
                 ButtonLikeRounding::All => this.rounded_md(),
                 ButtonLikeRounding::Left => this.rounded_l_md(),

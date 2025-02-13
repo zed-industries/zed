@@ -112,7 +112,6 @@ pub struct ThemeSettings {
     /// The terminal font family can be overridden using it's own setting.
     pub buffer_line_height: BufferLineHeight,
     /// The current theme selection.
-    /// TODO: Document this further
     pub theme_selection: Option<ThemeSelection>,
     /// The active theme.
     pub active_theme: Arc<Theme>,
@@ -120,6 +119,8 @@ pub struct ThemeSettings {
     ///
     /// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
     pub theme_overrides: Option<ThemeStyleContent>,
+    /// The current icon theme selection.
+    pub icon_theme_selection: Option<IconThemeSelection>,
     /// The active icon theme.
     pub active_icon_theme: Arc<IconTheme>,
     /// The density of the UI.
@@ -167,25 +168,28 @@ impl ThemeSettings {
 
     /// Reloads the current icon theme.
     ///
-    /// Reads the [`ThemeSettings`] to know which icon theme should be loaded.
+    /// Reads the [`ThemeSettings`] to know which icon theme should be loaded,
+    /// taking into account the current [`SystemAppearance`].
     pub fn reload_current_icon_theme(cx: &mut App) {
         let mut theme_settings = ThemeSettings::get_global(cx).clone();
+        let system_appearance = SystemAppearance::global(cx);
 
-        let active_theme = theme_settings.active_icon_theme.clone();
-        let mut icon_theme_name = active_theme.name.as_ref();
+        if let Some(icon_theme_selection) = theme_settings.icon_theme_selection.clone() {
+            let mut icon_theme_name = icon_theme_selection.icon_theme(*system_appearance);
 
-        // If the selected theme doesn't exist, fall back to the default theme.
-        let theme_registry = ThemeRegistry::global(cx);
-        if theme_registry
-            .get_icon_theme(icon_theme_name)
-            .ok()
-            .is_none()
-        {
-            icon_theme_name = DEFAULT_ICON_THEME_NAME;
-        };
+            // If the selected icon theme doesn't exist, fall back to the default theme.
+            let theme_registry = ThemeRegistry::global(cx);
+            if theme_registry
+                .get_icon_theme(icon_theme_name)
+                .ok()
+                .is_none()
+            {
+                icon_theme_name = DEFAULT_ICON_THEME_NAME;
+            };
 
-        if let Some(_theme) = theme_settings.switch_icon_theme(icon_theme_name, cx) {
-            ThemeSettings::override_global(theme_settings, cx);
+            if let Some(_theme) = theme_settings.switch_icon_theme(icon_theme_name, cx) {
+                ThemeSettings::override_global(theme_settings, cx);
+            }
         }
     }
 }
@@ -299,6 +303,55 @@ impl ThemeSelection {
     }
 }
 
+fn icon_theme_name_ref(_: &mut SchemaGenerator) -> Schema {
+    Schema::new_ref("#/definitions/IconThemeName".into())
+}
+
+/// Represents the selection of an icon theme, which can be either static or dynamic.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum IconThemeSelection {
+    /// A static icon theme selection, represented by a single icon theme name.
+    Static(#[schemars(schema_with = "icon_theme_name_ref")] String),
+    /// A dynamic icon theme selection, which can change based on the [`ThemeMode`].
+    Dynamic {
+        /// The mode used to determine which theme to use.
+        #[serde(default)]
+        mode: ThemeMode,
+        /// The icon theme to use for light mode.
+        #[schemars(schema_with = "icon_theme_name_ref")]
+        light: String,
+        /// The icon theme to use for dark mode.
+        #[schemars(schema_with = "icon_theme_name_ref")]
+        dark: String,
+    },
+}
+
+impl IconThemeSelection {
+    /// Returns the icon theme name based on the given [`Appearance`].
+    pub fn icon_theme(&self, system_appearance: Appearance) -> &str {
+        match self {
+            Self::Static(theme) => theme,
+            Self::Dynamic { mode, light, dark } => match mode {
+                ThemeMode::Light => light,
+                ThemeMode::Dark => dark,
+                ThemeMode::System => match system_appearance {
+                    Appearance::Light => light,
+                    Appearance::Dark => dark,
+                },
+            },
+        }
+    }
+
+    /// Returns the [`ThemeMode`] for the [`IconThemeSelection`].
+    pub fn mode(&self) -> Option<ThemeMode> {
+        match self {
+            IconThemeSelection::Static(_) => None,
+            IconThemeSelection::Dynamic { mode, .. } => Some(*mode),
+        }
+    }
+}
+
 /// Settings for rendering text in UI and text buffers.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {
@@ -344,7 +397,7 @@ pub struct ThemeSettingsContent {
     pub theme: Option<ThemeSelection>,
     /// The name of the icon theme to use.
     #[serde(default)]
-    pub icon_theme: Option<String>,
+    pub icon_theme: Option<IconThemeSelection>,
 
     /// UNSTABLE: Expect many elements to be broken.
     ///
@@ -393,6 +446,27 @@ impl ThemeSettingsContent {
         }
     }
 
+    /// Sets the icon theme for the given appearance to the icon theme with the specified name.
+    pub fn set_icon_theme(&mut self, icon_theme_name: String, appearance: Appearance) {
+        if let Some(selection) = self.icon_theme.as_mut() {
+            let icon_theme_to_update = match selection {
+                IconThemeSelection::Static(theme) => theme,
+                IconThemeSelection::Dynamic { mode, light, dark } => match mode {
+                    ThemeMode::Light => light,
+                    ThemeMode::Dark => dark,
+                    ThemeMode::System => match appearance {
+                        Appearance::Light => light,
+                        Appearance::Dark => dark,
+                    },
+                },
+            };
+
+            *icon_theme_to_update = icon_theme_name.to_string();
+        } else {
+            self.theme = Some(ThemeSelection::Static(icon_theme_name.to_string()));
+        }
+    }
+
     /// Sets the mode for the theme.
     pub fn set_mode(&mut self, mode: ThemeMode) {
         if let Some(selection) = self.theme.as_mut() {
@@ -418,6 +492,27 @@ impl ThemeSettingsContent {
                 light: ThemeSettings::DEFAULT_LIGHT_THEME.into(),
                 dark: ThemeSettings::DEFAULT_DARK_THEME.into(),
             });
+        }
+
+        if let Some(selection) = self.icon_theme.as_mut() {
+            match selection {
+                IconThemeSelection::Static(icon_theme) => {
+                    // If the icon theme was previously set to a single static
+                    // theme, we don't know whether it was a light or dark
+                    // theme, so we just use it for both.
+                    self.icon_theme = Some(IconThemeSelection::Dynamic {
+                        mode,
+                        light: icon_theme.clone(),
+                        dark: icon_theme.clone(),
+                    });
+                }
+                IconThemeSelection::Dynamic {
+                    mode: mode_to_update,
+                    ..
+                } => *mode_to_update = mode,
+            }
+        } else {
+            self.icon_theme = Some(IconThemeSelection::Static(DEFAULT_ICON_THEME_NAME.into()));
         }
     }
 }
@@ -588,10 +683,15 @@ impl settings::Settings for ThemeSettings {
                 .or(themes.get(&zed_default_dark().name))
                 .unwrap(),
             theme_overrides: None,
+            icon_theme_selection: defaults.icon_theme.clone(),
             active_icon_theme: defaults
                 .icon_theme
                 .as_ref()
-                .and_then(|name| themes.get_icon_theme(name).ok())
+                .and_then(|selection| {
+                    themes
+                        .get_icon_theme(selection.icon_theme(*system_appearance))
+                        .ok()
+                })
                 .unwrap_or_else(|| themes.get_icon_theme(DEFAULT_ICON_THEME_NAME).unwrap()),
             ui_density: defaults.ui_density.unwrap_or(UiDensity::Default),
             unnecessary_code_fade: defaults.unnecessary_code_fade.unwrap_or(0.0),
@@ -647,8 +747,12 @@ impl settings::Settings for ThemeSettings {
             this.apply_theme_overrides();
 
             if let Some(value) = &value.icon_theme {
-                if let Some(icon_theme) = themes.get_icon_theme(value).log_err() {
-                    this.active_icon_theme = icon_theme.clone();
+                this.icon_theme_selection = Some(value.clone());
+
+                let icon_theme_name = value.icon_theme(*system_appearance);
+
+                if let Some(icon_theme) = themes.get_icon_theme(icon_theme_name).log_err() {
+                    this.active_icon_theme = icon_theme;
                 }
             }
 
@@ -689,8 +793,21 @@ impl settings::Settings for ThemeSettings {
             ..Default::default()
         };
 
+        let icon_theme_names = ThemeRegistry::global(cx)
+            .list_icon_themes()
+            .into_iter()
+            .map(|icon_theme| Value::String(icon_theme.name.to_string()))
+            .collect();
+
+        let icon_theme_name_schema = SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            enum_values: Some(icon_theme_names),
+            ..Default::default()
+        };
+
         root_schema.definitions.extend([
             ("ThemeName".into(), theme_name_schema.into()),
+            ("IconThemeName".into(), icon_theme_name_schema.into()),
             ("FontFamilies".into(), params.font_family_schema()),
             ("FontFallbacks".into(), params.font_fallback_schema()),
         ]);

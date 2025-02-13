@@ -1,21 +1,20 @@
-use anyhow::{anyhow, Context as _, Result};
+use ::proto::{FromProto, ToProto};
+use anyhow::{anyhow, Result};
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
-use git::repository::RepoPath;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, SharedString};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel};
 use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
-    git::{GitState, Repository},
+    git::GitStore,
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
     worktree_store::WorktreeStore,
-    LspStore, LspStoreEvent, PrettierStore, ProjectEntryId, ProjectPath, ToolchainStore,
-    WorktreeId,
+    LspStore, LspStoreEvent, PrettierStore, ProjectPath, ToolchainStore, WorktreeId,
 };
 use remote::ssh_session::ChannelClient;
 use rpc::{
@@ -43,7 +42,7 @@ pub struct HeadlessProject {
     pub next_entry_id: Arc<AtomicUsize>,
     pub languages: Arc<LanguageRegistry>,
     pub extensions: Entity<HeadlessExtensionStore>,
-    pub git_state: Entity<GitState>,
+    pub git_store: Entity<GitStore>,
 }
 
 pub struct HeadlessAppState {
@@ -82,13 +81,14 @@ impl HeadlessProject {
             store
         });
 
-        let git_state = cx.new(|cx| GitState::new(&worktree_store, None, None, cx));
-
         let buffer_store = cx.new(|cx| {
             let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
+
+        let git_store =
+            cx.new(|cx| GitStore::new(&worktree_store, buffer_store.clone(), None, None, cx));
         let prettier_store = cx.new(|cx| {
             PrettierStore::new(
                 node_runtime.clone(),
@@ -179,6 +179,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &task_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &toolchain_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &git_store);
 
         client.add_request_handler(cx.weak_entity(), Self::handle_list_remote_directory);
         client.add_request_handler(cx.weak_entity(), Self::handle_get_path_metadata);
@@ -196,11 +197,6 @@ impl HeadlessProject {
         client.add_entity_request_handler(BufferStore::handle_update_buffer);
         client.add_entity_message_handler(BufferStore::handle_close_buffer);
 
-        client.add_entity_request_handler(Self::handle_stage);
-        client.add_entity_request_handler(Self::handle_unstage);
-        client.add_entity_request_handler(Self::handle_commit);
-        client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
-
         client.add_request_handler(
             extensions.clone().downgrade(),
             HeadlessExtensionStore::handle_sync_extensions,
@@ -216,6 +212,7 @@ impl HeadlessProject {
         LspStore::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
+        GitStore::init(&client);
 
         HeadlessProject {
             session: client,
@@ -228,7 +225,7 @@ impl HeadlessProject {
             next_entry_id: Default::default(),
             languages,
             extensions,
-            git_state,
+            git_store,
         }
     }
 
@@ -325,10 +322,8 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::AddWorktreeResponse> {
         use client::ErrorCodeExt;
-        let path = shellexpand::tilde(&message.payload.path).to_string();
-
         let fs = this.read_with(&mut cx, |this, _| this.fs.clone())?;
-        let path = PathBuf::from(path);
+        let path = PathBuf::from_proto(shellexpand::tilde(&message.payload.path).to_string());
 
         let canonicalized = match fs.canonicalize(&path).await {
             Ok(path) => path,
@@ -363,7 +358,7 @@ impl HeadlessProject {
         let response = this.update(&mut cx, |_, cx| {
             worktree.update(cx, |worktree, _| proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
-                canonicalized_path: canonicalized.to_string_lossy().to_string(),
+                canonicalized_path: canonicalized.to_proto(),
             })
         })?;
 
@@ -418,7 +413,7 @@ impl HeadlessProject {
                 buffer_store.open_buffer(
                     ProjectPath {
                         worktree_id,
-                        path: PathBuf::from(message.payload.path).into(),
+                        path: Arc::<Path>::from_proto(message.payload.path),
                     },
                     cx,
                 )
@@ -559,11 +554,11 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::ListRemoteDirectory>,
         cx: AsyncApp,
     ) -> Result<proto::ListRemoteDirectoryResponse> {
-        let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
         let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
+        let expanded = PathBuf::from_proto(shellexpand::tilde(&envelope.payload.path).to_string());
 
         let mut entries = Vec::new();
-        let mut response = fs.read_dir(Path::new(&expanded)).await?;
+        let mut response = fs.read_dir(&expanded).await?;
         while let Some(path) = response.next().await {
             if let Some(file_name) = path?.file_name() {
                 entries.push(file_name.to_string_lossy().to_string());
@@ -578,15 +573,15 @@ impl HeadlessProject {
         cx: AsyncApp,
     ) -> Result<proto::GetPathMetadataResponse> {
         let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
-        let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
+        let expanded = PathBuf::from_proto(shellexpand::tilde(&envelope.payload.path).to_string());
 
-        let metadata = fs.metadata(&PathBuf::from(expanded.clone())).await?;
+        let metadata = fs.metadata(&expanded).await?;
         let is_dir = metadata.map(|metadata| metadata.is_dir).unwrap_or(false);
 
         Ok(proto::GetPathMetadataResponse {
             exists: metadata.is_some(),
             is_dir,
-            path: expanded,
+            path: expanded.to_proto(),
         })
     }
 
@@ -615,137 +610,6 @@ impl HeadlessProject {
     ) -> Result<proto::Ack> {
         log::debug!("Received ping from client");
         Ok(proto::Ack {})
-    }
-
-    async fn handle_stage(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::Stage>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
-        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle =
-            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
-
-        let entries = envelope
-            .payload
-            .paths
-            .into_iter()
-            .map(PathBuf::from)
-            .map(RepoPath::new)
-            .collect();
-
-        repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.stage_entries(entries)
-            })?
-            .await??;
-        Ok(proto::Ack {})
-    }
-
-    async fn handle_unstage(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::Unstage>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
-        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle =
-            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
-
-        let entries = envelope
-            .payload
-            .paths
-            .into_iter()
-            .map(PathBuf::from)
-            .map(RepoPath::new)
-            .collect();
-
-        repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.unstage_entries(entries)
-            })?
-            .await??;
-
-        Ok(proto::Ack {})
-    }
-
-    async fn handle_commit(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::Commit>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
-        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle =
-            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
-
-        let message = SharedString::from(envelope.payload.message);
-        let name = envelope.payload.name.map(SharedString::from);
-        let email = envelope.payload.email.map(SharedString::from);
-
-        repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.commit(message, name.zip(email))
-            })?
-            .await??;
-        Ok(proto::Ack {})
-    }
-
-    async fn handle_open_commit_message_buffer(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::OpenCommitMessageBuffer>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::OpenBufferResponse> {
-        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository =
-            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
-        let buffer = repository
-            .update(&mut cx, |repository, cx| {
-                repository.open_commit_buffer(None, this.read(cx).buffer_store.clone(), cx)
-            })?
-            .await?;
-
-        let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id())?;
-        this.update(&mut cx, |headless_project, cx| {
-            headless_project
-                .buffer_store
-                .update(cx, |buffer_store, cx| {
-                    buffer_store
-                        .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
-                        .detach_and_log_err(cx);
-                })
-        })?;
-
-        Ok(proto::OpenBufferResponse {
-            buffer_id: buffer_id.to_proto(),
-        })
-    }
-
-    fn repository_for_request(
-        this: &Entity<Self>,
-        worktree_id: WorktreeId,
-        work_directory_id: ProjectEntryId,
-        cx: &mut AsyncApp,
-    ) -> Result<Entity<Repository>> {
-        this.update(cx, |project, cx| {
-            let repository_handle = project
-                .git_state
-                .read(cx)
-                .all_repositories()
-                .into_iter()
-                .find(|repository_handle| {
-                    repository_handle.read(cx).worktree_id == worktree_id
-                        && repository_handle
-                            .read(cx)
-                            .repository_entry
-                            .work_directory_id()
-                            == work_directory_id
-                })
-                .context("missing repository handle")?;
-            anyhow::Ok(repository_handle)
-        })?
     }
 }
 

@@ -326,16 +326,26 @@ impl Database {
 
             if !update.updated_repositories.is_empty() {
                 worktree_repository::Entity::insert_many(update.updated_repositories.iter().map(
-                    |repository| worktree_repository::ActiveModel {
-                        project_id: ActiveValue::set(project_id),
-                        worktree_id: ActiveValue::set(worktree_id),
-                        work_directory_id: ActiveValue::set(repository.work_directory_id as i64),
-                        scan_id: ActiveValue::set(update.scan_id as i64),
-                        branch: ActiveValue::set(repository.branch.clone()),
-                        is_deleted: ActiveValue::set(false),
-                        current_merge_conflicts: ActiveValue::Set(Some(
-                            serde_json::to_string(&repository.current_merge_conflicts).unwrap(),
-                        )),
+                    |repository| {
+                        worktree_repository::ActiveModel {
+                            project_id: ActiveValue::set(project_id),
+                            worktree_id: ActiveValue::set(worktree_id),
+                            work_directory_id: ActiveValue::set(
+                                repository.work_directory_id as i64,
+                            ),
+                            scan_id: ActiveValue::set(update.scan_id as i64),
+                            branch: ActiveValue::set(repository.branch.clone()),
+                            is_deleted: ActiveValue::set(false),
+                            branch_summary: ActiveValue::Set(
+                                repository
+                                    .branch_summary
+                                    .as_ref()
+                                    .map(|summary| serde_json::to_string(summary).unwrap()),
+                            ),
+                            current_merge_conflicts: ActiveValue::Set(Some(
+                                serde_json::to_string(&repository.current_merge_conflicts).unwrap(),
+                            )),
+                        }
                     },
                 ))
                 .on_conflict(
@@ -347,6 +357,8 @@ impl Database {
                     .update_columns([
                         worktree_repository::Column::ScanId,
                         worktree_repository::Column::Branch,
+                        worktree_repository::Column::BranchSummary,
+                        worktree_repository::Column::CurrentMergeConflicts,
                     ])
                     .to_owned(),
                 )
@@ -779,6 +791,13 @@ impl Database {
                         .transpose()?
                         .unwrap_or_default();
 
+                    let branch_summary = db_repository_entry
+                        .branch_summary
+                        .as_ref()
+                        .map(|branch_summary| serde_json::from_str(&branch_summary))
+                        .transpose()?
+                        .unwrap_or_default();
+
                     worktree.repository_entries.insert(
                         db_repository_entry.work_directory_id as u64,
                         proto::RepositoryEntry {
@@ -787,6 +806,7 @@ impl Database {
                             updated_statuses,
                             removed_statuses: Vec::new(),
                             current_merge_conflicts,
+                            branch_summary,
                         },
                     );
                 }

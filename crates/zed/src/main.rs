@@ -34,7 +34,7 @@ use project::project_settings::ProjectSettings;
 use recent_projects::{open_ssh_project, SshSettings};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
-use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
+use settings::{watch_config_file, Settings, SettingsStore};
 use simplelog::ConfigBuilder;
 use std::{
     env,
@@ -52,8 +52,9 @@ use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, derive_paths_with_position, handle_cli_connection,
-    handle_keymap_file_changes, handle_settings_changed, initialize_workspace,
-    inline_completion_registry, open_paths_with_positions, OpenListener, OpenRequest,
+    handle_keymap_file_changes, handle_settings_changed, handle_settings_file_changes,
+    initialize_workspace, inline_completion_registry, open_paths_with_positions, OpenListener,
+    OpenRequest,
 };
 
 #[cfg(unix)]
@@ -490,6 +491,7 @@ fn main() {
         project_panel::init(Assets, cx);
         git_ui::git_panel::init(cx);
         outline_panel::init(Assets, cx);
+        component_preview::init(cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);

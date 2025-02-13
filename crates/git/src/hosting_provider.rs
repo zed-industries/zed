@@ -4,12 +4,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use collections::BTreeMap;
 use derive_more::{Deref, DerefMut};
-use gpui::{App, Global};
+use gpui::{App, Global, SharedString};
 use http_client::HttpClient;
 use parking_lot::RwLock;
 use url::Url;
-
-use crate::Oid;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct PullRequest {
@@ -83,7 +81,7 @@ pub trait GitHostingProvider {
         &self,
         _repo_owner: &str,
         _repo: &str,
-        _commit: Oid,
+        _commit: SharedString,
         _http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
         Ok(None)
