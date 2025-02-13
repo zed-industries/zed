@@ -749,14 +749,14 @@ impl GitPanel {
                 let result = cx
                     .update(|cx| {
                         if stage {
-                            active_repository.read(cx).stage_entries(repo_paths.clone())
+                            active_repository
+                                .update(cx, |repo, cx| repo.stage_entries(repo_paths.clone(), cx))
                         } else {
                             active_repository
-                                .read(cx)
-                                .unstage_entries(repo_paths.clone())
+                                .update(cx, |repo, cx| repo.unstage_entries(repo_paths.clone(), cx))
                         }
                     })?
-                    .await?;
+                    .await;
 
                 this.update(&mut cx, |this, cx| {
                     for pending in this.pending.iter_mut() {
@@ -849,9 +849,10 @@ impl GitPanel {
                 return;
             }
 
-            let stage_task = active_repository.read(cx).stage_entries(changed_files);
+            let stage_task =
+                active_repository.update(cx, |repo, cx| repo.stage_entries(changed_files, cx));
             cx.spawn(|_, mut cx| async move {
-                stage_task.await??;
+                stage_task.await?;
                 let commit_task = active_repository
                     .update(&mut cx, |repo, _| repo.commit(message.into(), None))?;
                 commit_task.await?
