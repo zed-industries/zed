@@ -4729,18 +4729,19 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        if !EditorSettings::get_global(cx).selection_highlight {
+            self.clear_background_highlights::<SelectedTextHighlight>(cx);
+            return;
+        }
         if self.selections.count() != 1 {
             self.clear_background_highlights::<SelectedTextHighlight>(cx);
             return;
         }
-
         let selection = self.selections.newest::<Point>(cx);
-
         if selection.is_empty() || selection.start.row != selection.end.row {
             self.clear_background_highlights::<SelectedTextHighlight>(cx);
             return;
         }
-
         let buffer = self.buffer().read(cx).snapshot(cx);
         cx.spawn_in(window, |editor, mut cx| async move {
             let matches = cx

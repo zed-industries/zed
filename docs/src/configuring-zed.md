@@ -472,6 +472,12 @@ List of `string` values
 "current_line_highlight": "all"
 ```
 
+## Selection Highlight
+
+- Description: Whether to highlight all occurrences of the selected text in an editor.
+- Setting: `selection_highlight`
+- Default: `true`
+
 ## LSP Highlight Debounce
 
 - Description: The debounce delay before querying highlights from the language server based on the current cursor location.
