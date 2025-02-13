@@ -190,7 +190,6 @@ fn paint_line(
 
                 if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
                     wraps.next();
-
                     if let Some((background_origin, background_color)) = current_background.as_mut()
                     {
                         if glyph_origin.x == background_origin.x {
@@ -206,7 +205,6 @@ fn paint_line(
                         background_origin.x = origin.x;
                         background_origin.y += line_height;
                     }
-
                     if let Some((underline_origin, underline_style)) = current_underline.as_mut() {
                         if glyph_origin.x == underline_origin.x {
                             underline_origin.x -= max_glyph_size.width.half();
@@ -219,7 +217,6 @@ fn paint_line(
                         underline_origin.x = origin.x;
                         underline_origin.y += line_height;
                     }
-
                     if let Some((strikethrough_origin, strikethrough_style)) =
                         current_strikethrough.as_mut()
                     {
@@ -263,10 +260,14 @@ fn paint_line(
                     }
 
                     if let Some(style_run) = style_run {
+                        let mut run_color = style_run.color;
                         let mut run_underline = style_run.underline.as_ref();
                         let mut run_background_color = style_run.background_color;
                         let mut run_strikethrough = style_run.strikethrough;
                         // Override by text run by current style when hovered or activated.
+                        if let Some(val) = text_style.and_then(|s| s.color) {
+                            run_color = val;
+                        }
                         if let Some(val) = text_style.and_then(|s| s.underline.as_ref()) {
                             run_underline = Some(val);
                         }
@@ -301,7 +302,7 @@ fn paint_line(
                                     glyph_origin.y + baseline_offset.y + (layout.descent * 0.618),
                                 ),
                                 UnderlineStyle {
-                                    color: Some(run_underline.color.unwrap_or(style_run.color)),
+                                    color: Some(run_underline.color.unwrap_or(run_color)),
                                     thickness: run_underline.thickness,
                                     wavy: run_underline.wavy,
                                 },
@@ -320,18 +321,14 @@ fn paint_line(
                                         + (((layout.ascent * 0.5) + baseline_offset.y) * 0.5),
                                 ),
                                 StrikethroughStyle {
-                                    color: Some(run_strikethrough.color.unwrap_or(style_run.color)),
+                                    color: Some(run_strikethrough.color.unwrap_or(run_color)),
                                     thickness: run_strikethrough.thickness,
                                 },
                             ));
                         }
 
                         run_end += style_run.len as usize;
-                        if let Some(val) = text_style.and_then(|s| s.color) {
-                            color = val;
-                        } else {
-                            color = style_run.color;
-                        }
+                        color = run_color;
                     } else {
                         run_end = layout.len;
                         finished_background = current_background.take();
