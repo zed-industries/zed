@@ -168,7 +168,7 @@ impl Render for ZedPredictModal {
             .id("edit-prediction-onboarding")
             .key_context("ZedPredictModal")
             .relative()
-            .w(px(480.))
+            .w(px(550.))
             .h_full()
             .max_h(max_height)
             .p_4()
@@ -201,7 +201,7 @@ impl Render for ZedPredictModal {
                         svg()
                             .path("icons/zed_predict_bg.svg")
                             .text_color(cx.theme().colors().icon_disabled)
-                            .w(px(460.))
+                            .w(px(530.))
                             .h(px(128.))
                             .overflow_hidden(),
                     ),
@@ -285,7 +285,9 @@ impl Render for ZedPredictModal {
 
         if self.user_store.read(cx).current_user().is_some() {
             let copy = match self.sign_in_status {
-                SignInStatus::Idle => "Get accurate and instant edit predictions at every keystroke. Before setting Zed as your edit prediction provider:",
+                SignInStatus::Idle => {
+                    "Zed can now predict your next edit on every keystroke. Powered by Zeta, our open-source, open-dataset language model."
+                }
                 SignInStatus::SignedIn => "Almost there! Ensure you:",
                 SignInStatus::Waiting => unreachable!(),
             };
@@ -327,7 +329,7 @@ impl Render for ZedPredictModal {
                         .child(
                             Checkbox::new("tos-checkbox", self.terms_of_service.into())
                                 .fill()
-                                .label("Read and accept the")
+                                .label("I have read and accept the")
                                 .on_click(cx.listener(move |this, state, _window, cx| {
                                     this.terms_of_service = *state == ToggleState::Selected;
                                     cx.notify();
@@ -351,7 +353,7 @@ impl Render for ZedPredictModal {
                                         "training-data-checkbox",
                                         self.data_collection_opted_in.into(),
                                     )
-                                    .label("Open source repos: optionally share training data.")
+                                    .label("Contribute to the open dataset when editing open source.")
                                     .fill()
                                     .on_click(cx.listener(
                                         move |this, state, _window, cx| {
@@ -393,14 +395,14 @@ impl Render for ZedPredictModal {
                                         )
                                     )
                                     .child(info_item(
-                                        "We ask this exclusively for open source projects.",
+                                        "We collect data exclusively from open source projects.",
                                     ))
                                     .child(info_item(
                                         "Zed automatically detects if your project is open source.",
                                     ))
-                                    .child(info_item("Toggle it anytime via the status bar menu."))
+                                    .child(info_item("Toggle participation at any time via the status bar menu."))
                                     .child(multiline_info_item(
-                                        "If turned on, this setting is valid for all open source projects",
+                                        "If turned on, this setting applies for all open source repositories",
                                         label_item("you open in Zed.")
                                     ))
                                     .child(multiline_info_item(
@@ -425,7 +427,7 @@ impl Render for ZedPredictModal {
                         .gap_2()
                         .w_full()
                         .child(
-                            Button::new("accept-tos", "Enable Edit Predictions")
+                            Button::new("accept-tos", "Enable Edit Prediction")
                                 .disabled(!self.terms_of_service)
                                 .style(ButtonStyle::Tinted(TintColor::Accent))
                                 .full_width()
