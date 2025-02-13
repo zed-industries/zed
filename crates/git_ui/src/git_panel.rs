@@ -1248,6 +1248,10 @@ impl GitPanel {
             || self.conflicted_staged_count > 0
     }
 
+    fn has_conflicts(&self) -> bool {
+        self.conflicted_count > 0
+    }
+
     fn has_tracked_changes(&self) -> bool {
         self.tracked_count > 0
     }
@@ -1834,14 +1838,14 @@ impl GitPanel {
 
         let mut is_staged: ToggleState = self.entry_is_staged(entry).into();
 
-        if !self.has_staged_changes() && !entry.status.is_created() {
+        if !self.has_staged_changes() && !self.has_conflicts() && !entry.status.is_created() {
             is_staged = ToggleState::Selected;
         }
 
         let checkbox = Checkbox::new(id, is_staged)
             .disabled(!has_write_access)
             .fill()
-            .placeholder(!self.has_staged_changes())
+            .placeholder(!self.has_staged_changes() && !self.has_conflicts())
             .elevation(ElevationIndex::Surface)
             .on_click({
                 let entry = entry.clone();
