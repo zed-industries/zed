@@ -31,7 +31,7 @@ use file_icons::FileIcons;
 use git::{blame::BlameEntry, Oid};
 use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash,
-    point, px, quad, relative, size, svg, transparent_black, Action, AnyElement, App,
+    point, px, quad, relative, size, solid_color, svg, transparent_black, Action, AnyElement, App,
     AvailableSpace, Axis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners,
     CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable, FontId,
     GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
@@ -89,6 +89,7 @@ enum DisplayDiffHunk {
         display_row_range: Range<DisplayRow>,
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
+        contains_expanded: bool,
     },
 }
 
@@ -1567,6 +1568,11 @@ impl EditorElement {
                 if hunk_display_end.column() > 0 {
                     end_row.0 += 1;
                 }
+                let start_row = hunk_display_start.row();
+                let contains_expanded = snapshot
+                    .row_infos(start_row)
+                    .take(end_row.0 as usize - start_row.0 as usize)
+                    .any(|row_info| row_info.diff_status.is_some());
                 DisplayDiffHunk::Unfolded {
                     status: hunk.status(),
                     diff_base_byte_range: hunk.diff_base_byte_range,
@@ -1576,6 +1582,7 @@ impl EditorElement {
                         hunk.buffer_id,
                         hunk.buffer_range,
                     ),
+                    contains_expanded,
                 }
             };
 
@@ -4341,7 +4348,7 @@ impl EditorElement {
                         window.paint_quad(fill(Bounds { origin, size }, color));
                     };
 
-                let mut current_paint: Option<(gpui::Background, Range<DisplayRow>)> = None;
+                let mut current_paint: Option<(Hsla, Range<DisplayRow>)> = None;
                 for (&new_row, &new_background) in &layout.highlighted_rows {
                     match &mut current_paint {
                         Some((current_background, current_range)) => {
@@ -4539,10 +4546,16 @@ impl EditorElement {
         }
     }
 
-    fn paint_diff_hunks(layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
+    fn paint_diff_hunk_gutter_indicators(
+        layout: &mut EditorLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         if layout.display_hunks.is_empty() {
             return;
         }
+
+        let corners = Corners::all(px(0.));
 
         let line_height = layout.position_map.line_height;
         window.paint_layer(layout.gutter_hitbox.bounds, |window| {
@@ -4557,36 +4570,41 @@ impl EditorElement {
                         );
                         Some((
                             hunk_bounds,
-                            cx.theme().status().modified,
-                            Corners::all(px(0.)),
+                            cx.theme().colors().version_control_modified.opacity(0.7),
+                            corners,
                             &DiffHunkSecondaryStatus::None,
+                            false,
                         ))
                     }
                     DisplayDiffHunk::Unfolded {
                         status,
                         display_row_range,
+                        contains_expanded,
                         ..
                     } => hitbox.as_ref().map(|hunk_hitbox| match status {
                         DiffHunkStatus::Added(secondary_status) => (
                             hunk_hitbox.bounds,
-                            cx.theme().status().created,
-                            Corners::all(px(0.)),
+                            cx.theme().colors().version_control_added.opacity(0.7),
+                            corners,
                             secondary_status,
+                            *contains_expanded,
                         ),
                         DiffHunkStatus::Modified(secondary_status) => (
                             hunk_hitbox.bounds,
-                            cx.theme().status().modified,
-                            Corners::all(px(0.)),
+                            cx.theme().colors().version_control_modified.opacity(0.7),
+                            corners,
                             secondary_status,
+                            *contains_expanded,
                         ),
                         DiffHunkStatus::Removed(secondary_status)
                             if !display_row_range.is_empty() =>
                         {
                             (
                                 hunk_hitbox.bounds,
-                                cx.theme().status().deleted,
-                                Corners::all(px(0.)),
+                                cx.theme().colors().version_control_deleted.opacity(0.7),
+                                corners,
                                 secondary_status,
+                                *contains_expanded,
                             )
                         }
                         DiffHunkStatus::Removed(secondary_status) => (
@@ -4597,23 +4615,34 @@ impl EditorElement {
                                 ),
                                 size(hunk_hitbox.size.width * px(2.), hunk_hitbox.size.height),
                             ),
-                            cx.theme().status().deleted,
+                            cx.theme().colors().version_control_deleted.opacity(0.7),
                             Corners::all(1. * line_height),
                             secondary_status,
+                            *contains_expanded,
                         ),
                     }),
                 };
 
-                if let Some((hunk_bounds, mut background_color, corner_radii, secondary_status)) =
-                    hunk_to_paint
+                if let Some((
+                    hunk_bounds,
+                    background_color,
+                    corner_radii,
+                    secondary_status,
+                    contains_expanded,
+                )) = hunk_to_paint
                 {
-                    if *secondary_status != DiffHunkSecondaryStatus::None {
-                        background_color.a *= 0.6;
-                    }
+                    let background = if *secondary_status != DiffHunkSecondaryStatus::None
+                        && contains_expanded
+                    {
+                        pattern_slash(background_color, line_height.0 / 2.5)
+                    } else {
+                        solid_color(background_color)
+                    };
+
                     window.paint_quad(quad(
                         hunk_bounds,
                         corner_radii,
-                        background_color,
+                        background,
                         Edges::default(),
                         transparent_black(),
                     ));
@@ -4733,7 +4762,7 @@ impl EditorElement {
                 )
             });
         if show_git_gutter {
-            Self::paint_diff_hunks(layout, window, cx)
+            Self::paint_diff_hunk_gutter_indicators(layout, window, cx)
         }
 
         let highlight_width = 0.275 * layout.position_map.line_height;
@@ -5292,9 +5321,15 @@ impl EditorElement {
                                             end_display_row.0 -= 1;
                                         }
                                         let color = match &hunk.status() {
-                                            DiffHunkStatus::Added(_) => theme.status().created,
-                                            DiffHunkStatus::Modified(_) => theme.status().modified,
-                                            DiffHunkStatus::Removed(_) => theme.status().deleted,
+                                            DiffHunkStatus::Added(_) => {
+                                                theme.colors().version_control_added
+                                            }
+                                            DiffHunkStatus::Modified(_) => {
+                                                theme.colors().version_control_modified
+                                            }
+                                            DiffHunkStatus::Removed(_) => {
+                                                theme.colors().version_control_deleted
+                                            }
                                         };
                                         ColoredRange {
                                             start: start_display_row,
@@ -6875,39 +6910,17 @@ impl Element for EditorElement {
                         )
                     };
 
-                    let (mut highlighted_rows, distinguish_unstaged_hunks) =
-                        self.editor.update(cx, |editor, cx| {
-                            (
-                                editor.highlighted_display_rows(window, cx),
-                                editor.distinguish_unstaged_diff_hunks,
-                            )
-                        });
+                    let mut highlighted_rows = self
+                        .editor
+                        .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
 
                     for (ix, row_info) in row_infos.iter().enumerate() {
                         let background = match row_info.diff_status {
-                            Some(DiffHunkStatus::Added(secondary_status)) => {
-                                let color = style.status.created_background;
-                                match secondary_status {
-                                    DiffHunkSecondaryStatus::HasSecondaryHunk
-                                    | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
-                                        if distinguish_unstaged_hunks =>
-                                    {
-                                        pattern_slash(color, line_height.0 / 4.0)
-                                    }
-                                    _ => color.into(),
-                                }
+                            Some(DiffHunkStatus::Added(_)) => {
+                                cx.theme().colors().version_control_added_background
                             }
-                            Some(DiffHunkStatus::Removed(secondary_status)) => {
-                                let color = style.status.deleted_background;
-                                match secondary_status {
-                                    DiffHunkSecondaryStatus::HasSecondaryHunk
-                                    | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
-                                        if distinguish_unstaged_hunks =>
-                                    {
-                                        pattern_slash(color, line_height.0 / 4.0)
-                                    }
-                                    _ => color.into(),
-                                }
+                            Some(DiffHunkStatus::Removed(_)) => {
+                                cx.theme().colors().version_control_deleted_background
                             }
                             _ => continue,
                         };
@@ -7755,7 +7768,7 @@ pub struct EditorLayout {
     indent_guides: Option<Vec<IndentGuideLayout>>,
     visible_display_row_range: Range<DisplayRow>,
     active_rows: BTreeMap<DisplayRow, bool>,
-    highlighted_rows: BTreeMap<DisplayRow, gpui::Background>,
+    highlighted_rows: BTreeMap<DisplayRow, Hsla>,
     line_elements: SmallVec<[AnyElement; 1]>,
     line_numbers: Arc<HashMap<MultiBufferRow, LineNumberLayout>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
