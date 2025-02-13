@@ -8,7 +8,6 @@ use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use db::sqlez_macros::sql;
 use db::{define_connection, query};
 use editor::{Anchor, ClipboardSelection, Editor, ToPoint};
-use futures::future::OrElse;
 use gpui::{
     Action, App, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, Global, WeakEntity,
 };
@@ -213,21 +212,6 @@ pub struct VimGlobals {
     pub global_marks: HashMap<WorkspaceId, HashMap<String, (Arc<Path>, Vec<Point>)>>,
 }
 
-// pub struct LoadedMarks {
-//     pub local: HashMap<BufferId, HashMap<String, Vec<Anchor>>>,
-//     pub global: Int,
-// }
-
-// pub enum MarksCollection {
-//     Unloaded,
-//     Loaded(LoadedMarks),
-// }
-// when you open a buffer, read from the local marks and convert to anchor
-// when you create a mark, or edit a buffer such that an anchor's point changes, write that to the database
-// pub struct MarksCollection {
-//     pub local_loaded: HashMap<BufferId, HashMap<String, Vec<Anchor>>>, // keep this type on non-global-vim
-//     pub local: HashMap<Arc<Path>, HashMap<String, Vec<Point>>>,
-// }
 impl Global for VimGlobals {}
 
 impl VimGlobals {
@@ -267,19 +251,18 @@ impl VimGlobals {
             let Some(workspace_id) = workspace.database_id() else {
                 return;
             };
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn(|_, cx| async move {
                 let local_marks = cx
                     .background_executor()
                     .spawn(async move { DB.get_local_marks(workspace_id) })
                     .await?;
-                println!("local marks is empty: {}", local_marks.is_empty());
                 let global_marks = cx
                     .background_executor()
                     .spawn(async move { DB.get_global_marks(workspace_id) })
                     .await?;
-                cx.update_global(|g: &mut VimGlobals, cx: &mut App| {
-                    g.load_local_marks(workspace_id, local_marks, cx);
-                    g.load_global_marks(workspace_id, global_marks, cx);
+                cx.update_global(|g: &mut VimGlobals, _cx: &mut App| {
+                    g.load_local_marks(workspace_id, local_marks);
+                    g.load_global_marks(workspace_id, global_marks);
                 })
             })
             .detach_and_log_err(cx)
@@ -445,7 +428,7 @@ impl VimGlobals {
         };
         let path = file.path().to_path_buf();
 
-        cx.update_global(|g: &mut VimGlobals, cx: &mut App| {
+        cx.update_global(|g: &mut VimGlobals, _cx: &mut App| {
             if !g
                 .local_marks
                 .contains_key(&(workspace_id.clone(), path.clone().into()))
@@ -461,7 +444,7 @@ impl VimGlobals {
                 .and_then(|map| map.insert(name.clone(), points));
         });
 
-        cx.spawn(|mut cx| {
+        cx.spawn(|cx| {
             let value = value.clone();
             let name = name.clone();
             async move {
@@ -515,7 +498,7 @@ impl VimGlobals {
         };
         let path = file.path().to_path_buf();
 
-        cx.update_global(|g: &mut VimGlobals, cx: &mut App| {
+        cx.update_global(|g: &mut VimGlobals, _cx: &mut App| {
             if !g.global_marks.contains_key(&workspace_id.clone()) {
                 g.global_marks.insert(
                     workspace_id.clone(),
@@ -527,7 +510,7 @@ impl VimGlobals {
                 .get_mut(&workspace_id.clone())
                 .and_then(|map| map.insert(name.clone(), (path.clone().into(), points)));
         });
-        cx.spawn(|mut cx| {
+        cx.spawn(|cx| {
             let value = value.clone();
             let name = name.clone();
             async move {
@@ -552,14 +535,13 @@ impl VimGlobals {
         &mut self,
         workspace_id: WorkspaceId,
         marks: Vec<(Vec<u8>, String, String)>,
-        cx: &mut App,
     ) {
         for (abs_path, name, values) in marks {
             let Some(value) = serde_json::from_str::<Vec<(u32, u32)>>(&values).log_err() else {
                 continue;
             };
             let path = PathBuf::from(OsString::from_vec(abs_path));
-            let mut marks = self
+            let marks = self
                 .local_marks
                 .entry((workspace_id, Arc::from(path)))
                 .or_default();
@@ -575,14 +557,13 @@ impl VimGlobals {
         &mut self,
         workspace_id: WorkspaceId,
         marks: Vec<(Vec<u8>, String, String)>,
-        cx: &mut App,
     ) {
         for (abs_path, name, values) in marks {
             let Some(value) = serde_json::from_str::<Vec<(u32, u32)>>(&values).log_err() else {
                 continue;
             };
             let path = PathBuf::from(OsString::from_vec(abs_path));
-            let mut global_marks = self.global_marks.entry(workspace_id).or_default();
+            let global_marks = self.global_marks.entry(workspace_id).or_default();
             let points = value
                 .into_iter()
                 .map(|(row, col)| Point::new(row, col))
