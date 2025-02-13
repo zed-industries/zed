@@ -900,9 +900,9 @@ impl Element for TerminalElement {
 
             self.register_mouse_listeners(origin, layout.mode, &layout.hitbox, window);
             if self.can_navigate_to_selected_word && layout.last_hovered_word.is_some() {
-                window.set_cursor_style(gpui::CursorStyle::PointingHand, &layout.hitbox);
+                window.set_cursor_style(gpui::CursorStyle::PointingHand, Some(&layout.hitbox));
             } else {
-                window.set_cursor_style(gpui::CursorStyle::IBeam, &layout.hitbox);
+                window.set_cursor_style(gpui::CursorStyle::IBeam, Some(&layout.hitbox));
             }
 
             let cursor = layout.cursor.take();

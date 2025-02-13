@@ -4530,9 +4530,9 @@ impl EditorElement {
             // In singleton buffers, we select corresponding lines on the line number click, so use | -like cursor.
             // In multi buffers, we open file at the line number clicked, so use a pointing hand cursor.
             if is_singleton {
-                window.set_cursor_style(CursorStyle::IBeam, &hitbox);
+                window.set_cursor_style(CursorStyle::IBeam, Some(&hitbox));
             } else {
-                window.set_cursor_style(CursorStyle::PointingHand, &hitbox);
+                window.set_cursor_style(CursorStyle::PointingHand, Some(&hitbox));
             }
         }
     }

@@ -1838,10 +1838,7 @@ impl Interactivity {
                 }
             });
         }
-        let hover_cursor_style = self
-            .hover_style
-            .as_ref()
-            .and_then(|style| style.mouse_cursor);
+        let drag_cursor_style = self.base_style.as_ref().mouse_cursor;
 
         let mut drag_listener = mem::take(&mut self.drag_listener);
         let drop_listeners = mem::take(&mut self.drop_listeners);
@@ -1933,7 +1930,7 @@ impl Interactivity {
                                         view: drag,
                                         value: drag_value,
                                         cursor_offset,
-                                        cursor_style: hover_cursor_style,
+                                        cursor_style: drag_cursor_style,
                                     });
                                     pending_mouse_down.take();
                                     window.refresh();
