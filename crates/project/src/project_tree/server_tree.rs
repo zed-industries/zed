@@ -343,7 +343,7 @@ pub(crate) struct ServerTreeRebase<'a> {
     old_contents: BTreeMap<WorktreeId, ServersForWorktree>,
     new_tree: &'a mut LanguageServerTree,
     /// All server IDs seen in the old tree.
-    all_server_ids: BTreeSet<LanguageServerId>,
+    all_server_ids: BTreeMap<LanguageServerId, LanguageServerName>,
     /// Server IDs we've preserved for a new iteration of the tree. `all_server_ids - rebased_server_ids` is the
     /// set of server IDs that can be shut down.
     rebased_server_ids: BTreeSet<LanguageServerId>,
@@ -357,9 +357,14 @@ impl<'tree> ServerTreeRebase<'tree> {
             .values()
             .flat_map(|nodes| {
                 nodes.roots.values().flat_map(|servers| {
-                    servers
-                        .values()
-                        .filter_map(|server| server.0.id.get().copied())
+                    servers.values().filter_map(|server| {
+                        server
+                            .0
+                            .id
+                            .get()
+                            .copied()
+                            .map(|id| (id, server.0.name.clone()))
+                    })
                 })
             })
             .collect();
@@ -426,10 +431,10 @@ impl<'tree> ServerTreeRebase<'tree> {
     }
 
     /// Returns IDs of servers that are no longer referenced (and can be shut down).
-    pub(crate) fn finish(self) -> BTreeSet<LanguageServerId> {
+    pub(crate) fn finish(self) -> BTreeMap<LanguageServerId, LanguageServerName> {
         self.all_server_ids
-            .difference(&self.rebased_server_ids)
-            .copied()
+            .into_iter()
+            .filter(|(id, _)| !self.rebased_server_ids.contains(id))
             .collect()
     }
 }

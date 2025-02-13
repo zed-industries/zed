@@ -3679,7 +3679,6 @@ impl LspStore {
 
                 let mut rebase = lsp_tree.rebase();
                 for buffer in buffer_store.read(cx).buffers().collect::<Vec<_>>() {
-
                     let buffer = buffer.read(cx);
                     if !local.registered_buffers.contains_key(&buffer.remote_id()) {
                         continue;
@@ -3689,7 +3688,11 @@ impl LspStore {
                         .zip(buffer.language().map(|l| l.name()))
                     {
                         let worktree_id = file.worktree_id(cx);
-                        let Some(worktree) = local.worktree_store.read(cx).worktree_for_id(worktree_id, cx) else {
+                        let Some(worktree) = local
+                            .worktree_store
+                            .read(cx)
+                            .worktree_for_id(worktree_id, cx)
+                        else {
                             continue;
                         };
                         let path: Arc<Path> = file
@@ -3713,44 +3716,47 @@ impl LspStore {
                             cx,
                         );
                         for node in nodes {
-                            node.server_id_or_init(|LaunchDisposition {
-                                 server_name,
-                                 attach,
-                                 path,
-                                 settings,
-                             }| match attach {
-                                language::Attach::InstancePerRoot => {
-                                    // todo: handle instance per root proper.
-                                    if let Some(server_ids) = local
-                                        .language_server_ids
-                                        .get(&(worktree_id, server_name.clone()))
-                                    {
-                                        server_ids.iter().cloned().next().unwrap()
-                                    } else {
-                                        local.start_language_server(
-                                            &worktree,
-                                            delegate.clone(),
-                                            local.languages
-                                                .lsp_adapters(&language)
-                                                .into_iter()
-                                                .find(|adapter| &adapter.name() == server_name)
-                                                .expect("To find LSP adapter"),
-                                            settings,
-                                            cx,
-                                        )
+                            node.server_id_or_init(
+                                |LaunchDisposition {
+                                     server_name,
+                                     attach,
+                                     path,
+                                     settings,
+                                 }| match attach {
+                                    language::Attach::InstancePerRoot => {
+                                        // todo: handle instance per root proper.
+                                        if let Some(server_ids) = local
+                                            .language_server_ids
+                                            .get(&(worktree_id, server_name.clone()))
+                                        {
+                                            server_ids.iter().cloned().next().unwrap()
+                                        } else {
+                                            local.start_language_server(
+                                                &worktree,
+                                                delegate.clone(),
+                                                local
+                                                    .languages
+                                                    .lsp_adapters(&language)
+                                                    .into_iter()
+                                                    .find(|adapter| &adapter.name() == server_name)
+                                                    .expect("To find LSP adapter"),
+                                                settings,
+                                                cx,
+                                            )
+                                        }
                                     }
-                                }
-                                language::Attach::Shared => {
-                                    let uri = Url::from_directory_path(
-                                        worktree.read(cx).abs_path().join(&path.path),
-                                    );
-                                    let key = (worktree_id, server_name.clone());
-                                    if !local.language_server_ids.contains_key(&key) {
+                                    language::Attach::Shared => {
+                                        let uri = Url::from_directory_path(
+                                            worktree.read(cx).abs_path().join(&path.path),
+                                        );
+                                        let key = (worktree_id, server_name.clone());
+                                        local.language_server_ids.remove(&key);
 
-                                        local.start_language_server(
+                                        let server_id = local.start_language_server(
                                             &worktree,
                                             delegate.clone(),
-                                            local.languages
+                                            local
+                                                .languages
                                                 .lsp_adapters(&language)
                                                 .into_iter()
                                                 .find(|adapter| &adapter.name() == server_name)
@@ -3758,32 +3764,23 @@ impl LspStore {
                                             settings,
                                             cx,
                                         );
-                                    }
-                                    if let Some(server_ids) = local
-                                        .language_server_ids
-                                        .get(&key)
-                                    {
-                                        debug_assert_eq!(server_ids.len(), 1);
-                                        let server_id = server_ids.iter().cloned().next().unwrap();
-
-                                        if let Some(state) = local.language_servers.get(&server_id) {
+                                        if let Some(state) = local.language_servers.get(&server_id)
+                                        {
                                             if let Ok(uri) = uri {
                                                 state.add_workspace_folder(uri);
                                             };
                                         }
                                         server_id
-                                    } else {
-                                        unreachable!("Language server ID should be available, as it's registered on demand")
                                     }
-                                }
-                            });
+                                },
+                            );
                         }
                     }
                 }
                 rebase.finish()
             });
-            for id in to_stop {
-                self.stop_local_language_server(id, cx).detach();
+            for (id, name) in to_stop {
+                self.stop_local_language_server(id, name, cx).detach();
             }
         }
     }
@@ -7275,6 +7272,7 @@ impl LspStore {
     fn stop_local_language_server(
         &mut self,
         server_id: LanguageServerId,
+        name: LanguageServerName,
         cx: &mut Context<Self>,
     ) -> Task<Vec<WorktreeId>> {
         let local = match &mut self.mode {
@@ -7285,15 +7283,12 @@ impl LspStore {
         };
 
         let mut orphaned_worktrees = vec![];
-        // Did any of the worktrees reference this server ID at least once?
-        let mut was_referenced = false;
         // Remove this server ID from all entries in the given worktree.
         local.language_server_ids.retain(|(worktree, _), ids| {
             if !ids.remove(&server_id) {
                 return true;
             }
 
-            was_referenced = true;
             if ids.is_empty() {
                 orphaned_worktrees.push(*worktree);
                 false
@@ -7301,17 +7296,8 @@ impl LspStore {
                 true
             }
         });
-        let Some(status) = self
-            .language_server_statuses
-            .remove(&server_id)
-            .filter(|_| was_referenced)
-        else {
-            return Task::ready(Vec::new());
-        };
-
-        let name = LanguageServerName(status.name.into());
+        let _ = self.language_server_statuses.remove(&server_id);
         log::info!("stopping language server {name}");
-
         self.buffer_store.update(cx, |buffer_store, cx| {
             for buffer in buffer_store.buffers() {
                 buffer.update(cx, |buffer, cx| {
@@ -7399,7 +7385,14 @@ impl LspStore {
             });
             let tasks = language_servers_to_stop
                 .into_iter()
-                .map(|server| self.stop_local_language_server(server, cx))
+                .map(|server| {
+                    let name = self
+                        .language_server_statuses
+                        .get(&server)
+                        .map(|state| state.name.as_str().into())
+                        .unwrap_or_else(|| LanguageServerName::from("Unknown"));
+                    self.stop_local_language_server(server, name, cx)
+                })
                 .collect::<Vec<_>>();
 
             cx.spawn(|this, mut cx| async move {

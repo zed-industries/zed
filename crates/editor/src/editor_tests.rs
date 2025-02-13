@@ -11332,13 +11332,13 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
             },
         );
     });
+
     cx.executor().run_until_parked();
     assert_eq!(
         server_restarts.load(atomic::Ordering::Acquire),
         1,
         "Should restart LSP server on a related LSP settings change"
     );
-
     update_test_project_settings(cx, |project_settings| {
         project_settings.lsp.insert(
             language_server_name.into(),
@@ -11357,7 +11357,6 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         1,
         "Should not restart LSP server on a related LSP settings change that is the same"
     );
-
     update_test_project_settings(cx, |project_settings| {
         project_settings.lsp.insert(
             language_server_name.into(),
