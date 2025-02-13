@@ -17073,6 +17073,8 @@ dependencies = [
  "language_models",
  "log",
  "menu",
+ "migrator",
+ "paths",
  "postage",
  "project",
  "regex",
