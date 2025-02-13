@@ -4062,7 +4062,6 @@ dependencies = [
  "http_client",
  "indoc",
  "inline_completion",
- "inventory",
  "itertools 0.14.0",
  "language",
  "linkify",
