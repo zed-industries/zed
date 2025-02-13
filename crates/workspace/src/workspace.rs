@@ -8190,7 +8190,6 @@ mod tests {
         dirty_regular_buffer.update(cx, |buffer, cx| {
             buffer.project_items[0].update(cx, |pi, cx| pi.is_dirty = true)
         });
-        dbg!("wow!");
 
         let close_multi_buffer_task = pane
             .update_in(cx, |pane, window, cx| {
