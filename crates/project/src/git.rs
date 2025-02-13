@@ -378,10 +378,10 @@ impl GitStore {
             .collect();
 
         repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.stage_entries(entries)
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.stage_entries(entries, cx)
             })?
-            .await??;
+            .await?;
         Ok(proto::Ack {})
     }
 
@@ -404,10 +404,10 @@ impl GitStore {
             .collect();
 
         repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.unstage_entries(entries)
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.unstage_entries(entries, cx)
             })?
-            .await??;
+            .await?;
 
         Ok(proto::Ack {})
     }
@@ -762,19 +762,11 @@ impl Repository {
         }
     }
 
-    pub fn stage_entries(&self, entries: Vec<RepoPath>) -> oneshot::Receiver<Result<()>> {
-        let (result_tx, result_rx) = futures::channel::oneshot::channel();
-        if entries.is_empty() {
-            result_tx.send(Ok(())).ok();
-            return result_rx;
-        }
-        self.update_sender
-            .unbounded_send((Message::Stage(self.git_repo.clone(), entries), result_tx))
-            .ok();
-        result_rx
+    fn buffer_store(&self, cx: &App) -> Option<Entity<BufferStore>> {
+        Some(self.git_store.upgrade()?.read(cx).buffer_store.clone())
     }
 
-    pub fn unstage_entries(&self, entries: Vec<RepoPath>) -> oneshot::Receiver<Result<()>> {
+    pub fn stage_entries(&self, entries: Vec<RepoPath>, cx: &mut App) -> Task<anyhow::Result<()>> {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
         if entries.is_empty() {
             return Task::ready(Ok(()));
