@@ -1614,9 +1614,13 @@ impl Interactivity {
                                             global_id, hitbox, &style, window, cx,
                                         );
 
-                                        if !cx.has_active_drag() {
+                                        if let Some(drag) = cx.active_drag.as_ref() {
+                                            if let Some(mouse_cursor) = drag.cursor_style {
+                                                window.set_cursor_style(mouse_cursor, None);
+                                            }
+                                        } else {
                                             if let Some(mouse_cursor) = style.mouse_cursor {
-                                                window.set_cursor_style(mouse_cursor, hitbox);
+                                                window.set_cursor_style(mouse_cursor, Some(hitbox));
                                             }
                                         }
 
@@ -1834,6 +1838,10 @@ impl Interactivity {
                 }
             });
         }
+        let hover_cursor_style = self
+            .hover_style
+            .as_ref()
+            .and_then(|style| style.mouse_cursor);
 
         let mut drag_listener = mem::take(&mut self.drag_listener);
         let drop_listeners = mem::take(&mut self.drop_listeners);
@@ -1925,6 +1933,7 @@ impl Interactivity {
                                         view: drag,
                                         value: drag_value,
                                         cursor_offset,
+                                        cursor_style: hover_cursor_style,
                                     });
                                     pending_mouse_down.take();
                                     window.refresh();
@@ -2254,6 +2263,7 @@ impl Interactivity {
                     }
                 }
 
+                style.mouse_cursor = drag.cursor_style;
                 cx.active_drag = Some(drag);
             }
         }

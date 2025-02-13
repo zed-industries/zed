@@ -408,7 +408,7 @@ pub(crate) type AnyMouseListener =
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
-    pub(crate) hitbox_id: HitboxId,
+    pub(crate) hitbox_id: Option<HitboxId>,
     pub(crate) style: CursorStyle,
 }
 
@@ -1924,10 +1924,12 @@ impl Window {
 
     /// Updates the cursor style at the platform level. This method should only be called
     /// during the prepaint phase of element drawing.
-    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
+    ///
+    /// If `hitbox` is `None`, the cursor style will be applied to the entire window.
+    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: Option<&Hitbox>) {
         self.invalidator.debug_assert_paint();
         self.next_frame.cursor_styles.push(CursorStyleRequest {
-            hitbox_id: hitbox.id,
+            hitbox_id: hitbox.map(|hitbox| hitbox.id),
             style,
         });
     }
@@ -2976,7 +2978,13 @@ impl Window {
                 .cursor_styles
                 .iter()
                 .rev()
-                .find(|request| request.hitbox_id.is_hovered(self))
+                .find(|request| {
+                    request.hitbox_id.is_none()
+                        || request
+                            .hitbox_id
+                            .map(|id| id.is_hovered(self))
+                            .unwrap_or(false)
+                })
                 .map(|request| request.style)
                 .unwrap_or(CursorStyle::Arrow);
             cx.platform.set_cursor_style(style);
@@ -3075,6 +3083,7 @@ impl Window {
                             value: Arc::new(paths.clone()),
                             view: cx.new(|_| paths).into(),
                             cursor_offset: position,
+                            cursor_style: None,
                         });
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {

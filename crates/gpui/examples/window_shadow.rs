@@ -61,7 +61,7 @@ impl Render for WindowShadow {
                                             CursorStyle::ResizeUpRightDownLeft
                                         }
                                     },
-                                    &hitbox,
+                                    Some(&hitbox),
                                 );
                             },
                         )

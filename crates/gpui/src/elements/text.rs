@@ -673,7 +673,7 @@ impl Element for InteractiveText {
                             .iter()
                             .any(|range| range.contains(&ix))
                         {
-                            window.set_cursor_style(crate::CursorStyle::PointingHand, hitbox)
+                            window.set_cursor_style(crate::CursorStyle::PointingHand, Some(hitbox));
                         }
                     }
 
