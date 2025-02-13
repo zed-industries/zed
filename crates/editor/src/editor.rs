@@ -13106,7 +13106,12 @@ impl Editor {
         }
     }
 
-    pub fn copy_path(&mut self, _: &CopyPath, _window: &mut Window, cx: &mut Context<Self>) {
+    pub fn copy_path(
+        &mut self,
+        _: &zed_actions::workspace::CopyPath,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(path) = self.target_file_abs_path(cx) {
             if let Some(path) = path.to_str() {
                 cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
@@ -13116,7 +13121,7 @@ impl Editor {
 
     pub fn copy_relative_path(
         &mut self,
-        _: &CopyRelativePath,
+        _: &zed_actions::workspace::CopyRelativePath,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {

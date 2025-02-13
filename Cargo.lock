@@ -8984,6 +8984,7 @@ dependencies = [
  "util",
  "workspace",
  "worktree",
+ "zed_actions",
 ]
 
 [[package]]
@@ -10179,6 +10180,7 @@ dependencies = [
  "util",
  "workspace",
  "worktree",
+ "zed_actions",
 ]
 
 [[package]]
@@ -16248,6 +16250,7 @@ dependencies = [
  "ui",
  "util",
  "uuid",
+ "zed_actions",
 ]
 
 [[package]]
