@@ -43,9 +43,33 @@ actions!(
         ResetBufferFontSize,
         DecreaseUiFontSize,
         IncreaseUiFontSize,
-        ResetUiFontSize
+        ResetUiFontSize,
     ]
 );
+
+pub mod workspace {
+    use gpui::action_with_deprecated_aliases;
+
+    action_with_deprecated_aliases!(
+        workspace,
+        CopyPath,
+        [
+            "editor::CopyPath",
+            "outline_panel::CopyPath",
+            "project_panel::CopyPath"
+        ]
+    );
+
+    action_with_deprecated_aliases!(
+        workspace,
+        CopyRelativePath,
+        [
+            "editor::CopyRelativePath",
+            "outline_panel::CopyRelativePath",
+            "project_panel::CopyRelativePath"
+        ]
+    );
+}
 
 pub mod git {
     use gpui::action_with_deprecated_aliases;

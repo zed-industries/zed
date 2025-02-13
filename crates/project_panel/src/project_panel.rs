@@ -186,8 +186,6 @@ actions!(
         NewDirectory,
         NewFile,
         Copy,
-        CopyPath,
-        CopyRelativePath,
         Duplicate,
         RevealInFileManager,
         RemoveFromProject,
@@ -730,8 +728,11 @@ impl ProjectPanel {
                                 }
                             })
                             .separator()
-                            .action("Copy Path", Box::new(CopyPath))
-                            .action("Copy Relative Path", Box::new(CopyRelativePath))
+                            .action("Copy Path", Box::new(zed_actions::workspace::CopyPath))
+                            .action(
+                                "Copy Relative Path",
+                                Box::new(zed_actions::workspace::CopyRelativePath),
+                            )
                             .separator()
                             .when(!is_root || !cfg!(target_os = "windows"), |menu| {
                                 menu.action("Rename", Box::new(Rename))
@@ -2161,7 +2162,12 @@ impl ProjectPanel {
         self.paste(&Paste {}, window, cx);
     }
 
-    fn copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut Context<Self>) {
+    fn copy_path(
+        &mut self,
+        _: &zed_actions::workspace::CopyPath,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let abs_file_paths = {
             let project = self.project.read(cx);
             self.effective_entries()
@@ -2185,7 +2191,12 @@ impl ProjectPanel {
         }
     }
 
-    fn copy_relative_path(&mut self, _: &CopyRelativePath, _: &mut Window, cx: &mut Context<Self>) {
+    fn copy_relative_path(
+        &mut self,
+        _: &zed_actions::workspace::CopyRelativePath,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let file_paths = {
             let project = self.project.read(cx);
             self.effective_entries()
