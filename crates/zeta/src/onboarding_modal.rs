@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use crate::{onboarding_event, ZED_PREDICT_DATA_COLLECTION_CHOICE};
+use anyhow::Context as _;
 use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
 use feature_flags::FeatureFlagAppExt as _;
@@ -83,6 +84,7 @@ impl ZedPredictModal {
         let task = self
             .user_store
             .update(cx, |this, cx| this.accept_terms_of_service(cx));
+        let fs = self.fs.clone();
 
         cx.spawn(|this, mut cx| async move {
             task.await?;
@@ -100,6 +102,20 @@ impl ZedPredictModal {
                 )
                 .await
                 .log_err();
+
+            // Make sure edit prediction provider setting is using the new key
+            let settings_path = paths::settings_file().as_path();
+            let settings_path = fs.canonicalize(settings_path).await.with_context(|| {
+                format!("Failed to canonicalize settings path {:?}", settings_path)
+            })?;
+
+            if let Some(settings) = fs.load(&settings_path).await.log_err() {
+                if let Some(new_settings) =
+                    migrator::migrate_edit_prediction_provider_settings(&settings)?
+                {
+                    fs.atomic_write(settings_path, new_settings).await?;
+                }
+            }
 
             this.update(&mut cx, |this, cx| {
                 update_settings_file::<AllLanguageSettings>(this.fs.clone(), cx, move |file, _| {
