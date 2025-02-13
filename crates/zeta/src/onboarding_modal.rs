@@ -67,7 +67,7 @@ impl ZedPredictModal {
     }
 
     fn view_blog(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/blog/edit-predictions");
+        cx.open_url("https://zed.dev/blog/edit-prediction");
         cx.notify();
 
         onboarding_event!("Blog Link clicked");
