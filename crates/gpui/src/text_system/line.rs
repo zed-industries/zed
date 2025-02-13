@@ -266,7 +266,7 @@ fn paint_line(
                         let mut run_underline = style_run.underline.as_ref();
                         let mut run_background_color = style_run.background_color;
                         let mut run_strikethrough = style_run.strikethrough;
-                        // Override by current text style
+                        // Override by text run by current style when hovered or actived.
                         if let Some(val) = text_style.and_then(|s| s.underline.as_ref()) {
                             run_underline = Some(val);
                         }
