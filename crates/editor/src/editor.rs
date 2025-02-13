@@ -1591,6 +1591,10 @@ impl Editor {
     }
 
     pub fn edit_prediction_in_conflict(&self) -> bool {
+        if !self.show_edit_predictions_in_menu() {
+            return false;
+        }
+
         let showing_completions = self
             .context_menu
             .borrow()
