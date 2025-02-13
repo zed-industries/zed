@@ -1,51 +1,63 @@
-# Inno Setup executable path
-$innoSetupPath = "C:\zjk\apps\Inno Setup 6\ISCC.exe"
-$repoDir = "C:\zjk\projects\zed"
-$innoFilePath = "$repoDir\crates\zed\resources\windows\installer\zed.iss"
-$signToolPath = "powershell.exe -ExecutionPolicy Bypass -File $repoDir\crates\zed\resources\windows\installer\sign.ps1"
+$ErrorActionPreference = "Stop"
 
-$product = @{
-    "nameLong"         = "Zed"
-    "nameShort"        = "zed"
-    "DirName"          = "Zed"
-    "RegValueName"     = "ZedEditor"
-    "RegValueNameLong" = "Zed Editor (User)"
-    "ShellNameShort"   = "&Zed Editor"
-    "MutexName"        = "ZedSetupMutex" # TODO:
-    "AppUserModelId"   = "ZedIndustry.Zed"
-    "ResourcesDir"     = "$repoDir\crates\zed\resources\windows"
-    ”AppId"            = "{{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}"
+$issFilePath = "$env:ZED_WORKSPACE/crates/zed/resources/windows/installer/zed.iss"
+$channel = $env:RELEASE_CHANNEL
+
+switch ($channel) {
+    "stable" {
+        $appId = "{{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}"
+        $appName = "Zed Editor"
+        $appDisplayName = "Zed Editor (User)"
+        $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION"
+        $appMutex = "ZedSetupMutex" # TODO:
+        $appExeName = "zed"
+        $regValueName = "ZedEditor"
+        $appUserId = "ZedIndustry.Zed"
+        $appShellNameShort = "Z&ed Editor"
+    }
+    "preview" {
+        $appId = "{{F70E4811-D0E2-4D88-AC99-D63752799F95}"
+        $appName = "Zed Editor Preview"
+        $appDisplayName = "Zed Editor Preview (User)"
+        $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION-preview"
+        $appMutex = "ZedSetupMutex" # TODO:
+        $appExeName = "zed"
+        $regValueName = "ZedEditorPreview"
+        $appUserId = "ZedIndustry.Zed.Preview"
+        $appShellNameShort = "Z&ed Editor Preview"
+    }
+    default {
+        Write-Error "can't bundle installer for $channel"
+        exit 1
+    }
 }
 
-$sourcePath = $repoDir
-$outputPath = "$repoDir\target\windows"
-New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
+$innoSetupPath = "iscc.exe"
 
 $definitions = @{
-    "NameLong"         = $product.nameLong
-    "NameShort"        = $product.nameShort
-    "DirName"          = $product.DirName
-    "Version"          = "1.0.0"
-    "RawVersion"       = "1.0.0"
-    "ExeBasename"      = $product.nameShort
-    "RegValueName"     = $product.RegValueName
-    "RegValueNameLong" = $product.RegValueNameLong
-    "ShellNameShort"   = $product.ShellNameShort
-    "AppMutex"         = $product.MutexName
-    "SourceDir"        = $sourcePath
-    "OutputDir"        = $outputPath
-    "ResourcesDir"     = $product.ResourcesDir
-    "AppId"            = $product.AppId
-    "AppUserId"        = $product.AppUserModelId
-    "signToolPath"     = $signToolPath
+    "AppId"          = $appId
+    "OutputDir"      = "$env:ZED_WORKSPACE/target"
+    "AppSetupName"   = $appSetupName
+    "AppName"        = $appName
+    "AppDisplayName" = $appDisplayName
+    "RegValueName"   = $regValueName
+    "AppMutex"       = $appMutex
+    "AppExeName"     = $appExeName
+    "ResourcesDir"   = "$env:ZED_WORKSPACE/crates/zed/resources/windows"
+    "ShellNameShort" = $appShellNameShort
+    "AppUserId"      = $appUserId
+    "Version"        = "$env:RELEASE_VERSION"
+    "SourceDir"      = "$env:ZED_WORKSPACE"
 }
+
+$signTool = "pwsh.exe -ExecutionPolicy Bypass -File $env:ZED_WORKSPACE/crates/zed/resources/windows/installer/sign.ps1 `$f"
 
 $defs = @()
 foreach ($key in $definitions.Keys) {
     $defs += "/d$key=`"$($definitions[$key])`""
 }
 
-$innoArgs = @($issPath) + $innoFilePath + $defs + "/sDefaultsign=`"$signToolPath `$f`""
+$innoArgs = @($issFilePath) + $innoFilePath + $defs + "/sDefaultsign=`"$signTool`""
 
 # Execute Inno Setup
 Write-Host "🚀 Running Inno Setup: $innoSetupPath $innoArgs"
@@ -53,6 +65,7 @@ $process = Start-Process -FilePath $innoSetupPath -ArgumentList $innoArgs -NoNew
 
 if ($process.ExitCode -eq 0) {
     Write-Host "✅ Inno Setup successfully compiled the installer"
+    Write-Output "SETUP_PATH=target/$appSetupName.exe" >> $env:GITHUB_ENV
     exit 0
 }
 else {
