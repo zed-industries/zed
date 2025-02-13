@@ -372,6 +372,10 @@ jobs:
           workspaces: ${{ env.ZED_WORKSPACE }}
           cache-provider: "github"
 
+      # TODO: Remove this
+      - name: Test Inno Setup
+        run: iscc.exe /?
+
       - name: Configure CI
         run: |
           mkdir -p ${{ env.CARGO_HOME }} -ErrorAction Ignore
