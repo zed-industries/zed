@@ -1617,6 +1617,7 @@ impl Editor {
     ) -> AcceptEditPredictionBinding {
         let key_context = self.key_context_internal(true, window, cx);
         let in_conflict = self.edit_prediction_in_conflict();
+
         AcceptEditPredictionBinding(
             window
                 .bindings_for_action_in_context(&AcceptEditPrediction, key_context)
@@ -1629,7 +1630,12 @@ impl Editor {
                             .map_or(false, |keystroke| keystroke.modifiers.modified())
                 })
                 .rev()
-                .next(),
+                .min_by_key(|binding| {
+                    binding
+                        .keystrokes()
+                        .first()
+                        .map_or(u8::MAX, |k| k.modifiers.number_of_modifiers())
+                }),
         )
     }
 
