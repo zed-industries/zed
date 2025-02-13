@@ -549,7 +549,7 @@ fn matching_history_items<'a>(
         .chain(currently_opened)
         .filter_map(|found_path| {
             // In case it's a file outside of the current project the ProjectPath.path in found_path will be empty, only the absolute path exists
-            // in order to be able to find matches on the path we still need to set it in path temporaly
+            // in order to be able to find matches on the path we still need to set it in path temporally
             let (filename, path) = match found_path.project.path.file_name() {
                 Some(filename) => (
                     filename.to_string_lossy().to_lowercase(),
