@@ -22,7 +22,7 @@ use crate::{
     InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
     RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
     StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR,
-    EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT, FILE_HEADER_HEIGHT,
+    EDIT_PREDICTION_REQUIRING_MODIFIER_KEY_CONTEXT, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus};
@@ -5849,32 +5849,22 @@ impl KeyBindingValidator for AcceptEditPredictionsBindingValidator {
         if binding.keystrokes().len() == 1 && binding.keystrokes()[0].modifiers.modified() {
             return Ok(());
         }
-        let required_predicate =
-            Not(Identifier(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT.into()).into());
+
+        let required_predicate = Identifier(EDIT_PREDICTION_REQUIRING_MODIFIER_KEY_CONTEXT.into());
         match binding.predicate() {
             Some(predicate) if required_predicate.is_superset(&predicate) => {
-                return Ok(());
+                Err(MarkdownString(format!(
+                    "when using {} in the context of `{}`, \
+                     the binding must be a single keystroke with modifiers. \n\n \
+                     This ensures that pressing these modifiers can be used for previewing edit predictions.\n\n\
+                     For more information, see the [documentation]({}) on edit predictions.",
+                    MarkdownString::inline_code(AcceptEditPrediction.name()),
+                    EDIT_PREDICTION_REQUIRING_MODIFIER_KEY_CONTEXT,
+                    "https://zed.dev/docs/completions#edit-predictions"
+                )))
             }
-            _ => {}
+            _ => Ok(()),
         }
-        let negated_requires_modifier_key_context = MarkdownString::inline_code(&format!(
-            "!{}",
-            EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT
-        ));
-        Err(MarkdownString(format!(
-            "{} can only be bound to a single keystroke with modifiers, so \
-            that pressing these modifiers can be used for prediction \
-            preview.\n\n\
-            This restriction does not apply when the context requires {}, \
-            since these bindings are not used for prediction preview. For \
-            example, in the default keymap `tab` requires {}, and `alt-tab` \
-            is used otherwise.\n\n\
-            See [the documentation]({}) for more details.",
-            MarkdownString::inline_code(AcceptEditPrediction.name()),
-            negated_requires_modifier_key_context.clone(),
-            negated_requires_modifier_key_context,
-            "https://zed.dev/docs/completions#edit-predictions",
-        )))
     }
 }
 
