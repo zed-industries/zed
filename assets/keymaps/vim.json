@@ -539,7 +539,7 @@
   {
     "context": "vim_mode == visual",
     "bindings": {
-      "X": "vim::Exchange"
+      "shift-x": "vim::Exchange"
     }
   },
   {
