@@ -401,7 +401,6 @@ impl InputEvent for MouseExitEvent {
 }
 impl MouseEvent for MouseExitEvent {
     fn with_local_coordinates(self, _origin: Point<Pixels>, _scale: f32) -> Self {
-        // TODO: convert to local coordinates
         self
     }
 }
@@ -437,20 +436,26 @@ impl Render for ExternalPaths {
 pub enum FileDropEvent {
     /// The files have entered the window.
     Entered {
-        /// The position of the mouse relative to the window.
+        /// The position relative to the current element
         position: Point<Pixels>,
+        /// The position of the mouse relative to the window
+        absolute_position: Point<Pixels>,
         /// The paths of the files that are being dragged.
         paths: ExternalPaths,
     },
     /// The files are being dragged over the window
     Pending {
-        /// The position of the mouse relative to the window.
+        /// The position relative to the current element
         position: Point<Pixels>,
+        /// The position of the mouse relative to the window
+        absolute_position: Point<Pixels>,
     },
     /// The files have been dropped onto the window.
     Submit {
-        /// The position of the mouse relative to the window.
+        /// The position relative to the current element
         position: Point<Pixels>,
+        /// The position of the mouse relative to the window
+        absolute_position: Point<Pixels>,
     },
     /// The user has stopped dragging the files over the window.
     Exited,
@@ -463,9 +468,33 @@ impl InputEvent for FileDropEvent {
     }
 }
 impl MouseEvent for FileDropEvent {
-    fn with_local_coordinates(self, _origin: Point<Pixels>, _scale: f32) -> Self {
-        // TODO: convert to local coordinates?
-        self
+    fn with_local_coordinates(self, origin: Point<Pixels>, scale: f32) -> Self {
+        match self {
+            Self::Entered {
+                position: _,
+                absolute_position,
+                paths,
+            } => Self::Entered {
+                position: (absolute_position - origin) / scale,
+                absolute_position,
+                paths,
+            },
+            Self::Pending {
+                position: _,
+                absolute_position,
+            } => Self::Pending {
+                position: (absolute_position - origin) / scale,
+                absolute_position,
+            },
+            Self::Submit {
+                position: _,
+                absolute_position,
+            } => Self::Submit {
+                position: (absolute_position - origin) / scale,
+                absolute_position,
+            },
+            x => x,
+        }
     }
 }
 

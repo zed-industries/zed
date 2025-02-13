@@ -3107,17 +3107,17 @@ impl Window {
             // Track the mouse position with our own state, since accessing the platform
             // API for the mouse position can only occur on the main thread.
             PlatformInput::MouseMove(mouse_move) => {
-                self.mouse_position = mouse_move.position;
+                self.mouse_position = mouse_move.absolute_position;
                 self.modifiers = mouse_move.modifiers;
                 PlatformInput::MouseMove(mouse_move)
             }
             PlatformInput::MouseDown(mouse_down) => {
-                self.mouse_position = mouse_down.position;
+                self.mouse_position = mouse_down.absolute_position;
                 self.modifiers = mouse_down.modifiers;
                 PlatformInput::MouseDown(mouse_down)
             }
             PlatformInput::MouseUp(mouse_up) => {
-                self.mouse_position = mouse_up.position;
+                self.mouse_position = mouse_up.absolute_position;
                 self.modifiers = mouse_up.modifiers;
                 PlatformInput::MouseUp(mouse_up)
             }
@@ -3130,45 +3130,55 @@ impl Window {
                 PlatformInput::ModifiersChanged(modifiers_changed)
             }
             PlatformInput::ScrollWheel(scroll_wheel) => {
-                self.mouse_position = scroll_wheel.position;
+                self.mouse_position = scroll_wheel.absolute_position;
                 self.modifiers = scroll_wheel.modifiers;
                 PlatformInput::ScrollWheel(scroll_wheel)
             }
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.
             PlatformInput::FileDrop(file_drop) => match file_drop {
-                FileDropEvent::Entered { position, paths } => {
-                    self.mouse_position = position;
+                FileDropEvent::Entered {
+                    position,
+                    absolute_position,
+                    paths,
+                } => {
+                    self.mouse_position = absolute_position;
                     if cx.active_drag.is_none() {
                         cx.active_drag = Some(AnyDrag {
                             value: Arc::new(paths.clone()),
                             view: cx.new(|_| paths).into(),
-                            cursor_offset: position,
+                            cursor_offset: absolute_position,
                         });
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {
                         position,
-                        absolute_position: position,
+                        absolute_position,
                         pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
                     })
                 }
-                FileDropEvent::Pending { position } => {
-                    self.mouse_position = position;
+                FileDropEvent::Pending {
+                    position,
+                    absolute_position,
+                } => {
+                    self.mouse_position = absolute_position;
                     PlatformInput::MouseMove(MouseMoveEvent {
                         position,
-                        absolute_position: position,
+                        absolute_position,
                         pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
                     })
                 }
-                FileDropEvent::Submit { position } => {
+                FileDropEvent::Submit {
+                    position,
+                    absolute_position,
+                } => {
                     cx.activate(true);
                     self.mouse_position = position;
                     PlatformInput::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,
                         position,
-                        absolute_position: position,
+                        absolute_position,
                         modifiers: Modifiers::default(),
                         click_count: 1,
                     })

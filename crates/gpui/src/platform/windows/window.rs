@@ -851,6 +851,11 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                         cursor_position.y as f32,
                         scale_factor,
                     ),
+                    absolute_position: logical_point(
+                        cursor_position.x as f32,
+                        cursor_position.y as f32,
+                        scale_factor,
+                    ),
                     paths: ExternalPaths(paths),
                 });
                 self.handle_drag_drop(input);
@@ -876,6 +881,11 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
         let scale_factor = self.0.state.borrow().scale_factor;
         let input = PlatformInput::FileDrop(FileDropEvent::Pending {
             position: logical_point(
+                cursor_position.x as f32,
+                cursor_position.y as f32,
+                scale_factor,
+            ),
+            absolute_position: logical_point(
                 cursor_position.x as f32,
                 cursor_position.y as f32,
                 scale_factor,
@@ -909,6 +919,11 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
         let scale_factor = self.0.state.borrow().scale_factor;
         let input = PlatformInput::FileDrop(FileDropEvent::Submit {
             position: logical_point(
+                cursor_position.x as f32,
+                cursor_position.y as f32,
+                scale_factor,
+            ),
+            absolute_position: logical_point(
                 cursor_position.x as f32,
                 cursor_position.y as f32,
                 scale_factor,

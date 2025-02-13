@@ -1862,9 +1862,13 @@ extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDr
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     let paths = external_paths_from_event(dragging_info);
-    if let Some(event) =
-        paths.map(|paths| PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }))
-    {
+    if let Some(event) = paths.map(|paths| {
+        PlatformInput::FileDrop(FileDropEvent::Entered {
+            position,
+            absolute_position: position,
+            paths,
+        })
+    }) {
         if send_new_event(&window_state, event) {
             window_state.lock().external_files_dragged = true;
             return NSDragOperationCopy;
@@ -1878,7 +1882,10 @@ extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDr
     let position = drag_event_position(&window_state, dragging_info);
     if send_new_event(
         &window_state,
-        PlatformInput::FileDrop(FileDropEvent::Pending { position }),
+        PlatformInput::FileDrop(FileDropEvent::Pending {
+            position,
+            absolute_position: position,
+        }),
     ) {
         NSDragOperationCopy
     } else {
@@ -1900,7 +1907,10 @@ extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -
     let position = drag_event_position(&window_state, dragging_info);
     if send_new_event(
         &window_state,
-        PlatformInput::FileDrop(FileDropEvent::Submit { position }),
+        PlatformInput::FileDrop(FileDropEvent::Submit {
+            position,
+            absolute_position: position,
+        }),
     ) {
         YES
     } else {
