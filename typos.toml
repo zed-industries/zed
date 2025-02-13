@@ -46,6 +46,8 @@ extend-exclude = [
     "script/danger/dangerfile.ts",
     # Eval examples for prompts and criteria
     "crates/eval/src/examples/",
+    # File type extensions are not typos
+    "crates/zed/resources/windows/installer/zed.iss",
 ]
 
 [default]
@@ -63,6 +65,6 @@ extend-ignore-re = [
     # macOS version
     "Big Sur",
     # Not an actual typo but an intentionally invalid color, in `color_extractor`
-    "#fof"
+    "#fof",
 ]
 check-filename = true
