@@ -1409,7 +1409,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     // Simulate diagnostics starting to update.
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.start_progress(progress_token).await;
-    drop(_handle);
+
     // Restart the server before the diagnostics finish updating.
     project.update(cx, |project, cx| {
         project.restart_language_servers_for_buffers(vec![buffer], cx);
