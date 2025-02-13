@@ -153,7 +153,7 @@ fn paint_line(
         ),
     );
 
-    // TODO: text_align and line_height need to inherit from normal style when is hovered or actived.
+    // TODO: text_align and line_height need to inherit from normal style when is hovered or activated.
     let mut text_align = text_style
         .and_then(|s| s.text_align)
         .unwrap_or(TextAlign::Left);
@@ -266,7 +266,7 @@ fn paint_line(
                         let mut run_underline = style_run.underline.as_ref();
                         let mut run_background_color = style_run.background_color;
                         let mut run_strikethrough = style_run.strikethrough;
-                        // Override by text run by current style when hovered or actived.
+                        // Override by text run by current style when hovered or activated.
                         if let Some(val) = text_style.and_then(|s| s.underline.as_ref()) {
                             run_underline = Some(val);
                         }

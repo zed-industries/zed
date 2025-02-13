@@ -43,13 +43,14 @@ impl Render for HelloWorld {
                                 this.text_color(gpui::red())
                                     .text_center()
                                     .text_decoration_1()
+                                    .text_decoration_wavy()
                                     .text_decoration_color(gpui::red())
                             })
                             .hover(|this| {
-                                this.text_color(gpui::blue())
+                                this.text_color(gpui::yellow())
                                     .text_center()
                                     .text_decoration_1()
-                                    .text_decoration_color(gpui::blue())
+                                    .text_decoration_color(gpui::yellow())
                             })
                             .child(format!("Hello, {}!", &self.text)),
                     )
