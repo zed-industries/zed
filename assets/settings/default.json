@@ -788,6 +788,7 @@
       "**/*.key",
       "**/*.cert",
       "**/*.crt",
+      "**/.dev.vars",
       "**/secrets.yml"
     ],
     // When to show edit predictions previews in buffer.
