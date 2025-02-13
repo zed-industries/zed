@@ -8,12 +8,13 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::commit_tooltip::CommitTooltip;
 use editor::{
-    actions::MoveToEnd, scroll::ScrollbarAutoHide, Editor, EditorElement, EditorMode,
-    EditorSettings, MultiBuffer, ShowScrollbar,
+    scroll::ScrollbarAutoHide, Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer,
+    ShowScrollbar,
 };
 use git::repository::{CommitDetails, ResetMode};
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
 use gpui::*;
+use itertools::Itertools;
 use language::{markdown, Buffer, File, ParsedMarkdown};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use multi_buffer::ExcerptInfo;
@@ -27,8 +28,8 @@ use settings::Settings as _;
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration, usize};
 use time::OffsetDateTime;
 use ui::{
-    prelude::*, ButtonLike, Checkbox, CheckboxWithLabel, Divider, DividerColor, ElevationIndex,
-    IndentGuideColors, ListItem, ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
+    prelude::*, ButtonLike, Checkbox, Divider, DividerColor, ElevationIndex, IndentGuideColors,
+    ListItem, ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -45,7 +46,7 @@ actions!(
         OpenMenu,
         FocusEditor,
         FocusChanges,
-        FillCoAuthors,
+        ToggleFillCoAuthors,
     ]
 );
 
@@ -154,7 +155,7 @@ pub struct GitPanel {
     conflicted_count: usize,
     conflicted_staged_count: usize,
     current_modifiers: Modifiers,
-    enable_auto_coauthors: bool,
+    add_coauthors: bool,
     entries: Vec<GitListEntry>,
     entries_by_path: collections::HashMap<RepoPath, usize>,
     focus_handle: FocusHandle,
@@ -260,7 +261,7 @@ impl GitPanel {
                 conflicted_count: 0,
                 conflicted_staged_count: 0,
                 current_modifiers: window.modifiers(),
-                enable_auto_coauthors: true,
+                add_coauthors: true,
                 entries: Vec::new(),
                 entries_by_path: HashMap::default(),
                 focus_handle: cx.focus_handle(),
@@ -696,10 +697,13 @@ impl GitPanel {
             return;
         }
 
-        let message = self.commit_editor.read(cx).text(cx);
+        let mut message = self.commit_editor.read(cx).text(cx);
         if message.trim().is_empty() {
             self.commit_editor.read(cx).focus_handle(cx).focus(window);
             return;
+        }
+        if self.add_coauthors {
+            self.fill_co_authors(&mut message, cx);
         }
 
         let task = if self.has_staged_changes() {
@@ -781,19 +785,70 @@ impl GitPanel {
         self.pending_commit = Some(task);
     }
 
-    fn fill_co_authors(&mut self, _: &FillCoAuthors, window: &mut Window, cx: &mut Context<Self>) {
-        const CO_AUTHOR_PREFIX: &str = "Co-authored-by: ";
+    fn potential_co_authors(&self, cx: &App) -> Vec<(String, String)> {
+        let mut new_co_authors = Vec::new();
+        let project = self.project.read(cx);
 
         let Some(room) = self
             .workspace
             .upgrade()
             .and_then(|workspace| workspace.read(cx).active_call()?.read(cx).room().cloned())
         else {
-            return;
+            return Vec::default();
         };
 
-        let mut existing_text = self.commit_editor.read(cx).text(cx);
-        existing_text.make_ascii_lowercase();
+        let room = room.read(cx);
+
+        for (peer_id, collaborator) in project.collaborators() {
+            if collaborator.is_host {
+                continue;
+            }
+
+            let Some(participant) = room.remote_participant_for_peer_id(*peer_id) else {
+                continue;
+            };
+            if participant.can_write() && participant.user.email.is_some() {
+                let email = participant.user.email.clone().unwrap();
+
+                new_co_authors.push((
+                    participant
+                        .user
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| participant.user.github_login.clone()),
+                    email,
+                ))
+            }
+        }
+        if !project.is_local() && !project.is_read_only(cx) {
+            if let Some(user) = room.local_participant_user(cx) {
+                if let Some(email) = user.email.clone() {
+                    new_co_authors.push((
+                        user.name
+                            .clone()
+                            .unwrap_or_else(|| user.github_login.clone()),
+                        email.clone(),
+                    ))
+                }
+            }
+        }
+        new_co_authors
+    }
+
+    fn toggle_fill_co_authors(
+        &mut self,
+        _: &ToggleFillCoAuthors,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.add_coauthors = !self.add_coauthors;
+        cx.notify();
+    }
+
+    fn fill_co_authors(&mut self, message: &mut String, cx: &mut Context<Self>) {
+        const CO_AUTHOR_PREFIX: &str = "Co-authored-by: ";
+
+        let existing_text = message.to_ascii_lowercase();
         let lowercase_co_author_prefix = CO_AUTHOR_PREFIX.to_lowercase();
         let mut ends_with_co_authors = false;
         let existing_co_authors = existing_text
@@ -810,70 +865,32 @@ impl GitPanel {
             })
             .collect::<HashSet<_>>();
 
-        let project = self.project.read(cx);
-        let room = room.read(cx);
-        let mut new_co_authors = Vec::new();
+        let new_co_authors = self
+            .potential_co_authors(cx)
+            .into_iter()
+            .filter(|(_, email)| {
+                !existing_co_authors
+                    .iter()
+                    .any(|existing| existing.contains(email.as_str()))
+            })
+            .collect::<Vec<_>>();
 
-        for (peer_id, collaborator) in project.collaborators() {
-            if collaborator.is_host {
-                continue;
-            }
-
-            let Some(participant) = room.remote_participant_for_peer_id(*peer_id) else {
-                continue;
-            };
-            if participant.can_write() && participant.user.email.is_some() {
-                let email = participant.user.email.clone().unwrap();
-
-                if !existing_co_authors.contains(&email.as_ref()) {
-                    new_co_authors.push((
-                        participant
-                            .user
-                            .name
-                            .clone()
-                            .unwrap_or_else(|| participant.user.github_login.clone()),
-                        email,
-                    ))
-                }
-            }
-        }
-        if !project.is_local() && !project.is_read_only(cx) {
-            if let Some(user) = room.local_participant_user(cx) {
-                if let Some(email) = user.email.clone() {
-                    if !existing_co_authors.contains(&email.as_ref()) {
-                        new_co_authors.push((
-                            user.name
-                                .clone()
-                                .unwrap_or_else(|| user.github_login.clone()),
-                            email.clone(),
-                        ))
-                    }
-                }
-            }
-        }
         if new_co_authors.is_empty() {
             return;
         }
 
-        self.commit_editor.update(cx, |editor, cx| {
-            let editor_end = editor.buffer().read(cx).read(cx).len();
-            let mut edit = String::new();
-            if !ends_with_co_authors {
-                edit.push('\n');
-            }
-            for (name, email) in new_co_authors {
-                edit.push('\n');
-                edit.push_str(CO_AUTHOR_PREFIX);
-                edit.push_str(&name);
-                edit.push_str(" <");
-                edit.push_str(&email);
-                edit.push('>');
-            }
-
-            editor.edit(Some((editor_end..editor_end, edit)), cx);
-            editor.move_to_end(&MoveToEnd, window, cx);
-            editor.focus_handle(cx).focus(window);
-        });
+        if !ends_with_co_authors {
+            message.push('\n');
+        }
+        for (name, email) in new_co_authors {
+            message.push('\n');
+            message.push_str(CO_AUTHOR_PREFIX);
+            message.push_str(&name);
+            message.push_str(" <");
+            message.push_str(&email);
+            message.push('>');
+        }
+        message.push('\n');
     }
 
     fn schedule_update(
@@ -1043,11 +1060,6 @@ impl GitPanel {
 
         self.select_first_entry_if_none(cx);
 
-        cx.notify();
-    }
-
-    fn toggle_auto_coauthors(&mut self, cx: &mut Context<Self>) {
-        self.enable_auto_coauthors = !self.enable_auto_coauthors;
         cx.notify();
     }
 
@@ -1241,14 +1253,59 @@ impl GitPanel {
                 cx.listener(move |this, _: &ClickEvent, window, cx| this.commit_changes(window, cx))
             });
 
-        let enable_coauthors = CheckboxWithLabel::new(
-            "enable-coauthors",
-            Label::new("Add Co-authors")
-                .color(Color::Disabled)
-                .size(LabelSize::XSmall),
-            self.enable_auto_coauthors.into(),
-            cx.listener(move |this, _, _, cx| this.toggle_auto_coauthors(cx)),
-        );
+        let potential_co_authors = self.potential_co_authors(cx);
+        let enable_coauthors = if potential_co_authors.is_empty() {
+            None
+        } else {
+            Some(
+                IconButton::new("co-authors", IconName::Person)
+                    .icon_color(Color::Disabled)
+                    .selected_icon_color(Color::Selected)
+                    .toggle_state(self.add_coauthors)
+                    .tooltip(move |_, cx| {
+                        let title = format!(
+                            "Add co-authored-by:{}{}",
+                            if potential_co_authors.len() == 1 {
+                                ""
+                            } else {
+                                "\n"
+                            },
+                            potential_co_authors
+                                .iter()
+                                .map(|(name, email)| format!(" {} <{}>", name, email))
+                                .join("\n")
+                        );
+                        Tooltip::simple(title, cx)
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.add_coauthors = !this.add_coauthors;
+                        cx.notify();
+                    })),
+            )
+        };
+
+        let branch = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.read(cx).branch().map(|b| b.name.clone()))
+            .unwrap_or_else(|| "<no branch>".into());
+
+        let branch_selector = Button::new("branch-selector", branch)
+            .color(Color::Muted)
+            .style(ButtonStyle::Subtle)
+            .icon(IconName::GitBranch)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .size(ButtonSize::Compact)
+            .icon_position(IconPosition::Start)
+            .tooltip(Tooltip::for_action_title(
+                "Switch Branch",
+                &zed_actions::git::Branch,
+            ))
+            .on_click(cx.listener(|_, _, window, cx| {
+                window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
+            }))
+            .style(ButtonStyle::Transparent);
 
         let footer_size = px(32.);
         let gap = px(16.0);
@@ -1274,7 +1331,7 @@ impl GitPanel {
                     .left_2()
                     .h(footer_size)
                     .flex_none()
-                    .child(enable_coauthors),
+                    .child(branch_selector),
             )
             .child(
                 h_flex()
@@ -1283,6 +1340,7 @@ impl GitPanel {
                     .right_2()
                     .h(footer_size)
                     .flex_none()
+                    .children(enable_coauthors)
                     .child(commit_button),
             )
     }
@@ -1301,32 +1359,6 @@ impl GitPanel {
         }) {
             return None;
         }
-
-        let _branch_selector = Button::new("branch-selector", branch.name.clone())
-            .color(Color::Muted)
-            .style(ButtonStyle::Subtle)
-            .icon(IconName::GitBranch)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .size(ButtonSize::Compact)
-            .icon_position(IconPosition::Start)
-            .tooltip(Tooltip::for_action_title(
-                "Switch Branch",
-                &zed_actions::git::Branch,
-            ))
-            .on_click(cx.listener(|_, _, window, cx| {
-                window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
-            }))
-            .style(ButtonStyle::Transparent);
-
-        let _timestamp = Label::new(time_format::format_local_timestamp(
-            OffsetDateTime::from_unix_timestamp(commit.commit_timestamp).log_err()?,
-            OffsetDateTime::now_utc(),
-            time_format::TimestampFormat::Relative,
-        ))
-        .size(LabelSize::Small)
-        .color(Color::Muted);
-
         let tooltip = if self.has_staged_changes() {
             "git reset HEAD^ --soft"
         } else {
@@ -1374,13 +1406,6 @@ impl GitPanel {
                         .icon_position(IconPosition::Start)
                         .tooltip(Tooltip::for_action_title(tooltip, &git::Uncommit))
                         .on_click(cx.listener(|this, _, window, cx| this.uncommit(window, cx))),
-                    // .child(
-                    //     panel_filled_button("Push")
-                    //         .icon(IconName::ArrowUp)
-                    //         .icon_size(IconSize::Small)
-                    //         .icon_color(Color::Muted)
-                    //         .icon_position(IconPosition::Start), // .disabled(true),
-                    // ),
                 ),
         )
     }
@@ -1857,7 +1882,7 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::toggle_staged_for_selected))
             .when(has_write_access && has_co_authors, |git_panel| {
-                git_panel.on_action(cx.listener(Self::fill_co_authors))
+                git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
             // .on_action(cx.listener(|this, &OpenSelected, cx| this.open_selected(&OpenSelected, cx)))
             .on_hover(cx.listener(|this, hovered, window, cx| {
