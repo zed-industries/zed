@@ -427,7 +427,7 @@ impl Render for ZedPredictModal {
                         .gap_2()
                         .w_full()
                         .child(
-                            Button::new("accept-tos", "Enable Edit Predictions")
+                            Button::new("accept-tos", "Enable Edit Prediction")
                                 .disabled(!self.terms_of_service)
                                 .style(ButtonStyle::Tinted(TintColor::Accent))
                                 .full_width()
