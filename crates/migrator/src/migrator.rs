@@ -644,8 +644,6 @@ const SETTINGS_REPLACE_NESTED_KEY: &str = r#"
 )
 "#;
 
-/// Migration specific to substituting `features.inline_completion_provider` with
-/// `edit_prediction_provider` before the onboarding flow sets `edit_prediction_provider`.
 fn replace_edit_prediction_provider_setting(
     contents: &str,
     mat: &QueryMatch,
@@ -665,9 +663,8 @@ fn replace_edit_prediction_provider_setting(
         .byte_range();
     let setting_name = contents.get(setting_range.clone())?;
 
-    if dbg!(parent_object_name) == "features" && dbg!(setting_name) == "inline_completion_provider"
-    {
-        return Some((dbg!(setting_range), "edit_prediction_provider".into()));
+    if parent_object_name == "features" && setting_name == "inline_completion_provider" {
+        return Some((setting_range, "edit_prediction_provider".into()));
     }
 
     None
