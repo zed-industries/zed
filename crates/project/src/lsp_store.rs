@@ -3328,16 +3328,7 @@ impl LspStore {
                                     }
                                 }
                             });
-                            let servers_to_drop = this
-                                .refresh_server_tree(cx)
-                                .into_iter()
-                                .map(|server| this.stop_local_language_server(server, cx))
-                                .collect::<Vec<_>>();
-                            cx.background_executor()
-                                .spawn(async move {
-                                    futures::future::join_all(servers_to_drop).await;
-                                })
-                                .detach();
+                            this.refresh_server_tree(cx);
                         })
                         .ok();
                     }
@@ -3650,10 +3641,8 @@ impl LspStore {
             }
         }
 
-        let to_stop = self.refresh_server_tree(cx);
-        for id in to_stop {
-            self.stop_local_language_server(id, cx).detach();
-        }
+        self.refresh_server_tree(cx);
+
         if let Some(prettier_store) = self.as_local().map(|s| s.prettier_store.clone()) {
             prettier_store.update(cx, |prettier_store, cx| {
                 prettier_store.on_settings_changed(language_formatters_to_check, cx)
@@ -3663,18 +3652,19 @@ impl LspStore {
         cx.notify();
     }
 
-    fn refresh_server_tree(&mut self, cx: &mut App) -> Vec<LanguageServerId> {
-        let mut to_stop = vec![];
+    fn refresh_server_tree(&mut self, cx: &mut Context<'_, Self>) {
+        let buffer_store = self.buffer_store.clone();
         if let Some(local) = self.as_local_mut() {
-            local.lsp_tree.clone().update(cx, |lsp_tree, cx| {
-                let mut get_adapter = {
+            let mut adapters = BTreeMap::default();
+            let to_stop = local.lsp_tree.clone().update(cx, |lsp_tree, cx| {
+                let get_adapter = {
                     let languages = local.languages.clone();
                     let environment = local.environment.clone();
                     let weak = local.weak.clone();
                     let worktree_store = local.worktree_store.clone();
                     let http_client = local.http_client.clone();
                     let fs = local.fs.clone();
-                    move |worktree_id, cx: &mut App| -> Option<Arc<dyn LspAdapterDelegate>> {
+                    move |worktree_id, cx: &mut App| {
                         let worktree = worktree_store.read(cx).worktree_for_id(worktree_id, cx)?;
                         Some(LocalLspAdapterDelegate::new(
                             languages.clone(),
@@ -3688,34 +3678,111 @@ impl LspStore {
                     }
                 };
 
-                lsp_tree.on_settings_changed(
-                    &mut get_adapter,
-                    &mut |disposition, cx| {
-                        let worktree = local
-                            .worktree_store
-                            .read(cx)
-                            .worktree_for_id(disposition.path.worktree_id, cx)
-                            .expect("Worktree ID to be valid");
-                        let delegate =
-                            LocalLspAdapterDelegate::from_local_lsp(local, &worktree, cx);
-                        let adapter = local
-                            .languages
-                            .adapter_for_name(disposition.server_name)
-                            .expect("Adapter to be available");
-                        local.start_language_server(
-                            &worktree,
-                            delegate,
-                            adapter,
-                            disposition.settings,
+                let mut rebase = lsp_tree.rebase();
+                for buffer in buffer_store.read(cx).buffers().collect::<Vec<_>>() {
+                    let buffer = buffer.read(cx);
+                    if let Some((file, language)) = File::from_dyn(buffer.file())
+                        .cloned()
+                        .zip(buffer.language().map(|l| l.name()))
+                    {
+                        let worktree_id = file.worktree_id(cx);
+                        let Some(worktree) = local.worktree_store.read(cx).worktree_for_id(worktree_id, cx) else {
+                            continue;
+                        };
+                        let path: Arc<Path> = file
+                            .path()
+                            .parent()
+                            .map(Arc::from)
+                            .unwrap_or_else(|| file.path().clone());
+                        let worktree_path = ProjectPath { worktree_id, path };
+
+                        let Some(delegate) = adapters
+                            .entry(worktree_id)
+                            .or_insert_with(|| get_adapter(worktree_id, cx))
+                            .clone()
+                        else {
+                            continue;
+                        };
+                        let nodes = rebase.get(
+                            worktree_path,
+                            AdapterQuery::Language(&language),
+                            delegate.clone(),
                             cx,
-                        )
-                    },
-                    &mut |id| to_stop.push(id),
-                    cx,
-                );
+                        );
+                        for node in nodes {
+                            node.server_id_or_init(|LaunchDisposition {
+                                 server_name,
+                                 attach,
+                                 path,
+                                 settings,
+                             }| match attach {
+                                language::Attach::InstancePerRoot => {
+                                    // todo: handle instance per root proper.
+                                    if let Some(server_ids) = local
+                                        .language_server_ids
+                                        .get(&(worktree_id, server_name.clone()))
+                                    {
+                                        server_ids.iter().cloned().next().unwrap()
+                                    } else {
+                                        local.start_language_server(
+                                            &worktree,
+                                            delegate.clone(),
+                                            local.languages
+                                                .lsp_adapters(&language)
+                                                .into_iter()
+                                                .find(|adapter| &adapter.name() == server_name)
+                                                .expect("To find LSP adapter"),
+                                            settings,
+                                            cx,
+                                        )
+                                    }
+                                }
+                                language::Attach::Shared => {
+                                    let uri = Url::from_directory_path(
+                                        worktree.read(cx).abs_path().join(&path.path),
+                                    );
+                                    let key = (worktree_id, server_name.clone());
+                                    if !local.language_server_ids.contains_key(&key) {
+
+                                        local.start_language_server(
+                                            &worktree,
+                                            delegate.clone(),
+                                            local.languages
+                                                .lsp_adapters(&language)
+                                                .into_iter()
+                                                .find(|adapter| &adapter.name() == server_name)
+                                                .expect("To find LSP adapter"),
+                                            settings,
+                                            cx,
+                                        );
+                                    }
+                                    if let Some(server_ids) = local
+                                        .language_server_ids
+                                        .get(&key)
+                                    {
+                                        debug_assert_eq!(server_ids.len(), 1);
+                                        let server_id = server_ids.iter().cloned().next().unwrap();
+
+                                        if let Some(state) = local.language_servers.get(&server_id) {
+                                            if let Ok(uri) = uri {
+                                                state.add_workspace_folder(uri);
+                                            };
+                                        }
+                                        server_id
+                                    } else {
+                                        unreachable!("Language server ID should be available, as it's registered on demand")
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
+                rebase.finish()
             });
+            for id in to_stop {
+                self.stop_local_language_server(id, cx).detach();
+            }
         }
-        to_stop
     }
 
     pub fn apply_code_action(

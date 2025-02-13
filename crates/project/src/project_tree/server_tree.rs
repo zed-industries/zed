@@ -322,107 +322,11 @@ impl LanguageServerTree {
         adapters_with_settings
     }
 
-    pub(crate) fn on_settings_changed(
-        &mut self,
-        get_delegate: &mut dyn FnMut(WorktreeId, &mut App) -> Option<Arc<dyn LspAdapterDelegate>>,
-        spawn_language_server: &mut dyn FnMut(LaunchDisposition, &mut App) -> LanguageServerId,
-        on_language_server_removed: &mut dyn FnMut(LanguageServerId),
-        cx: &mut App,
-    ) {
-        // Settings are checked at query time. Thus, to avoid messing with inference of applicable settings, we're just going to clear ourselves and let the next query repopulate.
-        // We're going to optimistically re-run the queries and re-assign the same language server id when a language server still exists at a given tree node.
-        let old_instances = std::mem::take(&mut self.instances);
-        let old_attach_kinds = std::mem::take(&mut self.attach_kind_cache);
-
-        let mut referenced_instances = BTreeSet::new();
-        // Re-map the old tree onto a new one. In the process we'll get a list of servers we have to shut down.
-        let mut all_instances = BTreeSet::new();
-
-        for (worktree_id, servers) in &old_instances {
-            // Record all initialized node ids.
-            all_instances.extend(servers.roots.values().flat_map(|servers_at_node| {
-                servers_at_node
-                    .values()
-                    .filter_map(|(server_node, _)| server_node.id.get().copied())
-            }));
-            let Some(delegate) = get_delegate(*worktree_id, cx) else {
-                // If worktree is no longer around, we're just going to shut down all of the language servers (since they've been added to all_instances).
-                continue;
-            };
-
-            for (path, servers_for_path) in &servers.roots {
-                for (server_name, (_, languages)) in servers_for_path {
-                    let settings_location = SettingsLocation {
-                        worktree_id: *worktree_id,
-                        path: &path,
-                    };
-                    // Verify which of the previous languages still have this server enabled.
-
-                    let mut adapter_with_settings = IndexMap::default();
-
-                    for language_name in languages {
-                        self.adapters_for_language(settings_location, language_name, cx)
-                            .into_iter()
-                            .for_each(|(lsp_adapter, lsp_settings)| {
-                                if &lsp_adapter.0.name() != server_name {
-                                    return;
-                                }
-                                adapter_with_settings
-                                    .entry(lsp_adapter)
-                                    .and_modify(|x: &mut (_, BTreeSet<LanguageName>)| {
-                                        x.1.extend(lsp_settings.1.clone())
-                                    })
-                                    .or_insert(lsp_settings);
-                            });
-                    }
-
-                    if adapter_with_settings.is_empty() {
-                        // Since all languages that have had this server enabled are now disabled, we can remove the server entirely.
-                        continue;
-                    };
-
-                    for new_node in self.get_with_adapters(
-                        ProjectPath {
-                            path: path.clone(),
-                            worktree_id: *worktree_id,
-                        },
-                        adapter_with_settings,
-                        delegate.clone(),
-                        cx,
-                    ) {
-                        new_node.server_id_or_init(|disposition| {
-                            let Some((existing_node, _)) = servers
-                                .roots
-                                .get(&disposition.path.path)
-                                .and_then(|roots| roots.get(disposition.server_name))
-                                .filter(|(old_node, _)| {
-                                    old_attach_kinds.get(disposition.server_name).map_or(
-                                        false,
-                                        |old_attach| {
-                                            disposition.attach == *old_attach
-                                                && disposition.settings == old_node.settings
-                                        },
-                                    )
-                                })
-                            else {
-                                return spawn_language_server(disposition, cx);
-                            };
-                            if let Some(id) = existing_node.id.get().copied() {
-                                // If we have a node with ID assigned (and it's parameters match `disposition`), reuse the id.
-                                referenced_instances.insert(id);
-                                id
-                            } else {
-                                // Otherwise, if we do have a node but it does not have an ID assigned, keep it that way.
-                                return spawn_language_server(disposition, cx);
-                            }
-                        });
-                    }
-                }
-            }
-        }
-        for server_to_remove in all_instances.difference(&referenced_instances) {
-            on_language_server_removed(*server_to_remove);
-        }
+    // Rebasing a tree:
+    // - Clears it out
+    // - Provides you with the indirect access to the old tree while you're reinitializing a new one (by querying it).
+    pub(crate) fn rebase(&mut self) -> ServerTreeRebase<'_> {
+        ServerTreeRebase::new(self)
     }
 
     /// Remove nodes with a given ID from the tree.
@@ -432,5 +336,100 @@ impl LanguageServerTree {
                 nodes.retain(|_, (node, _)| node.id.get().map_or(true, |id| !ids.contains(&id)));
             }
         }
+    }
+}
+
+pub(crate) struct ServerTreeRebase<'a> {
+    old_contents: BTreeMap<WorktreeId, ServersForWorktree>,
+    new_tree: &'a mut LanguageServerTree,
+    /// All server IDs seen in the old tree.
+    all_server_ids: BTreeSet<LanguageServerId>,
+    /// Server IDs we've preserved for a new iteration of the tree. `all_server_ids - rebased_server_ids` is the
+    /// set of server IDs that can be shut down.
+    rebased_server_ids: BTreeSet<LanguageServerId>,
+}
+
+impl<'tree> ServerTreeRebase<'tree> {
+    fn new(new_tree: &'tree mut LanguageServerTree) -> Self {
+        let old_contents = std::mem::take(&mut new_tree.instances);
+        new_tree.attach_kind_cache.clear();
+        let all_server_ids = old_contents
+            .values()
+            .flat_map(|nodes| {
+                nodes.roots.values().flat_map(|servers| {
+                    servers
+                        .values()
+                        .filter_map(|server| server.0.id.get().copied())
+                })
+            })
+            .collect();
+        Self {
+            old_contents,
+            new_tree,
+            all_server_ids,
+            rebased_server_ids: BTreeSet::new(),
+        }
+    }
+
+    pub(crate) fn get<'a>(
+        &'a mut self,
+        path: ProjectPath,
+        query: AdapterQuery<'_>,
+        delegate: Arc<dyn LspAdapterDelegate>,
+        cx: &mut App,
+    ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
+        let settings_location = SettingsLocation {
+            worktree_id: path.worktree_id,
+            path: &path.path,
+        };
+        let adapters = match query {
+            AdapterQuery::Language(language_name) => {
+                self.new_tree
+                    .adapters_for_language(settings_location, language_name, cx)
+            }
+            AdapterQuery::Adapter(language_server_name) => IndexMap::from_iter(
+                self.new_tree
+                    .adapter_for_name(language_server_name)
+                    .map(|adapter| (adapter, (LspSettings::default(), BTreeSet::new()))),
+            ),
+        };
+
+        self.new_tree
+            .get_with_adapters(path, adapters, delegate, cx)
+            .filter_map(|node| {
+                // Inspect result of the query and initialize it ourselves before
+                // handing it off to the caller.
+                let disposition = node.0.upgrade()?;
+
+                if disposition.id.get().is_some() {
+                    return Some(node);
+                }
+                let Some((existing_node, _)) = self
+                    .old_contents
+                    .get(&disposition.path.worktree_id)
+                    .and_then(|worktree_nodes| worktree_nodes.roots.get(&disposition.path.path))
+                    .and_then(|roots| roots.get(&disposition.name))
+                    .filter(|(old_node, _)| {
+                        disposition.attach == old_node.attach
+                            && disposition.settings == old_node.settings
+                    })
+                else {
+                    return Some(node);
+                };
+                if let Some(existing_id) = existing_node.id.get() {
+                    self.rebased_server_ids.insert(*existing_id);
+                    disposition.id.set(*existing_id).ok();
+                }
+
+                Some(node)
+            })
+    }
+
+    /// Returns IDs of servers that are no longer referenced (and can be shut down).
+    pub(crate) fn finish(self) -> BTreeSet<LanguageServerId> {
+        self.all_server_ids
+            .difference(&self.rebased_server_ids)
+            .copied()
+            .collect()
     }
 }
