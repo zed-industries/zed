@@ -541,26 +541,40 @@ fn matching_history_items<'a>(
     query: &FileSearchQuery,
 ) -> HashMap<Arc<Path>, Match> {
     let mut candidates_paths = HashMap::default();
+    // List of path not part of current project
+    let mut non_project_path = HashMap::default();
 
     let history_items_by_worktrees = history_items
         .into_iter()
         .chain(currently_opened)
         .filter_map(|found_path| {
+            // In case it's a file outside of the current project the ProjectPath.path in found_path will be empty, only the absolute path exists
+            // in order to be able to find matches on the path we still need to set it in path temporaly
+            let (filename, path) = match found_path.project.path.file_name() {
+                Some(filename) => (
+                    filename.to_string_lossy().to_lowercase(),
+                    &*found_path.project.path,
+                ),
+                None => {
+                    let absolute_path = found_path.absolute.as_ref()?;
+                    non_project_path.insert(
+                        (found_path.project.worktree_id, absolute_path.as_path()),
+                        &found_path.project,
+                    );
+                    (
+                        absolute_path.file_name()?.to_string_lossy().to_lowercase(),
+                        absolute_path.as_ref(),
+                    )
+                }
+            };
+
             let candidate = PathMatchCandidate {
                 is_dir: false, // You can't open directories as project items
-                path: &found_path.project.path,
+                path,
                 // Only match history items names, otherwise their paths may match too many queries, producing false positives.
                 // E.g. `foo` would match both `something/foo/bar.rs` and `something/foo/foo.rs` and if the former is a history item,
                 // it would be shown first always, despite the latter being a better match.
-                char_bag: CharBag::from_iter(
-                    found_path
-                        .project
-                        .path
-                        .file_name()?
-                        .to_string_lossy()
-                        .to_lowercase()
-                        .chars(),
-                ),
+                char_bag: CharBag::from_iter(filename.chars()),
             };
             candidates_paths.insert(&found_path.project, found_path);
             Some((found_path.project.worktree_id, candidate))
@@ -588,11 +602,20 @@ fn matching_history_items<'a>(
             )
             .into_iter()
             .filter_map(|path_match| {
-                candidates_paths
-                    .remove_entry(&ProjectPath {
+                // Find the original ProjectPath if it's a file not included in the project
+                // This ProjectPath has been replaced earlier with a temporary path containing absolute path of the file
+                let candidate_path_key = match non_project_path.get(&(
+                    WorktreeId::from_usize(path_match.worktree_id),
+                    &path_match.path,
+                )) {
+                    Some(original_project_path) => (*original_project_path).clone(),
+                    None => ProjectPath {
                         worktree_id: WorktreeId::from_usize(path_match.worktree_id),
                         path: Arc::clone(&path_match.path),
-                    })
+                    },
+                };
+                candidates_paths
+                    .remove_entry(&candidate_path_key)
                     .map(|(_, found_path)| {
                         (
                             Arc::clone(&path_match.path),
