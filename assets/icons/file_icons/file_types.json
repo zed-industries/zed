@@ -18,6 +18,7 @@
     "bash_logout": "terminal",
     "bash_profile": "terminal",
     "bashrc": "terminal",
+    "bicep": "bicep",
     "bmp": "image",
     "c": "c",
     "c++": "cpp",
