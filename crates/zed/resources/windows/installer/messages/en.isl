@@ -12,5 +12,4 @@ AddToPath=Add to PATH (requires shell restart)
 RunAfter=Run %1 after installation
 Other=Other:
 SourceFile=%1 Source File
-OpenWithZedContextMenu=Open w&ith %1
-UpdatingZed=Updating Zed...
+OpenWithContextMenu=Open w&ith %1
