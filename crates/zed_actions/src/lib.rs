@@ -56,8 +56,7 @@ pub mod workspace {
         [
             "editor::CopyPath",
             "outline_panel::CopyPath",
-            "project_panel::CopyPath",
-            "workspace::CopyPath"
+            "project_panel::CopyPath"
         ]
     );
 
@@ -67,8 +66,7 @@ pub mod workspace {
         [
             "editor::CopyRelativePath",
             "outline_panel::CopyRelativePath",
-            "project_panel::CopyRelativePath",
-            "workspace::CopyRelativePath"
+            "project_panel::CopyRelativePath"
         ]
     );
 }
