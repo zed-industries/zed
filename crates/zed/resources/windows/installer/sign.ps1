@@ -6,37 +6,27 @@ param (
 $params = @{}
 
 $endpoint = $ENV:ENDPOINT
-if (-Not [string]::IsNullOrWhiteSpace($endpoint)) {
-    $params["Endpoint"] = $endpoint
+if ([string]::IsNullOrWhiteSpace($endpoint)) {
+    throw "The 'ENDPOINT' env is required."
 }
+$params["Endpoint"] = $endpoint
 
 $trustedSigningAccountName = $ENV:ACCOUNT_NAME
 if ([string]::IsNullOrWhiteSpace($trustedSigningAccountName)) {
-    throw "The 'trusted-signing-account-name' input is required."
+    throw "The 'ACCOUNT_NAME' env is required."
 }
 $params["CodeSigningAccountName"] = $trustedSigningAccountName
 
 $certificateProfileName = $ENV:CERT_PROFILE_NAME
-if (-Not [string]::IsNullOrWhiteSpace($certificateProfileName)) {
-    $params["CertificateProfileName"] = $certificateProfileName
+if ([string]::IsNullOrWhiteSpace($certificateProfileName)) {
+    throw "The 'CERT_PROFILE_NAME' env is required."
 }
+$params["CertificateProfileName"] = $certificateProfileName
 
 $params["Files"] = $FILE_PATH
-
-$fileDigest = $ENV:FILE_DIGEST
-if (-Not [string]::IsNullOrWhiteSpace($fileDigest)) {
-    $params["FileDigest"] = $fileDigest
-}
-
-$timestampRfc3161 = $ENV:TIMESTAMP_SERVER
-if (-Not [string]::IsNullOrWhiteSpace($timestampRfc3161)) {
-    $params["TimestampRfc3161"] = $timestampRfc3161
-}
-
-$timestampDigest = $ENV:TIMESTAMP_DIGEST
-if (-Not [string]::IsNullOrWhiteSpace($timestampDigest)) {
-    $params["TimestampDigest"] = $timestampDigest
-}
+$params["FileDigest"] = "SHA256"
+$params["TimestampRfc3161"] = "http://timestamp.acs.microsoft.com"
+$params["TimestampDigest"] = "SHA256"
 
 $trace = $ENV:TRACE
 if (-Not [string]::IsNullOrWhiteSpace($trace)) {
