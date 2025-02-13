@@ -61,6 +61,7 @@ pub struct IconDefinition {
 const FILE_ICONS: &[(&str, &str)] = &[
     ("astro", "icons/file_icons/astro.svg"),
     ("audio", "icons/file_icons/audio.svg"),
+    ("bicep", "icons/file_icons/file.svg"),
     ("bun", "icons/file_icons/bun.svg"),
     ("c", "icons/file_icons/c.svg"),
     ("code", "icons/file_icons/code.svg"),

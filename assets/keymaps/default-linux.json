@@ -510,13 +510,14 @@
     "context": "Editor && edit_prediction",
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
-      "alt-l": "editor::AcceptEditPrediction"
+      "alt-l": "editor::AcceptEditPrediction",
+      "tab": "editor::AcceptEditPrediction"
     }
   },
   {
-    "context": "Editor && edit_prediction && !edit_prediction_requires_modifier",
+    "context": "Editor && edit_prediction_conflict",
     "bindings": {
-      "tab": "editor::AcceptEditPrediction",
+      "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction"
     }
   },
