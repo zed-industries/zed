@@ -3633,7 +3633,7 @@ impl ProjectPanel {
             })
             .on_drag_move::<DraggedSelection>(cx.listener(
                 move |this, event: &DragMoveEvent<DraggedSelection>, window, cx| {
-                    if event.bounds.contains(&event.event.position) {
+                    if event.bounds.contains(&event.event.absolute_position) {
                         if this.last_selection_drag_over_entry == Some(entry_id) {
                             return;
                         }

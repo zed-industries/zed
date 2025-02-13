@@ -260,7 +260,7 @@ impl Interactivity {
                             (listener)(
                                 &DragMoveEvent {
                                     event: event.clone(),
-                                    bounds: hitbox.bounds,
+                                    bounds: hitbox.bounds + window.element_origin(),
                                     drag: PhantomData,
                                     dragged_item: Arc::clone(&drag.value),
                                 },
