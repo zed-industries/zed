@@ -59,6 +59,7 @@ pub struct IconDefinition {
 
 /// A mapping of a file type identifier to its corresponding icon.
 const FILE_ICONS: &[(&str, &str)] = &[
+    ("archive", "icons/file_icons/file.svg"),
     ("astro", "icons/file_icons/astro.svg"),
     ("audio", "icons/file_icons/audio.svg"),
     ("bicep", "icons/file_icons/file.svg"),
