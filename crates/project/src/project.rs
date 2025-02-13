@@ -1612,6 +1612,16 @@ impl Project {
         })
     }
 
+    pub fn delete_file(
+        &mut self,
+        path: ProjectPath,
+        trash: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let entry = self.entry_for_path(&path, cx)?;
+        self.delete_entry(entry.id, trash, cx)
+    }
+
     pub fn delete_entry(
         &mut self,
         entry_id: ProjectEntryId,
