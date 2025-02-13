@@ -3328,7 +3328,6 @@ impl LspStore {
                                     }
                                 }
                             });
-                            this.refresh_server_tree(cx);
                         })
                         .ok();
                     }
@@ -3680,7 +3679,11 @@ impl LspStore {
 
                 let mut rebase = lsp_tree.rebase();
                 for buffer in buffer_store.read(cx).buffers().collect::<Vec<_>>() {
+
                     let buffer = buffer.read(cx);
+                    if !local.registered_buffers.contains_key(&buffer.remote_id()) {
+                        continue;
+                    }
                     if let Some((file, language)) = File::from_dyn(buffer.file())
                         .cloned()
                         .zip(buffer.language().map(|l| l.name()))

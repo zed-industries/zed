@@ -1572,10 +1572,10 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
         diagnostics: Vec::new(),
     });
     cx.executor().run_until_parked();
-
     project.update(cx, |project, cx| {
         project.restart_language_servers_for_buffers(vec![buffer.clone()], cx);
     });
+    cx.run_until_parked();
     let mut fake_server = fake_servers.next().await.unwrap();
     let notification = fake_server
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
