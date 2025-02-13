@@ -583,14 +583,15 @@
   {
     "context": "Editor && edit_prediction",
     "bindings": {
-      "alt-tab": "editor::AcceptEditPrediction"
+      "alt-tab": "editor::AcceptEditPrediction",
+      "tab": "editor::AcceptEditPrediction"
     }
   },
   {
-    "context": "Editor && edit_prediction && !edit_prediction_requires_modifier",
+    "context": "Editor && edit_prediction_conflict",
     "use_key_equivalents": true,
     "bindings": {
-      "tab": "editor::AcceptEditPrediction"
+      "alt-tab": "editor::AcceptEditPrediction"
     }
   },
   {

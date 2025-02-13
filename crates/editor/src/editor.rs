@@ -194,8 +194,7 @@ pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
-pub(crate) const EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT: &str =
-    "edit_prediction_requires_modifier";
+pub(crate) const EDIT_PREDICTION_CONFLICT_KEY_CONTEXT: &str = "edit_prediction_conflict";
 
 pub fn render_parsed_markdown(
     element_id: impl Into<ElementId>,
@@ -1545,13 +1544,10 @@ impl Editor {
             key_context.add("renaming");
         }
 
-        let mut showing_completions = false;
-
         match self.context_menu.borrow().as_ref() {
             Some(CodeContextMenu::Completions(_)) => {
                 key_context.add("menu");
                 key_context.add("showing_completions");
-                showing_completions = true;
             }
             Some(CodeContextMenu::CodeActions(_)) => {
                 key_context.add("menu");
@@ -1579,15 +1575,11 @@ impl Editor {
         }
 
         if has_active_edit_prediction {
-            key_context.add("copilot_suggestion");
-            key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
-            if showing_completions
-                || self.edit_prediction_requires_modifier()
-                // Require modifier key when the cursor is on leading whitespace, to allow `tab`
-                // bindings to insert tab characters.
-                || (self.edit_prediction_requires_modifier_in_leading_space && self.edit_prediction_cursor_on_leading_whitespace)
-            {
-                key_context.add(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT);
+            if self.edit_prediction_in_conflict() {
+                key_context.add(EDIT_PREDICTION_CONFLICT_KEY_CONTEXT);
+            } else {
+                key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
+                key_context.add("copilot_suggestion");
             }
         }
 
@@ -1598,16 +1590,40 @@ impl Editor {
         key_context
     }
 
+    pub fn edit_prediction_in_conflict(&self) -> bool {
+        let showing_completions = self
+            .context_menu
+            .borrow()
+            .as_ref()
+            .map_or(false, |context| {
+                matches!(context, CodeContextMenu::Completions(_))
+            });
+
+        showing_completions
+            || self.edit_prediction_requires_modifier()
+            // Require modifier key when the cursor is on leading whitespace, to allow `tab`
+            // bindings to insert tab characters.
+            || (self.edit_prediction_requires_modifier_in_leading_space && self.edit_prediction_cursor_on_leading_whitespace)
+    }
+
     pub fn accept_edit_prediction_keybind(
         &self,
         window: &Window,
         cx: &App,
     ) -> AcceptEditPredictionBinding {
         let key_context = self.key_context_internal(true, window, cx);
+        let in_conflict = self.edit_prediction_in_conflict();
         AcceptEditPredictionBinding(
             window
                 .bindings_for_action_in_context(&AcceptEditPrediction, key_context)
                 .into_iter()
+                .filter(|binding| {
+                    !in_conflict
+                        || binding
+                            .keystrokes()
+                            .first()
+                            .map_or(false, |keystroke| keystroke.modifiers.modified())
+                })
                 .rev()
                 .next(),
         )
