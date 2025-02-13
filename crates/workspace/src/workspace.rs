@@ -8188,7 +8188,7 @@ mod tests {
         });
 
         dirty_regular_buffer.update(cx, |buffer, cx| {
-            buffer.project_items[0].update(cx, |pi, cx| pi.is_dirty = true)
+            buffer.project_items[0].update(cx, |pi, _| pi.is_dirty = true)
         });
 
         let close_multi_buffer_task = pane
