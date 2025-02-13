@@ -18,6 +18,7 @@ use crate::provider::{
     lmstudio::LmStudioSettings,
     ollama::OllamaSettings,
     open_ai::OpenAiSettings,
+    mistral::MistralSettings,
 };
 
 /// Initializes the language model settings.
@@ -63,6 +64,7 @@ pub struct AllLanguageModelSettings {
     pub copilot_chat: CopilotChatSettings,
     pub lmstudio: LmStudioSettings,
     pub deepseek: DeepSeekSettings,
+    pub mistral: MistralSettings,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -76,6 +78,7 @@ pub struct AllLanguageModelSettingsContent {
     pub google: Option<GoogleSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub copilot_chat: Option<CopilotChatSettingsContent>,
+    pub mistral: Option<MistralSettingsContent>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -169,6 +172,12 @@ pub struct LmStudioSettingsContent {
 pub struct DeepseekSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::deepseek::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct MistralSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<provider::mistral::AvailableModel>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]

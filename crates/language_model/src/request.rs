@@ -269,6 +269,35 @@ impl LanguageModelRequest {
         }
     }
 
+    pub fn into_mistral(self, model: String, max_output_tokens: Option<u32>) -> mistral::Request {
+        let stream = !model.starts_with("o1-");
+        mistral::Request {
+            model,
+            messages: self
+                .messages
+                .into_iter()
+                .map(|msg| match msg.role {
+                    Role::User => mistral::RequestMessage::User {
+                        content: msg.string_contents(),
+                    },
+                    Role::Assistant => mistral::RequestMessage::Assistant {
+                        content: Some(msg.string_contents()),
+                        tool_calls: Vec::new(),
+                    },
+                    Role::System => mistral::RequestMessage::System {
+                        content: msg.string_contents(),
+                    },
+                })
+                .collect(),
+            stream,
+            stop: self.stop,
+            temperature: self.temperature.unwrap_or(1.0),
+            max_tokens: max_output_tokens,
+            tools: Vec::new(),
+            tool_choice: None,
+        }
+    }
+
     pub fn into_google(self, model: String) -> google_ai::GenerateContentRequest {
         google_ai::GenerateContentRequest {
             model,

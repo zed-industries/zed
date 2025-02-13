@@ -30,6 +30,7 @@ lmstudio = { workspace = true, features = ["schemars"] }
 log.workspace = true
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
+mistral = { workspace = true, features = ["schemars"] }
 parking_lot.workspace = true
 proto.workspace = true
 schemars.workspace = true
