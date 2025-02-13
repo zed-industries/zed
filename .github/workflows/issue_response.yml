@@ -1,0 +1,32 @@
+name: Issue Response
+
+on:
+  schedule:
+    - cron: "0 12 * * 2"
+  workflow_dispatch:
+
+jobs:
+  issue-response:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: "script/issues_needing_comments/pnpm-lock.yaml"
+
+      - run: pnpm install --dir script/issues_needing_comments
+
+      - name: Run Issue Response Script
+        run: pnpm run --dir script/issues_needing_comments ts-node main.ts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SLACK_ISSUE_RESPONSE_WEBHOOK_URL: ${{ secrets.SLACK_ISSUE_RESPONSE_WEBHOOK_URL }}
