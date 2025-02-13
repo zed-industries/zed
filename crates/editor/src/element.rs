@@ -4545,6 +4545,8 @@ impl EditorElement {
             return;
         }
 
+        let corners = Corners::all(px(0.));
+
         let line_height = layout.position_map.line_height;
         window.paint_layer(layout.gutter_hitbox.bounds, |window| {
             for (hunk, hitbox) in &layout.display_hunks {
@@ -4559,7 +4561,7 @@ impl EditorElement {
                         Some((
                             hunk_bounds,
                             cx.theme().status().modified,
-                            Corners::all(px(0.)),
+                            corners,
                             &DiffHunkSecondaryStatus::None,
                         ))
                     }
@@ -4571,13 +4573,13 @@ impl EditorElement {
                         DiffHunkStatus::Added(secondary_status) => (
                             hunk_hitbox.bounds,
                             cx.theme().colors().version_control_added,
-                            Corners::all(px(0.)),
+                            corners,
                             secondary_status,
                         ),
                         DiffHunkStatus::Modified(secondary_status) => (
                             hunk_hitbox.bounds,
                             cx.theme().colors().version_control_modified,
-                            Corners::all(px(0.)),
+                            corners,
                             secondary_status,
                         ),
                         DiffHunkStatus::Removed(secondary_status)
@@ -4586,7 +4588,7 @@ impl EditorElement {
                             (
                                 hunk_hitbox.bounds,
                                 cx.theme().colors().version_control_deleted,
-                                Corners::all(px(0.)),
+                                corners,
                                 secondary_status,
                             )
                         }
@@ -4609,8 +4611,8 @@ impl EditorElement {
                     hunk_to_paint
                 {
                     let background = if *secondary_status != DiffHunkSecondaryStatus::None {
-                        background_color.a *= 0.6;
-                        pattern_slash(background_color, line_height.0 / 3.0)
+                        background_color.a *= 0.7;
+                        pattern_slash(background_color, line_height.0 / 2.5)
                     } else {
                         solid_color(background_color)
                     };
