@@ -2061,7 +2061,7 @@ mod tests {
             .unwrap();
         executor.run_until_parked();
 
-        cx.simulate_prompt_answer(1);
+        cx.simulate_prompt_answer("Don't Save");
         close.await.unwrap();
         assert!(!window_is_edited(window, cx));
 
@@ -2122,7 +2122,7 @@ mod tests {
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
         // The window is successfully closed after the user dismisses the prompt.
-        cx.simulate_prompt_answer(1);
+        cx.simulate_prompt_answer("Don't Save");
         executor.run_until_parked();
         assert_eq!(cx.update(|cx| cx.windows().len()), 0);
     }
@@ -2857,7 +2857,7 @@ mod tests {
             })
             .unwrap();
         cx.background_executor.run_until_parked();
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Overwrite");
         save_task.await.unwrap();
         window
             .update(cx, |_, _, cx| {
@@ -3156,7 +3156,7 @@ mod tests {
             },
         );
         cx.background_executor.run_until_parked();
-        cx.simulate_prompt_answer(1);
+        cx.simulate_prompt_answer("Don't Save");
         cx.background_executor.run_until_parked();
 
         window
