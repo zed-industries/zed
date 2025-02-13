@@ -507,15 +507,6 @@ enum EditPredictionSettings {
     },
 }
 
-impl EditPredictionSettings {
-    pub fn is_enabled(&self) -> bool {
-        match self {
-            EditPredictionSettings::Disabled => false,
-            EditPredictionSettings::Enabled { .. } => true,
-        }
-    }
-}
-
 enum InlineCompletionHighlight {}
 
 pub enum MenuInlineCompletionsPolicy {
@@ -718,6 +709,8 @@ pub struct Editor {
     edit_prediction_preview: EditPredictionPreview,
     edit_prediction_cursor_on_leading_whitespace: bool,
     edit_prediction_requires_modifier_in_leading_space: bool,
+    /// Shows prediction even if disabled for the current buffer
+    user_requested_edit_prediction: bool,
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
@@ -1435,6 +1428,7 @@ impl Editor {
             edit_prediction_settings: EditPredictionSettings::Disabled,
             edit_prediction_cursor_on_leading_whitespace: false,
             edit_prediction_requires_modifier_in_leading_space: true,
+            user_requested_edit_prediction: false,
             custom_context_menu: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
@@ -2176,6 +2170,7 @@ impl Editor {
             refresh_matching_bracket_highlights(self, window, cx);
             self.update_visible_inline_completion(window, cx);
             self.edit_prediction_requires_modifier_in_leading_space = true;
+            self.user_requested_edit_prediction = false;
             linked_editing_ranges::refresh_linked_ranges(self, window, cx);
             if self.git_blame_inline_enabled {
                 self.start_inline_blame_timer(window, cx);
@@ -4776,7 +4771,7 @@ impl Editor {
 
     pub fn edit_predictions_enabled(&self) -> bool {
         match self.edit_prediction_settings {
-            EditPredictionSettings::Disabled => false,
+            EditPredictionSettings::Disabled => self.user_requested_edit_prediction,
             EditPredictionSettings::Enabled { .. } => true,
         }
     }
@@ -4903,6 +4898,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.user_requested_edit_prediction = true;
+
         if !self.has_active_inline_completion() {
             self.refresh_inline_completion(false, true, window, cx);
             return;
@@ -5186,6 +5183,13 @@ impl Editor {
             return false;
         };
 
+        if matches!(
+            active_inline_completion.completion,
+            InlineCompletion::Edit { .. }
+        ) {
+            self.user_requested_edit_prediction = false;
+        }
+
         self.splice_inlays(&active_inline_completion.inlay_ids, Default::default(), cx);
         self.clear_highlights::<InlineCompletionHighlight>(cx);
         self.stale_inline_completion_in_menu = Some(active_inline_completion);
@@ -5323,7 +5327,7 @@ impl Editor {
         self.edit_prediction_settings =
             self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
 
-        if !self.edit_prediction_settings.is_enabled() {
+        if !self.edit_predictions_enabled() {
             self.discard_inline_completion(false, cx);
             return None;
         }
@@ -5342,6 +5346,7 @@ impl Editor {
             })
             .collect::<Vec<_>>();
         if edits.is_empty() {
+            self.user_requested_edit_prediction = false;
             return None;
         }
 

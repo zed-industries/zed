@@ -3561,7 +3561,9 @@ impl EditorElement {
         let editor = self.editor.read(cx);
         let active_inline_completion = editor.active_inline_completion.as_ref()?;
 
-        if editor.edit_prediction_visible_in_cursor_popover(true) {
+        if !editor.edit_predictions_enabled()
+            || editor.edit_prediction_visible_in_cursor_popover(true)
+        {
             return None;
         }
 
