@@ -33,8 +33,8 @@ use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash,
     point, px, quad, relative, size, svg, transparent_black, Action, AnyElement, App,
     AvailableSpace, Axis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners,
-    CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _,
-    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
+    CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable, FontId,
+    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
     StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement,
@@ -4175,6 +4175,7 @@ impl EditorElement {
                         multi_buffer_range.clone(),
                         line_height,
                         &editor,
+                        window,
                         cx,
                     );
                     element.prepaint_as_root(
@@ -8918,6 +8919,7 @@ fn diff_hunk_controls(
     hunk_range: Range<Anchor>,
     line_height: Pixels,
     editor: &Entity<Editor>,
+    _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let stage = editor.update(cx, |editor, cx| {
@@ -8963,6 +8965,27 @@ fn diff_hunk_controls(
                 }),
         )
         .child(
+            Button::new(("skip-hunk", row as u64), "Skip")
+                .label_size(LabelSize::Small)
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |window, cx| {
+                        Tooltip::for_action_in("Skip Hunk", &GoToHunk, &focus_handle, window, cx)
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            let snapshot = editor.snapshot(window, cx);
+                            let position = hunk_range.end.to_point(&snapshot.buffer_snapshot);
+                            editor.go_to_hunk_after_position(&snapshot, position, window, cx);
+                            editor.expand_selected_diff_hunks(cx);
+                        });
+                    }
+                }),
+        )
+        .child(
             Button::new(
                 ("stage-unstage-hunk", row as u64),
                 if stage { "Stage" } else { "Unstage" },
@@ -8989,27 +9012,6 @@ fn diff_hunk_controls(
                     });
                 }
             }),
-        )
-        .child(
-            Button::new(("skip-hunk", row as u64), "Skip")
-                .label_size(LabelSize::Small)
-                .tooltip({
-                    let focus_handle = editor.focus_handle(cx);
-                    move |window, cx| {
-                        Tooltip::for_action_in("Skip Hunk", &GoToHunk, &focus_handle, window, cx)
-                    }
-                })
-                .on_click({
-                    let editor = editor.clone();
-                    move |_event, window, cx| {
-                        editor.update(cx, |editor, cx| {
-                            let snapshot = editor.snapshot(window, cx);
-                            let position = hunk_range.end.to_point(&snapshot.buffer_snapshot);
-                            editor.go_to_hunk_after_position(&snapshot, position, window, cx);
-                            editor.expand_selected_diff_hunks(cx);
-                        });
-                    }
-                }),
         )
         .into_any_element()
 }
