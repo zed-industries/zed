@@ -13,14 +13,14 @@ $appUserId = "ZedIndustry.Zed"
 
 switch ($channel) {
     "stable" {
-        $appId = "{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}"
-        $appSetupName = "ZedEditorUserSetup-x64-{$env:VERSION}.exe"
+        $appId = "{{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}"
+        $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION.exe"
     }
     "preview" {
-        $appId = "{F70E4811-D0E2-4D88-AC99-D63752799F95}"
+        $appId = "{{F70E4811-D0E2-4D88-AC99-D63752799F95}"
         $appName = $appName + " Preview"
         $appDisplayName = $appDisplayName + " Preview"
-        $appSetupName = "ZedEditorUserSetup-x64-{$env:VERSION}-preview.exe"
+        $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION-preview.exe"
         $regValueName = $regValueName + "Preview"
         $appUserId = $appUserId + ".Preview"
     }
