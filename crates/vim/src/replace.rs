@@ -221,6 +221,14 @@ impl Vim {
             let previous_range_end = previous_range.end.to_offset(&snapshot.buffer_snapshot);
             let previous_range_start = previous_range.start.to_offset(&snapshot.buffer_snapshot);
 
+            let mut overwrite = |smaller_range: Range<Anchor>, larger_range: Range<Anchor>| {
+                let new_text: String = snapshot
+                    .buffer_snapshot
+                    .text_for_range(smaller_range)
+                    .collect();
+                editor.edit([(larger_range, new_text)], cx);
+            };
+
             if previous_range_end < new_range_start || new_range_end < previous_range_start {
                 let previous_text: String = snapshot
                     .buffer_snapshot
@@ -232,25 +240,12 @@ impl Vim {
                     .collect();
 
                 editor.edit([(previous_range, new_text), (new_range, previous_text)], cx);
-                return;
-            }
-
-            let mut overwrite = |smaller_range: Range<Anchor>, larger_range: Range<Anchor>| {
-                let new_text: String = snapshot
-                    .buffer_snapshot
-                    .text_for_range(smaller_range)
-                    .collect();
-                editor.edit([(larger_range, new_text)], cx);
-            };
-
-            if new_range_start <= previous_range_start && new_range_end >= previous_range_end {
+            } else if new_range_start <= previous_range_start && new_range_end >= previous_range_end
+            {
                 overwrite(previous_range, new_range);
-                return;
-            }
-
-            if previous_range_start <= new_range_start && previous_range_end >= new_range_end {
+            } else if previous_range_start <= new_range_start && previous_range_end >= new_range_end
+            {
                 overwrite(new_range, previous_range);
-                return;
             }
         } else {
             let ranges = [new_range];
