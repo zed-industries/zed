@@ -283,6 +283,7 @@ impl InlayId {
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
+enum SelectedTextHighlight {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Navigated {
@@ -2165,6 +2166,7 @@ impl Editor {
             }
             self.refresh_code_actions(window, cx);
             self.refresh_document_highlights(cx);
+            self.refresh_selected_text_highlights(window, cx);
             refresh_matching_bracket_highlights(self, window, cx);
             self.update_visible_inline_completion(window, cx);
             self.edit_prediction_requires_modifier_in_leading_space = true;
@@ -4720,6 +4722,83 @@ impl Editor {
             }
         }));
         None
+    }
+
+    pub fn refresh_selected_text_highlights(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        if self.selections.count() != 1 {
+            self.clear_background_highlights::<SelectedTextHighlight>(cx);
+            return;
+        }
+
+        let selection = self.selections.newest::<Point>(cx);
+
+        if selection.is_empty() || selection.start.row != selection.end.row {
+            self.clear_background_highlights::<SelectedTextHighlight>(cx);
+            return;
+        }
+
+        let buffer = self.buffer().read(cx).snapshot(cx);
+        cx.spawn_in(window, |editor, mut cx| async move {
+            let matches = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut ranges = Vec::new();
+                    let buffer_ranges =
+                        vec![buffer.anchor_before(0)..buffer.anchor_after(buffer.len())];
+                    let query = buffer.text_for_range(selection.range()).collect::<String>();
+                    for range in buffer_ranges {
+                        for (search_buffer, search_range, excerpt_id) in
+                            buffer.range_to_buffer_ranges(range)
+                        {
+                            ranges.extend(
+                                project::search::SearchQuery::text(
+                                    query.clone(),
+                                    false,
+                                    false,
+                                    false,
+                                    Default::default(),
+                                    Default::default(),
+                                    None,
+                                )
+                                .unwrap()
+                                .search(search_buffer, Some(search_range.clone()))
+                                .await
+                                .into_iter()
+                                .map(|match_range| {
+                                    let start = search_buffer
+                                        .anchor_after(search_range.start + match_range.start);
+                                    let end = search_buffer
+                                        .anchor_before(search_range.start + match_range.end);
+                                    Anchor::range_in_buffer(
+                                        excerpt_id,
+                                        search_buffer.remote_id(),
+                                        start..end,
+                                    )
+                                }),
+                            );
+                        }
+                    }
+                    ranges
+                })
+                .await;
+            editor
+                .update_in(&mut cx, |editor, _, cx| {
+                    editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                    if !matches.is_empty() {
+                        editor.highlight_background::<SelectedTextHighlight>(
+                            &matches,
+                            |theme| theme.editor_document_highlight_bracket_background,
+                            cx,
+                        )
+                    }
+                })
+                .ok();
+        })
+        .detach();
     }
 
     pub fn refresh_inline_completion(
