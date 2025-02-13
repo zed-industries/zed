@@ -5318,9 +5318,15 @@ impl EditorElement {
                                             end_display_row.0 -= 1;
                                         }
                                         let color = match &hunk.status() {
-                                            DiffHunkStatus::Added(_) => theme.status().created,
-                                            DiffHunkStatus::Modified(_) => theme.status().modified,
-                                            DiffHunkStatus::Removed(_) => theme.status().deleted,
+                                            DiffHunkStatus::Added(_) => {
+                                                theme.colors().version_control_added
+                                            }
+                                            DiffHunkStatus::Modified(_) => {
+                                                theme.colors().version_control_modified
+                                            }
+                                            DiffHunkStatus::Removed(_) => {
+                                                theme.colors().version_control_deleted
+                                            }
                                         };
                                         ColoredRange {
                                             start: start_display_row,
