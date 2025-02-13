@@ -446,28 +446,29 @@ mod test {
 
     #[gpui::test]
     async fn test_exchange_separate_range(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let mut cx = VimTestContext::new(cx, true).await;
 
-        cx.set_shared_state("ˇhello world").await;
-        cx.simulate_shared_keystrokes("c x i w w c x i w").await;
-        cx.shared_state().await.assert_eq("world ˇhello");
+        cx.set_state("ˇhello world", Mode::Normal);
+        cx.simulate_keystrokes("c x i w w c x i w");
+        cx.assert_state("world helloˇ", Mode::Normal);
     }
 
     #[gpui::test]
     async fn test_exchange_complete_overlap(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let mut cx = VimTestContext::new(cx, true).await;
 
-        cx.set_shared_state("ˇhello world").await;
-        cx.simulate_shared_keystrokes("c x x w c x i w").await;
-        cx.shared_state().await.assert_eq("ˇhello");
+        cx.set_state("ˇhello world", Mode::Normal);
+        cx.simulate_keystrokes("c x x w c x i w");
+        cx.assert_state("world helloˇ", Mode::Normal);
+        cx.assert_state("ˇhello", Mode::Normal);
     }
 
     #[gpui::test]
     async fn test_exchange_partial_overlap(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let mut cx = VimTestContext::new(cx, true).await;
 
-        cx.set_shared_state("ˇhello world").await;
-        cx.simulate_shared_keystrokes("c x t r w c x i w").await;
-        cx.shared_state().await.assert_eq("hello ˇworld");
+        cx.set_state("ˇhello world", Mode::Normal);
+        cx.simulate_keystrokes("c x t r w c x i w");
+        cx.assert_state("hello ˇworld", Mode::Normal);
     }
 }
