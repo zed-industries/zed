@@ -66,7 +66,7 @@ impl ZedPredictModal {
     }
 
     fn view_blog(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/blog/"); // TODO Add the link when live
+        cx.open_url("https://zed.dev/blog/edit-predictions");
         cx.notify();
 
         onboarding_event!("Blog Link clicked");
@@ -272,19 +272,16 @@ impl Render for ZedPredictModal {
                 )),
             ));
 
-        let blog_post_button = if cx.is_staff() {
-            Some(
+        let blog_post_button = cx
+            .has_flag::<feature_flags::PredictEditsLaunchFeatureFlag>()
+            .then(|| {
                 Button::new("view-blog", "Read the Blog Post")
                     .full_width()
                     .icon(IconName::ArrowUpRight)
                     .icon_size(IconSize::Indicator)
                     .icon_color(Color::Muted)
-                    .on_click(cx.listener(Self::view_blog)),
-            )
-        } else {
-            // TODO: put back when blog post is published
-            None
-        };
+                    .on_click(cx.listener(Self::view_blog))
+            });
 
         if self.user_store.read(cx).current_user().is_some() {
             let copy = match self.sign_in_status {

@@ -12,6 +12,7 @@ use futures::{
     future::{BoxFuture, Shared},
     FutureExt, SinkExt,
 };
+use git::repository::Branch;
 use gpui::{App, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity};
 use postage::oneshot;
 use rpc::{
@@ -24,7 +25,10 @@ use smol::{
 };
 use text::ReplicaId;
 use util::{paths::SanitizedPath, ResultExt};
-use worktree::{Entry, ProjectEntryId, UpdatedEntriesSet, Worktree, WorktreeId, WorktreeSettings};
+use worktree::{
+    branch_to_proto, Entry, ProjectEntryId, UpdatedEntriesSet, Worktree, WorktreeId,
+    WorktreeSettings,
+};
 
 use crate::{search::SearchQuery, ProjectPath};
 
@@ -133,11 +137,12 @@ impl WorktreeStore {
             .find(|worktree| worktree.read(cx).id() == id)
     }
 
-    pub fn current_branch(&self, repository: ProjectPath, cx: &App) -> Option<Arc<str>> {
+    pub fn current_branch(&self, repository: ProjectPath, cx: &App) -> Option<Branch> {
         self.worktree_for_id(repository.worktree_id, cx)?
             .read(cx)
             .git_entry(repository.path)?
             .branch()
+            .cloned()
     }
 
     pub fn worktree_for_entry(
@@ -938,9 +943,24 @@ impl WorktreeStore {
                         .map(|proto_branch| git::repository::Branch {
                             is_head: proto_branch.is_head,
                             name: proto_branch.name.into(),
-                            unix_timestamp: proto_branch
-                                .unix_timestamp
-                                .map(|timestamp| timestamp as i64),
+                            upstream: proto_branch.upstream.map(|upstream| {
+                                git::repository::Upstream {
+                                    ref_name: upstream.ref_name.into(),
+                                    tracking: upstream.tracking.map(|tracking| {
+                                        git::repository::UpstreamTracking {
+                                            ahead: tracking.ahead as u32,
+                                            behind: tracking.behind as u32,
+                                        }
+                                    }),
+                                }
+                            }),
+                            most_recent_commit: proto_branch.most_recent_commit.map(|commit| {
+                                git::repository::CommitSummary {
+                                    sha: commit.sha.into(),
+                                    subject: commit.subject.into(),
+                                    commit_timestamp: commit.commit_timestamp,
+                                }
+                            }),
                         })
                         .collect();
 
@@ -1126,14 +1146,7 @@ impl WorktreeStore {
             .await?;
 
         Ok(proto::GitBranchesResponse {
-            branches: branches
-                .into_iter()
-                .map(|branch| proto::Branch {
-                    is_head: branch.is_head,
-                    name: branch.name.to_string(),
-                    unix_timestamp: branch.unix_timestamp.map(|timestamp| timestamp as u64),
-                })
-                .collect(),
+            branches: branches.iter().map(branch_to_proto).collect(),
         })
     }
 

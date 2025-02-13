@@ -631,7 +631,7 @@
     }
   },
   {
-    "context": "GitPanel || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || Welcome",
+    "context": "ChangesList || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || Welcome",
     "bindings": {
       ":": "command_palette::Toggle",
       "g /": "pane::DeploySearch"

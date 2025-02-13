@@ -6,13 +6,15 @@ use crate::{
 };
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
+use editor::commit_tooltip::CommitTooltip;
 use editor::{
     actions::MoveToEnd, scroll::ScrollbarAutoHide, Editor, EditorElement, EditorMode,
     EditorSettings, MultiBuffer, ShowScrollbar,
 };
+use git::repository::{CommitDetails, ResetMode};
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
 use gpui::*;
-use language::{Buffer, File};
+use language::{markdown, Buffer, File, ParsedMarkdown};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use multi_buffer::ExcerptInfo;
 use panel::{panel_editor_container, panel_editor_style, panel_filled_button, PanelHeader};
@@ -23,6 +25,7 @@ use project::{
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration, usize};
+use time::OffsetDateTime;
 use ui::{
     prelude::*, ButtonLike, Checkbox, CheckboxWithLabel, Divider, DividerColor, ElevationIndex,
     IndentGuideColors, ListItem, ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
@@ -207,7 +210,7 @@ impl GitPanel {
     ) -> Entity<Self> {
         let fs = workspace.app_state().fs.clone();
         let project = workspace.project().clone();
-        let git_state = project.read(cx).git_state().clone();
+        let git_store = project.read(cx).git_store().clone();
         let active_repository = project.read(cx).active_repository(cx);
         let workspace = cx.entity().downgrade();
 
@@ -231,14 +234,14 @@ impl GitPanel {
             let scroll_handle = UniformListScrollHandle::new();
 
             cx.subscribe_in(
-                &git_state,
+                &git_store,
                 window,
-                move |this, git_state, event, window, cx| match event {
+                move |this, git_store, event, window, cx| match event {
                     GitEvent::FileSystemUpdated => {
                         this.schedule_update(false, window, cx);
                     }
                     GitEvent::ActiveRepositoryChanged | GitEvent::GitStateUpdated => {
-                        this.active_repository = git_state.read(cx).active_repository();
+                        this.active_repository = git_store.read(cx).active_repository();
                         this.schedule_update(true, window, cx);
                     }
                 },
@@ -744,6 +747,40 @@ impl GitPanel {
         self.pending_commit = Some(task);
     }
 
+    fn uncommit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+        let prior_head = self.load_commit_details("HEAD", cx);
+
+        let task = cx.spawn(|_, mut cx| async move {
+            let prior_head = prior_head.await?;
+
+            repo.update(&mut cx, |repo, _| repo.reset("HEAD^", ResetMode::Soft))?
+                .await??;
+
+            Ok(prior_head)
+        });
+
+        let task = cx.spawn_in(window, |this, mut cx| async move {
+            let result = task.await;
+            this.update_in(&mut cx, |this, window, cx| {
+                this.pending_commit.take();
+                match result {
+                    Ok(prior_commit) => {
+                        this.commit_editor.update(cx, |editor, cx| {
+                            editor.set_text(prior_commit.message, window, cx)
+                        });
+                    }
+                    Err(e) => this.show_err_toast(e, cx),
+                }
+            })
+            .ok();
+        });
+
+        self.pending_commit = Some(task);
+    }
+
     fn fill_co_authors(&mut self, _: &FillCoAuthors, window: &mut Window, cx: &mut Context<Self>) {
         const CO_AUTHOR_PREFIX: &str = "Co-authored-by: ";
 
@@ -1131,15 +1168,9 @@ impl GitPanel {
         let all_repositories = self
             .project
             .read(cx)
-            .git_state()
+            .git_store()
             .read(cx)
             .all_repositories();
-
-        let branch = self
-            .active_repository
-            .as_ref()
-            .and_then(|repository| repository.read(cx).branch())
-            .unwrap_or_else(|| "(no current branch)".into());
 
         let has_repo_above = all_repositories.iter().any(|repo| {
             repo.read(cx)
@@ -1148,26 +1179,7 @@ impl GitPanel {
                 .is_above_project()
         });
 
-        let icon_button = Button::new("branch-selector", branch)
-            .color(Color::Muted)
-            .style(ButtonStyle::Subtle)
-            .icon(IconName::GitBranch)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .size(ButtonSize::Compact)
-            .icon_position(IconPosition::Start)
-            .tooltip(Tooltip::for_action_title(
-                "Switch Branch",
-                &zed_actions::git::Branch,
-            ))
-            .on_click(cx.listener(|_, _, window, cx| {
-                window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
-            }))
-            .style(ButtonStyle::Transparent);
-
         self.panel_header_container(window, cx)
-            .child(h_flex().pl_1().child(icon_button))
-            .child(div().flex_grow())
             .when(all_repositories.len() > 1 || has_repo_above, |el| {
                 el.child(self.render_repository_selector(cx))
             })
@@ -1200,6 +1212,7 @@ impl GitPanel {
             && !editor.read(cx).is_empty(cx)
             && !self.has_unstaged_conflicts()
             && self.has_write_access(cx);
+
         // let can_commit_all =
         //     !self.commit_pending && self.can_commit_all && !editor.read(cx).is_empty(cx);
         let panel_editor_style = panel_editor_style(true, window, cx);
@@ -1274,10 +1287,108 @@ impl GitPanel {
             )
     }
 
+    fn render_previous_commit(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let active_repository = self.active_repository.as_ref()?;
+        let branch = active_repository.read(cx).branch()?;
+        let commit = branch.most_recent_commit.as_ref()?.clone();
+
+        if branch.upstream.as_ref().is_some_and(|upstream| {
+            if let Some(tracking) = &upstream.tracking {
+                tracking.ahead == 0
+            } else {
+                true
+            }
+        }) {
+            return None;
+        }
+
+        let _branch_selector = Button::new("branch-selector", branch.name.clone())
+            .color(Color::Muted)
+            .style(ButtonStyle::Subtle)
+            .icon(IconName::GitBranch)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .size(ButtonSize::Compact)
+            .icon_position(IconPosition::Start)
+            .tooltip(Tooltip::for_action_title(
+                "Switch Branch",
+                &zed_actions::git::Branch,
+            ))
+            .on_click(cx.listener(|_, _, window, cx| {
+                window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
+            }))
+            .style(ButtonStyle::Transparent);
+
+        let _timestamp = Label::new(time_format::format_local_timestamp(
+            OffsetDateTime::from_unix_timestamp(commit.commit_timestamp).log_err()?,
+            OffsetDateTime::now_utc(),
+            time_format::TimestampFormat::Relative,
+        ))
+        .size(LabelSize::Small)
+        .color(Color::Muted);
+
+        let tooltip = if self.has_staged_changes() {
+            "git reset HEAD^ --soft"
+        } else {
+            "git reset HEAD^"
+        };
+
+        let this = cx.entity();
+        Some(
+            h_flex()
+                .items_center()
+                .py_1p5()
+                .px(px(8.))
+                .bg(cx.theme().colors().background)
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .gap_1p5()
+                .child(
+                    div()
+                        .flex_grow()
+                        .overflow_hidden()
+                        .max_w(relative(0.6))
+                        .h_full()
+                        .child(
+                            Label::new(commit.subject.clone())
+                                .size(LabelSize::Small)
+                                .text_ellipsis(),
+                        )
+                        .id("commit-msg-hover")
+                        .hoverable_tooltip(move |window, cx| {
+                            GitPanelMessageTooltip::new(
+                                this.clone(),
+                                commit.sha.clone(),
+                                window,
+                                cx,
+                            )
+                            .into()
+                        }),
+                )
+                .child(div().flex_1())
+                .child(
+                    panel_filled_button("Uncommit")
+                        .icon(IconName::Undo)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .icon_position(IconPosition::Start)
+                        .tooltip(Tooltip::for_action_title(tooltip, &git::Uncommit))
+                        .on_click(cx.listener(|this, _, window, cx| this.uncommit(window, cx))),
+                    // .child(
+                    //     panel_filled_button("Push")
+                    //         .icon(IconName::ArrowUp)
+                    //         .icon_size(IconSize::Small)
+                    //         .icon_color(Color::Muted)
+                    //         .icon_position(IconPosition::Start), // .disabled(true),
+                    // ),
+                ),
+        )
+    }
+
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .h_full()
-            .flex_1()
+            .flex_grow()
             .justify_center()
             .items_center()
             .child(
@@ -1563,6 +1674,17 @@ impl GitPanel {
             .into_any_element()
     }
 
+    fn load_commit_details(
+        &self,
+        sha: &str,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<CommitDetails>> {
+        let Some(repo) = self.active_repository.clone() else {
+            return Task::ready(Err(anyhow::anyhow!("no active repo")));
+        };
+        repo.update(cx, |repo, cx| repo.show(sha, cx))
+    }
+
     fn render_entry(
         &self,
         ix: usize,
@@ -1757,6 +1879,7 @@ impl Render for GitPanel {
             } else {
                 self.render_empty_state(cx).into_any_element()
             })
+            .children(self.render_previous_commit(cx))
             .child(self.render_commit_editor(window, cx))
     }
 }
@@ -1843,3 +1966,81 @@ impl Panel for GitPanel {
 }
 
 impl PanelHeader for GitPanel {}
+
+struct GitPanelMessageTooltip {
+    commit_tooltip: Option<Entity<CommitTooltip>>,
+}
+
+impl GitPanelMessageTooltip {
+    fn new(
+        git_panel: Entity<GitPanel>,
+        sha: SharedString,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let workspace = git_panel.read(cx).workspace.clone();
+        cx.new(|cx| {
+            cx.spawn_in(window, |this, mut cx| async move {
+                let language_registry = workspace.update(&mut cx, |workspace, _cx| {
+                    workspace.app_state().languages.clone()
+                })?;
+
+                let details = git_panel
+                    .update(&mut cx, |git_panel, cx| {
+                        git_panel.load_commit_details(&sha, cx)
+                    })?
+                    .await?;
+
+                let mut parsed_message = ParsedMarkdown::default();
+                markdown::parse_markdown_block(
+                    &details.message,
+                    Some(&language_registry),
+                    None,
+                    &mut parsed_message.text,
+                    &mut parsed_message.highlights,
+                    &mut parsed_message.region_ranges,
+                    &mut parsed_message.regions,
+                )
+                .await;
+
+                let commit_details = editor::commit_tooltip::CommitDetails {
+                    sha: details.sha.clone(),
+                    committer_name: details.committer_name.clone(),
+                    committer_email: details.committer_email.clone(),
+                    commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
+                    message: Some(editor::commit_tooltip::ParsedCommitMessage {
+                        message: details.message.clone(),
+                        parsed_message,
+                        ..Default::default()
+                    }),
+                };
+
+                this.update_in(&mut cx, |this: &mut GitPanelMessageTooltip, window, cx| {
+                    this.commit_tooltip = Some(cx.new(move |cx| {
+                        CommitTooltip::new(
+                            commit_details,
+                            panel_editor_style(true, window, cx),
+                            Some(workspace),
+                        )
+                    }));
+                    cx.notify();
+                })
+            })
+            .detach();
+
+            Self {
+                commit_tooltip: None,
+            }
+        })
+    }
+}
+
+impl Render for GitPanelMessageTooltip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<'_, Self>) -> impl IntoElement {
+        if let Some(commit_tooltip) = &self.commit_tooltip {
+            commit_tooltip.clone().into_any_element()
+        } else {
+            gpui::Empty.into_any_element()
+        }
+    }
+}

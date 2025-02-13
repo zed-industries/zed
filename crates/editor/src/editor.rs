@@ -13,10 +13,10 @@
 //!
 //! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behavior.
 pub mod actions;
-mod blame_entry_tooltip;
 mod blink_manager;
 mod clangd_ext;
 mod code_context_menus;
+pub mod commit_tooltip;
 pub mod display_map;
 mod editor_settings;
 mod editor_settings_controls;
@@ -52,6 +52,7 @@ pub use actions::{AcceptEditPrediction, OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
+use buffer_diff::DiffHunkSecondaryStatus;
 use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -95,7 +96,7 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CompletionDocumentation, CursorShape, Diagnostic, EditPredictionsMode, EditPreview,
+    CompletionDocumentation, CursorShape, Diagnostic, DiskState, EditPredictionsMode, EditPreview,
     HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection,
     SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
 };
@@ -160,7 +161,7 @@ use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
 use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
 use ui::{
-    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
+    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize, Key,
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TakeUntilExt, TryFutureExt};
@@ -5656,29 +5657,39 @@ impl Editor {
     fn render_edit_prediction_accept_keybind(&self, window: &mut Window, cx: &App) -> Option<Div> {
         let accept_binding = self.accept_edit_prediction_keybind(window, cx);
         let accept_keystroke = accept_binding.keystroke()?;
-        let colors = cx.theme().colors();
-        let accent_color = colors.text_accent;
-        let editor_bg_color = colors.editor_background;
-        let bg_color = editor_bg_color.blend(accent_color.opacity(0.1));
+
+        let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
+
+        let modifiers_color = if accept_keystroke.modifiers == window.modifiers() {
+            Color::Accent
+        } else {
+            Color::Muted
+        };
 
         h_flex()
             .px_0p5()
-            .gap_1()
-            .bg(bg_color)
+            .when(is_platform_style_mac, |parent| parent.gap_0p5())
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
             .text_size(TextSize::XSmall.rems(cx))
-            .children(ui::render_modifiers(
+            .child(h_flex().children(ui::render_modifiers(
                 &accept_keystroke.modifiers,
                 PlatformStyle::platform(),
-                Some(if accept_keystroke.modifiers == window.modifiers() {
-                    Color::Accent
-                } else {
-                    Color::Muted
-                }),
+                Some(modifiers_color),
                 Some(IconSize::XSmall.rems().into()),
-                false,
-            ))
-            .child(accept_keystroke.key.clone())
+                true,
+            )))
+            .when(is_platform_style_mac, |parent| {
+                parent.child(accept_keystroke.key.clone())
+            })
+            .when(!is_platform_style_mac, |parent| {
+                parent.child(
+                    Key::new(
+                        util::capitalize(&accept_keystroke.key),
+                        Some(Color::Default),
+                    )
+                    .size(Some(IconSize::XSmall.rems().into())),
+                )
+            })
             .into()
     }
 
@@ -5807,13 +5818,13 @@ impl Editor {
                                 },
                             )
                             .child(Label::new("Hold").size(LabelSize::Small))
-                            .children(ui::render_modifiers(
+                            .child(h_flex().children(ui::render_modifiers(
                                 &accept_keystroke.modifiers,
                                 PlatformStyle::platform(),
                                 Some(Color::Default),
                                 Some(IconSize::Small.rems().into()),
-                                true,
-                            ))
+                                false,
+                            )))
                             .into_any(),
                     );
                 }
@@ -5857,6 +5868,7 @@ impl Editor {
 
         let has_completion = self.active_inline_completion.is_some();
 
+        let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
         Some(
             h_flex()
                 .min_w(min_width)
@@ -5885,8 +5897,8 @@ impl Editor {
                         .child(
                             h_flex()
                                 .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                                .gap_1()
-                                .children(ui::render_modifiers(
+                                .when(is_platform_style_mac, |parent| parent.gap_1())
+                                .child(h_flex().children(ui::render_modifiers(
                                     &accept_keystroke.modifiers,
                                     PlatformStyle::platform(),
                                     Some(if !has_completion {
@@ -5895,8 +5907,8 @@ impl Editor {
                                         Color::Default
                                     }),
                                     None,
-                                    true,
-                                )),
+                                    false,
+                                ))),
                         )
                         .child(Label::new("Preview").into_any_element())
                         .opacity(if has_completion { 1.0 } else { 0.4 }),
@@ -12429,6 +12441,121 @@ impl Editor {
     ) {
         let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
         self.toggle_diff_hunks_in_ranges(ranges, cx);
+    }
+
+    fn diff_hunks_in_ranges<'a>(
+        &'a self,
+        ranges: &'a [Range<Anchor>],
+        buffer: &'a MultiBufferSnapshot,
+    ) -> impl 'a + Iterator<Item = MultiBufferDiffHunk> {
+        ranges.iter().flat_map(move |range| {
+            let end_excerpt_id = range.end.excerpt_id;
+            let range = range.to_point(buffer);
+            let mut peek_end = range.end;
+            if range.end.row < buffer.max_row().0 {
+                peek_end = Point::new(range.end.row + 1, 0);
+            }
+            buffer
+                .diff_hunks_in_range(range.start..peek_end)
+                .filter(move |hunk| hunk.excerpt_id.cmp(&end_excerpt_id, buffer).is_le())
+        })
+    }
+
+    pub fn has_stageable_diff_hunks_in_ranges(
+        &self,
+        ranges: &[Range<Anchor>],
+        snapshot: &MultiBufferSnapshot,
+    ) -> bool {
+        let mut hunks = self.diff_hunks_in_ranges(ranges, &snapshot);
+        hunks.any(|hunk| {
+            log::debug!("considering {hunk:?}");
+            hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk
+        })
+    }
+
+    pub fn toggle_staged_selected_diff_hunks(
+        &mut self,
+        _: &ToggleStagedSelectedDiffHunks,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
+        self.stage_or_unstage_diff_hunks(&ranges, cx);
+    }
+
+    pub fn stage_or_unstage_diff_hunks(
+        &mut self,
+        ranges: &[Range<Anchor>],
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let stage = self.has_stageable_diff_hunks_in_ranges(ranges, &snapshot);
+
+        let chunk_by = self
+            .diff_hunks_in_ranges(&ranges, &snapshot)
+            .chunk_by(|hunk| hunk.buffer_id);
+        for (buffer_id, hunks) in &chunk_by {
+            let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
+                log::debug!("no buffer for id");
+                continue;
+            };
+            let buffer = buffer.read(cx).snapshot();
+            let Some((repo, path)) = project
+                .read(cx)
+                .repository_and_path_for_buffer_id(buffer_id, cx)
+            else {
+                log::debug!("no git repo for buffer id");
+                continue;
+            };
+            let Some(diff) = snapshot.diff_for_buffer_id(buffer_id) else {
+                log::debug!("no diff for buffer id");
+                continue;
+            };
+            let Some(secondary_diff) = diff.secondary_diff() else {
+                log::debug!("no secondary diff for buffer id");
+                continue;
+            };
+
+            let edits = diff.secondary_edits_for_stage_or_unstage(
+                stage,
+                hunks.map(|hunk| {
+                    (
+                        hunk.diff_base_byte_range.clone(),
+                        hunk.secondary_diff_base_byte_range.clone(),
+                        hunk.buffer_range.clone(),
+                    )
+                }),
+                &buffer,
+            );
+
+            let index_base = secondary_diff.base_text().map_or_else(
+                || Rope::from(""),
+                |snapshot| snapshot.text.as_rope().clone(),
+            );
+            let index_buffer = cx.new(|cx| {
+                Buffer::local_normalized(index_base.clone(), text::LineEnding::default(), cx)
+            });
+            let new_index_text = index_buffer.update(cx, |index_buffer, cx| {
+                index_buffer.edit(edits, None, cx);
+                index_buffer.snapshot().as_rope().to_string()
+            });
+            let new_index_text = if new_index_text.is_empty()
+                && (diff.is_single_insertion
+                    || buffer
+                        .file()
+                        .map_or(false, |file| file.disk_state() == DiskState::New))
+            {
+                log::debug!("removing from index");
+                None
+            } else {
+                Some(new_index_text)
+            };
+
+            let _ = repo.read(cx).set_index_text(&path, new_index_text);
+        }
     }
 
     pub fn expand_selected_diff_hunks(&mut self, cx: &mut Context<Self>) {
