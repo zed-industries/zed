@@ -30,9 +30,11 @@ WizardStyle=modern
 ; CloseApplications=force
 
 SignTool=Defaultsign
-
 DefaultDirName={autopf}\{#AppName}
 PrivilegesRequired=lowest
+
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl,{#ResourcesDir}\installer\messages\en.isl"; LicenseFile: "script\terms\terms.rtf"
