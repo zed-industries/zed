@@ -89,6 +89,7 @@ enum DisplayDiffHunk {
         display_row_range: Range<DisplayRow>,
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
+        contains_expanded: bool,
     },
 }
 
@@ -1567,6 +1568,11 @@ impl EditorElement {
                 if hunk_display_end.column() > 0 {
                     end_row.0 += 1;
                 }
+                let start_row = hunk_display_start.row();
+                let contains_expanded = snapshot
+                    .row_infos(start_row)
+                    .take(end_row.0 as usize - start_row.0 as usize)
+                    .any(|row_info| row_info.diff_status.is_some());
                 DisplayDiffHunk::Unfolded {
                     status: hunk.status(),
                     diff_base_byte_range: hunk.diff_base_byte_range,
@@ -1576,6 +1582,7 @@ impl EditorElement {
                         hunk.buffer_id,
                         hunk.buffer_range,
                     ),
+                    contains_expanded,
                 }
             };
 
@@ -4560,36 +4567,41 @@ impl EditorElement {
                         );
                         Some((
                             hunk_bounds,
-                            cx.theme().status().modified,
+                            cx.theme().colors().version_control_modified.opacity(0.7),
                             corners,
                             &DiffHunkSecondaryStatus::None,
+                            false,
                         ))
                     }
                     DisplayDiffHunk::Unfolded {
                         status,
                         display_row_range,
+                        contains_expanded,
                         ..
                     } => hitbox.as_ref().map(|hunk_hitbox| match status {
                         DiffHunkStatus::Added(secondary_status) => (
                             hunk_hitbox.bounds,
-                            cx.theme().colors().version_control_added,
+                            cx.theme().colors().version_control_added.opacity(0.7),
                             corners,
                             secondary_status,
+                            *contains_expanded,
                         ),
                         DiffHunkStatus::Modified(secondary_status) => (
                             hunk_hitbox.bounds,
-                            cx.theme().colors().version_control_modified,
+                            cx.theme().colors().version_control_modified.opacity(0.7),
                             corners,
                             secondary_status,
+                            *contains_expanded,
                         ),
                         DiffHunkStatus::Removed(secondary_status)
                             if !display_row_range.is_empty() =>
                         {
                             (
                                 hunk_hitbox.bounds,
-                                cx.theme().colors().version_control_deleted,
+                                cx.theme().colors().version_control_deleted.opacity(0.7),
                                 corners,
                                 secondary_status,
+                                *contains_expanded,
                             )
                         }
                         DiffHunkStatus::Removed(secondary_status) => (
@@ -4600,18 +4612,25 @@ impl EditorElement {
                                 ),
                                 size(hunk_hitbox.size.width * px(2.), hunk_hitbox.size.height),
                             ),
-                            cx.theme().colors().version_control_deleted,
+                            cx.theme().colors().version_control_deleted.opacity(0.7),
                             Corners::all(1. * line_height),
                             secondary_status,
+                            *contains_expanded,
                         ),
                     }),
                 };
 
-                if let Some((hunk_bounds, mut background_color, corner_radii, secondary_status)) =
-                    hunk_to_paint
+                if let Some((
+                    hunk_bounds,
+                    background_color,
+                    corner_radii,
+                    secondary_status,
+                    contains_expanded,
+                )) = hunk_to_paint
                 {
-                    let background = if *secondary_status != DiffHunkSecondaryStatus::None {
-                        background_color.a *= 0.7;
+                    let background = if *secondary_status != DiffHunkSecondaryStatus::None
+                        && contains_expanded
+                    {
                         pattern_slash(background_color, line_height.0 / 2.5)
                     } else {
                         solid_color(background_color)
