@@ -25,7 +25,7 @@
 /crates/zed/resources/flatpak/flatpak-cargo-sources.json
 /dev.zed.Zed*.json
 /plugins/bin
-/script/node_modules
+**/node_modules
 /zed.xcworkspace
 DerivedData/
 Packages
