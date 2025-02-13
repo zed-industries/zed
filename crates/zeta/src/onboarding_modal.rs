@@ -286,7 +286,7 @@ impl Render for ZedPredictModal {
         if self.user_store.read(cx).current_user().is_some() {
             let copy = match self.sign_in_status {
                 SignInStatus::Idle => {
-                    "Now Zed can predict your next edit on every keystroke. To start::"
+                    "Now Zed can predict your next edit on every keystroke. To start:"
                 }
                 SignInStatus::SignedIn => "Almost there! Ensure you:",
                 SignInStatus::Waiting => unreachable!(),
