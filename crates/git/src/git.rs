@@ -38,6 +38,7 @@ actions!(
         StageAll,
         UnstageAll,
         RevertAll,
+        CleanAll,
         Uncommit,
         Commit,
         ClearCommitMessage

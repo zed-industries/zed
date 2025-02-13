@@ -13,6 +13,7 @@ use editor::{
 };
 use git::repository::{CommitDetails, ResetMode};
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
+use git::{CleanAll, RevertAll, StageAll, UnstageAll};
 use gpui::*;
 use itertools::Itertools;
 use language::{markdown, Buffer, File, ParsedMarkdown};
@@ -615,7 +616,7 @@ impl GitPanel {
             let workspace = self.workspace.clone();
 
             if entry.status.is_staged() != Some(false) {
-                self.update_staging_area_for_entries(false, vec![entry.repo_path.clone()], cx);
+                self.perform_stage(false, vec![entry.repo_path.clone()], cx);
             }
 
             if entry.status.is_created() {
@@ -686,6 +687,74 @@ impl GitPanel {
         });
     }
 
+    fn revert_all(&mut self, _: &RevertAll, _window: &mut Window, cx: &mut Context<Self>) {
+        self.entries
+            .iter()
+            .filter_map(|entry| entry.status_entry())
+            .filter(|status_entry| !status_entry.status.is_created())
+            .map(|status_entry| status_entry.repo_path.clone())
+            .collect::<Vec<_>>();
+    }
+
+    fn clean_all(&mut self, _: &CleanAll, window: &mut Window, cx: &mut Context<Self>) {
+        let to_delete = self
+            .entries
+            .iter()
+            .filter_map(|entry| entry.status_entry())
+            .filter(|status_entry| status_entry.status.is_created())
+            .map(|status_entry| status_entry.repo_path.clone())
+            .collect::<Vec<_>>();
+
+        let prompt = window.prompt(
+            PromptLevel::Info,
+            "Do you want to trash this file?",
+            None,
+            &["Trash", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, |_, mut cx| async move {
+            match prompt.await {
+                Ok(0) => {}
+                _ => return Ok(()),
+            }
+            let task = workspace.update(&mut cx, |workspace, cx| {
+                workspace
+                    .project()
+                    .update(cx, |project, cx| project.delete_file(path, true, cx))
+            })?;
+            if let Some(task) = task {
+                task.await?;
+            }
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to trash file", window, cx, |e, _, _| {
+            Some(format!("{e}"))
+        });
+        return Some(());
+    }
+
+    fn stage_all(&mut self, _: &StageAll, _window: &mut Window, cx: &mut Context<Self>) {
+        let repo_paths = self
+            .entries
+            .iter()
+            .filter_map(|entry| entry.status_entry())
+            .filter(|status_entry| status_entry.is_staged != Some(true))
+            .map(|status_entry| status_entry.repo_path.clone())
+            .collect::<Vec<_>>();
+        self.perform_stage(true, repo_paths, cx);
+    }
+
+    fn unstage_all(&mut self, _: &UnstageAll, _window: &mut Window, cx: &mut Context<Self>) {
+        let repo_paths = self
+            .entries
+            .iter()
+            .filter_map(|entry| entry.status_entry())
+            .filter(|status_entry| status_entry.is_staged != Some(false))
+            .map(|status_entry| status_entry.repo_path.clone())
+            .collect::<Vec<_>>();
+        self.perform_stage(false, repo_paths, cx);
+    }
+
     fn toggle_staged_for_entry(
         &mut self,
         entry: &GitListEntry,
@@ -720,15 +789,10 @@ impl GitPanel {
                 (goal_staged_state, entries)
             }
         };
-        self.update_staging_area_for_entries(stage, repo_paths, cx);
+        self.perform_stage(stage, repo_paths, cx);
     }
 
-    fn update_staging_area_for_entries(
-        &mut self,
-        stage: bool,
-        repo_paths: Vec<RepoPath>,
-        cx: &mut Context<Self>,
-    ) {
+    fn perform_stage(&mut self, stage: bool, repo_paths: Vec<RepoPath>, cx: &mut Context<Self>) {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
@@ -1248,6 +1312,12 @@ impl GitPanel {
             || self.conflicted_staged_count > 0
     }
 
+    fn has_unstaged_changes(&self) -> bool {
+        self.tracked_count > self.tracked_staged_count
+            || self.new_count > self.new_staged_count
+            || self.conflicted_count > self.conflicted_staged_count
+    }
+
     fn has_conflicts(&self) -> bool {
         self.conflicted_count > 0
     }
@@ -1320,10 +1390,17 @@ impl GitPanel {
                 .is_above_project()
         });
 
-        self.panel_header_container(window, cx)
-            .when(all_repositories.len() > 1 || has_repo_above, |el| {
-                el.child(self.render_repository_selector(cx))
-            })
+        self.panel_header_container(window, cx).when(
+            all_repositories.len() > 1 || has_repo_above,
+            |el| {
+                el.child(
+                    Label::new("Repository")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(self.render_repository_selector(cx))
+            },
+        )
     }
 
     pub fn render_repository_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1747,7 +1824,7 @@ impl GitPanel {
         repo.update(cx, |repo, cx| repo.show(sha, cx))
     }
 
-    fn deploy_context_menu(
+    fn deploy_entry_context_menu(
         &mut self,
         position: Point<Pixels>,
         ix: usize,
@@ -1771,6 +1848,51 @@ impl GitPanel {
                 .separator()
                 .action("Open Diff", Confirm.boxed_clone())
                 .action("Open File", SecondaryConfirm.boxed_clone())
+        });
+
+        let subscription = cx.subscribe_in(
+            &context_menu,
+            window,
+            |this, _, _: &DismissEvent, window, cx| {
+                if this.context_menu.as_ref().is_some_and(|context_menu| {
+                    context_menu.0.focus_handle(cx).contains_focused(window, cx)
+                }) {
+                    cx.focus_self(window);
+                }
+                this.context_menu.take();
+                cx.notify();
+            },
+        );
+        self.selected_entry = Some(ix);
+        self.context_menu = Some((context_menu, position, subscription));
+        cx.notify();
+    }
+
+    fn deploy_panel_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry) = self.entries.get(ix).and_then(|e| e.status_entry()) else {
+            return;
+        };
+        let revert_title = if entry.status.is_deleted() {
+            "Restore file"
+        } else if entry.status.is_created() {
+            "Trash file"
+        } else {
+            "Discard changes"
+        };
+
+        let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
+            context_menu
+                .action("Stage All", StageAll.boxed_clone())
+                .action("Unstage All", UnstageAll.boxed_clone())
+                .action("Open Diff", Confirm.boxed_clone())
+                .separator()
+                .action("Discard All Changes", RevertAll.boxed_clone())
+                .action("Clean Untracked Files", CleanAll.boxed_clone())
         });
 
         let subscription = cx.subscribe_in(
@@ -1892,7 +2014,7 @@ impl GitPanel {
                     })
                     .on_secondary_mouse_down(cx.listener(
                         move |this, event: &MouseDownEvent, window, cx| {
-                            this.deploy_context_menu(event.position, ix, window, cx)
+                            this.deploy_entry_context_menu(event.position, ix, window, cx)
                         },
                     ))
                     .child(
@@ -1967,6 +2089,10 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::focus_changes_list))
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::toggle_staged_for_selected))
+            .on_action(cx.listener(Self::stage_all))
+            .on_action(cx.listener(Self::unstage_all))
+            .on_action(cx.listener(Self::revert_all))
+            .on_action(cx.listener(Self::clean_all))
             .when(has_write_access && has_co_authors, |git_panel| {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
