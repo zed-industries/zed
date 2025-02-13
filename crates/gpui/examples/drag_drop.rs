@@ -94,7 +94,6 @@ impl Render for DragDrop {
                             .border_color(color)
                             .text_color(color)
                             .cursor_move()
-                            .dra
                             .hover(|this| this.bg(color.opacity(0.2)))
                             .child(format!("Item ({})", ix))
                             .on_drag(drag_info, |info: &DragInfo, position, _, cx| {
