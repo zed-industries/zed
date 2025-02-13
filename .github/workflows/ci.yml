@@ -751,6 +751,78 @@ jobs:
       - name: Limit /nix/store to 50GB
         run: "[ $(du -sm /nix/store | cut -f1) -gt 50000 ] && nix-collect-garbage -d"
 
+  bundle-windows:
+    steps:
+      # more info here:- https://github.com/rust-lang/cargo/issues/13020
+      - name: Enable longer pathnames for git
+        run: git config --system core.longpaths true
+
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Create Dev Drive using ReFS
+        run: ./script/setup-dev-driver.ps1
+
+      # actions/checkout does not let us clone into anywhere outside ${{ github.workspace }}, so we have to copy the clone...
+      - name: Copy Git Repo to Dev Drive
+        run: |
+          Copy-Item -Path "${{ github.workspace }}" -Destination "${{ env.ZED_WORKSPACE }}" -Recurse
+
+      - name: Determine version and release channel
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          # This exports RELEASE_CHANNEL into env (GITHUB_ENV)
+          script/determine-release-channel.ps1
+
+      - name: Build Zed
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        run: |
+          cargo build --release
+          cp ".\target\release\zed.exe" ".\crates\zed\resources\windows\Zed.exe"
+
+      - name: Sign the binary
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.CERT_PROFILE_NAME }}
+          files-folder: ${{ env.ZED_WORKSPACE }}\crates\zed\resources\windows
+          files-folder-filter: exe,dll
+
+      - name: Prepare Inno Setup
+        run: srcipt/prepare-inno-setup.ps1
+
+      - name: Run Inno Setup
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          ENDPOINT: ${{ secrets.ENDPOINT }}
+          ACCOUNT_NAME: ${{ secrets.ACCOUNT_NAME }}
+          CERT_PROFILE_NAME: ${{ secrets.CERT_PROFILE_NAME }}
+        with:
+          path: ${{ env.ZED_WORKSPACE }}\crates\zed\resources\windows\installer\zed.iss
+          options: /dAppId="${{ env:APP_ID }}"
+            /dOutputDir="${{ env.ZED_WORKSPACE }}" /dappSetupName="${{ env.APP_SETUP_NAME }}"
+            /dAppName="${{ env.APP_NAME }}" /dAppDisplayName="${{ env.APP_DISPLAY_NAME }}" /dRegValueName="${{ env.REG_VALUE_NAME }}"
+            /dAppMutex="${{ env.APP_MUTEX }}" /dExeBasename="${{ env.APP_EXE_NAME }}" /dResourcesDir="${{ env.ZED_WORKSPACE }}\build"
+            /dsignToolPath="pwsh.exe -ExecutionPolicy Bypass -File ${{ env.ZED_WORKSPACE }}\build\sign.ps1"
+            /dShellNameShort="&Zed Editor" /dAppUserId="${{ env.APP_USER_ID }}" /dVersion="${{ env.VERSION }}"
+            /dSourceDir="${{ env.ZED_WORKSPACE }}"
+            /sDefaultsign="pwsh.exe -ExecutionPolicy Bypass -File ${{ env.ZED_WORKSPACE }}\build\sign.ps1 $f"
+
+      - name: Check dev drive space
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        # `setup-dev-driver.ps1` creates a 100GB drive, with CI taking up ~45GB of the drive.
+        run: ./script/exit-ci-if-dev-drive-is-full.ps1 95
+
   auto-release-preview:
     name: Auto release preview
     if: |
