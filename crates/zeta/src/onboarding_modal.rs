@@ -285,7 +285,9 @@ impl Render for ZedPredictModal {
 
         if self.user_store.read(cx).current_user().is_some() {
             let copy = match self.sign_in_status {
-                SignInStatus::Idle => "Get accurate and instant edit predictions at every keystroke. Before setting Zed as your edit prediction provider:",
+                SignInStatus::Idle => {
+                    "Now Zed can predict your next edit on every keystroke. To start::"
+                }
                 SignInStatus::SignedIn => "Almost there! Ensure you:",
                 SignInStatus::Waiting => unreachable!(),
             };
@@ -351,7 +353,7 @@ impl Render for ZedPredictModal {
                                         "training-data-checkbox",
                                         self.data_collection_opted_in.into(),
                                     )
-                                    .label("Open source repos: optionally share training data.")
+                                    .label("Optionally share training data (open source repos).")
                                     .fill()
                                     .on_click(cx.listener(
                                         move |this, state, _window, cx| {
