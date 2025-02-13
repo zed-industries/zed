@@ -671,6 +671,7 @@ impl AppState {
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
         theme::init(theme::LoadThemes::JustBase, cx);
+        gpui_tokio::init(cx);
         client::init(&client, cx);
         crate::init_settings(cx);
 
