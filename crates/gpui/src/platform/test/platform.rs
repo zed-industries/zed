@@ -64,9 +64,16 @@ impl ScreenCaptureSource for TestScreenCaptureSource {
 
 impl ScreenCaptureStream for TestScreenCaptureStream {}
 
+struct TestPrompt {
+    msg: String,
+    detail: Option<String>,
+    answers: Vec<String>,
+    tx: oneshot::Sender<usize>,
+}
+
 #[derive(Default)]
 pub(crate) struct TestPrompts {
-    multiple_choice: VecDeque<(Vec<String>, oneshot::Sender<usize>)>,
+    multiple_choice: VecDeque<TestPrompt>,
     new_path: VecDeque<(PathBuf, oneshot::Sender<Result<Option<PathBuf>>>)>,
 }
 
@@ -129,21 +136,33 @@ impl TestPlatform {
 
     #[track_caller]
     pub(crate) fn simulate_prompt_answer(&self, response: &str) {
-        let (answers, tx) = self
+        let prompt = self
             .prompts
             .borrow_mut()
             .multiple_choice
             .pop_front()
             .expect("no pending multiple choice prompt");
         self.background_executor().set_waiting_hint(None);
-        let Some(ix) = answers.iter().position(|a| a == response) else {
-            panic!("{} is not a valid response: {:?}", response, answers)
+        let Some(ix) = prompt.answers.iter().position(|a| a == response) else {
+            panic!(
+                "PROMPT: {}\n{:?}\n{:?}\nCannot respond with {}",
+                prompt.msg, prompt.detail, prompt.answers, response
+            )
         };
-        tx.send(ix).ok();
+        prompt.tx.send(ix).ok();
     }
 
     pub(crate) fn has_pending_prompt(&self) -> bool {
         !self.prompts.borrow().multiple_choice.is_empty()
+    }
+
+    pub(crate) fn pending_prompt(&self) -> Option<(String, String)> {
+        let prompts = self.prompts.borrow();
+        let prompt = prompts.multiple_choice.front()?;
+        Some((
+            prompt.msg.clone(),
+            prompt.detail.clone().unwrap_or_default(),
+        ))
     }
 
     pub(crate) fn set_screen_capture_sources(&self, sources: Vec<TestScreenCaptureSource>) {
@@ -163,7 +182,12 @@ impl TestPlatform {
         self.prompts
             .borrow_mut()
             .multiple_choice
-            .push_back((answers, tx));
+            .push_back(TestPrompt {
+                msg: msg.to_string(),
+                detail: detail.map(|s| s.to_string()),
+                answers: answers.clone(),
+                tx,
+            });
         rx
     }
 

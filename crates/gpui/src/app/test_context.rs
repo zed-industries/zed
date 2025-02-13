@@ -296,6 +296,11 @@ impl TestAppContext {
         self.test_platform.has_pending_prompt()
     }
 
+    /// Returns true if there's an alert dialog open.
+    pub fn pending_prompt(&self) -> Option<(String, String)> {
+        self.test_platform.pending_prompt()
+    }
+
     /// All the urls that have been opened with cx.open_url() during this test.
     pub fn opened_url(&self) -> Option<String> {
         self.test_platform.opened_url.borrow().clone()

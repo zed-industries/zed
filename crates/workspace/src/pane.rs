@@ -1464,6 +1464,9 @@ impl Pane {
             }
         });
         if dirty_project_item_ids.is_empty() {
+            if item.is_singleton(cx) && item.is_dirty(cx) {
+                return false;
+            }
             return true;
         }
 
@@ -1491,21 +1494,23 @@ impl Pane {
     ) -> (String, String) {
         /// Quantity of item paths displayed in prompt prior to cutoff..
         const FILE_NAMES_CUTOFF_POINT: usize = 10;
-        let mut file_names: Vec<_> = items
-            .map(|item| {
-                item.project_path(cx)
-                    .and_then(|project_path| {
-                        project_path
-                            .path
-                            .file_name()
-                            .and_then(|name| name.to_str().map(ToOwned::to_owned))
-                    })
-                    .unwrap_or_else(|| "untitled".to_string())
-            })
-            .take(FILE_NAMES_CUTOFF_POINT)
-            .collect();
-        let should_display_followup_text =
-            all_dirty_items > FILE_NAMES_CUTOFF_POINT || file_names.len() != all_dirty_items;
+        let mut file_names = Vec::new();
+        let mut should_display_followup_text = false;
+        for (ix, item) in items.enumerate() {
+            item.for_each_project_item(cx, &mut |_, project_item| {
+                let filename = project_item.project_path(cx).and_then(|path| {
+                    path.path
+                        .file_name()
+                        .and_then(|name| name.to_str().map(ToOwned::to_owned))
+                });
+                file_names.push(filename.unwrap_or("untitled".to_string()));
+            });
+
+            if ix == FILE_NAMES_CUTOFF_POINT {
+                should_display_followup_text = true;
+                break;
+            }
+        }
         if should_display_followup_text {
             let not_shown_files = all_dirty_items - file_names.len();
             if not_shown_files == 1 {
@@ -1532,18 +1537,13 @@ impl Pane {
     ) -> Task<Result<()>> {
         // Find the items to close.
         let mut items_to_close = Vec::new();
-        let mut dirty_items = Vec::new();
         for item in &self.items {
             if should_close(item.item_id()) {
                 items_to_close.push(item.boxed_clone());
-                if item.is_dirty(cx) && item.is_singleton(cx) {
-                    dirty_items.push(item.boxed_clone());
-                }
             }
         }
 
         let active_item_id = self.active_item().map(|item| item.item_id());
-        dbg!(&active_item_id);
 
         items_to_close.sort_by_key(|item| {
             let path = item.project_path(cx);
@@ -1560,6 +1560,17 @@ impl Pane {
             return Task::ready(Ok(()));
         };
         cx.spawn_in(window, |pane, mut cx| async move {
+            let dirty_items = workspace.update(&mut cx, |workspace, cx| {
+                items_to_close
+                    .iter()
+                    .filter(|item| {
+                        item.is_dirty(cx)
+                            && !Self::skip_save_on_close(item.as_ref(), &workspace, cx)
+                    })
+                    .map(|item| item.boxed_clone())
+                    .collect::<Vec<_>>()
+            })?;
+
             if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
                 let answer = pane.update_in(&mut cx, |_, window, cx| {
                     let (prompt, detail) =
@@ -1572,7 +1583,7 @@ impl Pane {
                         cx,
                     )
                 })?;
-                match dbg!(answer.await) {
+                match answer.await {
                     Ok(0) => save_intent = SaveIntent::SaveAll,
                     Ok(1) => save_intent = SaveIntent::Skip,
                     Ok(2) => return Ok(()),
@@ -1589,7 +1600,6 @@ impl Pane {
                         }
                     })?;
                 }
-                dbg!(&item_to_close.item_id(), should_save, save_intent);
 
                 if should_save {
                     if !Self::save_item(
@@ -1601,14 +1611,12 @@ impl Pane {
                     )
                     .await?
                     {
-                        dbg!("oops");
                         break;
                     }
                 }
 
                 // Remove the item from the pane.
                 pane.update_in(&mut cx, |pane, window, cx| {
-                    dbg!("removing...");
                     pane.remove_item(item_to_close.item_id(), false, true, window, cx);
                 })
                 .ok();
@@ -1867,7 +1875,7 @@ impl Pane {
                         cx,
                     )
                 })?;
-                match dbg!(answer.await) {
+                match answer.await {
                     Ok(0) => {
                         pane.update_in(cx, |_, window, cx| {
                             item.save(should_format, project, window, cx)
@@ -1931,7 +1939,6 @@ impl Pane {
                             _ => return Ok(false), // Cancel
                         }
                     } else {
-                        dbg!("oops");
                         return Ok(false);
                     }
                 }
@@ -1972,7 +1979,7 @@ impl Pane {
                 item: item.downgrade_item(),
                 save_intent,
             });
-            dbg!(true)
+            true
         })
     }
 
@@ -4343,7 +4350,6 @@ mod tests {
     async fn test_close_all_items(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
-        dbg!();
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
@@ -4355,7 +4361,6 @@ mod tests {
         add_labeled_item(&pane, "C", false, cx);
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
-        dbg!();
         pane.update_in(cx, |pane, window, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
             pane.pin_tab_at(ix, window, cx);
@@ -4373,7 +4378,6 @@ mod tests {
         .unwrap();
         assert_item_labels(&pane, ["A*"], cx);
 
-        dbg!();
         pane.update_in(cx, |pane, window, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
             pane.unpin_tab_at(ix, window, cx);
@@ -4390,24 +4394,22 @@ mod tests {
         .await
         .unwrap();
 
-        dbg!();
         assert_item_labels(&pane, [], cx);
 
         add_labeled_item(&pane, "A", true, cx).update(cx, |item, cx| {
             item.project_items
-                .push(TestProjectItem::new(1, "A.txt", cx))
+                .push(TestProjectItem::new_dirty(1, "A.txt", cx))
         });
         add_labeled_item(&pane, "B", true, cx).update(cx, |item, cx| {
             item.project_items
-                .push(TestProjectItem::new(2, "B.txt", cx))
+                .push(TestProjectItem::new_dirty(2, "B.txt", cx))
         });
         add_labeled_item(&pane, "C", true, cx).update(cx, |item, cx| {
             item.project_items
-                .push(TestProjectItem::new(3, "C.txt", cx))
+                .push(TestProjectItem::new_dirty(3, "C.txt", cx))
         });
         assert_item_labels(&pane, ["A^", "B^", "C*^"], cx);
 
-        dbg!();
         let save = pane
             .update_in(cx, |pane, window, cx| {
                 pane.close_all_items(
@@ -4421,15 +4423,11 @@ mod tests {
             })
             .unwrap();
 
-        dbg!();
         cx.executor().run_until_parked();
         cx.simulate_prompt_answer("Save all");
-        dbg!();
         save.await.unwrap();
-        dbg!();
         assert_item_labels(&pane, [], cx);
 
-        dbg!();
         add_labeled_item(&pane, "A", true, cx);
         add_labeled_item(&pane, "B", true, cx);
         add_labeled_item(&pane, "C", true, cx);
@@ -4447,13 +4445,54 @@ mod tests {
             })
             .unwrap();
 
-        dbg!();
         cx.executor().run_until_parked();
         cx.simulate_prompt_answer("Discard all");
-        dbg!();
         save.await.unwrap();
-        dbg!();
         assert_item_labels(&pane, [], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_with_save_intent(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        let a = cx.update(|_, cx| TestProjectItem::new_dirty(1, "A.txt", cx));
+        let b = cx.update(|_, cx| TestProjectItem::new_dirty(1, "B.txt", cx));
+        let c = cx.update(|_, cx| TestProjectItem::new_dirty(1, "C.txt", cx));
+
+        add_labeled_item(&pane, "AB", true, cx).update(cx, |item, _| {
+            item.project_items.push(a.clone());
+            item.project_items.push(b.clone());
+        });
+        add_labeled_item(&pane, "C", true, cx)
+            .update(cx, |item, _| item.project_items.push(c.clone()));
+        assert_item_labels(&pane, ["AB^", "C*^"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_all_items(
+                &CloseAllItems {
+                    save_intent: Some(SaveIntent::Save),
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap();
+
+        assert_item_labels(&pane, [], cx);
+        cx.update(|_, cx| {
+            assert!(!a.read(cx).is_dirty);
+            assert!(!b.read(cx).is_dirty);
+            assert!(!c.read(cx).is_dirty);
+        });
     }
 
     #[gpui::test]
