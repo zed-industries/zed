@@ -1478,7 +1478,7 @@ pub mod test {
             self.save_count += 1;
             self.is_dirty = false;
             for item in &self.project_items {
-                item.update(cx, |item, cx| {
+                item.update(cx, |item, _| {
                     if item.is_dirty {
                         item.is_dirty = false;
                     }
