@@ -67,7 +67,10 @@ use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap};
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
 };
-use futures::{future, FutureExt};
+use futures::{
+    future::{self, Shared},
+    FutureExt,
+};
 use fuzzy::StringMatchCandidate;
 
 use code_context_menus::{
@@ -761,6 +764,7 @@ pub struct Editor {
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: HashMap<TypeId, Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
+    load_diff_task: Option<Shared<Task<()>>>,
     selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
@@ -1318,12 +1322,16 @@ impl Editor {
         };
 
         let mut code_action_providers = Vec::new();
+        let mut load_uncommitted_diff = None;
         if let Some(project) = project.clone() {
-            get_uncommitted_diff_for_buffer(
-                &project,
-                buffer.read(cx).all_buffers(),
-                buffer.clone(),
-                cx,
+            load_uncommitted_diff = Some(
+                get_uncommitted_diff_for_buffer(
+                    &project,
+                    buffer.read(cx).all_buffers(),
+                    buffer.clone(),
+                    cx,
+                )
+                .shared(),
             );
             code_action_providers.push(Rc::new(project) as Rc<_>);
         }
@@ -1471,6 +1479,7 @@ impl Editor {
             selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
             text_style_refinement: None,
+            load_diff_task: load_uncommitted_diff,
         };
         this.tasks_update_task = Some(this.refresh_runnables(window, cx));
         this._subscriptions.extend(project_subscriptions);
@@ -14120,11 +14129,14 @@ impl Editor {
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).diff_for(buffer_id).is_none() {
                     if let Some(project) = &self.project {
-                        get_uncommitted_diff_for_buffer(
-                            project,
-                            [buffer.clone()],
-                            self.buffer.clone(),
-                            cx,
+                        self.load_diff_task = Some(
+                            get_uncommitted_diff_for_buffer(
+                                project,
+                                [buffer.clone()],
+                                self.buffer.clone(),
+                                cx,
+                            )
+                            .shared(),
                         );
                     }
                 }
@@ -14879,6 +14891,10 @@ impl Editor {
 
         gpui::Size::new(em_width, line_height)
     }
+
+    pub fn wait_for_diff_to_load(&self) -> Option<Shared<Task<()>>> {
+        self.load_diff_task.clone()
+    }
 }
 
 fn get_uncommitted_diff_for_buffer(
@@ -14886,7 +14902,7 @@ fn get_uncommitted_diff_for_buffer(
     buffers: impl IntoIterator<Item = Entity<Buffer>>,
     buffer: Entity<MultiBuffer>,
     cx: &mut App,
-) {
+) -> Task<()> {
     let mut tasks = Vec::new();
     project.update(cx, |project, cx| {
         for buffer in buffers {
@@ -14903,7 +14919,6 @@ fn get_uncommitted_diff_for_buffer(
             })
             .ok();
     })
-    .detach();
 }
 
 fn char_len_with_expanded_tabs(offset: usize, text: &str, tab_size: NonZeroU32) -> usize {
