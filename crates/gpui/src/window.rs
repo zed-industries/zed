@@ -1095,19 +1095,6 @@ impl Window {
         style
     }
 
-    /// The current text style, if any. Which is composed of all the style refinements provided to `with_text_style`.
-    pub(crate) fn interactive_text_style(&self) -> Option<TextStyle> {
-        if self.text_style_stack.is_empty() {
-            return None;
-        }
-
-        let mut style = TextStyle::default();
-        for refinement in &self.text_style_stack {
-            style.refine(refinement);
-        }
-        Some(style)
-    }
-
     /// Check if the platform window is maximized
     /// On some platforms (namely Windows) this is different than the bounds being the size of the display
     pub fn is_maximized(&self) -> bool {

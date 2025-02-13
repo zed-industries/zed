@@ -2,11 +2,12 @@ use crate::{
     register_tooltip_mouse_handlers, set_tooltip_on_window, ActiveTooltip, AnyView, App, Bounds,
     DispatchPhase, Element, ElementId, GlobalElementId, HighlightStyle, Hitbox, IntoElement,
     LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
-    TextOverflow, TextRun, TextStyle, TooltipId, WhiteSpace, Window, WrappedLine,
-    WrappedLineLayout,
+    TextOverflow, TextRun, TextStyle, TextStyleRefinement, TooltipId, WhiteSpace, Window,
+    WrappedLine, WrappedLineLayout,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
+use refineable::Refineable;
 use smallvec::SmallVec;
 use std::{
     cell::{Cell, RefCell},
@@ -390,15 +391,19 @@ impl TextLayout {
 
         let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;
-        let text_style = window.text_style();
-        let interactive_text_style = window.interactive_text_style();
+
+        // Get current text_style refinements
+        let mut text_style = TextStyleRefinement::default();
+        for style in window.text_style_stack.iter().as_ref() {
+            text_style.refine(&style);
+        }
+
         for line in &element_state.lines {
             line.paint(
                 line_origin,
                 line_height,
-                text_style.text_align,
+                Some(&text_style),
                 Some(bounds),
-                interactive_text_style.as_ref(),
                 window,
                 cx,
             )

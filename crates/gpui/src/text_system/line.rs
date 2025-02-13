@@ -1,7 +1,7 @@
 use crate::{
     black, fill, point, px, size, App, Bounds, Half, Hsla, LineLayout, Pixels, Point, Result,
-    SharedString, StrikethroughStyle, TextAlign, TextStyle, UnderlineStyle, Window, WrapBoundary,
-    WrappedLineLayout,
+    SharedString, StrikethroughStyle, TextAlign, TextStyleRefinement, UnderlineStyle, Window,
+    WrapBoundary, WrappedLineLayout,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -71,11 +71,10 @@ impl ShapedLine {
             origin,
             &self.layout,
             line_height,
-            TextAlign::default(),
+            None,
             None,
             &self.decoration_runs,
             &[],
-            None,
             window,
             cx,
         )?;
@@ -108,9 +107,8 @@ impl WrappedLine {
         &self,
         origin: Point<Pixels>,
         line_height: Pixels,
-        text_align: TextAlign,
+        text_style: Option<&TextStyleRefinement>,
         bounds: Option<Bounds<Pixels>>,
-        interactive_text_style: Option<&TextStyle>,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<()> {
@@ -123,11 +121,10 @@ impl WrappedLine {
             origin,
             &self.layout.unwrapped_layout,
             line_height,
-            text_align,
+            text_style,
             align_width,
             &self.decoration_runs,
             &self.wrap_boundaries,
-            interactive_text_style,
             window,
             cx,
         )?;
@@ -141,11 +138,10 @@ fn paint_line(
     origin: Point<Pixels>,
     layout: &LineLayout,
     line_height: Pixels,
-    text_align: TextAlign,
+    text_style: Option<&TextStyleRefinement>,
     align_width: Option<Pixels>,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
-    interactive_text_style: Option<&TextStyle>,
     window: &mut Window,
     cx: &mut App,
 ) -> Result<()> {
@@ -157,10 +153,10 @@ fn paint_line(
         ),
     );
 
-    let mut text_align = text_align;
-    if let Some(style) = interactive_text_style {
-        text_align = style.text_align;
-    }
+    // TODO: text_align and line_height need to inherit from normal style when is hovered or actived.
+    let mut text_align = text_style
+        .and_then(|s| s.text_align)
+        .unwrap_or(TextAlign::Left);
 
     window.paint_layer(line_bounds, |window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
@@ -197,12 +193,6 @@ fn paint_line(
 
                     if let Some((background_origin, background_color)) = current_background.as_mut()
                     {
-                        if let Some(text_style) = &interactive_text_style {
-                            if let Some(val) = text_style.background_color {
-                                *background_color = val;
-                            }
-                        }
-
                         if glyph_origin.x == background_origin.x {
                             background_origin.x -= max_glyph_size.width.half()
                         }
@@ -273,18 +263,26 @@ fn paint_line(
                     }
 
                     if let Some(style_run) = style_run {
+                        let mut run_underline = style_run.underline.as_ref();
+                        let mut run_background_color = style_run.background_color;
+                        let mut run_strikethrough = style_run.strikethrough;
+                        // Override by current text style
+                        if let Some(val) = text_style.and_then(|s| s.underline.as_ref()) {
+                            run_underline = Some(val);
+                        }
+                        if let Some(val) = text_style.and_then(|s| s.background_color) {
+                            run_background_color = Some(val);
+                        }
+                        if let Some(val) = text_style.and_then(|s| s.strikethrough) {
+                            run_strikethrough = Some(val);
+                        }
+
                         if let Some((_, background_color)) = &mut current_background {
-                            if style_run.background_color.as_ref() != Some(background_color) {
+                            if run_background_color.as_ref() != Some(background_color) {
                                 finished_background = current_background.take();
                             }
                         }
-                        if let Some(mut run_background) = style_run.background_color {
-                            // Override by current text style
-                            if let Some(text_style) = &interactive_text_style {
-                                if let Some(val) = text_style.background_color {
-                                    run_background = val;
-                                }
-                            }
+                        if let Some(run_background) = run_background_color {
                             current_background.get_or_insert((
                                 point(glyph_origin.x, glyph_origin.y),
                                 run_background,
@@ -296,14 +294,7 @@ fn paint_line(
                                 finished_underline = current_underline.take();
                             }
                         }
-                        if let Some(mut run_underline) = style_run.underline.as_ref() {
-                            // Override by current text style
-                            if let Some(text_style) = &interactive_text_style {
-                                if let Some(val) = &text_style.underline {
-                                    run_underline = val;
-                                }
-                            }
-
+                        if let Some(run_underline) = run_underline.as_ref() {
                             current_underline.get_or_insert((
                                 point(
                                     glyph_origin.x,
@@ -317,18 +308,11 @@ fn paint_line(
                             ));
                         }
                         if let Some((_, strikethrough_style)) = &mut current_strikethrough {
-                            if style_run.strikethrough.as_ref() != Some(strikethrough_style) {
+                            if run_strikethrough.as_ref() != Some(strikethrough_style) {
                                 finished_strikethrough = current_strikethrough.take();
                             }
                         }
-                        if let Some(mut run_strikethrough) = style_run.strikethrough.as_ref() {
-                            // Override by current text style
-                            if let Some(text_style) = &interactive_text_style {
-                                if let Some(val) = &text_style.strikethrough {
-                                    run_strikethrough = val;
-                                }
-                            }
-
+                        if let Some(mut run_strikethrough) = run_strikethrough.as_ref() {
                             current_strikethrough.get_or_insert((
                                 point(
                                     glyph_origin.x,
@@ -343,8 +327,8 @@ fn paint_line(
                         }
 
                         run_end += style_run.len as usize;
-                        if let Some(text_style) = &interactive_text_style {
-                            color = text_style.color;
+                        if let Some(val) = text_style.and_then(|s| s.color) {
+                            color = val;
                         } else {
                             color = style_run.color;
                         }
