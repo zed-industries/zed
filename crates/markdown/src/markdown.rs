@@ -416,7 +416,7 @@ impl MarkdownElement {
         let is_hovering_link = hitbox.is_hovered(window)
             && !self.markdown.read(cx).selection.pending
             && rendered_text
-                .link_for_position(window.mouse_position())
+                .link_for_position(window.mouse_position() - window.element_origin())
                 .is_some();
 
         if is_hovering_link {
