@@ -19,7 +19,7 @@ use futures::{
 };
 use fuzzy::CharBag;
 use git::{
-    repository::{GitRepository, RepoPath},
+    repository::{Branch, GitRepository, RepoPath},
     status::{
         FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
     },
@@ -201,7 +201,7 @@ pub struct RepositoryEntry {
     pub(crate) statuses_by_path: SumTree<StatusEntry>,
     work_directory_id: ProjectEntryId,
     pub work_directory: WorkDirectory,
-    pub(crate) branch: Option<Arc<str>>,
+    pub(crate) branch: Option<Branch>,
     pub current_merge_conflicts: TreeSet<RepoPath>,
 }
 
@@ -214,8 +214,8 @@ impl Deref for RepositoryEntry {
 }
 
 impl RepositoryEntry {
-    pub fn branch(&self) -> Option<Arc<str>> {
-        self.branch.clone()
+    pub fn branch(&self) -> Option<&Branch> {
+        self.branch.as_ref()
     }
 
     pub fn work_directory_id(&self) -> ProjectEntryId {
@@ -243,7 +243,8 @@ impl RepositoryEntry {
     pub fn initial_update(&self) -> proto::RepositoryEntry {
         proto::RepositoryEntry {
             work_directory_id: self.work_directory_id.to_proto(),
-            branch: self.branch.as_ref().map(|branch| branch.to_string()),
+            branch: self.branch.as_ref().map(|branch| branch.name.to_string()),
+            branch_summary: self.branch.as_ref().map(branch_to_proto),
             updated_statuses: self
                 .statuses_by_path
                 .iter()
@@ -302,7 +303,8 @@ impl RepositoryEntry {
 
         proto::RepositoryEntry {
             work_directory_id: self.work_directory_id.to_proto(),
-            branch: self.branch.as_ref().map(|branch| branch.to_string()),
+            branch: self.branch.as_ref().map(|branch| branch.name.to_string()),
+            branch_summary: self.branch.as_ref().map(branch_to_proto),
             updated_statuses,
             removed_statuses,
             current_merge_conflicts: self
@@ -311,6 +313,61 @@ impl RepositoryEntry {
                 .map(|path| path.as_ref().to_proto())
                 .collect(),
         }
+    }
+}
+
+pub fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
+    proto::Branch {
+        is_head: branch.is_head,
+        name: branch.name.to_string(),
+        unix_timestamp: branch
+            .most_recent_commit
+            .as_ref()
+            .map(|commit| commit.commit_timestamp as u64),
+        upstream: branch.upstream.as_ref().map(|upstream| proto::GitUpstream {
+            ref_name: upstream.ref_name.to_string(),
+            tracking: upstream
+                .tracking
+                .as_ref()
+                .map(|upstream| proto::UpstreamTracking {
+                    ahead: upstream.ahead as u64,
+                    behind: upstream.behind as u64,
+                }),
+        }),
+        most_recent_commit: branch
+            .most_recent_commit
+            .as_ref()
+            .map(|commit| proto::CommitSummary {
+                sha: commit.sha.to_string(),
+                subject: commit.subject.to_string(),
+                commit_timestamp: commit.commit_timestamp,
+            }),
+    }
+}
+
+pub fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
+    git::repository::Branch {
+        is_head: proto.is_head,
+        name: proto.name.clone().into(),
+        upstream: proto
+            .upstream
+            .as_ref()
+            .map(|upstream| git::repository::Upstream {
+                ref_name: upstream.ref_name.to_string().into(),
+                tracking: upstream.tracking.as_ref().map(|tracking| {
+                    git::repository::UpstreamTracking {
+                        ahead: tracking.ahead as u32,
+                        behind: tracking.behind as u32,
+                    }
+                }),
+            }),
+        most_recent_commit: proto.most_recent_commit.as_ref().map(|commit| {
+            git::repository::CommitSummary {
+                sha: commit.sha.to_string().into(),
+                subject: commit.subject.to_string().into(),
+                commit_timestamp: commit.commit_timestamp,
+            }
+        }),
     }
 }
 
@@ -2625,7 +2682,7 @@ impl Snapshot {
 
                     self.repositories
                         .update(&PathKey(work_dir_entry.path.clone()), &(), |repo| {
-                            repo.branch = repository.branch.map(Into::into);
+                            repo.branch = repository.branch_summary.as_ref().map(proto_to_branch);
                             repo.statuses_by_path.edit(edits, &());
                             repo.current_merge_conflicts = conflicted_paths
                         });
@@ -2647,7 +2704,7 @@ impl Snapshot {
                             work_directory: WorkDirectory::InProject {
                                 relative_path: work_dir_entry.path.clone(),
                             },
-                            branch: repository.branch.map(Into::into),
+                            branch: repository.branch_summary.as_ref().map(proto_to_branch),
                             statuses_by_path: statuses,
                             current_merge_conflicts: conflicted_paths,
                         },
@@ -3449,7 +3506,7 @@ impl BackgroundScannerState {
             RepositoryEntry {
                 work_directory_id: work_dir_id,
                 work_directory: work_directory.clone(),
-                branch: repository.branch_name().map(Into::into),
+                branch: None,
                 statuses_by_path: Default::default(),
                 current_merge_conflicts: Default::default(),
             },
@@ -4198,6 +4255,7 @@ impl BackgroundScanner {
         // the git repository in an ancestor directory. Find any gitignore files
         // in ancestor directories.
         let root_abs_path = self.state.lock().snapshot.abs_path.clone();
+        let mut containing_git_repository = None;
         for (index, ancestor) in root_abs_path.as_path().ancestors().enumerate() {
             if index != 0 {
                 if let Ok(ignore) =
@@ -4227,7 +4285,7 @@ impl BackgroundScanner {
                     {
                         // We associate the external git repo with our root folder and
                         // also mark where in the git repo the root folder is located.
-                        self.state.lock().insert_git_repository_for_path(
+                        let local_repository = self.state.lock().insert_git_repository_for_path(
                             WorkDirectory::AboveProject {
                                 absolute_path: ancestor.into(),
                                 location_in_repo: root_abs_path
@@ -4236,10 +4294,14 @@ impl BackgroundScanner {
                                     .unwrap()
                                     .into(),
                             },
-                            ancestor_dot_git.into(),
+                            ancestor_dot_git.clone().into(),
                             self.fs.as_ref(),
                             self.watcher.as_ref(),
                         );
+
+                        if local_repository.is_some() {
+                            containing_git_repository = Some(ancestor_dot_git)
+                        }
                     };
                 }
 
@@ -4284,6 +4346,9 @@ impl BackgroundScanner {
             }
             self.process_events(paths.into_iter().map(Into::into).collect())
                 .await;
+        }
+        if let Some(abs_path) = containing_git_repository {
+            self.process_events(vec![abs_path]).await;
         }
 
         // Continue processing events until the worktree is dropped.
@@ -4703,7 +4768,7 @@ impl BackgroundScanner {
                 );
 
                 if let Some(local_repo) = repo {
-                    self.update_git_statuses(UpdateGitStatusesJob {
+                    self.update_git_repository(UpdateGitRepoJob {
                         local_repository: local_repo,
                     });
                 }
@@ -5255,15 +5320,6 @@ impl BackgroundScanner {
                         if local_repository.git_dir_scan_id == scan_id {
                             continue;
                         }
-                        let Some(work_dir) = state
-                            .snapshot
-                            .entry_for_id(local_repository.work_directory_id)
-                            .map(|entry| entry.path.clone())
-                        else {
-                            continue;
-                        };
-
-                        let branch = local_repository.repo_ptr.branch_name();
                         local_repository.repo_ptr.reload_index();
 
                         state.snapshot.git_repositories.update(
@@ -5273,17 +5329,12 @@ impl BackgroundScanner {
                                 entry.status_scan_id = scan_id;
                             },
                         );
-                        state.snapshot.snapshot.repositories.update(
-                            &PathKey(work_dir.clone()),
-                            &(),
-                            |entry| entry.branch = branch.map(Into::into),
-                        );
 
                         local_repository
                     }
                 };
 
-                repo_updates.push(UpdateGitStatusesJob { local_repository });
+                repo_updates.push(UpdateGitRepoJob { local_repository });
             }
 
             // Remove any git repositories whose .git entry no longer exists.
@@ -5319,7 +5370,7 @@ impl BackgroundScanner {
             .scoped(|scope| {
                 scope.spawn(async {
                     for repo_update in repo_updates {
-                        self.update_git_statuses(repo_update);
+                        self.update_git_repository(repo_update);
                     }
                     updates_done_tx.blocking_send(()).ok();
                 });
@@ -5343,22 +5394,37 @@ impl BackgroundScanner {
             .await;
     }
 
-    /// Update the git statuses for a given batch of entries.
-    fn update_git_statuses(&self, job: UpdateGitStatusesJob) {
+    fn update_branches(&self, job: &UpdateGitRepoJob) -> Result<()> {
+        let branches = job.local_repository.repo().branches()?;
+        let snapshot = self.state.lock().snapshot.snapshot.clone();
+
+        let mut repository = snapshot
+            .repository(job.local_repository.work_directory.path_key())
+            .context("Missing repository")?;
+
+        repository.branch = branches.into_iter().find(|branch| branch.is_head);
+
+        let mut state = self.state.lock();
+        state
+            .snapshot
+            .repositories
+            .insert_or_replace(repository, &());
+
+        Ok(())
+    }
+
+    fn update_statuses(&self, job: &UpdateGitRepoJob) -> Result<()> {
         log::trace!(
             "updating git statuses for repo {:?}",
             job.local_repository.work_directory.display_name()
         );
         let t0 = Instant::now();
 
-        let Some(statuses) = job
+        let statuses = job
             .local_repository
             .repo()
-            .status(&[git::WORK_DIRECTORY_REPO_PATH.clone()])
-            .log_err()
-        else {
-            return;
-        };
+            .status(&[git::WORK_DIRECTORY_REPO_PATH.clone()])?;
+
         log::trace!(
             "computed git statuses for repo {:?} in {:?}",
             job.local_repository.work_directory.display_name(),
@@ -5369,13 +5435,9 @@ impl BackgroundScanner {
         let mut changed_paths = Vec::new();
         let snapshot = self.state.lock().snapshot.snapshot.clone();
 
-        let Some(mut repository) =
-            snapshot.repository(job.local_repository.work_directory.path_key())
-        else {
-            // happens when a folder is deleted
-            log::debug!("Got an UpdateGitStatusesJob for a repository that isn't in the snapshot");
-            return;
-        };
+        let mut repository = snapshot
+            .repository(job.local_repository.work_directory.path_key())
+            .context("Got an UpdateGitStatusesJob for a repository that isn't in the snapshot")?;
 
         let merge_head_shas = job.local_repository.repo().merge_head_shas();
         if merge_head_shas != job.local_repository.current_merge_head_shas {
@@ -5403,6 +5465,7 @@ impl BackgroundScanner {
         }
 
         repository.statuses_by_path = new_entries_by_path;
+
         let mut state = self.state.lock();
         state
             .snapshot
@@ -5428,6 +5491,13 @@ impl BackgroundScanner {
             job.local_repository.work_directory.display_name(),
             t0.elapsed(),
         );
+        Ok(())
+    }
+
+    /// Update the git statuses for a given batch of entries.
+    fn update_git_repository(&self, job: UpdateGitRepoJob) {
+        self.update_branches(&job).log_err();
+        self.update_statuses(&job).log_err();
     }
 
     fn build_change_set(
@@ -5637,7 +5707,7 @@ struct UpdateIgnoreStatusJob {
     scan_queue: Sender<ScanJob>,
 }
 
-struct UpdateGitStatusesJob {
+struct UpdateGitRepoJob {
     local_repository: LocalRepositoryEntry,
 }
 

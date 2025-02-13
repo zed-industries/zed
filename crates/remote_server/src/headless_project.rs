@@ -1,22 +1,20 @@
 use ::proto::{FromProto, ToProto};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
-use git::repository::RepoPath;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, SharedString};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel};
 use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
-    git::{GitState, Repository},
+    git::GitStore,
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
     worktree_store::WorktreeStore,
-    LspStore, LspStoreEvent, PrettierStore, ProjectEntryId, ProjectPath, ToolchainStore,
-    WorktreeId,
+    LspStore, LspStoreEvent, PrettierStore, ProjectPath, ToolchainStore, WorktreeId,
 };
 use remote::ssh_session::ChannelClient;
 use rpc::{
@@ -44,7 +42,7 @@ pub struct HeadlessProject {
     pub next_entry_id: Arc<AtomicUsize>,
     pub languages: Arc<LanguageRegistry>,
     pub extensions: Entity<HeadlessExtensionStore>,
-    pub git_state: Entity<GitState>,
+    pub git_store: Entity<GitStore>,
 }
 
 pub struct HeadlessAppState {
@@ -89,9 +87,8 @@ impl HeadlessProject {
             buffer_store
         });
 
-        let git_state =
-            cx.new(|cx| GitState::new(&worktree_store, Some(&buffer_store), None, None, cx));
-
+        let git_store =
+            cx.new(|cx| GitStore::new(&worktree_store, buffer_store.clone(), None, None, cx));
         let prettier_store = cx.new(|cx| {
             PrettierStore::new(
                 node_runtime.clone(),
@@ -182,6 +179,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &task_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &toolchain_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &git_store);
 
         client.add_request_handler(cx.weak_entity(), Self::handle_list_remote_directory);
         client.add_request_handler(cx.weak_entity(), Self::handle_get_path_metadata);
@@ -199,12 +197,6 @@ impl HeadlessProject {
         client.add_entity_request_handler(BufferStore::handle_update_buffer);
         client.add_entity_message_handler(BufferStore::handle_close_buffer);
 
-        client.add_entity_request_handler(Self::handle_stage);
-        client.add_entity_request_handler(Self::handle_unstage);
-        client.add_entity_request_handler(Self::handle_commit);
-        client.add_entity_request_handler(Self::handle_set_index_text);
-        client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
-
         client.add_request_handler(
             extensions.clone().downgrade(),
             HeadlessExtensionStore::handle_sync_extensions,
@@ -220,6 +212,7 @@ impl HeadlessProject {
         LspStore::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
+        GitStore::init(&client);
 
         HeadlessProject {
             session: client,
@@ -232,7 +225,7 @@ impl HeadlessProject {
             next_entry_id: Default::default(),
             languages,
             extensions,
-            git_state,
+            git_store,
         }
     }
 

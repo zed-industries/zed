@@ -440,6 +440,9 @@ messages!(
     (SyncExtensionsResponse, Background),
     (InstallExtension, Background),
     (RegisterBufferWithLanguageServers, Background),
+    (GitReset, Background),
+    (GitShow, Background),
+    (GitCommitDetails, Background),
     (SetIndexText, Background),
 );
 
@@ -574,6 +577,8 @@ request_messages!(
     (SyncExtensions, SyncExtensionsResponse),
     (InstallExtension, Ack),
     (RegisterBufferWithLanguageServers, Ack),
+    (GitShow, GitCommitDetails),
+    (GitReset, Ack),
     (SetIndexText, Ack),
 );
 
@@ -667,6 +672,8 @@ entity_messages!(
     GetPathMetadata,
     CancelLanguageServerWork,
     RegisterBufferWithLanguageServers,
+    GitShow,
+    GitReset,
     SetIndexText,
 );
 

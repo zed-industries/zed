@@ -16,7 +16,7 @@ path = "src/ui.rs"
 chrono.workspace = true
 component.workspace = true
 gpui.workspace = true
-itertools = { workspace = true, optional = true }
+itertools.workspace = true
 linkme.workspace = true
 menu.workspace = true
 serde.workspace = true
@@ -26,13 +26,14 @@ story = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }
 theme.workspace = true
 ui_macros.workspace = true
+util.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
 [features]
 default = []
-stories = ["dep:itertools", "dep:story"]
+stories = ["dep:story"]
 
 # cargo-machete doesn't understand that linkme is used in the component macro
 [package.metadata.cargo-machete]

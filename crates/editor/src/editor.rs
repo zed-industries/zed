@@ -13,10 +13,10 @@
 //!
 //! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behavior.
 pub mod actions;
-mod blame_entry_tooltip;
 mod blink_manager;
 mod clangd_ext;
 mod code_context_menus;
+pub mod commit_tooltip;
 pub mod display_map;
 mod editor_settings;
 mod editor_settings_controls;
@@ -67,7 +67,10 @@ use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap};
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
 };
-use futures::{future, FutureExt};
+use futures::{
+    future::{self, Shared},
+    FutureExt,
+};
 use fuzzy::StringMatchCandidate;
 
 use code_context_menus::{
@@ -161,7 +164,7 @@ use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
 use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
 use ui::{
-    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
+    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize, Key,
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TakeUntilExt, TryFutureExt};
@@ -191,8 +194,7 @@ pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
-pub(crate) const EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT: &str =
-    "edit_prediction_requires_modifier";
+pub(crate) const EDIT_PREDICTION_CONFLICT_KEY_CONTEXT: &str = "edit_prediction_conflict";
 
 pub fn render_parsed_markdown(
     element_id: impl Into<ElementId>,
@@ -761,6 +763,7 @@ pub struct Editor {
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: HashMap<TypeId, Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
+    load_diff_task: Option<Shared<Task<()>>>,
     selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
@@ -1318,12 +1321,16 @@ impl Editor {
         };
 
         let mut code_action_providers = Vec::new();
+        let mut load_uncommitted_diff = None;
         if let Some(project) = project.clone() {
-            get_uncommitted_diff_for_buffer(
-                &project,
-                buffer.read(cx).all_buffers(),
-                buffer.clone(),
-                cx,
+            load_uncommitted_diff = Some(
+                get_uncommitted_diff_for_buffer(
+                    &project,
+                    buffer.read(cx).all_buffers(),
+                    buffer.clone(),
+                    cx,
+                )
+                .shared(),
             );
             code_action_providers.push(Rc::new(project) as Rc<_>);
         }
@@ -1471,6 +1478,7 @@ impl Editor {
             selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
             text_style_refinement: None,
+            load_diff_task: load_uncommitted_diff,
         };
         this.tasks_update_task = Some(this.refresh_runnables(window, cx));
         this._subscriptions.extend(project_subscriptions);
@@ -1536,13 +1544,10 @@ impl Editor {
             key_context.add("renaming");
         }
 
-        let mut showing_completions = false;
-
         match self.context_menu.borrow().as_ref() {
             Some(CodeContextMenu::Completions(_)) => {
                 key_context.add("menu");
                 key_context.add("showing_completions");
-                showing_completions = true;
             }
             Some(CodeContextMenu::CodeActions(_)) => {
                 key_context.add("menu");
@@ -1570,15 +1575,11 @@ impl Editor {
         }
 
         if has_active_edit_prediction {
-            key_context.add("copilot_suggestion");
-            key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
-            if showing_completions
-                || self.edit_prediction_requires_modifier()
-                // Require modifier key when the cursor is on leading whitespace, to allow `tab`
-                // bindings to insert tab characters.
-                || (self.edit_prediction_requires_modifier_in_leading_space && self.edit_prediction_cursor_on_leading_whitespace)
-            {
-                key_context.add(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT);
+            if self.edit_prediction_in_conflict() {
+                key_context.add(EDIT_PREDICTION_CONFLICT_KEY_CONTEXT);
+            } else {
+                key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
+                key_context.add("copilot_suggestion");
             }
         }
 
@@ -1589,16 +1590,40 @@ impl Editor {
         key_context
     }
 
+    pub fn edit_prediction_in_conflict(&self) -> bool {
+        let showing_completions = self
+            .context_menu
+            .borrow()
+            .as_ref()
+            .map_or(false, |context| {
+                matches!(context, CodeContextMenu::Completions(_))
+            });
+
+        showing_completions
+            || self.edit_prediction_requires_modifier()
+            // Require modifier key when the cursor is on leading whitespace, to allow `tab`
+            // bindings to insert tab characters.
+            || (self.edit_prediction_requires_modifier_in_leading_space && self.edit_prediction_cursor_on_leading_whitespace)
+    }
+
     pub fn accept_edit_prediction_keybind(
         &self,
         window: &Window,
         cx: &App,
     ) -> AcceptEditPredictionBinding {
         let key_context = self.key_context_internal(true, window, cx);
+        let in_conflict = self.edit_prediction_in_conflict();
         AcceptEditPredictionBinding(
             window
                 .bindings_for_action_in_context(&AcceptEditPrediction, key_context)
                 .into_iter()
+                .filter(|binding| {
+                    !in_conflict
+                        || binding
+                            .keystrokes()
+                            .first()
+                            .map_or(false, |keystroke| keystroke.modifiers.modified())
+                })
                 .rev()
                 .next(),
         )
@@ -5657,29 +5682,39 @@ impl Editor {
     fn render_edit_prediction_accept_keybind(&self, window: &mut Window, cx: &App) -> Option<Div> {
         let accept_binding = self.accept_edit_prediction_keybind(window, cx);
         let accept_keystroke = accept_binding.keystroke()?;
-        let colors = cx.theme().colors();
-        let accent_color = colors.text_accent;
-        let editor_bg_color = colors.editor_background;
-        let bg_color = editor_bg_color.blend(accent_color.opacity(0.1));
+
+        let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
+
+        let modifiers_color = if accept_keystroke.modifiers == window.modifiers() {
+            Color::Accent
+        } else {
+            Color::Muted
+        };
 
         h_flex()
             .px_0p5()
-            .gap_1()
-            .bg(bg_color)
+            .when(is_platform_style_mac, |parent| parent.gap_0p5())
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
             .text_size(TextSize::XSmall.rems(cx))
-            .children(ui::render_modifiers(
+            .child(h_flex().children(ui::render_modifiers(
                 &accept_keystroke.modifiers,
                 PlatformStyle::platform(),
-                Some(if accept_keystroke.modifiers == window.modifiers() {
-                    Color::Accent
-                } else {
-                    Color::Muted
-                }),
+                Some(modifiers_color),
                 Some(IconSize::XSmall.rems().into()),
-                false,
-            ))
-            .child(accept_keystroke.key.clone())
+                true,
+            )))
+            .when(is_platform_style_mac, |parent| {
+                parent.child(accept_keystroke.key.clone())
+            })
+            .when(!is_platform_style_mac, |parent| {
+                parent.child(
+                    Key::new(
+                        util::capitalize(&accept_keystroke.key),
+                        Some(Color::Default),
+                    )
+                    .size(Some(IconSize::XSmall.rems().into())),
+                )
+            })
             .into()
     }
 
@@ -5808,13 +5843,13 @@ impl Editor {
                                 },
                             )
                             .child(Label::new("Hold").size(LabelSize::Small))
-                            .children(ui::render_modifiers(
+                            .child(h_flex().children(ui::render_modifiers(
                                 &accept_keystroke.modifiers,
                                 PlatformStyle::platform(),
                                 Some(Color::Default),
                                 Some(IconSize::Small.rems().into()),
-                                true,
-                            ))
+                                false,
+                            )))
                             .into_any(),
                     );
                 }
@@ -5858,6 +5893,7 @@ impl Editor {
 
         let has_completion = self.active_inline_completion.is_some();
 
+        let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
         Some(
             h_flex()
                 .min_w(min_width)
@@ -5886,8 +5922,8 @@ impl Editor {
                         .child(
                             h_flex()
                                 .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                                .gap_1()
-                                .children(ui::render_modifiers(
+                                .when(is_platform_style_mac, |parent| parent.gap_1())
+                                .child(h_flex().children(ui::render_modifiers(
                                     &accept_keystroke.modifiers,
                                     PlatformStyle::platform(),
                                     Some(if !has_completion {
@@ -5896,8 +5932,8 @@ impl Editor {
                                         Color::Default
                                     }),
                                     None,
-                                    true,
-                                )),
+                                    false,
+                                ))),
                         )
                         .child(Label::new("Preview").into_any_element())
                         .opacity(if has_completion { 1.0 } else { 0.4 }),
@@ -14109,11 +14145,14 @@ impl Editor {
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).diff_for(buffer_id).is_none() {
                     if let Some(project) = &self.project {
-                        get_uncommitted_diff_for_buffer(
-                            project,
-                            [buffer.clone()],
-                            self.buffer.clone(),
-                            cx,
+                        self.load_diff_task = Some(
+                            get_uncommitted_diff_for_buffer(
+                                project,
+                                [buffer.clone()],
+                                self.buffer.clone(),
+                                cx,
+                            )
+                            .shared(),
                         );
                     }
                 }
@@ -14868,6 +14907,10 @@ impl Editor {
 
         gpui::Size::new(em_width, line_height)
     }
+
+    pub fn wait_for_diff_to_load(&self) -> Option<Shared<Task<()>>> {
+        self.load_diff_task.clone()
+    }
 }
 
 fn get_uncommitted_diff_for_buffer(
@@ -14875,7 +14918,7 @@ fn get_uncommitted_diff_for_buffer(
     buffers: impl IntoIterator<Item = Entity<Buffer>>,
     buffer: Entity<MultiBuffer>,
     cx: &mut App,
-) {
+) -> Task<()> {
     let mut tasks = Vec::new();
     project.update(cx, |project, cx| {
         for buffer in buffers {
@@ -14892,7 +14935,6 @@ fn get_uncommitted_diff_for_buffer(
             })
             .ok();
     })
-    .detach();
 }
 
 fn char_len_with_expanded_tabs(offset: usize, text: &str, tab_size: NonZeroU32) -> usize {

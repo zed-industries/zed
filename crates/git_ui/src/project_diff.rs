@@ -12,7 +12,7 @@ use gpui::{
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt, Point};
 use multi_buffer::{MultiBuffer, PathKey};
-use project::{git::GitState, Project, ProjectPath};
+use project::{git::GitStore, Project, ProjectPath};
 use theme::ActiveTheme;
 use ui::prelude::*;
 use util::ResultExt as _;
@@ -31,7 +31,7 @@ pub(crate) struct ProjectDiff {
     editor: Entity<Editor>,
     project: Entity<Project>,
     git_panel: Entity<GitPanel>,
-    git_state: Entity<GitState>,
+    git_store: Entity<GitStore>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     update_needed: postage::watch::Sender<()>,
@@ -137,11 +137,11 @@ impl ProjectDiff {
         cx.subscribe_in(&editor, window, Self::handle_editor_event)
             .detach();
 
-        let git_state = project.read(cx).git_state().clone();
-        let git_state_subscription = cx.subscribe_in(
-            &git_state,
+        let git_store = project.read(cx).git_store().clone();
+        let git_store_subscription = cx.subscribe_in(
+            &git_store,
             window,
-            move |this, _git_state, _event, _window, _cx| {
+            move |this, _git_store, _event, _window, _cx| {
                 *this.update_needed.borrow_mut() = ();
             },
         );
@@ -156,7 +156,7 @@ impl ProjectDiff {
 
         Self {
             project,
-            git_state: git_state.clone(),
+            git_store: git_store.clone(),
             git_panel: git_panel.clone(),
             workspace: workspace.downgrade(),
             focus_handle,
@@ -165,7 +165,7 @@ impl ProjectDiff {
             pending_scroll: None,
             update_needed: send,
             _task: worker,
-            _subscription: git_state_subscription,
+            _subscription: git_store_subscription,
         }
     }
 
@@ -175,7 +175,7 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(git_repo) = self.git_state.read(cx).active_repository() else {
+        let Some(git_repo) = self.git_store.read(cx).active_repository() else {
             return;
         };
         let repo = git_repo.read(cx);
@@ -248,7 +248,7 @@ impl ProjectDiff {
     }
 
     fn load_buffers(&mut self, cx: &mut Context<Self>) -> Vec<Task<Result<DiffBuffer>>> {
-        let Some(repo) = self.git_state.read(cx).active_repository() else {
+        let Some(repo) = self.git_store.read(cx).active_repository() else {
             self.multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.clear(cx);
             });

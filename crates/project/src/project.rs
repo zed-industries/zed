@@ -27,7 +27,7 @@ use git::Repository;
 pub mod search_history;
 mod yarn;
 
-use crate::git::GitState;
+use crate::git::GitStore;
 use anyhow::{anyhow, Context as _, Result};
 use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
@@ -161,7 +161,7 @@ pub struct Project {
     fs: Arc<dyn Fs>,
     ssh_client: Option<Entity<SshRemoteClient>>,
     client_state: ProjectClientState,
-    git_state: Entity<GitState>,
+    git_store: Entity<GitStore>,
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     worktree_store: Entity<WorktreeStore>,
@@ -610,15 +610,10 @@ impl Project {
         client.add_entity_request_handler(Self::handle_open_new_buffer);
         client.add_entity_message_handler(Self::handle_create_buffer_for_peer);
 
-        client.add_entity_request_handler(Self::handle_stage);
-        client.add_entity_request_handler(Self::handle_unstage);
-        client.add_entity_request_handler(Self::handle_commit);
-        client.add_entity_request_handler(Self::handle_set_index_text);
-        client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
-
         WorktreeStore::init(&client);
         BufferStore::init(&client);
         LspStore::init(&client);
+        GitStore::init(&client);
         SettingsObserver::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
@@ -705,8 +700,8 @@ impl Project {
                 )
             });
 
-            let git_state =
-                cx.new(|cx| GitState::new(&worktree_store, Some(&buffer_store), None, None, cx));
+            let git_store =
+                cx.new(|cx| GitStore::new(&worktree_store, buffer_store.clone(), None, None, cx));
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -719,7 +714,7 @@ impl Project {
                 lsp_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
-                git_state,
+                git_store,
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![cx.on_release(Self::release)],
                 active_entry: None,
@@ -826,10 +821,10 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let git_state = cx.new(|cx| {
-                GitState::new(
+            let git_store = cx.new(|cx| {
+                GitStore::new(
                     &worktree_store,
-                    Some(&buffer_store),
+                    buffer_store.clone(),
                     Some(ssh_proto.clone()),
                     Some(ProjectId(SSH_PROJECT_ID)),
                     cx,
@@ -848,7 +843,7 @@ impl Project {
                 lsp_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
-                git_state,
+                git_store,
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![
                     cx.on_release(Self::release),
@@ -898,6 +893,7 @@ impl Project {
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.git_store);
 
             ssh_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
             ssh_proto.add_entity_message_handler(Self::handle_update_worktree);
@@ -911,6 +907,7 @@ impl Project {
             SettingsObserver::init(&ssh_proto);
             TaskStore::init(Some(&ssh_proto));
             ToolchainStore::init(&ssh_proto);
+            GitStore::init(&ssh_proto);
 
             this
         })
@@ -1032,10 +1029,10 @@ impl Project {
             SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
         })?;
 
-        let git_state = cx.new(|cx| {
-            GitState::new(
+        let git_store = cx.new(|cx| {
+            GitStore::new(
                 &worktree_store,
-                Some(&buffer_store),
+                buffer_store.clone(),
                 Some(client.clone().into()),
                 Some(ProjectId(remote_id)),
                 cx,
@@ -1092,7 +1089,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
-                git_state,
+                git_store,
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -1615,6 +1612,16 @@ impl Project {
         })
     }
 
+    pub fn delete_file(
+        &mut self,
+        path: ProjectPath,
+        trash: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let entry = self.entry_for_path(&path, cx)?;
+        self.delete_entry(entry.id, trash, cx)
+    }
+
     pub fn delete_entry(
         &mut self,
         entry_id: ProjectEntryId,
@@ -1678,6 +1685,9 @@ impl Project {
             self.client
                 .subscribe_to_entity(project_id)?
                 .set_entity(&self.settings_observer, &mut cx.to_async()),
+            self.client
+                .subscribe_to_entity(project_id)?
+                .set_entity(&self.git_store, &mut cx.to_async()),
         ]);
 
         self.buffer_store.update(cx, |buffer_store, cx| {
@@ -4368,16 +4378,16 @@ impl Project {
         &self.buffer_store
     }
 
-    pub fn git_state(&self) -> &Entity<GitState> {
-        &self.git_state
+    pub fn git_store(&self) -> &Entity<GitStore> {
+        &self.git_store
     }
 
     pub fn active_repository(&self, cx: &App) -> Option<Entity<Repository>> {
-        self.git_state.read(cx).active_repository()
+        self.git_store.read(cx).active_repository()
     }
 
     pub fn all_repositories(&self, cx: &App) -> Vec<Entity<Repository>> {
-        self.git_state.read(cx).all_repositories()
+        self.git_store.read(cx).all_repositories()
     }
 
     pub fn repository_and_path_for_buffer_id(
@@ -4389,7 +4399,7 @@ impl Project {
             .buffer_for_id(buffer_id, cx)?
             .read(cx)
             .project_path(cx)?;
-        self.git_state
+        self.git_store
             .read(cx)
             .all_repositories()
             .into_iter()

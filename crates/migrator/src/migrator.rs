@@ -68,6 +68,17 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
     )
 }
 
+pub fn migrate_edit_prediction_provider_settings(text: &str) -> Result<Option<String>> {
+    migrate(
+        &text,
+        &[(
+            SETTINGS_REPLACE_NESTED_KEY,
+            replace_edit_prediction_provider_setting,
+        )],
+        &EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY,
+    )
+}
+
 type MigrationPatterns = &'static [(
     &'static str,
     fn(&str, &QueryMatch, &Query) -> Option<(Range<usize>, String)>,
@@ -550,7 +561,10 @@ pub static CONTEXT_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
 
 const SETTINGS_MIGRATION_PATTERNS: MigrationPatterns = &[
     (SETTINGS_STRING_REPLACE_QUERY, replace_setting_name),
-    (SETTINGS_REPLACE_NESTED_KEY, replace_setting_nested_key),
+    (
+        SETTINGS_REPLACE_NESTED_KEY,
+        replace_edit_prediction_provider_setting,
+    ),
     (
         SETTINGS_REPLACE_IN_LANGUAGES_QUERY,
         replace_setting_in_languages,
@@ -564,6 +578,14 @@ static SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
             .iter()
             .map(|pattern| pattern.0)
             .collect::<String>(),
+    )
+    .unwrap()
+});
+
+static EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
+    Query::new(
+        &tree_sitter_json::LANGUAGE.into(),
+        SETTINGS_REPLACE_NESTED_KEY,
     )
     .unwrap()
 });
@@ -622,7 +644,7 @@ const SETTINGS_REPLACE_NESTED_KEY: &str = r#"
 )
 "#;
 
-fn replace_setting_nested_key(
+fn replace_edit_prediction_provider_setting(
     contents: &str,
     mat: &QueryMatch,
     query: &Query,
@@ -641,26 +663,12 @@ fn replace_setting_nested_key(
         .byte_range();
     let setting_name = contents.get(setting_range.clone())?;
 
-    let new_setting_name = SETTINGS_NESTED_STRING_REPLACE
-        .get(&parent_object_name)?
-        .get(setting_name)?;
+    if parent_object_name == "features" && setting_name == "inline_completion_provider" {
+        return Some((setting_range, "edit_prediction_provider".into()));
+    }
 
-    Some((setting_range, new_setting_name.to_string()))
+    None
 }
-
-/// ```json
-/// "features": {
-///   "inline_completion_provider": "copilot"
-/// },
-/// ```
-pub static SETTINGS_NESTED_STRING_REPLACE: LazyLock<
-    HashMap<&'static str, HashMap<&'static str, &'static str>>,
-> = LazyLock::new(|| {
-    HashMap::from_iter([(
-        "features",
-        HashMap::from_iter([("inline_completion_provider", "edit_prediction_provider")]),
-    )])
-});
 
 const SETTINGS_REPLACE_IN_LANGUAGES_QUERY: &str = r#"
 (object

@@ -1,6 +1,6 @@
 use crate::{
-    blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
+    commit_tooltip::{blame_entry_relative_timestamp, CommitTooltip, ParsedCommitMessage},
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
     },
@@ -8,21 +8,20 @@ use crate::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ScrollBeyondLastLine,
         ScrollbarDiagnostics, ShowScrollbar,
     },
-    git::blame::{CommitDetails, GitBlame},
+    git::blame::GitBlame,
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
-    AcceptEditPrediction, BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint,
-    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
+    BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
+    DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk,
     GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
     InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
     RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR,
-    EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT, FILE_HEADER_HEIGHT,
+    StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus};
@@ -35,11 +34,11 @@ use gpui::{
     point, px, quad, relative, size, svg, transparent_black, Action, AnyElement, App,
     AvailableSpace, Axis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners,
     CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _,
-    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement,
-    KeyBindingContextPredicate, Keystroke, Length, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    Subscription, TextRun, TextStyleRefinement, WeakEntity, Window,
+    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
+    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement,
+    WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -55,7 +54,7 @@ use multi_buffer::{
     RowInfo, ToOffset,
 };
 use project::project_settings::{GitGutterSetting, ProjectSettings};
-use settings::{KeyBindingValidator, KeyBindingValidatorRegistration, Settings};
+use settings::Settings;
 use smallvec::{smallvec, SmallVec};
 use std::{
     any::TypeId,
@@ -75,7 +74,7 @@ use ui::{
     POPOVER_Y_PADDING,
 };
 use unicode_segmentation::UnicodeSegmentation;
-use util::{markdown::MarkdownString, RangeExt, ResultExt};
+use util::{RangeExt, ResultExt};
 use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
@@ -3815,7 +3814,7 @@ impl EditorElement {
                 let mut element = h_flex()
                     .items_start()
                     .child(
-                        div()
+                        h_flex()
                             .bg(cx.theme().colors().editor_background)
                             .border(BORDER_WIDTH)
                             .shadow_sm()
@@ -5834,45 +5833,6 @@ impl AcceptEditPredictionBinding {
     }
 }
 
-struct AcceptEditPredictionsBindingValidator;
-
-inventory::submit! { KeyBindingValidatorRegistration(|| Box::new(AcceptEditPredictionsBindingValidator)) }
-
-impl KeyBindingValidator for AcceptEditPredictionsBindingValidator {
-    fn action_type_id(&self) -> TypeId {
-        TypeId::of::<AcceptEditPrediction>()
-    }
-
-    fn validate(&self, binding: &gpui::KeyBinding) -> Result<(), MarkdownString> {
-        use KeyBindingContextPredicate::*;
-
-        if binding.keystrokes().len() == 1 && binding.keystrokes()[0].modifiers.modified() {
-            return Ok(());
-        }
-        let required_predicate =
-            Not(Identifier(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT.into()).into());
-        match binding.predicate() {
-            Some(predicate) if required_predicate.is_superset(&predicate) => {
-                return Ok(());
-            }
-            _ => {}
-        }
-        Err(MarkdownString(format!(
-            "{} can only be bound to a single keystroke with modifiers, so \
-            that holding down these modifiers can be used to preview \
-            completions inline when the completions menu is open.\n\n\
-            This restriction does not apply when the context requires {}, \
-            since these bindings will not be used when the completions menu \
-            is open.",
-            MarkdownString::inline_code(AcceptEditPrediction.name()),
-            MarkdownString::inline_code(&format!(
-                "!{}",
-                EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT
-            )),
-        )))
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn prepaint_gutter_button(
     button: IconButton,
@@ -5939,7 +5899,8 @@ fn render_inline_blame_entry(
 
     let details = blame.read(cx).details_for_entry(&blame_entry);
 
-    let tooltip = cx.new(|_| BlameEntryTooltip::new(blame_entry, details, style, workspace));
+    let tooltip =
+        cx.new(|_| CommitTooltip::blame_entry(blame_entry, details, style.clone(), workspace));
 
     h_flex()
         .id("inline-blame")
@@ -5989,8 +5950,14 @@ fn render_blame_entry(
 
     let workspace = editor.read(cx).workspace.as_ref().map(|(w, _)| w.clone());
 
-    let tooltip =
-        cx.new(|_| BlameEntryTooltip::new(blame_entry.clone(), details.clone(), style, workspace));
+    let tooltip = cx.new(|_| {
+        CommitTooltip::blame_entry(
+            blame_entry.clone(),
+            details.clone(),
+            style.clone(),
+            workspace,
+        )
+    });
 
     h_flex()
         .w_full()
@@ -6040,7 +6007,7 @@ fn render_blame_entry(
 
 fn deploy_blame_entry_context_menu(
     blame_entry: &BlameEntry,
-    details: Option<&CommitDetails>,
+    details: Option<&ParsedCommitMessage>,
     editor: Entity<Editor>,
     position: gpui::Point<Pixels>,
     window: &mut Window,
