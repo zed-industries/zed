@@ -752,6 +752,11 @@ jobs:
         run: "[ $(du -sm /nix/store | cut -f1) -gt 50000 ] && nix-collect-garbage -d"
 
   bundle-windows:
+    timeout-minutes: 120
+    name: Create a Windows installer
+    runs-on: hosted-windows-1
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+    needs: [windows_tests]
     steps:
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
       - name: Enable longer pathnames for git
@@ -795,11 +800,7 @@ jobs:
           files-folder: ${{ env.ZED_WORKSPACE }}\crates\zed\resources\windows
           files-folder-filter: exe,dll
 
-      - name: Prepare Inno Setup
-        run: ./script/prepare-inno-setup.ps1
-
       - name: Run Inno Setup
-        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
         env:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -807,16 +808,17 @@ jobs:
           ENDPOINT: ${{ secrets.ENDPOINT }}
           ACCOUNT_NAME: ${{ secrets.ACCOUNT_NAME }}
           CERT_PROFILE_NAME: ${{ secrets.CERT_PROFILE_NAME }}
+        run: ./script/bundle-windows.ps1
+
+      - uses: softprops/action-gh-release@v2
+        name: Upload app bundle to release
+        if: ${{ env.RELEASE_CHANNEL == 'preview' }} # Only publish preview for now
         with:
-          path: ${{ env.ZED_WORKSPACE }}\crates\zed\resources\windows\installer\zed.iss
-          options: /dAppId="${{ env.APP_ID }}"
-            /dOutputDir="${{ env.ZED_WORKSPACE }}" /dappSetupName="${{ env.APP_SETUP_NAME }}"
-            /dAppName="${{ env.APP_NAME }}" /dAppDisplayName="${{ env.APP_DISPLAY_NAME }}" /dRegValueName="${{ env.REG_VALUE_NAME }}"
-            /dAppMutex="${{ env.APP_MUTEX }}" /dExeBasename="${{ env.APP_EXE_NAME }}" /dResourcesDir="${{ env.ZED_WORKSPACE }}\build"
-            /dsignToolPath="pwsh.exe -ExecutionPolicy Bypass -File ${{ env.ZED_WORKSPACE }}\build\sign.ps1"
-            /dShellNameShort="&Zed Editor" /dAppUserId="${{ env.APP_USER_ID }}" /dVersion="${{ env.VERSION }}"
-            /dSourceDir="${{ env.ZED_WORKSPACE }}"
-            /sDefaultsign="pwsh.exe -ExecutionPolicy Bypass -File ${{ env.ZED_WORKSPACE }}\build\sign.ps1 $f"
+          draft: true
+          prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
+          files: ${{ env.SETUP_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check dev drive space
         working-directory: ${{ env.ZED_WORKSPACE }}
@@ -828,7 +830,8 @@ jobs:
     if: |
       startsWith(github.ref, 'refs/tags/v')
       && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
-    needs: [bundle-mac, bundle-linux-x86_x64, bundle-linux-aarch64]
+    needs:
+      [bundle-mac, bundle-linux-x86_x64, bundle-linux-aarch64, bundle-windows]
     runs-on:
       - self-hosted
       - bundle

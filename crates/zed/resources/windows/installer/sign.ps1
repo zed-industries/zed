@@ -1,6 +1,6 @@
 param (
     [Parameter(Mandatory = $true)]
-    [string]$FILE_PATH
+    [string]$filePath
 )
 
 $params = @{}
@@ -23,7 +23,7 @@ if ([string]::IsNullOrWhiteSpace($certificateProfileName)) {
 }
 $params["CertificateProfileName"] = $certificateProfileName
 
-$params["Files"] = $FILE_PATH
+$params["Files"] = $filePath
 $params["FileDigest"] = "SHA256"
 $params["TimestampRfc3161"] = "http://timestamp.acs.microsoft.com"
 $params["TimestampDigest"] = "SHA256"
