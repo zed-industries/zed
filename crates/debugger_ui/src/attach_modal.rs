@@ -53,14 +53,14 @@ pub(crate) struct AttachModal {
 impl AttachModal {
     pub fn new(
         session_id: &DebugSessionId,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         dap_store: Entity<DapStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let picker = cx.new(|cx| {
             Picker::uniform_list(
-                AttachModalDelegate::new(*session_id, *client_id, dap_store),
+                AttachModalDelegate::new(*session_id, client_id, dap_store),
                 window,
                 cx,
             )
@@ -130,8 +130,10 @@ impl PickerDelegate for AttachModalDelegate {
                     if let Some(processes) = this.delegate.candidates.clone() {
                         processes
                     } else {
-                        let Some((_, client)) = this.delegate.dap_store.update(cx, |store, cx| {
-                            store.client_by_id(&this.delegate.client_id, cx)
+                        let Some(client) = this.delegate.dap_store.update(cx, |store, cx| {
+                            store
+                                .client_by_id(&this.delegate.client_id, cx)
+                                .and_then(|(_, client)| client.read(cx).adapter_client())
                         }) else {
                             return Vec::new();
                         };
@@ -222,7 +224,7 @@ impl PickerDelegate for AttachModalDelegate {
 
         self.dap_store.update(cx, |store, cx| {
             store
-                .attach(&self.session_id, &self.client_id, candidate.pid, cx)
+                .attach(&self.session_id, self.client_id, candidate.pid, cx)
                 .detach_and_log_err(cx);
         });
 

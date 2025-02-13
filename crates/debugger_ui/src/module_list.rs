@@ -14,7 +14,7 @@ pub struct ModuleList {
 impl ModuleList {
     pub fn new(
         session: Entity<DebugSession>,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         cx: &mut Context<Self>,
     ) -> Self {
         let weak_entity = cx.weak_entity();
@@ -32,7 +32,7 @@ impl ModuleList {
             },
         );
 
-        let client_state = session.read(cx).client_state(*client_id).unwrap();
+        let client_state = session.read(cx).client_state(client_id).unwrap();
 
         let _subscription = cx.observe(&client_state, |module_list, state, cx| {
             let modules_len = state.update(cx, |state, cx| state.modules(cx).len());
@@ -46,7 +46,7 @@ impl ModuleList {
             session,
             focus_handle,
             _subscription,
-            client_id: *client_id,
+            client_id,
         }
     }
 

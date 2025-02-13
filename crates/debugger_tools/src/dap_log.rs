@@ -174,9 +174,13 @@ impl LogStore {
                             this.add_debug_client(
                                 *client_id,
                                 project.update(cx, |project, cx| {
-                                    project
-                                        .dap_store()
-                                        .update(cx, |store, cx| store.client_by_id(client_id, cx))
+                                    project.dap_store().update(cx, |store, cx| {
+                                        store.client_by_id(client_id, cx).and_then(
+                                            |(session, client)| {
+                                                Some((session, client.read(cx).adapter_client()?))
+                                            },
+                                        )
+                                    })
                                 }),
                             );
                         }
@@ -587,9 +591,8 @@ impl DapLogView {
                     session_name: session.read(cx).name(),
                     clients: {
                         let mut clients = session
-                            .read(cx)
-                            .as_local()?
-                            .clients()
+                            .read_with(cx, |session, cx| session.clients(cx))
+                            .iter()
                             .map(|client| DapMenuSubItem {
                                 client_id: client.id(),
                                 client_name: client.adapter_id(),

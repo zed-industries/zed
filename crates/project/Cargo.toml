@@ -44,6 +44,7 @@ globset.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 itertools.workspace = true
+indexmap.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true

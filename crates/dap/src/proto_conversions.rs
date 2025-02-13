@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Result};
 use client::proto::{
-    self, DapChecksum, DapChecksumAlgorithm, DapModule, DapScope, DapScopePresentationHint,
-    DapSource, DapSourcePresentationHint, DapStackFrame, DapVariable, SetDebugClientCapabilities,
+    self, DapChecksum, DapChecksumAlgorithm, DapEvaluateContext, DapModule, DapScope,
+    DapScopePresentationHint, DapSource, DapSourcePresentationHint, DapStackFrame, DapVariable,
+    SetDebugClientCapabilities,
 };
 use dap_types::{
     Capabilities, OutputEventCategory, OutputEventGroup, ScopePresentationHint, Source,
@@ -487,6 +488,153 @@ impl ProtoConversion for dap_types::OutputEventGroup {
             proto::DapOutputEventGroup::Start => Self::Start,
             proto::DapOutputEventGroup::StartCollapsed => Self::StartCollapsed,
             proto::DapOutputEventGroup::End => Self::End,
+        }
+    }
+}
+
+impl ProtoConversion for dap_types::CompletionItem {
+    type ProtoType = proto::DapCompletionItem;
+    type Output = Self;
+
+    fn to_proto(&self) -> Self::ProtoType {
+        proto::DapCompletionItem {
+            label: self.label.clone(),
+            text: self.text.clone(),
+            detail: self.detail.clone(),
+            typ: self
+                .type_
+                .as_ref()
+                .map(ProtoConversion::to_proto)
+                .map(|typ| typ.into()),
+            start: self.start,
+            length: self.length,
+            selection_start: self.selection_start,
+            selection_length: self.selection_length,
+            sort_text: self.sort_text.clone(),
+        }
+    }
+
+    fn from_proto(payload: Self::ProtoType) -> Self {
+        let typ = payload.typ(); // todo(debugger): This might be a potential issue/bug because it defaults to a type when it's None
+
+        Self {
+            label: payload.label,
+            detail: payload.detail,
+            sort_text: payload.sort_text,
+            text: payload.text.clone(),
+            type_: Some(dap_types::CompletionItemType::from_proto(typ)),
+            start: payload.start,
+            length: payload.length,
+            selection_start: payload.selection_start,
+            selection_length: payload.selection_length,
+        }
+    }
+}
+
+impl ProtoConversion for dap_types::EvaluateArgumentsContext {
+    type ProtoType = DapEvaluateContext;
+    type Output = Self;
+
+    fn to_proto(&self) -> Self::ProtoType {
+        match self {
+            dap_types::EvaluateArgumentsContext::Variables => {
+                proto::DapEvaluateContext::EvaluateVariables
+            }
+            dap_types::EvaluateArgumentsContext::Watch => proto::DapEvaluateContext::Watch,
+            dap_types::EvaluateArgumentsContext::Hover => proto::DapEvaluateContext::Hover,
+            dap_types::EvaluateArgumentsContext::Repl => proto::DapEvaluateContext::Repl,
+            dap_types::EvaluateArgumentsContext::Clipboard => proto::DapEvaluateContext::Clipboard,
+            dap_types::EvaluateArgumentsContext::Unknown => {
+                proto::DapEvaluateContext::EvaluateUnknown
+            }
+            _ => proto::DapEvaluateContext::EvaluateUnknown,
+        }
+    }
+
+    fn from_proto(payload: Self::ProtoType) -> Self {
+        match payload {
+            proto::DapEvaluateContext::EvaluateVariables => {
+                dap_types::EvaluateArgumentsContext::Variables
+            }
+            proto::DapEvaluateContext::Watch => dap_types::EvaluateArgumentsContext::Watch,
+            proto::DapEvaluateContext::Hover => dap_types::EvaluateArgumentsContext::Hover,
+            proto::DapEvaluateContext::Repl => dap_types::EvaluateArgumentsContext::Repl,
+            proto::DapEvaluateContext::Clipboard => dap_types::EvaluateArgumentsContext::Clipboard,
+            proto::DapEvaluateContext::EvaluateUnknown => {
+                dap_types::EvaluateArgumentsContext::Unknown
+            }
+        }
+    }
+}
+
+impl ProtoConversion for dap_types::CompletionItemType {
+    type ProtoType = proto::DapCompletionItemType;
+    type Output = Self;
+
+    fn to_proto(&self) -> Self::ProtoType {
+        match self {
+            dap_types::CompletionItemType::Class => proto::DapCompletionItemType::Class,
+            dap_types::CompletionItemType::Color => proto::DapCompletionItemType::Color,
+            dap_types::CompletionItemType::Constructor => proto::DapCompletionItemType::Constructor,
+            dap_types::CompletionItemType::Customcolor => proto::DapCompletionItemType::Customcolor,
+            dap_types::CompletionItemType::Enum => proto::DapCompletionItemType::Enum,
+            dap_types::CompletionItemType::Field => proto::DapCompletionItemType::Field,
+            dap_types::CompletionItemType::File => proto::DapCompletionItemType::CompletionItemFile,
+            dap_types::CompletionItemType::Function => proto::DapCompletionItemType::Function,
+            dap_types::CompletionItemType::Interface => proto::DapCompletionItemType::Interface,
+            dap_types::CompletionItemType::Keyword => proto::DapCompletionItemType::Keyword,
+            dap_types::CompletionItemType::Method => proto::DapCompletionItemType::Method,
+            dap_types::CompletionItemType::Module => proto::DapCompletionItemType::Module,
+            dap_types::CompletionItemType::Property => proto::DapCompletionItemType::Property,
+            dap_types::CompletionItemType::Reference => proto::DapCompletionItemType::Reference,
+            dap_types::CompletionItemType::Snippet => proto::DapCompletionItemType::Snippet,
+            dap_types::CompletionItemType::Text => proto::DapCompletionItemType::Text,
+            dap_types::CompletionItemType::Unit => proto::DapCompletionItemType::Unit,
+            dap_types::CompletionItemType::Value => proto::DapCompletionItemType::Value,
+            dap_types::CompletionItemType::Variable => proto::DapCompletionItemType::Variable,
+        }
+    }
+
+    fn from_proto(payload: Self::ProtoType) -> Self {
+        match payload {
+            proto::DapCompletionItemType::Class => dap_types::CompletionItemType::Class,
+            proto::DapCompletionItemType::Color => dap_types::CompletionItemType::Color,
+            proto::DapCompletionItemType::CompletionItemFile => dap_types::CompletionItemType::File,
+            proto::DapCompletionItemType::Constructor => dap_types::CompletionItemType::Constructor,
+            proto::DapCompletionItemType::Customcolor => dap_types::CompletionItemType::Customcolor,
+            proto::DapCompletionItemType::Enum => dap_types::CompletionItemType::Enum,
+            proto::DapCompletionItemType::Field => dap_types::CompletionItemType::Field,
+            proto::DapCompletionItemType::Function => dap_types::CompletionItemType::Function,
+            proto::DapCompletionItemType::Interface => dap_types::CompletionItemType::Interface,
+            proto::DapCompletionItemType::Keyword => dap_types::CompletionItemType::Keyword,
+            proto::DapCompletionItemType::Method => dap_types::CompletionItemType::Method,
+            proto::DapCompletionItemType::Module => dap_types::CompletionItemType::Module,
+            proto::DapCompletionItemType::Property => dap_types::CompletionItemType::Property,
+            proto::DapCompletionItemType::Reference => dap_types::CompletionItemType::Reference,
+            proto::DapCompletionItemType::Snippet => dap_types::CompletionItemType::Snippet,
+            proto::DapCompletionItemType::Text => dap_types::CompletionItemType::Text,
+            proto::DapCompletionItemType::Unit => dap_types::CompletionItemType::Unit,
+            proto::DapCompletionItemType::Value => dap_types::CompletionItemType::Value,
+            proto::DapCompletionItemType::Variable => dap_types::CompletionItemType::Variable,
+        }
+    }
+}
+
+impl ProtoConversion for dap_types::Thread {
+    type ProtoType = proto::DapThread;
+    type Output = Self;
+
+    fn to_proto(&self) -> Self::ProtoType {
+        proto::DapThread {
+            id: self.id,
+            name: self.name.clone(),
+        }
+    }
+
+    fn from_proto(payload: Self::ProtoType) -> Self {
+        Self {
+            id: payload.id,
+            name: payload.name,
         }
     }
 }

@@ -16,8 +16,10 @@ use gpui::{
     Focusable, Subscription, Task, WeakEntity,
 };
 use project::{
-    debugger::dap_session::DebugSessionId,
-    debugger::dap_store::{DapStore, DapStoreEvent},
+    debugger::{
+        dap_session::{DebugSessionId, ThreadId},
+        dap_store::{DapStore, DapStoreEvent},
+    },
     terminals::TerminalKind,
 };
 use rpc::proto::{self, SetDebuggerPanelItem, UpdateDebugAdapter};
@@ -118,7 +120,7 @@ pub struct DebugPanel {
     workspace: WeakEntity<Workspace>,
     _subscriptions: Vec<Subscription>,
     message_queue: HashMap<DebugAdapterClientId, VecDeque<OutputEvent>>,
-    thread_states: BTreeMap<(DebugAdapterClientId, u64), Entity<ThreadState>>,
+    thread_states: BTreeMap<(DebugAdapterClientId, ThreadId), Entity<ThreadState>>,
 }
 
 impl DebugPanel {
@@ -157,7 +159,7 @@ impl DebugPanel {
                 cx.subscribe_in(&project, window, {
                     move |this: &mut Self, _, event, window, cx| match event {
                         project::Event::DebugClientStarted((session_id, client_id)) => {
-                            this.handle_debug_client_started(session_id, client_id, window, cx);
+                            this.handle_debug_client_started(session_id, *client_id, window, cx);
                         }
                         project::Event::DebugClientEvent {
                             session_id,
@@ -166,14 +168,14 @@ impl DebugPanel {
                         } => match message {
                             Message::Event(event) => {
                                 this.handle_debug_client_events(
-                                    session_id, client_id, event, window, cx,
+                                    session_id, *client_id, event, window, cx,
                                 );
                             }
                             Message::Request(request) => {
                                 if StartDebugging::COMMAND == request.command {
                                     this.handle_start_debugging_request(
                                         session_id,
-                                        client_id,
+                                        *client_id,
                                         request.seq,
                                         request.arguments.clone(),
                                         cx,
@@ -181,7 +183,7 @@ impl DebugPanel {
                                 } else if RunInTerminal::COMMAND == request.command {
                                     this.handle_run_in_terminal_request(
                                         session_id,
-                                        client_id,
+                                        *client_id,
                                         request.seq,
                                         request.arguments.clone(),
                                         window,
@@ -335,8 +337,8 @@ impl DebugPanel {
 
     pub fn debug_panel_item_by_client(
         &self,
-        client_id: &DebugAdapterClientId,
-        thread_id: u64,
+        client_id: DebugAdapterClientId,
+        thread_id: ThreadId,
         cx: &mut Context<Self>,
     ) -> Option<Entity<DebugPanelItem>> {
         self.pane
@@ -346,7 +348,7 @@ impl DebugPanel {
             .find(|item| {
                 let item = item.read(cx);
 
-                &item.client_id() == client_id && item.thread_id() == thread_id
+                item.client_id() == client_id && item.thread_id() == thread_id
             })
     }
 
@@ -362,17 +364,23 @@ impl DebugPanel {
                 let thread_panel = item.downcast::<DebugPanelItem>().unwrap();
 
                 let thread_id = thread_panel.read(cx).thread_id();
-                let session_id = thread_panel.read(cx).session().read(cx).id();
                 let client_id = thread_panel.read(cx).client_id();
 
                 self.thread_states.remove(&(client_id, thread_id));
 
                 cx.notify();
 
-                self.dap_store.update(cx, |store, cx| {
-                    store
-                        .terminate_threads(&session_id, &client_id, Some(vec![thread_id; 1]), cx)
-                        .detach()
+                let Some(client_state) = thread_panel
+                    .read(cx)
+                    .session()
+                    .read(cx)
+                    .client_state(client_id)
+                else {
+                    return;
+                };
+
+                client_state.update(cx, |state, cx| {
+                    state.terminate_threads(Some(vec![thread_id; 1]), cx);
                 });
             }
             pane::Event::Remove { .. } => cx.emit(PanelEvent::Close),
@@ -405,7 +413,7 @@ impl DebugPanel {
     fn handle_start_debugging_request(
         &mut self,
         session_id: &DebugSessionId,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         seq: u64,
         request_args: Option<Value>,
         cx: &mut Context<Self>,
@@ -426,7 +434,7 @@ impl DebugPanel {
     fn handle_run_in_terminal_request(
         &mut self,
         session_id: &DebugSessionId,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         seq: u64,
         request_args: Option<Value>,
         window: &mut Window,
@@ -519,7 +527,7 @@ impl DebugPanel {
         });
 
         let session_id = *session_id;
-        let client_id = *client_id;
+
         cx.spawn(|this, mut cx| async move {
             // Ensure a response is always sent, even in error cases,
             // to maintain proper communication with the debug adapter
@@ -577,14 +585,7 @@ impl DebugPanel {
 
             let respond_task = this.update(&mut cx, |this, cx| {
                 this.dap_store.update(cx, |store, cx| {
-                    store.respond_to_run_in_terminal(
-                        &session_id,
-                        &client_id,
-                        success,
-                        seq,
-                        body,
-                        cx,
-                    )
+                    store.respond_to_run_in_terminal(&session_id, client_id, success, seq, body, cx)
                 })
             });
 
@@ -596,7 +597,7 @@ impl DebugPanel {
     fn handle_debug_client_started(
         &self,
         session_id: &DebugSessionId,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -610,14 +611,12 @@ impl DebugPanel {
         };
 
         let session_id = *session_id;
-        let client_id = *client_id;
         let workspace = self.workspace.clone();
         let request_type = session.configuration().request.clone();
         cx.spawn_in(window, |this, mut cx| async move {
             let task = this.update(&mut cx, |this, cx| {
-                this.dap_store.update(cx, |store, cx| {
-                    store.initialize(&session_id, &client_id, cx)
-                })
+                this.dap_store
+                    .update(cx, |store, cx| store.initialize(&session_id, client_id, cx))
             })?;
 
             task.await?;
@@ -626,7 +625,7 @@ impl DebugPanel {
                 DebugRequestType::Launch => {
                     let task = this.update(&mut cx, |this, cx| {
                         this.dap_store
-                            .update(cx, |store, cx| store.launch(&session_id, &client_id, cx))
+                            .update(cx, |store, cx| store.launch(&session_id, client_id, cx))
                     });
 
                     task?.await
@@ -635,7 +634,7 @@ impl DebugPanel {
                     if let Some(process_id) = config.process_id {
                         let task = this.update(&mut cx, |this, cx| {
                             this.dap_store.update(cx, |store, cx| {
-                                store.attach(&session_id, &client_id, process_id, cx)
+                                store.attach(&session_id, client_id, process_id, cx)
                             })
                         })?;
 
@@ -646,7 +645,7 @@ impl DebugPanel {
                                 workspace.toggle_modal(window, cx, |window, cx| {
                                     AttachModal::new(
                                         &session_id,
-                                        &client_id,
+                                        client_id,
                                         this.dap_store.clone(),
                                         window,
                                         cx,
@@ -680,28 +679,28 @@ impl DebugPanel {
     fn handle_debug_client_events(
         &mut self,
         session_id: &DebugSessionId,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         event: &Events,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
             Events::Initialized(event) => {
-                self.handle_initialized_event(&session_id, &client_id, event, cx)
+                self.handle_initialized_event(&session_id, client_id, event, cx)
             }
             Events::Stopped(event) => {
-                self.handle_stopped_event(&session_id, &client_id, event, window, cx)
+                self.handle_stopped_event(&session_id, client_id, event, window, cx)
             }
-            Events::Continued(event) => self.handle_continued_event(&client_id, event, cx),
-            Events::Exited(event) => self.handle_exited_event(&client_id, event, cx),
+            Events::Continued(event) => self.handle_continued_event(client_id, event, cx),
+            Events::Exited(event) => self.handle_exited_event(client_id, event, cx),
             Events::Terminated(event) => {
-                self.handle_terminated_event(&session_id, &client_id, event, cx)
+                self.handle_terminated_event(&session_id, client_id, event, cx)
             }
-            Events::Thread(event) => self.handle_thread_event(&client_id, event, cx),
-            Events::Output(event) => self.handle_output_event(&client_id, event, cx),
+            Events::Thread(event) => self.handle_thread_event(client_id, event, cx),
+            Events::Output(event) => self.handle_output_event(client_id, event, cx),
             Events::Breakpoint(_) => {}
-            Events::Module(event) => self.handle_module_event(&client_id, event, cx),
-            Events::LoadedSource(event) => self.handle_loaded_source_event(&client_id, event, cx),
+            Events::Module(event) => self.handle_module_event(client_id, event, cx),
+            Events::LoadedSource(event) => self.handle_loaded_source_event(client_id, event, cx),
             Events::Capabilities(event) => {
                 self.handle_capabilities_changed_event(session_id, client_id, event, cx);
             }
@@ -718,26 +717,25 @@ impl DebugPanel {
     fn handle_initialized_event(
         &mut self,
         session_id: &DebugSessionId,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         capabilities: &Option<Capabilities>,
         cx: &mut Context<Self>,
     ) {
         if let Some(capabilities) = capabilities {
             self.dap_store.update(cx, |store, cx| {
-                store.update_capabilities_for_client(&session_id, &client_id, capabilities, cx);
+                store.update_capabilities_for_client(&session_id, client_id, capabilities, cx);
             });
 
-            cx.emit(DebugPanelEvent::CapabilitiesChanged(*client_id));
+            cx.emit(DebugPanelEvent::CapabilitiesChanged(client_id));
         }
 
         let session_id = *session_id;
-        let client_id = *client_id;
 
         cx.spawn(|this, mut cx| async move {
             this.update(&mut cx, |debug_panel, cx| {
                 debug_panel.workspace.update(cx, |workspace, cx| {
                     workspace.project().update(cx, |project, cx| {
-                        project.initial_send_breakpoints(&session_id, &client_id, cx)
+                        project.initial_send_breakpoints(&session_id, client_id, cx)
                     })
                 })
             })??
@@ -746,7 +744,7 @@ impl DebugPanel {
             this.update(&mut cx, |debug_panel, cx| {
                 debug_panel
                     .dap_store
-                    .update(cx, |store, cx| store.configuration_done(&client_id, cx))
+                    .update(cx, |store, cx| store.configuration_done(client_id, cx))
             })?
             .await
         })
@@ -755,22 +753,22 @@ impl DebugPanel {
 
     fn handle_continued_event(
         &mut self,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         event: &ContinuedEvent,
         cx: &mut Context<Self>,
     ) {
-        cx.emit(DebugPanelEvent::Continued((*client_id, event.clone())));
+        cx.emit(DebugPanelEvent::Continued((client_id, event.clone())));
     }
 
     fn handle_stopped_event(
         &mut self,
         session_id: &DebugSessionId,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         event: &StoppedEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread_id) = event.thread_id else {
+        let Some(thread_id) = event.thread_id.map(|thread_id| ThreadId(thread_id)) else {
             return;
         };
 
@@ -782,8 +780,6 @@ impl DebugPanel {
         else {
             return; // this can/should never happen
         };
-
-        let client_id = *client_id;
 
         cx.spawn_in(window, {
             let event = event.clone();
@@ -800,17 +796,16 @@ impl DebugPanel {
                         thread_state.status = ThreadStatus::Stopped;
                     });
 
-                    let existing_item = this.debug_panel_item_by_client(&client_id, thread_id, cx);
+                    let existing_item = this.debug_panel_item_by_client(client_id, thread_id, cx);
                     if existing_item.is_none() {
                         let debug_panel = cx.entity();
                         this.pane.update(cx, |pane, cx| {
                             let tab = cx.new(|cx| {
                                 DebugPanelItem::new(
                                     session,
-                                    &client_id,
+                                    client_id,
                                     thread_id,
                                     thread_state,
-                                    this.dap_store.clone(),
                                     &debug_panel,
                                     this.workspace.clone(),
                                     window,
@@ -858,13 +853,13 @@ impl DebugPanel {
 
     fn handle_thread_event(
         &mut self,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         event: &ThreadEvent,
         cx: &mut Context<Self>,
     ) {
-        let thread_id = event.thread_id;
+        let thread_id = ThreadId(event.thread_id);
 
-        if let Some(thread_state) = self.thread_states.get(&(*client_id, thread_id)) {
+        if let Some(thread_state) = self.thread_states.get(&(client_id, thread_id)) {
             if !thread_state.read(cx).stopped && event.reason == ThreadEventReason::Exited {
                 const MESSAGE: &'static str = "Debug session exited without hitting breakpoints\n\nTry adding a breakpoint, or define the correct path mapping for your debugger.";
 
@@ -876,26 +871,26 @@ impl DebugPanel {
 
         if event.reason == ThreadEventReason::Started {
             self.thread_states
-                .insert((*client_id, thread_id), cx.new(|_| ThreadState::default()));
+                .insert((client_id, thread_id), cx.new(|_| ThreadState::default()));
         }
 
-        cx.emit(DebugPanelEvent::Thread((*client_id, event.clone())));
+        cx.emit(DebugPanelEvent::Thread((client_id, event.clone())));
         cx.notify();
     }
 
     fn handle_exited_event(
         &mut self,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         _: &ExitedEvent,
         cx: &mut Context<Self>,
     ) {
-        cx.emit(DebugPanelEvent::Exited(*client_id));
+        cx.emit(DebugPanelEvent::Exited(client_id));
     }
 
     fn handle_terminated_event(
         &mut self,
         session_id: &DebugSessionId,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         event: &Option<TerminatedEvent>,
         cx: &mut Context<Self>,
     ) {
@@ -903,7 +898,7 @@ impl DebugPanel {
 
         for (_, thread_state) in self
             .thread_states
-            .range_mut(&(*client_id, u64::MIN)..&(*client_id, u64::MAX))
+            .range_mut(&(client_id, ThreadId::MIN)..&(client_id, ThreadId::MAX))
         {
             thread_state.update(cx, |thread_state, cx| {
                 thread_state.status = ThreadStatus::Ended;
@@ -917,9 +912,17 @@ impl DebugPanel {
                 .as_ref()
                 .is_some_and(|v| v.as_bool().unwrap_or(true))
             {
-                store
-                    .restart(&client_id, restart_args, cx)
-                    .detach_and_log_err(cx);
+                let Some(session) = store.session_by_client_id(client_id) else {
+                    return;
+                };
+
+                let Some(client_state) = session.read(cx).client_state(client_id) else {
+                    return;
+                };
+
+                client_state.update(cx, |state, cx| {
+                    state.restart(restart_args, cx);
+                });
             } else {
                 store
                     .shutdown_session(&session_id, cx)
@@ -927,21 +930,21 @@ impl DebugPanel {
             }
         });
 
-        cx.emit(DebugPanelEvent::Terminated(*client_id));
+        cx.emit(DebugPanelEvent::Terminated(client_id));
     }
 
     fn handle_output_event(
         &mut self,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         event: &OutputEvent,
         cx: &mut Context<Self>,
     ) {
         self.message_queue
-            .entry(*client_id)
+            .entry(client_id)
             .or_default()
             .push_back(event.clone());
 
-        cx.emit(DebugPanelEvent::Output((*client_id, event.clone())));
+        cx.emit(DebugPanelEvent::Output((client_id, event.clone())));
     }
 
     fn on_dap_store_event(
@@ -973,7 +976,7 @@ impl DebugPanel {
     ) {
         if let Some(thread_state) = self.thread_states.get_mut(&(
             DebugAdapterClientId::from_proto(update.client_id),
-            update.thread_id,
+            ThreadId(update.thread_id),
         )) {
             thread_state.update(cx, |thread_state, _| {
                 thread_state.status = ThreadStatus::from_proto(update.status());
@@ -986,11 +989,11 @@ impl DebugPanel {
     pub(crate) fn handle_debug_adapter_update(
         &mut self,
         update: &UpdateDebugAdapter,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let client_id = DebugAdapterClientId::from_proto(update.client_id);
-        let thread_id = update.thread_id;
+        let thread_id = update.thread_id.map(|thread_id| ThreadId(thread_id));
 
         let active_item = self
             .pane
@@ -998,7 +1001,7 @@ impl DebugPanel {
             .active_item()
             .and_then(|item| item.downcast::<DebugPanelItem>());
 
-        let search = self
+        let _search = self
             .pane
             .read(cx)
             .items()
@@ -1020,15 +1023,16 @@ impl DebugPanel {
                 }
             });
 
-        if let Some((debug_panel_item, is_active_item)) = search {
-            debug_panel_item.update(cx, |this, cx| {
-                this.update_adapter(update, window, cx);
+        // if let Some((debug_panel_item, is_active_item)) = search {
+        // TODO(debugger): make this work again
+        // debug_panel_item.update(cx, |this, cx| {
+        // this.update_adapter(update, window, cx);
 
-                if is_active_item {
-                    this.go_to_current_stack_frame(window, cx);
-                }
-            });
-        }
+        // if is_active_item {
+        //     this.go_to_current_stack_frame(window, cx);
+        // }
+        // });
+        // }
     }
 
     fn handle_remote_has_initialized(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1055,7 +1059,7 @@ impl DebugPanel {
         };
 
         let client_id = DebugAdapterClientId::from_proto(payload.client_id);
-        let thread_id = payload.thread_id;
+        let thread_id = ThreadId(payload.thread_id);
         let thread_state = payload.thread_state.clone().unwrap();
         let thread_state = cx.new(|_| ThreadState::from_proto(thread_state));
 
@@ -1079,10 +1083,9 @@ impl DebugPanel {
                 let debug_panel_item = cx.new(|cx| {
                     DebugPanelItem::new(
                         session,
-                        &client_id,
+                        client_id,
                         thread_id,
                         thread_state,
-                        self.dap_store.clone(),
                         &debug_panel,
                         self.workspace.clone(),
                         window,
@@ -1118,26 +1121,26 @@ impl DebugPanel {
 
     fn handle_module_event(
         &mut self,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         event: &ModuleEvent,
         cx: &mut Context<Self>,
     ) {
-        cx.emit(DebugPanelEvent::Module((*client_id, event.clone())));
+        cx.emit(DebugPanelEvent::Module((client_id, event.clone())));
     }
 
     fn handle_loaded_source_event(
         &mut self,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         event: &LoadedSourceEvent,
         cx: &mut Context<Self>,
     ) {
-        cx.emit(DebugPanelEvent::LoadedSource((*client_id, event.clone())));
+        cx.emit(DebugPanelEvent::LoadedSource((client_id, event.clone())));
     }
 
     fn handle_capabilities_changed_event(
         &mut self,
         session_id: &DebugSessionId,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         event: &CapabilitiesEvent,
         cx: &mut Context<Self>,
     ) {
@@ -1145,7 +1148,7 @@ impl DebugPanel {
             store.update_capabilities_for_client(session_id, client_id, &event.capabilities, cx);
         });
 
-        cx.emit(DebugPanelEvent::CapabilitiesChanged(*client_id));
+        cx.emit(DebugPanelEvent::CapabilitiesChanged(client_id));
     }
 }
 

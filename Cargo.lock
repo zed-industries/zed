@@ -10228,6 +10228,7 @@ dependencies = [
  "gpui",
  "http_client",
  "image",
+ "indexmap",
  "itertools 0.14.0",
  "language",
  "log",

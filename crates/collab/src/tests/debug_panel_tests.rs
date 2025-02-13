@@ -269,7 +269,7 @@ async fn test_debug_panel_item_opens_on_remote(
             debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
         );
         assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
-        assert_eq!(1, active_debug_panel_item.read(cx).thread_id());
+        assert_eq!(1, active_debug_panel_item.read(cx).thread_id().0);
     });
 
     let shutdown_client = host_project.update(host_cx, |project, cx| {
@@ -368,7 +368,7 @@ async fn test_active_debug_panel_item_set_on_join_project(
             debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
         );
         assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
-        assert_eq!(1, active_debug_panel_item.read(cx).thread_id());
+        assert_eq!(1, active_debug_panel_item.read(cx).thread_id().0);
     });
 
     let shutdown_client = host_project.update(host_cx, |project, cx| {
@@ -481,7 +481,7 @@ async fn test_debug_panel_remote_button_presses(
             debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
         );
         assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
-        assert_eq!(1, active_debug_panel_item.read(cx).thread_id());
+        assert_eq!(1, active_debug_panel_item.read(cx).thread_id().0);
         active_debug_panel_item
     });
 
@@ -496,7 +496,7 @@ async fn test_debug_panel_remote_button_presses(
             debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
         );
         assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
-        assert_eq!(1, active_debug_panel_item.read(cx).thread_id());
+        assert_eq!(1, active_debug_panel_item.read(cx).thread_id().0);
         active_debug_panel_item
     });
 
@@ -1251,7 +1251,9 @@ async fn test_module_list(
         debug_panel_item.update(cx, |item, cx| {
             assert_eq!(
                 true,
-                item.capabilities(cx).supports_modules_request.unwrap(),
+                item.capabilities(cx)
+                    .and_then(|caps| caps.supports_modules_request)
+                    .unwrap(),
                 "Local supports modules request should be true"
             );
 
@@ -1279,7 +1281,9 @@ async fn test_module_list(
         debug_panel_item.update(cx, |item, cx| {
             assert_eq!(
                 true,
-                item.capabilities(cx).supports_modules_request.unwrap(),
+                item.capabilities(cx)
+                    .and_then(|caps| caps.supports_modules_request)
+                    .unwrap(),
                 "Remote capabilities supports modules request should be true"
             );
             let remote_module_list = item.module_list().update(cx, |list, cx| list.modules(cx));
@@ -1310,7 +1314,9 @@ async fn test_module_list(
         debug_panel_item.update(cx, |item, cx| {
             assert_eq!(
                 true,
-                item.capabilities(cx).supports_modules_request.unwrap(),
+                item.capabilities(cx)
+                    .and_then(|caps| caps.supports_modules_request)
+                    .unwrap(),
                 "Remote (mid session join) capabilities supports modules request should be true"
             );
             let remote_module_list = item.module_list().update(cx, |list, cx| list.modules(cx));
@@ -1950,9 +1956,7 @@ async fn test_ignore_breakpoints(
         let session_id = debug_panel.update(cx, |this, cx| {
             this.dap_store()
                 .read(cx)
-                .as_remote()
-                .unwrap()
-                .session_by_client_id(&client.id())
+                .session_by_client_id(client.id())
                 .unwrap()
                 .read(cx)
                 .id()
@@ -1966,7 +1970,7 @@ async fn test_ignore_breakpoints(
         );
         assert_eq!(false, breakpoints_ignored);
         assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
-        assert_eq!(1, active_debug_panel_item.read(cx).thread_id());
+        assert_eq!(1, active_debug_panel_item.read(cx).thread_id().0);
         active_debug_panel_item
     });
 
@@ -2004,7 +2008,7 @@ async fn test_ignore_breakpoints(
             active_debug_panel_item.read(cx).are_breakpoints_ignored(cx)
         );
         assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
-        assert_eq!(1, active_debug_panel_item.read(cx).thread_id());
+        assert_eq!(1, active_debug_panel_item.read(cx).thread_id().0);
 
         active_debug_panel_item
     });
@@ -2064,7 +2068,7 @@ async fn test_ignore_breakpoints(
 
         assert_eq!(true, breakpoints_ignored);
         assert_eq!(client.id(), debug_panel.client_id());
-        assert_eq!(1, debug_panel.thread_id());
+        assert_eq!(1, debug_panel.thread_id().0);
     });
 
     client
@@ -2135,7 +2139,7 @@ async fn test_ignore_breakpoints(
             debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
         );
         assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
-        assert_eq!(1, active_debug_panel_item.read(cx).thread_id());
+        assert_eq!(1, active_debug_panel_item.read(cx).thread_id().0);
         active_debug_panel_item
     });
 

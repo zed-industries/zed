@@ -355,7 +355,19 @@ message Envelope {
         DapLoadedSourcesRequest dap_loaded_sources_request = 331;
         DapLoadedSourcesResponse dap_loaded_sources_response = 332;
         ActiveDebugSessionsRequest active_debug_sessions_request = 333;
-        ActiveDebugSessionsResponse active_debug_sessions_response = 334; // current max
+        ActiveDebugSessionsResponse active_debug_sessions_response = 334;
+        DapStackTraceRequest dap_stack_trace_request = 335;
+        DapStackTraceResponse dap_stack_trace_response = 336;
+        DapScopesRequest dap_scopes_request = 337;
+        DapScopesResponse dap_scopes_response = 338;
+        DapSetVariableValueRequest dap_set_variable_value_request = 339;
+        DapSetVariableValueResponse dap_set_variable_value_response = 340;
+        DapEvaluateRequest dap_evaluate_request = 341;
+        DapEvaluateResponse dap_evaluate_response = 342;
+        DapCompletionRequest dap_completion_request = 343;
+        DapCompletionResponse dap_completion_response = 344;
+        DapThreadsRequest dap_threads_request = 345;
+        DapThreadsResponse dap_threads_response = 346; // current max
     }
 
     reserved 87 to 88;
@@ -2708,7 +2720,6 @@ message VariableListVariables {
 message DebuggerVariableList {
     repeated VariableListScopes scopes = 1;
     repeated VariableListVariables variables = 2;
-    repeated AddToVariableList added_variables = 3;
 }
 
 enum VariablesArgumentsFilter {
@@ -2726,20 +2737,13 @@ message VariablesRequest {
     uint64 thread_id = 3;
     uint64 session_id = 4;
     uint64 stack_frame_id = 5;
-    uint64 scope_id = 6;
-    uint64 variables_reference = 7;
-    optional VariablesArgumentsFilter filter = 8;
-    optional uint64 start = 9;
-    optional uint64 count = 10;
-    optional ValueFormat format = 11;
+    uint64 variables_reference = 6;
+    optional VariablesArgumentsFilter filter = 7;
+    optional uint64 start = 8;
+    optional uint64 count = 9;
+    optional ValueFormat format = 10;
 }
 
-message AddToVariableList {
-    uint64 variable_id = 1;
-    uint64 stack_frame_id = 2;
-    uint64 scope_id = 3;
-    repeated DapVariable variables = 4;
-}
 
 message DebuggerStackFrameList {
     uint64 thread_id = 1;
@@ -2752,6 +2756,110 @@ enum SteppingGranularity {
     Statement = 0;
     Line = 1;
     Instruction = 2;
+}
+
+enum DapEvaluateContext {
+    Repl = 0;
+    Watch = 1;
+    Hover = 2;
+    Clipboard = 3;
+    EvaluateVariables = 4;
+    EvaluateUnknown = 5;
+}
+
+message DapEvaluateRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    string expression = 3;
+    optional uint64 frame_id = 4;
+    optional DapEvaluateContext context = 5;
+}
+
+message DapEvaluateResponse {
+    string result = 1;
+    optional string evaluate_type = 2;
+    uint64 variable_reference = 3;
+    optional uint64 named_variables = 4;
+    optional uint64 indexed_variables = 5;
+    optional string memory_reference = 6;
+}
+
+
+message DapCompletionRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    string query = 3;
+    optional uint64 frame_id = 4;
+    optional uint64 line = 5;
+    uint64 column = 6;
+}
+
+enum DapCompletionItemType {
+    Method = 0;
+    Function = 1;
+    Constructor = 2;
+    Field = 3;
+    Variable = 4;
+    Class = 5;
+    Interface = 6;
+    Module = 7;
+    Property = 8;
+    Unit = 9;
+    Value = 10;
+    Enum = 11;
+    Keyword = 12;
+    Snippet = 13;
+    Text = 14;
+    Color = 15;
+    CompletionItemFile = 16;
+    Reference = 17;
+    Customcolor = 19;
+}
+
+message DapCompletionItem {
+    string label = 1;
+    optional string text = 2;
+    optional string sort_text = 3;
+    optional string detail = 4;
+    optional DapCompletionItemType typ = 5;
+    optional uint64 start = 6;
+    optional uint64 length = 7;
+    optional uint64 selection_start = 8;
+    optional uint64 selection_length = 9;
+}
+
+message DapCompletionResponse {
+    uint64 client_id = 1;
+    repeated DapCompletionItem completions = 2;
+}
+
+message DapScopesRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+    uint64 stack_frame_id = 4;
+}
+
+message DapScopesResponse {
+    repeated DapScope scopes = 1;
+}
+
+message DapSetVariableValueRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    string name = 3;
+    string value = 4;
+    uint64 variables_reference = 5;
+}
+
+message DapSetVariableValueResponse {
+    uint64 client_id = 1;
+    string value = 2;
+    optional string variable_type = 3;
+    optional uint64 variables_reference = 4;
+    optional uint64 named_variables = 5;
+    optional uint64 indexed_variables = 6;
+    optional string memory_reference = 7;
 }
 
 message DapPauseRequest {
@@ -2772,6 +2880,15 @@ message DapTerminateThreadsRequest {
     uint64 project_id = 1;
     uint64 client_id = 2;
     repeated uint64 thread_ids = 3;
+}
+
+message DapThreadsRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+}
+
+message DapThreadsResponse {
+    repeated DapThread threads = 1;
 }
 
 message DapTerminateRequest {
@@ -2874,6 +2991,18 @@ message DapLoadedSourcesResponse {
     repeated DapSource sources = 2;
 }
 
+message DapStackTraceRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+    optional uint64 start_frame = 4;
+    optional uint64 stack_trace_levels = 5;
+}
+
+message DapStackTraceResponse {
+    repeated DapStackFrame frames = 1;
+}
+
 message DapStackFrame {
     uint64 id = 1;
     string name = 2;
@@ -2926,9 +3055,8 @@ message UpdateDebugAdapter {
         DebuggerThreadState thread_state = 5;
         DebuggerStackFrameList stack_frame_list = 6;
         DebuggerVariableList variable_list = 7;
-        AddToVariableList add_to_variable_list = 8;
-        DebuggerModuleList modules = 9;
-        DapOutputEvent output_event = 10;
+        DebuggerModuleList modules = 8;
+        DapOutputEvent output_event = 9;
     }
 }
 
@@ -2950,6 +3078,11 @@ message DapVariable {
     optional uint64 named_variables = 7;
     optional uint64 indexed_variables = 8;
     optional string memory_reference = 9;
+}
+
+message DapThread {
+    uint64 id = 1;
+    string name = 2;
 }
 
 message DapScope {

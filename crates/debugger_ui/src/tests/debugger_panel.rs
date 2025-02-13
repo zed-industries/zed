@@ -15,7 +15,7 @@ use editor::{
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{
-    dap_store::{Breakpoint, BreakpointEditAction, BreakpointKind},
+    debugger::dap_store::{Breakpoint, BreakpointEditAction, BreakpointKind},
     FakeFs, Project,
 };
 use serde_json::json;
@@ -125,7 +125,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
                 debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
             );
             assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
-            assert_eq!(1, active_debug_panel_item.read(cx).thread_id());
+            assert_eq!(1, active_debug_panel_item.read(cx).thread_id().0);
         })
         .unwrap();
 
@@ -248,7 +248,7 @@ async fn test_we_can_only_have_one_panel_per_debug_thread(
                 debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
             );
             assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
-            assert_eq!(1, active_debug_panel_item.read(cx).thread_id());
+            assert_eq!(1, active_debug_panel_item.read(cx).thread_id().0);
         })
         .unwrap();
 
@@ -279,7 +279,7 @@ async fn test_we_can_only_have_one_panel_per_debug_thread(
                 debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
             );
             assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
-            assert_eq!(1, active_debug_panel_item.read(cx).thread_id());
+            assert_eq!(1, active_debug_panel_item.read(cx).thread_id().0);
         })
         .unwrap();
 
@@ -402,7 +402,7 @@ async fn test_client_can_open_multiple_thread_panels(
                 debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
             );
             assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
-            assert_eq!(1, active_debug_panel_item.read(cx).thread_id());
+            assert_eq!(1, active_debug_panel_item.read(cx).thread_id().0);
         })
         .unwrap();
 
@@ -433,7 +433,7 @@ async fn test_client_can_open_multiple_thread_panels(
                 debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
             );
             assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
-            assert_eq!(2, active_debug_panel_item.read(cx).thread_id());
+            assert_eq!(2, active_debug_panel_item.read(cx).thread_id().0);
         })
         .unwrap();
 
@@ -749,7 +749,7 @@ async fn test_handle_start_debugging_reverse_request(
     cx.run_until_parked();
 
     project.update(cx, |_, cx| {
-        assert_eq!(2, session.read(cx).as_local().unwrap().clients_len());
+        assert_eq!(2, session.read(cx).clients_len());
     });
     assert!(
         send_response.load(std::sync::atomic::Ordering::SeqCst),
@@ -759,9 +759,10 @@ async fn test_handle_start_debugging_reverse_request(
     let second_client = project.update(cx, |_, cx| {
         session
             .read(cx)
-            .as_local()
+            .client_state(DebugAdapterClientId(1))
             .unwrap()
-            .client_by_id(&DebugAdapterClientId(1))
+            .read(cx)
+            .adapter_client()
             .unwrap()
     });
 

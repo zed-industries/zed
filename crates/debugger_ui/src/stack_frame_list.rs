@@ -2,21 +2,14 @@ use std::path::Path;
 
 use anyhow::{anyhow, Result};
 use dap::client::DebugAdapterClientId;
-use dap::proto_conversions::ProtoConversion;
-use dap::StackFrame;
 use gpui::{
     list, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, Subscription, Task,
     WeakEntity,
 };
-use project::debugger::{dap_session::DebugSession, dap_store::DapStore};
+use project::debugger::dap_session::{DebugSession, StackFrame, ThreadId};
 use project::ProjectPath;
-use rpc::proto::{DebuggerStackFrameList, UpdateDebugAdapter};
 use ui::{prelude::*, Tooltip};
-use util::ResultExt;
 use workspace::Workspace;
-
-use crate::debugger_panel_item::DebugPanelItemEvent::Stopped;
-use crate::debugger_panel_item::{self, DebugPanelItem};
 
 pub type StackFrameId = u64;
 
@@ -27,36 +20,31 @@ pub enum StackFrameListEvent {
 }
 
 pub struct StackFrameList {
-    thread_id: u64,
     list: ListState,
+    thread_id: ThreadId,
     focus_handle: FocusHandle,
-    dap_store: Entity<DapStore>,
+    _subscription: Subscription,
     session: Entity<DebugSession>,
-    stack_frames: Vec<StackFrame>,
     entries: Vec<StackFrameEntry>,
     workspace: WeakEntity<Workspace>,
     client_id: DebugAdapterClientId,
-    _subscriptions: Vec<Subscription>,
     current_stack_frame_id: StackFrameId,
     fetch_stack_frames_task: Option<Task<Result<()>>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum StackFrameEntry {
-    Normal(StackFrame),
-    Collapsed(Vec<StackFrame>),
+    Normal(dap::StackFrame),
+    Collapsed(Vec<dap::StackFrame>),
 }
 
 impl StackFrameList {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         workspace: WeakEntity<Workspace>,
-        debug_panel_item: &Entity<DebugPanelItem>,
-        dap_store: Entity<DapStore>,
         session: Entity<DebugSession>,
-        client_id: &DebugAdapterClientId,
-        thread_id: u64,
-        window: &Window,
+        client_id: DebugAdapterClientId,
+        thread_id: ThreadId,
+        _window: &Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let weak_entity = cx.weak_entity();
@@ -76,53 +64,32 @@ impl StackFrameList {
             },
         );
 
-        let _subscriptions = vec![cx.subscribe_in(
-            debug_panel_item,
-            window,
-            Self::handle_debug_panel_item_event,
-        )];
+        let client_state = session.read(cx).client_state(client_id).unwrap();
+
+        let _subscription = cx.observe(&client_state, |stack_frame_list, state, cx| {
+            let _frame_len = state.update(cx, |state, cx| {
+                state.stack_frames(stack_frame_list.thread_id, cx).len()
+            });
+
+            stack_frame_list.build_entries(cx);
+        });
 
         Self {
             list,
             session,
             workspace,
-            dap_store,
             thread_id,
+            client_id,
             focus_handle,
-            _subscriptions,
-            client_id: *client_id,
+            _subscription,
             entries: Default::default(),
             fetch_stack_frames_task: None,
-            stack_frames: Default::default(),
             current_stack_frame_id: Default::default(),
         }
     }
 
-    pub(crate) fn thread_id(&self) -> u64 {
+    pub(crate) fn thread_id(&self) -> ThreadId {
         self.thread_id
-    }
-
-    pub(crate) fn to_proto(&self) -> DebuggerStackFrameList {
-        DebuggerStackFrameList {
-            thread_id: self.thread_id,
-            client_id: self.client_id.to_proto(),
-            current_stack_frame: self.current_stack_frame_id,
-            stack_frames: self.stack_frames.to_proto(),
-        }
-    }
-
-    pub(crate) fn set_from_proto(
-        &mut self,
-        stack_frame_list: DebuggerStackFrameList,
-        cx: &mut Context<Self>,
-    ) {
-        self.thread_id = stack_frame_list.thread_id;
-        self.client_id = DebugAdapterClientId::from_proto(stack_frame_list.client_id);
-        self.current_stack_frame_id = stack_frame_list.current_stack_frame;
-        self.stack_frames = Vec::from_proto(stack_frame_list.stack_frames);
-
-        self.build_entries();
-        cx.notify();
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -130,14 +97,26 @@ impl StackFrameList {
         &self.entries
     }
 
-    pub fn stack_frames(&self) -> &Vec<StackFrame> {
-        &self.stack_frames
+    pub fn stack_frames(&self, cx: &mut App) -> Vec<StackFrame> {
+        self.session
+            .read(cx)
+            .client_state(self.client_id)
+            .map(|state| state.update(cx, |client, cx| client.stack_frames(self.thread_id, cx)))
+            .unwrap_or_default()
     }
 
-    pub fn first_stack_frame_id(&self) -> u64 {
-        self.stack_frames
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn dap_stack_frames(&self, cx: &mut App) -> Vec<dap::StackFrame> {
+        self.stack_frames(cx)
+            .into_iter()
+            .map(|stack_frame| stack_frame.dap.clone())
+            .collect()
+    }
+
+    pub fn get_main_stack_frame_id(&self, cx: &mut Context<Self>) -> u64 {
+        self.stack_frames(cx)
             .first()
-            .map(|stack_frame| stack_frame.id)
+            .map(|stack_frame| stack_frame.dap.id)
             .unwrap_or(0)
     }
 
@@ -145,33 +124,14 @@ impl StackFrameList {
         self.current_stack_frame_id
     }
 
-    fn handle_debug_panel_item_event(
-        &mut self,
-        _: &Entity<DebugPanelItem>,
-        event: &debugger_panel_item::DebugPanelItemEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            Stopped { go_to_stack_frame } => {
-                self.fetch_stack_frames(*go_to_stack_frame, window, cx);
-            }
-            _ => {}
-        }
-    }
-
-    pub fn invalidate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.fetch_stack_frames(true, window, cx);
-    }
-
-    fn build_entries(&mut self) {
+    fn build_entries(&mut self, cx: &mut Context<Self>) {
         let mut entries = Vec::new();
         let mut collapsed_entries = Vec::new();
 
-        for stack_frame in &self.stack_frames {
-            match stack_frame.presentation_hint {
+        for stack_frame in &self.stack_frames(cx) {
+            match stack_frame.dap.presentation_hint {
                 Some(dap::StackFramePresentationHint::Deemphasize) => {
-                    collapsed_entries.push(stack_frame.clone());
+                    collapsed_entries.push(stack_frame.dap.clone());
                 }
                 _ => {
                     let collapsed_entries = std::mem::take(&mut collapsed_entries);
@@ -179,7 +139,7 @@ impl StackFrameList {
                         entries.push(StackFrameEntry::Collapsed(collapsed_entries.clone()));
                     }
 
-                    entries.push(StackFrameEntry::Normal(stack_frame.clone()));
+                    entries.push(StackFrameEntry::Normal(stack_frame.dap.clone()));
                 }
             }
         }
@@ -191,54 +151,55 @@ impl StackFrameList {
 
         std::mem::swap(&mut self.entries, &mut entries);
         self.list.reset(self.entries.len());
+        cx.notify();
     }
 
-    fn fetch_stack_frames(
-        &mut self,
-        go_to_stack_frame: bool,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) {
-        // If this is a remote debug session we never need to fetch stack frames ourselves
-        // because the host will fetch and send us stack frames whenever there's a stop event
-        if self.dap_store.read(cx).as_remote().is_some() {
-            return;
-        }
+    // fn fetch_stack_frames(
+    //     &mut self,
+    //     go_to_stack_frame: bool,
+    //     window: &Window,
+    //     cx: &mut Context<Self>,
+    // ) {
+    //     // If this is a remote debug session we never need to fetch stack frames ourselves
+    //     // because the host will fetch and send us stack frames whenever there's a stop event
+    //     if self.dap_store.read(cx).as_remote().is_some() {
+    //         return;
+    //     }
 
-        let task = self.dap_store.update(cx, |store, cx| {
-            store.stack_frames(&self.client_id, self.thread_id, cx)
-        });
+    //     let task = self.dap_store.update(cx, |store, cx| {
+    //         store.stack_frames(&self.client_id, self.thread_id, cx)
+    //     });
 
-        self.fetch_stack_frames_task = Some(cx.spawn_in(window, |this, mut cx| async move {
-            let mut stack_frames = task.await?;
+    //     self.fetch_stack_frames_task = Some(cx.spawn_in(window, |this, mut cx| async move {
+    //         let mut stack_frames = task.await?;
 
-            let task = this.update_in(&mut cx, |this, window, cx| {
-                std::mem::swap(&mut this.stack_frames, &mut stack_frames);
+    //         let task = this.update_in(&mut cx, |this, window, cx| {
+    //             std::mem::swap(&mut this.stack_frames, &mut stack_frames);
 
-                this.build_entries();
+    //             this.build_entries();
 
-                cx.emit(StackFrameListEvent::StackFramesUpdated);
+    //             cx.emit(StackFrameListEvent::StackFramesUpdated);
 
-                let stack_frame = this
-                    .stack_frames
-                    .first()
-                    .cloned()
-                    .ok_or_else(|| anyhow!("No stack frame found to select"))?;
+    //             let stack_frame = this
+    //                 .stack_frames
+    //                 .first()
+    //                 .cloned()
+    //                 .ok_or_else(|| anyhow!("No stack frame found to select"))?;
 
-                anyhow::Ok(this.select_stack_frame(&stack_frame, go_to_stack_frame, window, cx))
-            })?;
+    //             anyhow::Ok(this.select_stack_frame(&stack_frame, go_to_stack_frame, window, cx))
+    //         })?;
 
-            task?.await?;
+    //         task?.await?;
 
-            this.update(&mut cx, |this, _| {
-                this.fetch_stack_frames_task.take();
-            })
-        }));
-    }
+    //         this.update(&mut cx, |this, _| {
+    //             this.fetch_stack_frames_task.take();
+    //         })
+    //     }));
+    // }
 
     pub fn select_stack_frame(
         &mut self,
-        stack_frame: &StackFrame,
+        stack_frame: &dap::StackFrame,
         go_to_stack_frame: bool,
         window: &Window,
         cx: &mut Context<Self>,
@@ -249,20 +210,6 @@ impl StackFrameList {
             stack_frame.id,
         ));
         cx.notify();
-
-        if let Some((client, id)) = self.dap_store.read(cx).downstream_client() {
-            let request = UpdateDebugAdapter {
-                client_id: self.client_id.to_proto(),
-                session_id: self.session.read(cx).id().to_proto(),
-                project_id: *id,
-                thread_id: Some(self.thread_id),
-                variant: Some(rpc::proto::update_debug_adapter::Variant::StackFrameList(
-                    self.to_proto(),
-                )),
-            };
-
-            client.send(request).log_err();
-        }
 
         if !go_to_stack_frame {
             return Task::ready(Ok(()));
@@ -291,18 +238,21 @@ impl StackFrameList {
                 })??
                 .await?;
 
-                this.update(&mut cx, |this, cx| {
-                    this.dap_store.update(cx, |store, cx| {
-                        store.set_active_debug_line(&client_id, &project_path, row, cx);
-                    })
-                })
+                Ok(())
+
+                // TODO(debugger): make this work again
+                // this.update(&mut cx, |this, cx| {
+                //     this.dap_store.update(cx, |store, cx| {
+                //         store.set_active_debug_line(client_id, &project_path, row, cx);
+                //     })
+                // })
             }
         })
     }
 
-    pub fn project_path_from_stack_frame(
+    fn project_path_from_stack_frame(
         &self,
-        stack_frame: &StackFrame,
+        stack_frame: &dap::StackFrame,
         cx: &mut Context<Self>,
     ) -> Option<ProjectPath> {
         let path = stack_frame.source.as_ref().and_then(|s| s.path.as_ref())?;
@@ -317,14 +267,18 @@ impl StackFrameList {
     }
 
     pub fn restart_stack_frame(&mut self, stack_frame_id: u64, cx: &mut Context<Self>) {
-        self.dap_store.update(cx, |store, cx| {
-            store
-                .restart_stack_frame(&self.client_id, stack_frame_id, cx)
-                .detach_and_log_err(cx);
-        });
+        if let Some(client_state) = self.session.read(cx).client_state(self.client_id) {
+            client_state.update(cx, |state, cx| {
+                state.restart_stack_frame(stack_frame_id, cx)
+            });
+        }
     }
 
-    fn render_normal_entry(&self, stack_frame: &StackFrame, cx: &mut Context<Self>) -> AnyElement {
+    fn render_normal_entry(
+        &self,
+        stack_frame: &dap::StackFrame,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let source = stack_frame.source.clone();
         let is_selected_frame = stack_frame.id == self.current_stack_frame_id;
 
@@ -335,11 +289,10 @@ impl StackFrameList {
         );
 
         let supports_frame_restart = self
-            .dap_store
+            .session
             .read(cx)
-            .capabilities_by_id(&self.client_id, cx)
-            .map(|caps| caps.supports_restart_frame)
-            .flatten()
+            .client_state(self.client_id)
+            .and_then(|client| client.read(cx).capabilities().supports_restart_frame)
             .unwrap_or_default();
 
         let origin = stack_frame
@@ -442,7 +395,7 @@ impl StackFrameList {
     pub fn expand_collapsed_entry(
         &mut self,
         ix: usize,
-        stack_frames: &Vec<StackFrame>,
+        stack_frames: &Vec<dap::StackFrame>,
         cx: &mut Context<Self>,
     ) {
         self.entries.splice(
@@ -458,7 +411,7 @@ impl StackFrameList {
     fn render_collapsed_entry(
         &self,
         ix: usize,
-        stack_frames: &Vec<StackFrame>,
+        stack_frames: &Vec<dap::StackFrame>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let first_stack_frame = &stack_frames[0];

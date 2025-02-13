@@ -2,27 +2,24 @@ use crate::{
     stack_frame_list::{StackFrameList, StackFrameListEvent},
     variable_list::VariableList,
 };
-use dap::{
-    client::DebugAdapterClientId, proto_conversions::ProtoConversion, OutputEvent, OutputEventGroup,
-};
+use anyhow::anyhow;
+use dap::{client::DebugAdapterClientId, OutputEvent, OutputEventGroup};
 use editor::{
     display_map::{Crease, CreaseId},
     Anchor, CompletionProvider, Editor, EditorElement, EditorStyle, FoldPlaceholder,
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
-use language::{Buffer, CodeLabel, LanguageServerId, ToOffsetUtf16};
+use language::{Buffer, CodeLabel, LanguageServerId};
 use menu::Confirm;
 use project::{
-    debugger::{dap_session::DebugSession, dap_store::DapStore},
+    debugger::dap_session::{CompletionsQuery, DebugSession},
     Completion,
 };
-use rpc::proto;
 use settings::Settings;
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc, usize};
 use theme::ThemeSettings;
 use ui::{prelude::*, ButtonLike, Disclosure, ElevationIndex};
-use util::ResultExt;
 
 pub struct OutputGroup {
     pub start: Anchor,
@@ -36,7 +33,6 @@ pub struct Console {
     groups: Vec<OutputGroup>,
     console: Entity<Editor>,
     query_bar: Entity<Editor>,
-    dap_store: Entity<DapStore>,
     session: Entity<DebugSession>,
     client_id: DebugAdapterClientId,
     _subscriptions: Vec<Subscription>,
@@ -47,8 +43,7 @@ pub struct Console {
 impl Console {
     pub fn new(
         session: Entity<DebugSession>,
-        client_id: &DebugAdapterClientId,
-        dap_store: Entity<DapStore>,
+        client_id: DebugAdapterClientId,
         stack_frame_list: Entity<StackFrameList>,
         variable_list: Entity<VariableList>,
         window: &mut Window,
@@ -91,12 +86,11 @@ impl Console {
         Self {
             session,
             console,
-            dap_store,
             query_bar,
             variable_list,
             _subscriptions,
             stack_frame_list,
-            client_id: *client_id,
+            client_id,
             groups: Vec::default(),
         }
     }
@@ -111,8 +105,9 @@ impl Console {
         &self.query_bar
     }
 
-    fn is_local(&self, cx: &Context<Self>) -> bool {
-        self.dap_store.read(cx).as_local().is_some()
+    fn is_local(&self, _cx: &Context<Self>) -> bool {
+        // todo(debugger): Fix this function
+        true
     }
 
     fn handle_stack_frame_list_events(
@@ -128,21 +123,6 @@ impl Console {
     }
 
     pub fn add_message(&mut self, event: OutputEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some((client, project_id)) = self.dap_store.read(cx).downstream_client() {
-            client
-                .send(proto::UpdateDebugAdapter {
-                    project_id: *project_id,
-                    client_id: self.client_id.to_proto(),
-                    thread_id: None,
-                    session_id: self.session.read(cx).id().to_proto(),
-                    variant: Some(proto::update_debug_adapter::Variant::OutputEvent(
-                        event.to_proto(),
-                    )),
-                })
-                .log_err();
-            return;
-        }
-
         self.console.update(cx, |console, cx| {
             let output = event.output.trim_end().to_string();
 
@@ -254,45 +234,49 @@ impl Console {
             expression
         });
 
-        let evaluate_task = self.dap_store.update(cx, |store, cx| {
-            store.evaluate(
-                &self.client_id,
-                self.stack_frame_list.read(cx).current_stack_frame_id(),
+        let Some(client_state) = self.session.read(cx).client_state(self.client_id) else {
+            return;
+        };
+
+        client_state.update(cx, |state, cx| {
+            state.evaluate(
                 expression,
-                dap::EvaluateArgumentsContext::Variables,
+                Some(dap::EvaluateArgumentsContext::Variables),
+                Some(self.stack_frame_list.read(cx).current_stack_frame_id()),
                 None,
                 cx,
-            )
+            );
         });
 
-        let weak_console = cx.weak_entity();
+        // TODO(debugger): make this work again
+        // let weak_console = cx.weak_entity();
 
-        window
-            .spawn(cx, |mut cx| async move {
-                let response = evaluate_task.await?;
+        // window
+        //     .spawn(cx, |mut cx| async move {
+        //         let response = evaluate_task.await?;
 
-                weak_console.update_in(&mut cx, |console, window, cx| {
-                    console.add_message(
-                        OutputEvent {
-                            category: None,
-                            output: response.result,
-                            group: None,
-                            variables_reference: Some(response.variables_reference),
-                            source: None,
-                            line: None,
-                            column: None,
-                            data: None,
-                        },
-                        window,
-                        cx,
-                    );
+        //         weak_console.update_in(&mut cx, |console, window, cx| {
+        //             console.add_message(
+        //                 OutputEvent {
+        //                     category: None,
+        //                     output: response.result,
+        //                     group: None,
+        //                     variables_reference: Some(response.variables_reference),
+        //                     source: None,
+        //                     line: None,
+        //                     column: None,
+        //                     data: None,
+        //                 },
+        //                 window,
+        //                 cx,
+        //             );
 
-                    console.variable_list.update(cx, |variable_list, cx| {
-                        variable_list.invalidate(window, cx);
-                    })
-                })
-            })
-            .detach_and_log_err(cx);
+        //             console.variable_list.update(cx, |variable_list, cx| {
+        //                 variable_list.invalidate(window, cx);
+        //             })
+        //         })
+        //     })
+        //     .detach_and_log_err(cx);
     }
 
     fn render_console(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -383,9 +367,10 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
 
         let support_completions = console
             .read(cx)
-            .dap_store
+            .session
             .read(cx)
-            .capabilities_by_id(&console.read(cx).client_id, cx)
+            .client_state(console.read(cx).client_id)
+            .map(|state| state.read(cx).capabilities())
             .map(|caps| caps.supports_completions_request)
             .flatten()
             .unwrap_or_default();
@@ -470,7 +455,6 @@ impl ConsoleQueryBarCompletionProvider {
         });
 
         let query = buffer.read(cx).text();
-        let start_position = buffer.read(cx).anchor_before(0);
 
         cx.spawn(|_, cx| async move {
             let matches = fuzzy::match_strings(
@@ -489,14 +473,14 @@ impl ConsoleQueryBarCompletionProvider {
                     let variable_value = variables.get(&string_match.string)?;
 
                     Some(project::Completion {
-                        old_range: start_position..buffer_position,
+                        old_range: buffer_position..buffer_position,
                         new_text: string_match.string.clone(),
                         label: CodeLabel {
                             filter_range: 0..string_match.string.len(),
                             text: format!("{} {}", string_match.string.clone(), variable_value),
                             runs: Vec::new(),
                         },
-                        server_id: LanguageServerId(0), // TODO debugger: read from client
+                        server_id: LanguageServerId(usize::MAX),
                         documentation: None,
                         lsp_completion: Default::default(),
                         confirm: None,
@@ -514,20 +498,21 @@ impl ConsoleQueryBarCompletionProvider {
         buffer_position: language::Anchor,
         cx: &mut Context<Editor>,
     ) -> gpui::Task<gpui::Result<Vec<project::Completion>>> {
-        let text = buffer.read(cx).text();
-        let start_position = buffer.read(cx).anchor_before(0);
-        let snapshot = buffer.read(cx).snapshot();
+        let client_id = console.read(cx).client_id;
 
         let completion_task = console.update(cx, |console, cx| {
-            console.dap_store.update(cx, |store, cx| {
-                store.completions(
-                    &console.client_id,
-                    console.stack_frame_list.read(cx).current_stack_frame_id(),
-                    text,
-                    buffer_position.to_offset_utf16(&snapshot).0 as u64,
-                    cx,
-                )
-            })
+            if let Some(client_state) = console.session.read(cx).client_state(client_id) {
+                client_state.update(cx, |state, cx| {
+                    let frame_id = Some(console.stack_frame_list.read(cx).current_stack_frame_id());
+
+                    state.completions(
+                        CompletionsQuery::new(buffer.read(cx), buffer_position, frame_id),
+                        cx,
+                    )
+                })
+            } else {
+                Task::ready(Err(anyhow!("failed to fetch completions")))
+            }
         });
 
         cx.background_executor().spawn(async move {
@@ -535,14 +520,14 @@ impl ConsoleQueryBarCompletionProvider {
                 .await?
                 .iter()
                 .map(|completion| project::Completion {
-                    old_range: start_position..buffer_position,
+                    old_range: buffer_position..buffer_position, // TODO(debugger): change this
                     new_text: completion.text.clone().unwrap_or(completion.label.clone()),
                     label: CodeLabel {
                         filter_range: 0..completion.label.len(),
                         text: completion.label.clone(),
                         runs: Vec::new(),
                     },
-                    server_id: LanguageServerId(0), // TODO debugger: read from client
+                    server_id: LanguageServerId(usize::MAX),
                     documentation: None,
                     lsp_completion: Default::default(),
                     confirm: None,

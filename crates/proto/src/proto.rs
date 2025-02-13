@@ -476,6 +476,18 @@ messages!(
     (DebuggerSessionEnded, Background),
     (ActiveDebugSessionsRequest, Foreground),
     (ActiveDebugSessionsResponse, Foreground),
+    (DapStackTraceRequest, Background),
+    (DapStackTraceResponse, Background),
+    (DapScopesRequest, Background),
+    (DapScopesResponse, Background),
+    (DapSetVariableValueRequest, Background),
+    (DapSetVariableValueResponse, Background),
+    (DapEvaluateRequest, Background),
+    (DapEvaluateResponse, Background),
+    (DapCompletionRequest, Background),
+    (DapCompletionResponse, Background),
+    (DapThreadsRequest, Background),
+    (DapThreadsResponse, Background),
 );
 
 request_messages!(
@@ -627,7 +639,13 @@ request_messages!(
     (DapRestartStackFrameRequest, Ack),
     (DapShutdownSession, Ack),
     (VariablesRequest, DapVariables),
-    (ActiveDebugSessionsRequest, ActiveDebugSessionsResponse)
+    (ActiveDebugSessionsRequest, ActiveDebugSessionsResponse),
+    (DapStackTraceRequest, DapStackTraceResponse),
+    (DapScopesRequest, DapScopesResponse),
+    (DapSetVariableValueRequest, DapSetVariableValueResponse),
+    (DapEvaluateRequest, DapEvaluateResponse),
+    (DapCompletionRequest, DapCompletionResponse),
+    (DapThreadsRequest, DapThreadsResponse),
 );
 
 entity_messages!(
@@ -748,6 +766,12 @@ entity_messages!(
     ToggleIgnoreBreakpoints,
     DebuggerSessionEnded,
     ActiveDebugSessionsRequest,
+    DapStackTraceRequest,
+    DapScopesRequest,
+    DapSetVariableValueRequest,
+    DapEvaluateRequest,
+    DapCompletionRequest,
+    DapThreadsRequest,
 );
 
 entity_messages!(

@@ -27,11 +27,11 @@ const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct DebugAdapterClientId(pub usize);
+pub struct DebugAdapterClientId(pub u32);
 
 impl DebugAdapterClientId {
     pub fn from_proto(client_id: u64) -> Self {
-        Self(client_id as usize)
+        Self(client_id as u32)
     }
 
     pub fn to_proto(&self) -> u64 {
@@ -39,6 +39,7 @@ impl DebugAdapterClientId {
     }
 }
 
+/// Represents a connection to the debug adapter process, either via stdout/stdin or a socket.
 pub struct DebugAdapterClient {
     id: DebugAdapterClientId,
     sequence_count: AtomicU64,

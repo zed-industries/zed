@@ -5,24 +5,21 @@ use crate::module_list::ModuleList;
 use crate::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use crate::variable_list::VariableList;
 
-use dap::proto_conversions::{self, ProtoConversion};
 use dap::{
     client::DebugAdapterClientId, debugger_settings::DebuggerSettings, Capabilities,
     ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, OutputEventCategory, StoppedEvent,
     ThreadEvent,
 };
-use editor::Editor;
 use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
-use project::debugger::{dap_session::DebugSession, dap_store::DapStore};
-use rpc::proto::{self, DebuggerThreadStatus, PeerId, SetDebuggerPanelItem, UpdateDebugAdapter};
+use project::debugger::dap_session::{DebugSession, ThreadId};
+use rpc::proto::{self, DebuggerThreadStatus, PeerId, SetDebuggerPanelItem};
 use settings::Settings;
 use ui::{prelude::*, Indicator, Tooltip};
-use util::ResultExt as _;
 use workspace::{
     item::{self, Item, ItemEvent},
-    FollowableItem, ItemHandle, ViewId, Workspace,
+    FollowableItem, ViewId, Workspace,
 };
 
 #[derive(Debug)]
@@ -60,11 +57,10 @@ impl ThreadItem {
 }
 
 pub struct DebugPanelItem {
-    thread_id: u64,
+    thread_id: ThreadId,
     console: Entity<Console>,
     focus_handle: FocusHandle,
     remote_id: Option<ViewId>,
-    dap_store: Entity<DapStore>,
     session: Entity<DebugSession>,
     show_console_indicator: bool,
     module_list: Entity<ModuleList>,
@@ -82,10 +78,9 @@ impl DebugPanelItem {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         session: Entity<DebugSession>,
-        client_id: &DebugAdapterClientId,
-        thread_id: u64,
+        client_id: DebugAdapterClientId,
+        thread_id: ThreadId,
         thread_state: Entity<ThreadState>,
-        dap_store: Entity<DapStore>,
         debug_panel: &Entity<DebugPanel>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -93,13 +88,9 @@ impl DebugPanelItem {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let this = cx.entity();
-
         let stack_frame_list = cx.new(|cx| {
             StackFrameList::new(
                 workspace.clone(),
-                &this,
-                dap_store.clone(),
                 session.clone(),
                 client_id,
                 thread_id,
@@ -112,23 +103,20 @@ impl DebugPanelItem {
             VariableList::new(
                 session.clone(),
                 client_id,
-                dap_store.clone(),
                 stack_frame_list.clone(),
                 window,
                 cx,
             )
         });
 
-        let module_list = cx.new(|cx| ModuleList::new(session.clone(), &client_id, cx));
+        let module_list = cx.new(|cx| ModuleList::new(session.clone(), client_id, cx));
 
-        let loaded_source_list =
-            cx.new(|cx| LoadedSourceList::new(session.clone(), &client_id, cx));
+        let loaded_source_list = cx.new(|cx| LoadedSourceList::new(session.clone(), client_id, cx));
 
         let console = cx.new(|cx| {
             Console::new(
                 session.clone(),
                 client_id,
-                dap_store.clone(),
                 stack_frame_list.clone(),
                 variable_list.clone(),
                 window,
@@ -188,7 +176,6 @@ impl DebugPanelItem {
             session,
             console,
             thread_id,
-            dap_store,
             workspace,
             module_list,
             thread_state,
@@ -198,30 +185,9 @@ impl DebugPanelItem {
             remote_id: None,
             stack_frame_list,
             loaded_source_list,
-            client_id: *client_id,
+            client_id,
             show_console_indicator: false,
             active_thread_item: ThreadItem::Variables,
-        }
-    }
-
-    pub(crate) fn to_proto(&self, project_id: u64, cx: &App) -> SetDebuggerPanelItem {
-        let thread_state = Some(self.thread_state.read(cx).to_proto());
-        let variable_list = Some(self.variable_list.read(cx).to_proto());
-        let stack_frame_list = Some(self.stack_frame_list.read(cx).to_proto());
-
-        SetDebuggerPanelItem {
-            project_id,
-            session_id: self.session.read(cx).id().to_proto(),
-            client_id: self.client_id.to_proto(),
-            thread_id: self.thread_id,
-            console: None,
-            module_list: None,
-            active_thread_item: self.active_thread_item.to_proto().into(),
-            thread_state,
-            variable_list,
-            stack_frame_list,
-            loaded_source_list: None,
-            session_name: self.session.read(cx).name(),
         }
     }
 
@@ -239,12 +205,6 @@ impl DebugPanelItem {
         });
 
         self.active_thread_item = ThreadItem::from_proto(state.active_thread_item());
-
-        if let Some(stack_frame_list) = state.stack_frame_list.as_ref() {
-            self.stack_frame_list.update(cx, |this, cx| {
-                this.set_from_proto(stack_frame_list.clone(), cx);
-            });
-        }
 
         if let Some(variable_list_state) = state.variable_list.as_ref() {
             self.variable_list
@@ -269,7 +229,7 @@ impl DebugPanelItem {
         }
     }
 
-    fn should_skip_event(&self, client_id: &DebugAdapterClientId, thread_id: u64) -> bool {
+    fn should_skip_event(&self, client_id: &DebugAdapterClientId, thread_id: ThreadId) -> bool {
         thread_id != self.thread_id || *client_id != self.client_id
     }
 
@@ -279,7 +239,7 @@ impl DebugPanelItem {
         event: &ContinuedEvent,
         cx: &mut Context<Self>,
     ) {
-        if self.should_skip_event(client_id, event.thread_id) {
+        if self.should_skip_event(client_id, ThreadId(event.thread_id)) {
             return;
         }
 
@@ -293,21 +253,20 @@ impl DebugPanelItem {
         go_to_stack_frame: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.should_skip_event(client_id, event.thread_id.unwrap_or(self.thread_id)) {
+        if self.should_skip_event(
+            client_id,
+            event.thread_id.map(ThreadId).unwrap_or(self.thread_id),
+        ) {
             return;
         }
 
         if let Some(client_state) = self.session.read(cx).client_state(*client_id) {
-            client_state.update(cx, |state, cx| state.invalidate(cx));
+            client_state.update(cx, |state, cx| {
+                state.invalidate(cx);
+            });
         }
 
         cx.emit(DebugPanelItemEvent::Stopped { go_to_stack_frame });
-
-        if let Some((downstream_client, project_id)) = self.dap_store.read(cx).downstream_client() {
-            downstream_client
-                .send(self.to_proto(*project_id, cx))
-                .log_err();
-        }
     }
 
     fn handle_thread_event(
@@ -316,7 +275,7 @@ impl DebugPanelItem {
         event: &ThreadEvent,
         cx: &mut Context<Self>,
     ) {
-        if self.should_skip_event(client_id, event.thread_id) {
+        if self.should_skip_event(client_id, ThreadId(event.thread_id)) {
             return;
         }
 
@@ -393,9 +352,10 @@ impl DebugPanelItem {
 
         self.update_thread_state_status(ThreadStatus::Stopped, cx);
 
-        self.dap_store.update(cx, |store, cx| {
-            store.remove_active_debug_line_for_client(client_id, cx);
-        });
+        // TODO(debugger): make this work again
+        // self.dap_store.update(cx, |store, cx| {
+        //     store.remove_active_debug_line_for_client(client_id, cx);
+        // });
 
         cx.emit(DebugPanelItemEvent::Close);
     }
@@ -411,10 +371,6 @@ impl DebugPanelItem {
 
         self.update_thread_state_status(ThreadStatus::Exited, cx);
 
-        self.dap_store.update(cx, |store, cx| {
-            store.remove_active_debug_line_for_client(client_id, cx);
-        });
-
         cx.emit(DebugPanelItemEvent::Close);
     }
 
@@ -427,56 +383,42 @@ impl DebugPanelItem {
             return;
         }
 
-        // notify the view that the capabilities have changed
         cx.notify();
-
-        if let Some((downstream_client, project_id)) = self.dap_store.read(cx).downstream_client() {
-            if let Some(caps) = self.dap_store.read(cx).capabilities_by_id(client_id, cx) {
-                let message = proto_conversions::capabilities_to_proto(
-                    &caps,
-                    *project_id,
-                    self.session.read(cx).id().to_proto(),
-                    self.client_id.to_proto(),
-                );
-
-                downstream_client.send(message).log_err();
-            }
-        }
     }
 
-    pub(crate) fn update_adapter(
-        &mut self,
-        update: &UpdateDebugAdapter,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(update_variant) = update.variant.as_ref() {
-            match update_variant {
-                proto::update_debug_adapter::Variant::StackFrameList(stack_frame_list) => {
-                    self.stack_frame_list.update(cx, |this, cx| {
-                        this.set_from_proto(stack_frame_list.clone(), cx);
-                    })
-                }
-                proto::update_debug_adapter::Variant::ThreadState(thread_state) => {
-                    self.thread_state.update(cx, |this, _| {
-                        *this = ThreadState::from_proto(thread_state.clone());
-                    })
-                }
-                proto::update_debug_adapter::Variant::VariableList(variable_list) => self
-                    .variable_list
-                    .update(cx, |this, cx| this.set_from_proto(variable_list, cx)),
-                proto::update_debug_adapter::Variant::AddToVariableList(variables_to_add) => self
-                    .variable_list
-                    .update(cx, |this, _| this.add_variables(variables_to_add.clone())),
-                proto::update_debug_adapter::Variant::Modules(_) => {}
-                proto::update_debug_adapter::Variant::OutputEvent(output_event) => {
-                    self.console.update(cx, |this, cx| {
-                        this.add_message(OutputEvent::from_proto(output_event.clone()), window, cx);
-                    })
-                }
-            }
-        }
-    }
+    // pub(crate) fn update_adapter(
+    //     &mut self,
+    //     update: &UpdateDebugAdapter,
+    //     window: &mut Window,
+    //     cx: &mut Context<Self>,
+    // ) {
+    //     if let Some(update_variant) = update.variant.as_ref() {
+    //         match update_variant {
+    //             proto::update_debug_adapter::Variant::StackFrameList(stack_frame_list) => {
+    //                 self.stack_frame_list.update(cx, |this, cx| {
+    //                     this.set_from_proto(stack_frame_list.clone(), cx);
+    //                 })
+    //             }
+    //             proto::update_debug_adapter::Variant::ThreadState(thread_state) => {
+    //                 self.thread_state.update(cx, |this, _| {
+    //                     *this = ThreadState::from_proto(thread_state.clone());
+    //                 })
+    //             }
+    //             proto::update_debug_adapter::Variant::VariableList(variable_list) => self
+    //                 .variable_list
+    //                 .update(cx, |this, cx| this.set_from_proto(variable_list, cx)),
+    //             proto::update_debug_adapter::Variant::AddToVariableList(variables_to_add) => self
+    //                 .variable_list
+    //                 .update(cx, |this, _| this.add_variables(variables_to_add.clone())),
+    //             proto::update_debug_adapter::Variant::Modules(_) => {}
+    //             proto::update_debug_adapter::Variant::OutputEvent(output_event) => {
+    //                 self.console.update(cx, |this, cx| {
+    //                     this.add_message(OutputEvent::from_proto(output_event.clone()), window, cx);
+    //                 })
+    //             }
+    //         }
+    //     }
+    // }
 
     pub fn session(&self) -> &Entity<DebugSession> {
         &self.session
@@ -486,7 +428,7 @@ impl DebugPanelItem {
         self.client_id
     }
 
-    pub fn thread_id(&self) -> u64 {
+    pub fn thread_id(&self) -> ThreadId {
         self.thread_id
     }
 
@@ -527,41 +469,43 @@ impl DebugPanelItem {
     }
 
     pub fn capabilities(&self, cx: &mut Context<Self>) -> Option<Capabilities> {
-        self.dap_store
+        self.session()
             .read(cx)
-            .capabilities_by_id(&self.client_id, cx)
+            .client_state(self.client_id)
+            .map(|state| state.read(cx).capabilities().clone())
     }
 
     fn clear_highlights(&self, cx: &mut Context<Self>) {
-        if let Some((_, project_path, _)) = self.dap_store.read(cx).active_debug_line() {
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    let editor = workspace
-                        .items_of_type::<Editor>(cx)
-                        .find(|editor| Some(project_path.clone()) == editor.project_path(cx));
+        // TODO(debugger): make this work again
+        // if let Some((_, project_path, _)) = self.dap_store.read(cx).active_debug_line() {
+        //     self.workspace
+        //         .update(cx, |workspace, cx| {
+        //             let editor = workspace
+        //                 .items_of_type::<Editor>(cx)
+        //                 .find(|editor| Some(project_path.clone()) == editor.project_path(cx));
 
-                    if let Some(editor) = editor {
-                        editor.update(cx, |editor, cx| {
-                            editor.clear_row_highlights::<editor::DebugCurrentRowHighlight>();
+        //             if let Some(editor) = editor {
+        //                 editor.update(cx, |editor, cx| {
+        //                     editor.clear_row_highlights::<editor::DebugCurrentRowHighlight>();
 
-                            cx.notify();
-                        });
-                    }
-                })
-                .ok();
-        }
+        //                     cx.notify();
+        //                 });
+        //             }
+        //         })
+        //         .ok();
+        // }
     }
 
     pub fn go_to_current_stack_frame(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.stack_frame_list.update(cx, |stack_frame_list, cx| {
             if let Some(stack_frame) = stack_frame_list
-                .stack_frames()
+                .stack_frames(cx)
                 .iter()
-                .find(|frame| frame.id == stack_frame_list.current_stack_frame_id())
+                .find(|frame| frame.dap.id == stack_frame_list.current_stack_frame_id())
                 .cloned()
             {
                 stack_frame_list
-                    .select_stack_frame(&stack_frame, true, window, cx)
+                    .select_stack_frame(&stack_frame.dap, true, window, cx)
                     .detach_and_log_err(cx);
             }
         });
@@ -603,134 +547,110 @@ impl DebugPanelItem {
     }
 
     pub fn continue_thread(&mut self, cx: &mut Context<Self>) {
-        self.update_thread_state_status(ThreadStatus::Running, cx);
-
-        let task = self.dap_store.update(cx, |store, cx| {
-            store.continue_thread(&self.client_id, self.thread_id, cx)
-        });
-
-        cx.spawn(|this, mut cx| async move {
-            if task.await.log_err().is_none() {
-                this.update(&mut cx, |debug_panel_item, cx| {
-                    debug_panel_item.update_thread_state_status(ThreadStatus::Stopped, cx);
-                })
-                .log_err();
-            }
-        })
-        .detach();
+        self.session()
+            .read(cx)
+            .client_state(self.client_id)
+            .map(|entity| {
+                entity.update(cx, |state, cx| {
+                    state.continue_thread(self.thread_id, cx);
+                });
+            });
     }
 
     pub fn step_over(&mut self, cx: &mut Context<Self>) {
-        self.update_thread_state_status(ThreadStatus::Running, cx);
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
-        let task = self.dap_store.update(cx, |store, cx| {
-            store.step_over(&self.client_id, self.thread_id, granularity, cx)
-        });
-
-        cx.spawn(|this, mut cx| async move {
-            if task.await.log_err().is_none() {
-                this.update(&mut cx, |debug_panel_item, cx| {
-                    debug_panel_item.update_thread_state_status(ThreadStatus::Stopped, cx);
-                })
-                .log_err();
-            }
-        })
-        .detach();
+        self.session()
+            .read(cx)
+            .client_state(self.client_id)
+            .map(|entity| {
+                entity.update(cx, |state, cx| {
+                    state.step_over(self.thread_id, granularity, cx);
+                });
+            });
     }
 
     pub fn step_in(&mut self, cx: &mut Context<Self>) {
-        self.update_thread_state_status(ThreadStatus::Running, cx);
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
-        let task = self.dap_store.update(cx, |store, cx| {
-            store.step_in(&self.client_id, self.thread_id, granularity, cx)
-        });
-
-        cx.spawn(|this, mut cx| async move {
-            if task.await.log_err().is_none() {
-                this.update(&mut cx, |debug_panel_item, cx| {
-                    debug_panel_item.update_thread_state_status(ThreadStatus::Stopped, cx);
-                })
-                .log_err();
-            }
-        })
-        .detach();
+        self.session()
+            .read(cx)
+            .client_state(self.client_id)
+            .map(|entity| {
+                entity.update(cx, |state, cx| {
+                    state.step_in(self.thread_id, granularity, cx);
+                });
+            });
     }
 
     pub fn step_out(&mut self, cx: &mut Context<Self>) {
-        self.update_thread_state_status(ThreadStatus::Running, cx);
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
-        let task = self.dap_store.update(cx, |store, cx| {
-            store.step_out(&self.client_id, self.thread_id, granularity, cx)
-        });
-
-        cx.spawn(|this, mut cx| async move {
-            if task.await.log_err().is_none() {
-                this.update(&mut cx, |debug_panel_item, cx| {
-                    debug_panel_item.update_thread_state_status(ThreadStatus::Stopped, cx);
-                })
-                .log_err();
-            }
-        })
-        .detach();
+        self.session()
+            .read(cx)
+            .client_state(self.client_id)
+            .map(|entity| {
+                entity.update(cx, |state, cx| {
+                    state.step_out(self.thread_id, granularity, cx);
+                });
+            });
     }
 
     pub fn step_back(&mut self, cx: &mut Context<Self>) {
-        self.update_thread_state_status(ThreadStatus::Running, cx);
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
-        let task = self.dap_store.update(cx, |store, cx| {
-            store.step_back(&self.client_id, self.thread_id, granularity, cx)
-        });
-
-        cx.spawn(|this, mut cx| async move {
-            if task.await.log_err().is_none() {
-                this.update(&mut cx, |debug_panel_item, cx| {
-                    debug_panel_item.update_thread_state_status(ThreadStatus::Stopped, cx);
-                })
-                .log_err();
-            }
-        })
-        .detach();
+        self.session()
+            .read(cx)
+            .client_state(self.client_id)
+            .map(|entity| {
+                entity.update(cx, |state, cx| {
+                    state.step_back(self.thread_id, granularity, cx);
+                });
+            });
     }
 
     pub fn restart_client(&self, cx: &mut Context<Self>) {
-        self.dap_store.update(cx, |store, cx| {
-            store
-                .restart(&self.client_id, None, cx)
-                .detach_and_log_err(cx);
-        });
+        self.session()
+            .read(cx)
+            .client_state(self.client_id)
+            .map(|entity| {
+                entity.update(cx, |state, cx| {
+                    state.restart(None, cx);
+                });
+            });
     }
 
     pub fn pause_thread(&self, cx: &mut Context<Self>) {
-        self.dap_store.update(cx, |store, cx| {
-            store
-                .pause_thread(&self.client_id, self.thread_id, cx)
-                .detach_and_log_err(cx)
-        });
+        self.session()
+            .read(cx)
+            .client_state(self.client_id)
+            .map(|entity| {
+                entity.update(cx, |state, cx| {
+                    state.pause_thread(self.thread_id, cx);
+                });
+            });
     }
 
     pub fn stop_thread(&self, cx: &mut Context<Self>) {
-        self.dap_store.update(cx, |store, cx| {
-            store
-                .terminate_threads(
-                    &self.session.read(cx).id(),
-                    &self.client_id,
-                    Some(vec![self.thread_id; 1]),
-                    cx,
-                )
-                .detach_and_log_err(cx)
-        });
+        self.session()
+            .read(cx)
+            .client_state(self.client_id)
+            .map(|entity| {
+                entity.update(cx, |state, cx| {
+                    state.terminate_threads(Some(vec![self.thread_id; 1]), cx);
+                });
+            });
     }
 
     pub fn disconnect_client(&self, cx: &mut Context<Self>) {
-        self.dap_store.update(cx, |store, cx| {
-            store
-                .disconnect_client(&self.client_id, cx)
-                .detach_and_log_err(cx);
-        });
+        self.session()
+            .read(cx)
+            .client_state(self.client_id)
+            .map(|entity| {
+                entity.update(cx, |state, cx| {
+                    state.disconnect_client(cx);
+                });
+            });
     }
 
     pub fn toggle_ignore_breakpoints(&mut self, cx: &mut Context<Self>) {
@@ -760,7 +680,7 @@ impl Item for DebugPanelItem {
         Label::new(format!(
             "{} - Thread {}",
             self.session.read(cx).name(),
-            self.thread_id
+            self.thread_id.0
         ))
         .color(if params.selected {
             Color::Default
@@ -774,7 +694,7 @@ impl Item for DebugPanelItem {
         Some(SharedString::from(format!(
             "{} Thread {} - {:?}",
             self.session.read(cx).name(),
-            self.thread_id,
+            self.thread_id.0,
             self.thread_state.read(cx).status,
         )))
     }

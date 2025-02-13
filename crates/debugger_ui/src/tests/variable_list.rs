@@ -191,10 +191,19 @@ async fn test_basic_fetch_initial_scope_and_variables(
     cx.run_until_parked();
 
     active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
-        let stack_frame_list = debug_panel_item.stack_frame_list().read(cx);
+        let (stack_frame_list, stack_frame_id) =
+            debug_panel_item.stack_frame_list().update(cx, |list, cx| {
+                (
+                    list.stack_frames(cx)
+                        .into_iter()
+                        .map(|frame| frame.dap)
+                        .collect::<Vec<_>>(),
+                    list.current_stack_frame_id(),
+                )
+            });
 
-        assert_eq!(1, stack_frame_list.current_stack_frame_id());
-        assert_eq!(stack_frames, stack_frame_list.stack_frames().clone());
+        assert_eq!(1, stack_frame_id);
+        assert_eq!(stack_frames, stack_frame_list);
 
         debug_panel_item
             .variable_list()
@@ -444,10 +453,19 @@ async fn test_fetch_variables_for_multiple_scopes(
     cx.run_until_parked();
 
     active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
-        let stack_frame_list = debug_panel_item.stack_frame_list().read(cx);
+        let (stack_frame_list, stack_frame_id) =
+            debug_panel_item.stack_frame_list().update(cx, |list, cx| {
+                (
+                    list.stack_frames(cx)
+                        .into_iter()
+                        .map(|frame| frame.dap)
+                        .collect::<Vec<_>>(),
+                    list.current_stack_frame_id(),
+                )
+            });
 
-        assert_eq!(1, stack_frame_list.current_stack_frame_id());
-        assert_eq!(stack_frames, stack_frame_list.stack_frames().clone());
+        assert_eq!(1, stack_frame_id);
+        assert_eq!(stack_frames, stack_frame_list);
 
         debug_panel_item
             .variable_list()
@@ -1324,11 +1342,21 @@ async fn test_it_only_fetches_scopes_and_variables_for_the_first_stack_frame(
     cx.run_until_parked();
 
     active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
-        let stack_frame_list = debug_panel_item.stack_frame_list().read(cx);
-        let variable_list = debug_panel_item.variable_list().read(cx);
+        let (stack_frame_list, stack_frame_id) =
+            debug_panel_item.stack_frame_list().update(cx, |list, cx| {
+                (
+                    list.stack_frames(cx)
+                        .into_iter()
+                        .map(|frame| frame.dap)
+                        .collect::<Vec<_>>(),
+                    list.current_stack_frame_id(),
+                )
+            });
 
-        assert_eq!(1, stack_frame_list.current_stack_frame_id());
-        assert_eq!(stack_frames, stack_frame_list.stack_frames().clone());
+        assert_eq!(1, stack_frame_id);
+        assert_eq!(stack_frames, stack_frame_list);
+
+        let variable_list = debug_panel_item.variable_list().read(cx);
 
         assert_eq!(
             frame_1_variables
@@ -1560,11 +1588,21 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
     cx.run_until_parked();
 
     active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
-        let stack_frame_list = debug_panel_item.stack_frame_list().read(cx);
+        let (stack_frame_list, stack_frame_id) =
+            debug_panel_item.stack_frame_list().update(cx, |list, cx| {
+                (
+                    list.stack_frames(cx)
+                        .into_iter()
+                        .map(|frame| frame.dap)
+                        .collect::<Vec<_>>(),
+                    list.current_stack_frame_id(),
+                )
+            });
+
         let variable_list = debug_panel_item.variable_list().read(cx);
 
-        assert_eq!(1, stack_frame_list.current_stack_frame_id());
-        assert_eq!(stack_frames, stack_frame_list.stack_frames().clone());
+        assert_eq!(1, stack_frame_id);
+        assert_eq!(stack_frames, stack_frame_list);
 
         assert_eq!(
             frame_1_variables
@@ -1663,11 +1701,21 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
     cx.run_until_parked();
 
     active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
-        let stack_frame_list = debug_panel_item.stack_frame_list().read(cx);
+        let (stack_frame_list, stack_frame_id) =
+            debug_panel_item.stack_frame_list().update(cx, |list, cx| {
+                (
+                    list.stack_frames(cx)
+                        .into_iter()
+                        .map(|frame| frame.dap)
+                        .collect::<Vec<_>>(),
+                    list.current_stack_frame_id(),
+                )
+            });
+
         let variable_list = debug_panel_item.variable_list().read(cx);
 
-        assert_eq!(2, stack_frame_list.current_stack_frame_id());
-        assert_eq!(stack_frames, stack_frame_list.stack_frames().clone());
+        assert_eq!(2, stack_frame_id);
+        assert_eq!(stack_frames, stack_frame_list);
 
         assert_eq!(
             frame_1_variables

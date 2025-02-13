@@ -29,7 +29,7 @@ use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::FakeFs;
 use project::{
-    dap_store::BreakpointKind,
+    debugger::dap_store::BreakpointKind,
     lsp_command::SIGNATURE_HELP_HIGHLIGHT_CURRENT,
     project_settings::{LspSettings, ProjectSettings},
 };

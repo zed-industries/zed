@@ -15,7 +15,7 @@ pub struct LoadedSourceList {
 impl LoadedSourceList {
     pub fn new(
         session: Entity<DebugSession>,
-        client_id: &DebugAdapterClientId,
+        client_id: DebugAdapterClientId,
         cx: &mut Context<Self>,
     ) -> Self {
         let weak_entity = cx.weak_entity();
@@ -35,7 +35,7 @@ impl LoadedSourceList {
             },
         );
 
-        let client_state = session.read(cx).client_state(*client_id).unwrap();
+        let client_state = session.read(cx).client_state(client_id).unwrap();
         let _subscription = cx.observe(&client_state, |loaded_source_list, state, cx| {
             let len = state.update(cx, |state, cx| state.loaded_sources(cx).len());
 
@@ -48,7 +48,7 @@ impl LoadedSourceList {
             session,
             focus_handle,
             _subscription,
-            client_id: *client_id,
+            client_id,
         }
     }
 

@@ -9,7 +9,7 @@ use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
-    dap_store::DapStore,
+    debugger::dap_store::DapStore,
     git::GitStore,
     project_settings::SettingsObserver,
     search::SearchQuery,
