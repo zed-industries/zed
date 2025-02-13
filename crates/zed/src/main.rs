@@ -417,6 +417,7 @@ fn main() {
 
         SystemAppearance::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
+        load_user_themes_in_background(fs.clone(), cx);
         theme_extension::init(
             extension_host_proxy.clone(),
             ThemeRegistry::global(cx),
@@ -552,7 +553,6 @@ fn main() {
         telemetry.flush_events();
 
         let fs = app_state.fs.clone();
-        load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);
         watch_languages(fs.clone(), app_state.languages.clone(), cx);
         watch_file_types(fs.clone(), cx);

@@ -156,7 +156,7 @@ impl ThemeSettings {
             // If the selected theme doesn't exist, fall back to a default theme
             // based on the system appearance.
             let theme_registry = ThemeRegistry::global(cx);
-            if theme_registry.get(theme_name).ok().is_none() {
+            if theme_registry.get(theme_name).is_none() {
                 theme_name = Self::default_theme(*system_appearance);
             };
 
@@ -569,9 +569,12 @@ impl ThemeSettings {
 
         let mut new_theme = None;
 
-        if let Some(theme) = themes.get(theme).log_err() {
-            self.active_theme = theme.clone();
-            new_theme = Some(theme);
+        match themes.get(theme) {
+            Some(theme) => {
+                self.active_theme = theme.clone();
+                new_theme = Some(theme);
+            }
+            None => log::error!("Missing theme switched to: {theme}"),
         }
 
         self.apply_theme_overrides();
@@ -737,8 +740,7 @@ impl settings::Settings for ThemeSettings {
                 this.theme_selection = Some(value.clone());
 
                 let theme_name = value.theme(*system_appearance);
-
-                if let Some(theme) = themes.get(theme_name).log_err() {
+                if let Some(theme) = themes.get(theme_name) {
                     this.active_theme = theme;
                 }
             }

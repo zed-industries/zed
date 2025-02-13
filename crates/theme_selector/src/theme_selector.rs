@@ -162,11 +162,11 @@ impl ThemeSelectorDelegate {
         if let Some(mat) = self.matches.get(self.selected_index) {
             let registry = ThemeRegistry::global(cx);
             match registry.get(&mat.string) {
-                Ok(theme) => {
+                Some(theme) => {
                     Self::set_theme(theme, cx);
                 }
-                Err(error) => {
-                    log::error!("error loading theme {}: {}", mat.string, error)
+                None => {
+                    log::error!("selected theme not found: {}", mat.string)
                 }
             }
         }

@@ -144,13 +144,8 @@ impl ThemeRegistry {
     }
 
     /// Returns the theme with the given name.
-    pub fn get(&self, name: &str) -> Result<Arc<Theme>> {
-        self.state
-            .read()
-            .themes
-            .get(name)
-            .ok_or_else(|| anyhow!("theme not found: {}", name))
-            .cloned()
+    pub fn get(&self, name: &str) -> Option<Arc<Theme>> {
+        self.state.read().themes.get(name).cloned()
     }
 
     /// Loads the themes bundled with the Zed binary and adds them to the registry.
@@ -180,20 +175,23 @@ impl ThemeRegistry {
 
     /// Loads the user themes from the specified directory and adds them to the registry.
     pub async fn load_user_themes(&self, themes_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
-        let mut theme_paths = fs
+        let theme_paths = fs
             .read_dir(themes_path)
             .await
             .with_context(|| format!("reading themes from {themes_path:?}"))?;
 
-        while let Some(theme_path) = theme_paths.next().await {
-            let Some(theme_path) = theme_path.log_err() else {
-                continue;
-            };
-
-            self.load_user_theme(&theme_path, fs.clone())
-                .await
-                .log_err();
-        }
+        theme_paths
+            .map(|theme_path| async {
+                let theme_path = match theme_path.log_err() {
+                    Some(path) => path,
+                    None => return,
+                };
+                let fs_clone = fs.clone();
+                self.load_user_theme(&theme_path, fs_clone).await.log_err();
+            })
+            .buffer_unordered(10)
+            .collect::<Vec<()>>()
+            .await;
 
         Ok(())
     }
