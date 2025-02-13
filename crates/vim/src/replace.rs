@@ -459,8 +459,7 @@ mod test {
 
         cx.set_state("ˇhello world", Mode::Normal);
         cx.simulate_keystrokes("c x x w c x i w");
-        cx.assert_state("world helloˇ", Mode::Normal);
-        cx.assert_state("ˇhello", Mode::Normal);
+        cx.assert_state("worldˇ", Mode::Normal);
     }
 
     #[gpui::test]
