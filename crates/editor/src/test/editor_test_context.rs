@@ -2,8 +2,8 @@ use crate::{
     display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
     RowExt,
 };
+use buffer_diff::DiffHunkStatus;
 use collections::BTreeMap;
-use diff::DiffHunkStatus;
 use futures::Future;
 
 use gpui::{
@@ -298,6 +298,18 @@ impl EditorTestContext {
         self.cx.run_until_parked();
     }
 
+    pub fn assert_index_text(&mut self, expected: Option<&str>) {
+        let fs = self.update_editor(|editor, _, cx| {
+            editor.project.as_ref().unwrap().read(cx).fs().as_fake()
+        });
+        let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
+        let mut found = None;
+        fs.with_git_state(&Self::root_path().join(".git"), false, |git_state| {
+            found = git_state.index_contents.get(path.as_ref()).cloned();
+        });
+        assert_eq!(expected, found.as_deref());
+    }
+
     /// Change the editor's text and selections using a string containing
     /// embedded range markers that represent the ranges and directions of
     /// each selection.
@@ -459,9 +471,9 @@ pub fn assert_state_with_diff(
         .zip(line_infos)
         .map(|(line, info)| {
             let mut marker = match info.diff_status {
-                Some(DiffHunkStatus::Added) => "+ ",
-                Some(DiffHunkStatus::Removed) => "- ",
-                Some(DiffHunkStatus::Modified) => unreachable!(),
+                Some(DiffHunkStatus::Added(_)) => "+ ",
+                Some(DiffHunkStatus::Removed(_)) => "- ",
+                Some(DiffHunkStatus::Modified(_)) => unreachable!(),
                 None => {
                     if has_diff {
                         "  "

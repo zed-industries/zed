@@ -13,10 +13,10 @@
 //!
 //! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behavior.
 pub mod actions;
-mod blame_entry_tooltip;
 mod blink_manager;
 mod clangd_ext;
 mod code_context_menus;
+pub mod commit_tooltip;
 pub mod display_map;
 mod editor_settings;
 mod editor_settings_controls;
@@ -48,10 +48,11 @@ mod signature_help;
 pub mod test;
 
 pub(crate) use actions::*;
-pub use actions::{OpenExcerpts, OpenExcerptsSplit};
+pub use actions::{AcceptEditPrediction, OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
+use buffer_diff::DiffHunkSecondaryStatus;
 use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -66,24 +67,26 @@ use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap};
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
 };
-use futures::{future, FutureExt};
+use futures::{
+    future::{self, Shared},
+    FutureExt,
+};
 use fuzzy::StringMatchCandidate;
 
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
 };
-use diff::DiffHunkStatus;
 use git::blame::GitBlame;
 use gpui::{
-    div, impl_actions, linear_color_stop, linear_gradient, point, prelude::*, pulsating_between,
-    px, relative, size, Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext,
-    AvailableSpace, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context, DispatchPhase,
-    ElementId, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable,
-    FontId, FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext, Modifiers,
-    MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size,
-    Styled, StyledText, Subscription, Task, TextRun, TextStyle, TextStyleRefinement,
-    UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    div, impl_actions, point, prelude::*, pulsating_between, px, relative, size, Action, Animation,
+    AnimationExt, AnyElement, App, AsyncWindowContext, AvailableSpace, Background, Bounds,
+    ClickEvent, ClipboardEntry, ClipboardItem, Context, DispatchPhase, ElementId, Entity,
+    EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight,
+    Global, HighlightStyle, Hsla, InteractiveText, KeyContext, Modifiers, MouseButton,
+    MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled,
+    StyledText, Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
+    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -97,8 +100,8 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CompletionDocumentation, CursorShape, Diagnostic, EditPreview, HighlightedText, IndentKind,
-    IndentSize, InlineCompletionPreviewMode, Language, OffsetRangeExt, Point, Selection,
+    CompletionDocumentation, CursorShape, Diagnostic, DiskState, EditPredictionsMode, EditPreview,
+    HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection,
     SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
@@ -167,7 +170,7 @@ use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
 use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
 use ui::{
-    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
+    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize, Key,
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TakeUntilExt, TryFutureExt};
@@ -493,7 +496,6 @@ enum InlineCompletion {
     },
     Move {
         target: Anchor,
-        range_around_target: Range<text::Anchor>,
         snapshot: BufferSnapshot,
     },
 }
@@ -527,6 +529,15 @@ enum InlineCompletionHighlight {}
 pub enum MenuInlineCompletionsPolicy {
     Never,
     ByProvider,
+}
+
+pub enum EditPredictionPreview {
+    /// Modifier is not pressed
+    Inactive,
+    /// Modifier pressed
+    Active {
+        previous_scroll_position: Option<ScrollAnchor>,
+    },
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Default)]
@@ -713,7 +724,9 @@ pub struct Editor {
     inline_completions_hidden_for_vim_mode: bool,
     show_inline_completions_override: Option<bool>,
     menu_inline_completions_policy: MenuInlineCompletionsPolicy,
-    previewing_inline_completion: bool,
+    edit_prediction_preview: EditPredictionPreview,
+    edit_prediction_cursor_on_leading_whitespace: bool,
+    edit_prediction_requires_modifier_in_leading_space: bool,
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
@@ -730,6 +743,7 @@ pub struct Editor {
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
+    distinguish_unstaged_diff_hunks: bool,
     git_blame_inline_enabled: bool,
     serialize_dirty_buffers: bool,
     show_selection_menu: Option<bool>,
@@ -763,6 +777,7 @@ pub struct Editor {
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: HashMap<TypeId, Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
+    load_diff_task: Option<Shared<Task<()>>>,
     selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
@@ -1327,12 +1342,16 @@ impl Editor {
             None
         };
         let mut code_action_providers = Vec::new();
+        let mut load_uncommitted_diff = None;
         if let Some(project) = project.clone() {
-            get_uncommitted_diff_for_buffer(
-                &project,
-                buffer.read(cx).all_buffers(),
-                buffer.clone(),
-                cx,
+            load_uncommitted_diff = Some(
+                get_uncommitted_diff_for_buffer(
+                    &project,
+                    buffer.read(cx).all_buffers(),
+                    buffer.clone(),
+                    cx,
+                )
+                .shared(),
             );
             code_action_providers.push(Rc::new(project) as Rc<_>);
         }
@@ -1417,7 +1436,7 @@ impl Editor {
             edit_prediction_provider: None,
             active_inline_completion: None,
             stale_inline_completion_in_menu: None,
-            previewing_inline_completion: false,
+            edit_prediction_preview: EditPredictionPreview::Inactive,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -1435,9 +1454,12 @@ impl Editor {
             show_inline_completions_override: None,
             menu_inline_completions_policy: MenuInlineCompletionsPolicy::ByProvider,
             edit_prediction_settings: EditPredictionSettings::Disabled,
+            edit_prediction_cursor_on_leading_whitespace: false,
+            edit_prediction_requires_modifier_in_leading_space: true,
             custom_context_menu: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
+            distinguish_unstaged_diff_hunks: false,
             show_selection_menu: None,
             show_git_blame_inline_delay_task: None,
             git_blame_inline_enabled: ProjectSettings::get_global(cx).git.inline_blame_enabled(),
@@ -1479,6 +1501,7 @@ impl Editor {
             selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
             text_style_refinement: None,
+            load_diff_task: load_uncommitted_diff,
         };
         this.tasks_update_task = Some(this.refresh_runnables(window, cx));
         this._subscriptions.extend(project_subscriptions);
@@ -1520,6 +1543,15 @@ impl Editor {
     }
 
     fn key_context(&self, window: &Window, cx: &App) -> KeyContext {
+        self.key_context_internal(self.has_active_inline_completion(), window, cx)
+    }
+
+    fn key_context_internal(
+        &self,
+        has_active_edit_prediction: bool,
+        window: &Window,
+        cx: &App,
+    ) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Editor");
         let mode = match self.mode {
@@ -1570,11 +1602,15 @@ impl Editor {
             key_context.set("extension", extension.to_string());
         }
 
-        if self.has_active_inline_completion() {
+        if has_active_edit_prediction {
             key_context.add("copilot_suggestion");
             key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
-
-            if showing_completions || self.edit_prediction_requires_modifier() {
+            if showing_completions
+                || self.edit_prediction_requires_modifier()
+                // Require modifier key when the cursor is on leading whitespace, to allow `tab`
+                // bindings to insert tab characters.
+                || (self.edit_prediction_requires_modifier_in_leading_space && self.edit_prediction_cursor_on_leading_whitespace)
+            {
                 key_context.add(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT);
             }
         }
@@ -1591,13 +1627,12 @@ impl Editor {
         window: &Window,
         cx: &App,
     ) -> AcceptEditPredictionBinding {
-        let mut context = self.key_context(window, cx);
-        context.add(EDIT_PREDICTION_KEY_CONTEXT);
-
+        let key_context = self.key_context_internal(true, window, cx);
         AcceptEditPredictionBinding(
             window
-                .bindings_for_action_in_context(&AcceptEditPrediction, context)
+                .bindings_for_action_in_context(&AcceptEditPrediction, key_context)
                 .into_iter()
+                .rev()
                 .next(),
         )
     }
@@ -1963,15 +1998,6 @@ impl Editor {
         self.refresh_inline_completion(false, true, window, cx);
     }
 
-    pub fn inline_completion_start_anchor(&self) -> Option<Anchor> {
-        let active_completion = self.active_inline_completion.as_ref()?;
-        let result = match &active_completion.completion {
-            InlineCompletion::Edit { edits, .. } => edits.first()?.0.start,
-            InlineCompletion::Move { target, .. } => *target,
-        };
-        Some(result)
-    }
-
     fn inline_completions_disabled_in_scope(
         &self,
         buffer: &Entity<Buffer>,
@@ -2147,6 +2173,7 @@ impl Editor {
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, window, cx);
             self.update_visible_inline_completion(window, cx);
+            self.edit_prediction_requires_modifier_in_leading_space = true;
             linked_editing_ranges::refresh_linked_ranges(self, window, cx);
             if self.git_blame_inline_enabled {
                 self.start_inline_blame_timer(window, cx);
@@ -4789,7 +4816,6 @@ impl Editor {
         );
 
         let show_in_menu = by_provider
-            && EditorSettings::get_global(cx).show_edit_predictions_in_menu
             && self
                 .edit_prediction_provider
                 .as_ref()
@@ -4797,9 +4823,8 @@ impl Editor {
                     provider.provider.show_completions_in_menu()
                 });
 
-        let preview_requires_modifier = all_language_settings(file, cx)
-            .inline_completions_preview_mode()
-            == InlineCompletionPreviewMode::WhenHoldingModifier;
+        let preview_requires_modifier =
+            all_language_settings(file, cx).edit_predictions_mode() == EditPredictionsMode::Auto;
 
         EditPredictionSettings::Enabled {
             show_in_menu,
@@ -4809,6 +4834,13 @@ impl Editor {
 
     fn should_show_edit_predictions(&self) -> bool {
         self.snippet_stack.is_empty() && self.edit_predictions_enabled()
+    }
+
+    pub fn edit_prediction_preview_is_active(&self) -> bool {
+        matches!(
+            self.edit_prediction_preview,
+            EditPredictionPreview::Active { .. }
+        )
     }
 
     pub fn inline_completions_enabled(&self, cx: &App) -> bool {
@@ -4942,23 +4974,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let buffer = self.buffer.read(cx);
-        let snapshot = buffer.snapshot(cx);
-        let selection = self.selections.newest_adjusted(cx);
-        let cursor = selection.head();
-        let current_indent = snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
-        let suggested_indents = snapshot.suggested_indents([cursor.row], cx);
-        if let Some(suggested_indent) = suggested_indents.get(&MultiBufferRow(cursor.row)).copied()
-        {
-            if cursor.column < suggested_indent.len
-                && cursor.column <= current_indent.len
-                && current_indent.len <= suggested_indent.len
-            {
-                self.tab(&Default::default(), window, cx);
-                return;
-            }
-        }
-
         if self.show_edit_predictions_in_menu() {
             self.hide_context_menu(window, cx);
         }
@@ -4976,10 +4991,40 @@ impl Editor {
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
                 let target = *target;
-                // Note that this is also done in vim's handler of the Tab action.
-                self.change_selections(Some(Autoscroll::newest()), window, cx, |selections| {
-                    selections.select_anchor_ranges([target..target]);
-                });
+
+                if let Some(position_map) = &self.last_position_map {
+                    if position_map
+                        .visible_row_range
+                        .contains(&target.to_display_point(&position_map.snapshot).row())
+                        || !self.edit_prediction_requires_modifier()
+                    {
+                        // Note that this is also done in vim's handler of the Tab action.
+                        self.change_selections(
+                            Some(Autoscroll::newest()),
+                            window,
+                            cx,
+                            |selections| {
+                                selections.select_anchor_ranges([target..target]);
+                            },
+                        );
+                        self.clear_row_highlights::<EditPredictionPreview>();
+
+                        self.edit_prediction_preview = EditPredictionPreview::Active {
+                            previous_scroll_position: None,
+                        };
+                    } else {
+                        self.edit_prediction_preview = EditPredictionPreview::Active {
+                            previous_scroll_position: Some(position_map.snapshot.scroll_anchor),
+                        };
+                        self.highlight_rows::<EditPredictionPreview>(
+                            target..target,
+                            cx.theme().colors().editor_highlighted_line_background,
+                            true,
+                            cx,
+                        );
+                        self.request_autoscroll(Autoscroll::fit(), cx);
+                    }
+                }
             }
             InlineCompletion::Edit { edits, .. } => {
                 if let Some(provider) = self.edit_prediction_provider() {
@@ -5005,6 +5050,8 @@ impl Editor {
                 cx.notify();
             }
         }
+
+        self.edit_prediction_requires_modifier_in_leading_space = false;
     }
 
     pub fn accept_partial_inline_completion(
@@ -5143,11 +5190,11 @@ impl Editor {
         true
     }
 
-    /// Returns true when we're displaying the inline completion popover below the cursor
+    /// Returns true when we're displaying the edit prediction popover below the cursor
     /// like we are not previewing and the LSP autocomplete menu is visible
     /// or we are in `when_holding_modifier` mode.
     pub fn edit_prediction_visible_in_cursor_popover(&self, has_completion: bool) -> bool {
-        if self.previewing_inline_completion
+        if self.edit_prediction_preview_is_active()
             || !self.show_edit_predictions_in_menu()
             || !self.edit_predictions_enabled()
         {
@@ -5169,15 +5216,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if self.show_edit_predictions_in_menu() {
-            let accept_binding = self.accept_edit_prediction_keybind(window, cx);
-            if let Some(accept_keystroke) = accept_binding.keystroke() {
-                let was_previewing_inline_completion = self.previewing_inline_completion;
-                self.previewing_inline_completion = modifiers == accept_keystroke.modifiers
-                    && accept_keystroke.modifiers.modified();
-                if self.previewing_inline_completion != was_previewing_inline_completion {
-                    self.update_visible_inline_completion(window, cx);
-                }
-            }
+            self.update_edit_prediction_preview(&modifiers, window, cx);
         }
 
         let mouse_position = window.mouse_position();
@@ -5192,6 +5231,51 @@ impl Editor {
             window,
             cx,
         )
+    }
+
+    fn update_edit_prediction_preview(
+        &mut self,
+        modifiers: &Modifiers,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let accept_keybind = self.accept_edit_prediction_keybind(window, cx);
+        let Some(accept_keystroke) = accept_keybind.keystroke() else {
+            return;
+        };
+
+        if &accept_keystroke.modifiers == modifiers && accept_keystroke.modifiers.modified() {
+            if matches!(
+                self.edit_prediction_preview,
+                EditPredictionPreview::Inactive
+            ) {
+                self.edit_prediction_preview = EditPredictionPreview::Active {
+                    previous_scroll_position: None,
+                };
+
+                self.update_visible_inline_completion(window, cx);
+                cx.notify();
+            }
+        } else if let EditPredictionPreview::Active {
+            previous_scroll_position,
+        } = self.edit_prediction_preview
+        {
+            if let (Some(previous_scroll_position), Some(position_map)) =
+                (previous_scroll_position, self.last_position_map.as_ref())
+            {
+                self.set_scroll_position(
+                    previous_scroll_position
+                        .scroll_position(&position_map.snapshot.display_snapshot),
+                    window,
+                    cx,
+                );
+            }
+
+            self.edit_prediction_preview = EditPredictionPreview::Inactive;
+            self.clear_row_highlights::<EditPredictionPreview>();
+            self.update_visible_inline_completion(window, cx);
+            cx.notify();
+        }
     }
 
     fn update_visible_inline_completion(
@@ -5242,6 +5326,9 @@ impl Editor {
             return None;
         }
 
+        self.edit_prediction_cursor_on_leading_whitespace =
+            multibuffer.is_line_whitespace_upto(cursor);
+
         let inline_completion = provider.suggest(&buffer, cursor_buffer_position, cx)?;
         let edits = inline_completion
             .edits
@@ -5283,25 +5370,11 @@ impl Editor {
             invalidation_row_range =
                 move_invalidation_row_range.unwrap_or(edit_start_row..edit_end_row);
             let target = first_edit_start;
-            let target_point = text::ToPoint::to_point(&target.text_anchor, &snapshot);
-            // TODO: Base this off of TreeSitter or word boundaries?
-            let target_excerpt_begin = snapshot.anchor_before(snapshot.clip_point(
-                Point::new(target_point.row, target_point.column.saturating_sub(20)),
-                Bias::Left,
-            ));
-            let target_excerpt_end = snapshot.anchor_after(snapshot.clip_point(
-                Point::new(target_point.row, target_point.column + 20),
-                Bias::Right,
-            ));
-            let range_around_target = target_excerpt_begin..target_excerpt_end;
-            InlineCompletion::Move {
-                target,
-                range_around_target,
-                snapshot,
-            }
+            InlineCompletion::Move { target, snapshot }
         } else {
             let show_completions_in_buffer = !self.edit_prediction_visible_in_cursor_popover(true)
                 && !self.inline_completions_hidden_for_vim_mode;
+
             if show_completions_in_buffer {
                 if edits
                     .iter()
@@ -5822,7 +5895,7 @@ impl Editor {
     }
 
     pub fn context_menu_visible(&self) -> bool {
-        !self.previewing_inline_completion
+        !self.edit_prediction_preview_is_active()
             && self
                 .context_menu
                 .borrow()
@@ -5849,6 +5922,85 @@ impl Editor {
         }
     }
 
+    fn render_edit_prediction_accept_keybind(&self, window: &mut Window, cx: &App) -> Option<Div> {
+        let accept_binding = self.accept_edit_prediction_keybind(window, cx);
+        let accept_keystroke = accept_binding.keystroke()?;
+
+        let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
+
+        let modifiers_color = if accept_keystroke.modifiers == window.modifiers() {
+            Color::Accent
+        } else {
+            Color::Muted
+        };
+
+        h_flex()
+            .px_0p5()
+            .when(is_platform_style_mac, |parent| parent.gap_0p5())
+            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+            .text_size(TextSize::XSmall.rems(cx))
+            .child(h_flex().children(ui::render_modifiers(
+                &accept_keystroke.modifiers,
+                PlatformStyle::platform(),
+                Some(modifiers_color),
+                Some(IconSize::XSmall.rems().into()),
+                true,
+            )))
+            .when(is_platform_style_mac, |parent| {
+                parent.child(accept_keystroke.key.clone())
+            })
+            .when(!is_platform_style_mac, |parent| {
+                parent.child(
+                    Key::new(
+                        util::capitalize(&accept_keystroke.key),
+                        Some(Color::Default),
+                    )
+                    .size(Some(IconSize::XSmall.rems().into())),
+                )
+            })
+            .into()
+    }
+
+    fn render_edit_prediction_line_popover(
+        &self,
+        label: impl Into<SharedString>,
+        icon: Option<IconName>,
+        window: &mut Window,
+        cx: &App,
+    ) -> Option<Div> {
+        let bg_color = Self::edit_prediction_line_popover_bg_color(cx);
+
+        let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
+
+        let result = h_flex()
+            .gap_1()
+            .border_1()
+            .rounded_lg()
+            .shadow_sm()
+            .bg(bg_color)
+            .border_color(cx.theme().colors().text_accent.opacity(0.4))
+            .py_0p5()
+            .pl_1()
+            .pr(padding_right)
+            .children(self.render_edit_prediction_accept_keybind(window, cx))
+            .child(Label::new(label).size(LabelSize::Small))
+            .when_some(icon, |element, icon| {
+                element.child(
+                    div()
+                        .mt(px(1.5))
+                        .child(Icon::new(icon).size(IconSize::Small)),
+                )
+            });
+
+        Some(result)
+    }
+
+    fn edit_prediction_line_popover_bg_color(cx: &App) -> Hsla {
+        let accent_color = cx.theme().colors().text_accent;
+        let editor_bg_color = cx.theme().colors().editor_background;
+        editor_bg_color.blend(accent_color.opacity(0.1))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_cursor_popover(
         &self,
@@ -5857,7 +6009,7 @@ impl Editor {
         cursor_point: Point,
         style: &EditorStyle,
         accept_keystroke: &gpui::Keystroke,
-        window: &Window,
+        _window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         let provider = self.edit_prediction_provider.as_ref()?;
@@ -5865,10 +6017,10 @@ impl Editor {
         if provider.provider.needs_terms_acceptance(cx) {
             return Some(
                 h_flex()
-                    .h(self.edit_prediction_cursor_popover_height())
                     .min_w(min_width)
                     .flex_1()
                     .px_2()
+                    .py_1()
                     .gap_3()
                     .elevation_2(cx)
                     .hover(|style| style.bg(cx.theme().colors().element_hover))
@@ -5912,20 +6064,51 @@ impl Editor {
         }
 
         let completion = match &self.active_inline_completion {
-            Some(completion) => self.render_edit_prediction_cursor_popover_preview(
-                completion,
-                cursor_point,
-                style,
-                window,
-                cx,
-            )?,
+            Some(completion) => match &completion.completion {
+                InlineCompletion::Move {
+                    target, snapshot, ..
+                } if !self.has_visible_completions_menu() => {
+                    use text::ToPoint as _;
+
+                    return Some(
+                        h_flex()
+                            .px_2()
+                            .py_1()
+                            .elevation_2(cx)
+                            .border_color(cx.theme().colors().border)
+                            .rounded_tl(px(0.))
+                            .gap_2()
+                            .child(
+                                if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
+                                    Icon::new(IconName::ZedPredictDown)
+                                } else {
+                                    Icon::new(IconName::ZedPredictUp)
+                                },
+                            )
+                            .child(Label::new("Hold").size(LabelSize::Small))
+                            .child(h_flex().children(ui::render_modifiers(
+                                &accept_keystroke.modifiers,
+                                PlatformStyle::platform(),
+                                Some(Color::Default),
+                                Some(IconSize::Small.rems().into()),
+                                false,
+                            )))
+                            .into_any(),
+                    );
+                }
+                _ => self.render_edit_prediction_cursor_popover_preview(
+                    completion,
+                    cursor_point,
+                    style,
+                    cx,
+                )?,
+            },
 
             None if is_refreshing => match &self.stale_inline_completion_in_menu {
                 Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
                     stale_completion,
                     cursor_point,
                     style,
-                    window,
                     cx,
                 )?,
 
@@ -5936,9 +6119,6 @@ impl Editor {
 
             None => pending_completion_container().child(Label::new("No Prediction")),
         };
-
-        let buffer_font = theme::ThemeSettings::get_global(cx).buffer_font.clone();
-        let completion = completion.font(buffer_font.clone());
 
         let completion = if is_refreshing {
             completion
@@ -5956,34 +6136,48 @@ impl Editor {
 
         let has_completion = self.active_inline_completion.is_some();
 
+        let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
         Some(
             h_flex()
-                .h(self.edit_prediction_cursor_popover_height())
                 .min_w(min_width)
                 .max_w(max_width)
                 .flex_1()
-                .px_2()
                 .elevation_2(cx)
-                .child(completion)
-                .child(ui::Divider::vertical())
+                .border_color(cx.theme().colors().border)
+                .child(
+                    div()
+                        .flex_1()
+                        .py_1()
+                        .px_2()
+                        .overflow_hidden()
+                        .child(completion),
+                )
                 .child(
                     h_flex()
                         .h_full()
+                        .border_l_1()
+                        .rounded_r_lg()
+                        .border_color(cx.theme().colors().border)
+                        .bg(Self::edit_prediction_line_popover_bg_color(cx))
                         .gap_1()
-                        .pl_2()
-                        .child(h_flex().font(buffer_font.clone()).gap_1().children(
-                            ui::render_modifiers(
-                                &accept_keystroke.modifiers,
-                                PlatformStyle::platform(),
-                                Some(if !has_completion {
-                                    Color::Muted
-                                } else {
-                                    Color::Default
-                                }),
-                                None,
-                                true,
-                            ),
-                        ))
+                        .py_1()
+                        .px_2()
+                        .child(
+                            h_flex()
+                                .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                                .when(is_platform_style_mac, |parent| parent.gap_1())
+                                .child(h_flex().children(ui::render_modifiers(
+                                    &accept_keystroke.modifiers,
+                                    PlatformStyle::platform(),
+                                    Some(if !has_completion {
+                                        Color::Muted
+                                    } else {
+                                        Color::Default
+                                    }),
+                                    None,
+                                    false,
+                                ))),
+                        )
                         .child(Label::new("Preview").into_any_element())
                         .opacity(if has_completion { 1.0 } else { 0.4 }),
                 )
@@ -5996,7 +6190,6 @@ impl Editor {
         completion: &InlineCompletionState,
         cursor_point: Point,
         style: &EditorStyle,
-        window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<Div> {
         use text::ToPoint as _;
@@ -6022,6 +6215,23 @@ impl Editor {
         }
 
         match &completion.completion {
+            InlineCompletion::Move {
+                target, snapshot, ..
+            } => Some(
+                h_flex()
+                    .px_2()
+                    .gap_2()
+                    .flex_1()
+                    .child(
+                        if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
+                            Icon::new(IconName::ZedPredictDown)
+                        } else {
+                            Icon::new(IconName::ZedPredictUp)
+                        },
+                    )
+                    .child(Label::new("Jump to Edit")),
+            ),
+
             InlineCompletion::Edit {
                 edits,
                 edit_preview,
@@ -6091,102 +6301,10 @@ impl Editor {
                         .gap_2()
                         .pr_1()
                         .overflow_x_hidden()
+                        .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                         .child(left)
                         .child(preview),
                 )
-            }
-
-            InlineCompletion::Move {
-                target,
-                range_around_target,
-                snapshot,
-            } => {
-                let highlighted_text = snapshot.highlighted_text_for_range(
-                    range_around_target.clone(),
-                    None,
-                    &style.syntax,
-                );
-                let base = h_flex().gap_3().flex_1().child(render_relative_row_jump(
-                    "Jump ",
-                    cursor_point.row,
-                    target.text_anchor.to_point(&snapshot).row,
-                ));
-
-                if highlighted_text.text.is_empty() {
-                    return Some(base);
-                }
-
-                let cursor_color = self.current_user_player_color(cx).cursor;
-
-                let start_point = range_around_target.start.to_point(&snapshot);
-                let end_point = range_around_target.end.to_point(&snapshot);
-                let target_point = target.text_anchor.to_point(&snapshot);
-
-                let styled_text = highlighted_text.to_styled_text(&style.text);
-                let text_len = highlighted_text.text.len();
-
-                let cursor_relative_position = window
-                    .text_system()
-                    .layout_line(
-                        highlighted_text.text,
-                        style.text.font_size.to_pixels(window.rem_size()),
-                        // We don't need to include highlights
-                        // because we are only using this for the cursor position
-                        &[TextRun {
-                            len: text_len,
-                            font: style.text.font(),
-                            color: style.text.color,
-                            background_color: None,
-                            underline: None,
-                            strikethrough: None,
-                        }],
-                    )
-                    .log_err()
-                    .map(|line| {
-                        line.x_for_index(
-                            target_point.column.saturating_sub(start_point.column) as usize
-                        )
-                    });
-
-                let fade_before = start_point.column > 0;
-                let fade_after = end_point.column < snapshot.line_len(end_point.row);
-
-                let background = cx.theme().colors().elevated_surface_background;
-
-                let preview = h_flex()
-                    .relative()
-                    .child(styled_text)
-                    .when(fade_before, |parent| {
-                        parent.child(div().absolute().top_0().left_0().w_4().h_full().bg(
-                            linear_gradient(
-                                90.,
-                                linear_color_stop(background, 0.),
-                                linear_color_stop(background.opacity(0.), 1.),
-                            ),
-                        ))
-                    })
-                    .when(fade_after, |parent| {
-                        parent.child(div().absolute().top_0().right_0().w_4().h_full().bg(
-                            linear_gradient(
-                                -90.,
-                                linear_color_stop(background, 0.),
-                                linear_color_stop(background.opacity(0.), 1.),
-                            ),
-                        ))
-                    })
-                    .when_some(cursor_relative_position, |parent, position| {
-                        parent.child(
-                            div()
-                                .w(px(2.))
-                                .h_full()
-                                .bg(cursor_color)
-                                .absolute()
-                                .top_0()
-                                .left(position),
-                        )
-                    });
-
-                Some(base.child(preview))
             }
         }
     }
@@ -7370,8 +7488,7 @@ impl Editor {
         let buffer = buffer.read(cx);
         let original_text = diff
             .read(cx)
-            .snapshot
-            .base_text
+            .base_text()
             .as_ref()?
             .as_rope()
             .slice(hunk.diff_base_byte_range.clone());
@@ -10795,13 +10912,17 @@ impl Editor {
             }
         }
 
-        let mut active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
+        let active_group_id = self
+            .active_diagnostics
+            .as_ref()
+            .map(|active_group| active_group.group_id);
+        let active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
             active_diagnostics
                 .primary_range
                 .to_offset(&buffer)
                 .to_inclusive()
         });
-        let mut search_start = if let Some(active_primary_range) = active_primary_range.as_ref() {
+        let search_start = if let Some(active_primary_range) = active_primary_range.as_ref() {
             if active_primary_range.contains(&selection.head()) {
                 *active_primary_range.start()
             } else {
@@ -10810,83 +10931,91 @@ impl Editor {
         } else {
             selection.head()
         };
+
         let snapshot = self.snapshot(window, cx);
-        loop {
-            let mut diagnostics;
-            if direction == Direction::Prev {
-                diagnostics = buffer
-                    .diagnostics_in_range::<usize>(0..search_start)
-                    .collect::<Vec<_>>();
-                diagnostics.reverse();
-            } else {
-                diagnostics = buffer
-                    .diagnostics_in_range::<usize>(search_start..buffer.len())
-                    .collect::<Vec<_>>();
-            };
-            let group = diagnostics
-                .into_iter()
-                .filter(|diagnostic| !snapshot.intersects_fold(diagnostic.range.start))
-                // relies on diagnostics_in_range to return diagnostics with the same starting range to
-                // be sorted in a stable way
-                // skip until we are at current active diagnostic, if it exists
-                .skip_while(|entry| {
-                    let is_in_range = match direction {
-                        Direction::Prev => entry.range.end > search_start,
-                        Direction::Next => entry.range.start < search_start,
-                    };
-                    is_in_range
-                        && self
-                            .active_diagnostics
-                            .as_ref()
-                            .is_some_and(|a| a.group_id != entry.diagnostic.group_id)
-                })
-                .find_map(|entry| {
-                    if entry.diagnostic.is_primary
-                        && entry.diagnostic.severity <= DiagnosticSeverity::WARNING
-                        && entry.range.start != entry.range.end
-                        // if we match with the active diagnostic, skip it
-                        && Some(entry.diagnostic.group_id)
-                            != self.active_diagnostics.as_ref().map(|d| d.group_id)
-                    {
-                        Some((entry.range, entry.diagnostic.group_id))
+        let primary_diagnostics_before = buffer
+            .diagnostics_in_range::<usize>(0..search_start)
+            .filter(|entry| entry.diagnostic.is_primary)
+            .filter(|entry| entry.range.start != entry.range.end)
+            .filter(|entry| entry.diagnostic.severity <= DiagnosticSeverity::WARNING)
+            .filter(|entry| !snapshot.intersects_fold(entry.range.start))
+            .collect::<Vec<_>>();
+        let last_same_group_diagnostic_before = active_group_id.and_then(|active_group_id| {
+            primary_diagnostics_before
+                .iter()
+                .position(|entry| entry.diagnostic.group_id == active_group_id)
+        });
+
+        let primary_diagnostics_after = buffer
+            .diagnostics_in_range::<usize>(search_start..buffer.len())
+            .filter(|entry| entry.diagnostic.is_primary)
+            .filter(|entry| entry.range.start != entry.range.end)
+            .filter(|entry| entry.diagnostic.severity <= DiagnosticSeverity::WARNING)
+            .filter(|diagnostic| !snapshot.intersects_fold(diagnostic.range.start))
+            .collect::<Vec<_>>();
+        let last_same_group_diagnostic_after = active_group_id.and_then(|active_group_id| {
+            primary_diagnostics_after
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(i, entry)| {
+                    if entry.diagnostic.group_id == active_group_id {
+                        Some(i)
                     } else {
                         None
                     }
-                });
+                })
+        });
 
-            if let Some((primary_range, group_id)) = group {
-                let Some(buffer_id) = buffer.anchor_after(primary_range.start).buffer_id else {
-                    return;
-                };
-                self.activate_diagnostics(buffer_id, group_id, window, cx);
-                if self.active_diagnostics.is_some() {
-                    self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                        s.select(vec![Selection {
-                            id: selection.id,
-                            start: primary_range.start,
-                            end: primary_range.start,
-                            reversed: false,
-                            goal: SelectionGoal::None,
-                        }]);
-                    });
-                    self.refresh_inline_completion(false, true, window, cx);
-                }
-                break;
-            } else {
-                // Cycle around to the start of the buffer, potentially moving back to the start of
-                // the currently active diagnostic.
-                active_primary_range.take();
-                if direction == Direction::Prev {
-                    if search_start == buffer.len() {
-                        break;
-                    } else {
-                        search_start = buffer.len();
-                    }
-                } else if search_start == 0 {
-                    break;
-                } else {
-                    search_start = 0;
-                }
+        let next_primary_diagnostic = match direction {
+            Direction::Prev => primary_diagnostics_before
+                .iter()
+                .take(last_same_group_diagnostic_before.unwrap_or(usize::MAX))
+                .rev()
+                .next(),
+            Direction::Next => primary_diagnostics_after
+                .iter()
+                .skip(
+                    last_same_group_diagnostic_after
+                        .map(|index| index + 1)
+                        .unwrap_or(0),
+                )
+                .next(),
+        };
+
+        // Cycle around to the start of the buffer, potentially moving back to the start of
+        // the currently active diagnostic.
+        let cycle_around = || match direction {
+            Direction::Prev => primary_diagnostics_after
+                .iter()
+                .rev()
+                .chain(primary_diagnostics_before.iter().rev())
+                .next(),
+            Direction::Next => primary_diagnostics_before
+                .iter()
+                .chain(primary_diagnostics_after.iter())
+                .next(),
+        };
+
+        if let Some((primary_range, group_id)) = next_primary_diagnostic
+            .or_else(cycle_around)
+            .map(|entry| (&entry.range, entry.diagnostic.group_id))
+        {
+            let Some(buffer_id) = buffer.anchor_after(primary_range.start).buffer_id else {
+                return;
+            };
+            self.activate_diagnostics(buffer_id, group_id, window, cx);
+            if self.active_diagnostics.is_some() {
+                self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    s.select(vec![Selection {
+                        id: selection.id,
+                        start: primary_range.start,
+                        end: primary_range.start,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    }]);
+                });
+                self.refresh_inline_completion(false, true, window, cx);
             }
         }
     }
@@ -12808,6 +12937,10 @@ impl Editor {
         });
     }
 
+    pub fn set_distinguish_unstaged_diff_hunks(&mut self) {
+        self.distinguish_unstaged_diff_hunks = true;
+    }
+
     pub fn expand_all_diff_hunks(
         &mut self,
         _: &ExpandAllHunkDiffs,
@@ -12827,6 +12960,121 @@ impl Editor {
     ) {
         let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
         self.toggle_diff_hunks_in_ranges(ranges, cx);
+    }
+
+    fn diff_hunks_in_ranges<'a>(
+        &'a self,
+        ranges: &'a [Range<Anchor>],
+        buffer: &'a MultiBufferSnapshot,
+    ) -> impl 'a + Iterator<Item = MultiBufferDiffHunk> {
+        ranges.iter().flat_map(move |range| {
+            let end_excerpt_id = range.end.excerpt_id;
+            let range = range.to_point(buffer);
+            let mut peek_end = range.end;
+            if range.end.row < buffer.max_row().0 {
+                peek_end = Point::new(range.end.row + 1, 0);
+            }
+            buffer
+                .diff_hunks_in_range(range.start..peek_end)
+                .filter(move |hunk| hunk.excerpt_id.cmp(&end_excerpt_id, buffer).is_le())
+        })
+    }
+
+    pub fn has_stageable_diff_hunks_in_ranges(
+        &self,
+        ranges: &[Range<Anchor>],
+        snapshot: &MultiBufferSnapshot,
+    ) -> bool {
+        let mut hunks = self.diff_hunks_in_ranges(ranges, &snapshot);
+        hunks.any(|hunk| {
+            log::debug!("considering {hunk:?}");
+            hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk
+        })
+    }
+
+    pub fn toggle_staged_selected_diff_hunks(
+        &mut self,
+        _: &ToggleStagedSelectedDiffHunks,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
+        self.stage_or_unstage_diff_hunks(&ranges, cx);
+    }
+
+    pub fn stage_or_unstage_diff_hunks(
+        &mut self,
+        ranges: &[Range<Anchor>],
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let stage = self.has_stageable_diff_hunks_in_ranges(ranges, &snapshot);
+
+        let chunk_by = self
+            .diff_hunks_in_ranges(&ranges, &snapshot)
+            .chunk_by(|hunk| hunk.buffer_id);
+        for (buffer_id, hunks) in &chunk_by {
+            let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
+                log::debug!("no buffer for id");
+                continue;
+            };
+            let buffer = buffer.read(cx).snapshot();
+            let Some((repo, path)) = project
+                .read(cx)
+                .repository_and_path_for_buffer_id(buffer_id, cx)
+            else {
+                log::debug!("no git repo for buffer id");
+                continue;
+            };
+            let Some(diff) = snapshot.diff_for_buffer_id(buffer_id) else {
+                log::debug!("no diff for buffer id");
+                continue;
+            };
+            let Some(secondary_diff) = diff.secondary_diff() else {
+                log::debug!("no secondary diff for buffer id");
+                continue;
+            };
+
+            let edits = diff.secondary_edits_for_stage_or_unstage(
+                stage,
+                hunks.map(|hunk| {
+                    (
+                        hunk.diff_base_byte_range.clone(),
+                        hunk.secondary_diff_base_byte_range.clone(),
+                        hunk.buffer_range.clone(),
+                    )
+                }),
+                &buffer,
+            );
+
+            let index_base = secondary_diff.base_text().map_or_else(
+                || Rope::from(""),
+                |snapshot| snapshot.text.as_rope().clone(),
+            );
+            let index_buffer = cx.new(|cx| {
+                Buffer::local_normalized(index_base.clone(), text::LineEnding::default(), cx)
+            });
+            let new_index_text = index_buffer.update(cx, |index_buffer, cx| {
+                index_buffer.edit(edits, None, cx);
+                index_buffer.snapshot().as_rope().to_string()
+            });
+            let new_index_text = if new_index_text.is_empty()
+                && (diff.is_single_insertion
+                    || buffer
+                        .file()
+                        .map_or(false, |file| file.disk_state() == DiskState::New))
+            {
+                log::debug!("removing from index");
+                None
+            } else {
+                Some(new_index_text)
+            };
+
+            let _ = repo.read(cx).set_index_text(&path, new_index_text);
+        }
     }
 
     pub fn expand_selected_diff_hunks(&mut self, cx: &mut Context<Self>) {
@@ -13307,11 +13555,17 @@ impl Editor {
             .and_then(|f| f.as_local())
     }
 
-    fn target_file_abs_path(&self, cx: &mut Context<Self>) -> Option<PathBuf> {
+    pub fn target_file_abs_path(&self, cx: &mut Context<Self>) -> Option<PathBuf> {
         self.active_excerpt(cx).and_then(|(_, buffer, _)| {
-            let project_path = buffer.read(cx).project_path(cx)?;
-            let project = self.project.as_ref()?.read(cx);
-            project.absolute_path(&project_path, cx)
+            let buffer = buffer.read(cx);
+            if let Some(project_path) = buffer.project_path(cx) {
+                let project = self.project.as_ref()?.read(cx);
+                project.absolute_path(&project_path, cx)
+            } else {
+                buffer
+                    .file()
+                    .and_then(|file| file.as_local().map(|file| file.abs_path(cx)))
+            }
         })
     }
 
@@ -13389,6 +13643,31 @@ impl Editor {
 
         self.clear_row_highlights::<DebugCurrentRowHighlight>();
         cx.notify();
+    }
+
+    pub fn copy_file_name_without_extension(
+        &mut self,
+        _: &CopyFileNameWithoutExtension,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(file) = self.target_file(cx) {
+            if let Some(file_stem) = file.path().file_stem() {
+                if let Some(name) = file_stem.to_str() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
+                }
+            }
+        }
+    }
+
+    pub fn copy_file_name(&mut self, _: &CopyFileName, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(file) = self.target_file(cx) {
+            if let Some(file_name) = file.path().file_name() {
+                if let Some(name) = file_name.to_str() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
+                }
+            }
+        }
     }
 
     pub fn toggle_git_blame(
@@ -13884,14 +14163,14 @@ impl Editor {
         &self,
         window: &mut Window,
         cx: &mut App,
-    ) -> BTreeMap<DisplayRow, Hsla> {
+    ) -> BTreeMap<DisplayRow, Background> {
         let snapshot = self.snapshot(window, cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
             .iter()
             .flat_map(|(_, highlighted_rows)| highlighted_rows.iter())
             .fold(
-                BTreeMap::<DisplayRow, Hsla>::new(),
+                BTreeMap::<DisplayRow, Background>::new(),
                 |mut unique_rows, highlight| {
                     let start = highlight.range.start.to_display_point(&snapshot);
                     let end = highlight.range.end.to_display_point(&snapshot);
@@ -13908,7 +14187,7 @@ impl Editor {
                             used_highlight_orders.entry(row).or_insert(highlight.index);
                         if highlight.index >= *used_index {
                             *used_index = highlight.index;
-                            unique_rows.insert(DisplayRow(row), highlight.color);
+                            unique_rows.insert(DisplayRow(row), highlight.color.into());
                         }
                     }
                     unique_rows
@@ -14394,11 +14673,14 @@ impl Editor {
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).diff_for(buffer_id).is_none() {
                     if let Some(project) = &self.project {
-                        get_uncommitted_diff_for_buffer(
-                            project,
-                            [buffer.clone()],
-                            self.buffer.clone(),
-                            cx,
+                        self.load_diff_task = Some(
+                            get_uncommitted_diff_for_buffer(
+                                project,
+                                [buffer.clone()],
+                                self.buffer.clone(),
+                                cx,
+                            )
+                            .shared(),
                         );
                     }
                 }
@@ -15043,6 +15325,7 @@ impl Editor {
         }
 
         self.hide_context_menu(window, cx);
+        self.discard_inline_completion(false, cx);
         cx.emit(EditorEvent::Blurred);
         cx.notify();
     }
@@ -15132,7 +15415,7 @@ impl Editor {
     }
 
     pub fn has_visible_completions_menu(&self) -> bool {
-        !self.previewing_inline_completion
+        !self.edit_prediction_preview_is_active()
             && self.context_menu.borrow().as_ref().map_or(false, |menu| {
                 menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
             })
@@ -15164,6 +15447,10 @@ impl Editor {
 
         gpui::Size::new(em_width, line_height)
     }
+
+    pub fn wait_for_diff_to_load(&self) -> Option<Shared<Task<()>>> {
+        self.load_diff_task.clone()
+    }
 }
 
 fn get_uncommitted_diff_for_buffer(
@@ -15171,7 +15458,7 @@ fn get_uncommitted_diff_for_buffer(
     buffers: impl IntoIterator<Item = Entity<Buffer>>,
     buffer: Entity<MultiBuffer>,
     cx: &mut App,
-) {
+) -> Task<()> {
     let mut tasks = Vec::new();
     project.update(cx, |project, cx| {
         for buffer in buffers {
@@ -15188,7 +15475,6 @@ fn get_uncommitted_diff_for_buffer(
             })
             .ok();
     })
-    .detach();
 }
 
 fn char_len_with_expanded_tabs(offset: usize, text: &str, tab_size: NonZeroU32) -> usize {
@@ -16082,7 +16368,7 @@ impl EditorSnapshot {
             ) {
                 // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
                 // when the caret is just above or just below the deleted hunk.
-                let allow_adjacent = hunk.status() == DiffHunkStatus::Removed;
+                let allow_adjacent = hunk.status().is_removed();
                 let related_to_selection = if allow_adjacent {
                     hunk.row_range.overlaps(&query_rows)
                         || hunk.row_range.start == query_rows.end

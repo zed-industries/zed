@@ -98,7 +98,7 @@ impl QuickCommitModal {
         commit_message_buffer: Option<Entity<Buffer>>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let git_state = project.read(cx).git_state().clone();
+        let git_store = project.read(cx).git_store().clone();
         let active_repository = project.read(cx).active_repository(cx);
 
         let focus_handle = cx.focus_handle();
@@ -130,7 +130,7 @@ impl QuickCommitModal {
         let all_repositories = self
             .project
             .read(cx)
-            .git_state()
+            .git_store()
             .read(cx)
             .all_repositories();
         let entry_count = self

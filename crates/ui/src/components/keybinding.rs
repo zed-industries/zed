@@ -15,7 +15,7 @@ pub struct KeyBinding {
 
     /// The [`PlatformStyle`] to use when displaying this keybinding.
     platform_style: PlatformStyle,
-    size: Option<Pixels>,
+    size: Option<AbsoluteLength>,
 }
 
 impl KeyBinding {
@@ -59,8 +59,8 @@ impl KeyBinding {
     }
 
     /// Sets the size for this [`KeyBinding`].
-    pub fn size(mut self, size: Pixels) -> Self {
-        self.size = Some(size);
+    pub fn size(mut self, size: impl Into<AbsoluteLength>) -> Self {
+        self.size = Some(size.into());
         self
     }
 }
@@ -92,7 +92,7 @@ impl RenderOnce for KeyBinding {
                         self.platform_style,
                         None,
                         self.size,
-                        false,
+                        true,
                     ))
                     .map(|el| {
                         el.child(render_key(&keystroke, self.platform_style, None, self.size))
@@ -105,12 +105,12 @@ pub fn render_key(
     keystroke: &Keystroke,
     platform_style: PlatformStyle,
     color: Option<Color>,
-    size: Option<Pixels>,
+    size: Option<AbsoluteLength>,
 ) -> AnyElement {
     let key_icon = icon_for_key(keystroke, platform_style);
     match key_icon {
         Some(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
-        None => Key::new(capitalize(&keystroke.key), color)
+        None => Key::new(util::capitalize(&keystroke.key), color)
             .size(size)
             .into_any_element(),
     }
@@ -144,11 +144,13 @@ pub fn render_modifiers(
     modifiers: &Modifiers,
     platform_style: PlatformStyle,
     color: Option<Color>,
-    size: Option<Pixels>,
-    standalone: bool,
+    size: Option<AbsoluteLength>,
+    trailing_separator: bool,
 ) -> impl Iterator<Item = AnyElement> {
+    #[derive(Clone)]
     enum KeyOrIcon {
         Key(&'static str),
+        Plus,
         Icon(IconName),
     }
 
@@ -200,23 +202,34 @@ pub fn render_modifiers(
         .into_iter()
         .filter(|modifier| modifier.enabled)
         .collect::<Vec<_>>();
-    let last_ix = filtered.len().saturating_sub(1);
 
-    filtered
+    let platform_keys = filtered
         .into_iter()
-        .enumerate()
-        .flat_map(move |(ix, modifier)| match platform_style {
-            PlatformStyle::Mac => vec![modifier.mac],
-            PlatformStyle::Linux if standalone && ix == last_ix => vec![modifier.linux],
-            PlatformStyle::Linux => vec![modifier.linux, KeyOrIcon::Key("+")],
-            PlatformStyle::Windows if standalone && ix == last_ix => {
-                vec![modifier.windows]
-            }
-            PlatformStyle::Windows => vec![modifier.windows, KeyOrIcon::Key("+")],
+        .map(move |modifier| match platform_style {
+            PlatformStyle::Mac => Some(modifier.mac),
+            PlatformStyle::Linux => Some(modifier.linux),
+            PlatformStyle::Windows => Some(modifier.windows),
+        });
+
+    let separator = match platform_style {
+        PlatformStyle::Mac => None,
+        PlatformStyle::Linux => Some(KeyOrIcon::Plus),
+        PlatformStyle::Windows => Some(KeyOrIcon::Plus),
+    };
+
+    let platform_keys = itertools::intersperse(platform_keys, separator.clone());
+
+    platform_keys
+        .chain(if modifiers.modified() && trailing_separator {
+            Some(separator)
+        } else {
+            None
         })
+        .flatten()
         .map(move |key_or_icon| match key_or_icon {
             KeyOrIcon::Key(key) => Key::new(key, color).size(size).into_any_element(),
             KeyOrIcon::Icon(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
+            KeyOrIcon::Plus => "+".into_any_element(),
         })
 }
 
@@ -224,14 +237,15 @@ pub fn render_modifiers(
 pub struct Key {
     key: SharedString,
     color: Option<Color>,
-    size: Option<Pixels>,
+    size: Option<AbsoluteLength>,
 }
 
 impl RenderOnce for Key {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let single_char = self.key.len() == 1;
-        let size = self.size.unwrap_or(px(14.));
-        let size_f32: f32 = size.into();
+        let size = self
+            .size
+            .unwrap_or_else(|| TextSize::default().rems(cx).into());
 
         div()
             .py_0()
@@ -242,7 +256,7 @@ impl RenderOnce for Key {
                     this.px_0p5()
                 }
             })
-            .h(rems_from_px(size_f32))
+            .h(size)
             .text_size(size)
             .line_height(relative(1.))
             .text_color(self.color.unwrap_or(Color::Muted).color(cx))
@@ -259,7 +273,7 @@ impl Key {
         }
     }
 
-    pub fn size(mut self, size: impl Into<Option<Pixels>>) -> Self {
+    pub fn size(mut self, size: impl Into<Option<AbsoluteLength>>) -> Self {
         self.size = size.into();
         self
     }
@@ -269,17 +283,15 @@ impl Key {
 pub struct KeyIcon {
     icon: IconName,
     color: Option<Color>,
-    size: Option<Pixels>,
+    size: Option<AbsoluteLength>,
 }
 
 impl RenderOnce for KeyIcon {
     fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let size = self
-            .size
-            .unwrap_or(IconSize::Small.rems().to_pixels(window.rem_size()));
+        let size = self.size.unwrap_or(IconSize::Small.rems().into());
 
         Icon::new(self.icon)
-            .size(IconSize::Custom(size))
+            .size(IconSize::Custom(size.to_rems(window.rem_size())))
             .color(self.color.unwrap_or(Color::Muted))
     }
 }
@@ -293,7 +305,7 @@ impl KeyIcon {
         }
     }
 
-    pub fn size(mut self, size: impl Into<Option<Pixels>>) -> Self {
+    pub fn size(mut self, size: impl Into<Option<AbsoluteLength>>) -> Self {
         self.size = size.into();
         self
     }
@@ -390,20 +402,12 @@ pub fn text_for_keystroke(keystroke: &Keystroke, platform_style: PlatformStyle) 
     let key = match keystroke.key.as_str() {
         "pageup" => "PageUp",
         "pagedown" => "PageDown",
-        key => &capitalize(key),
+        key => &util::capitalize(key),
     };
 
     text.push_str(key);
 
     text
-}
-
-fn capitalize(str: &str) -> String {
-    let mut chars = str.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
-    }
 }
 
 #[cfg(test)]

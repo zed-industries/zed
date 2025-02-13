@@ -1,5 +1,5 @@
 use super::*;
-use diff::DiffHunkStatus;
+use buffer_diff::DiffHunkStatus;
 use gpui::{App, TestAppContext};
 use indoc::indoc;
 use language::{Buffer, Rope};
@@ -979,8 +979,6 @@ fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
 
     let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_all_diff_hunks_expanded(cx);
-        multibuffer.add_diff(diff.clone(), cx);
         multibuffer.push_excerpts(
             buffer.clone(),
             [ExcerptRange {
@@ -989,6 +987,8 @@ fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
             }],
             cx,
         );
+        multibuffer.set_all_diff_hunks_expanded(cx);
+        multibuffer.add_diff(diff.clone(), cx);
     });
     cx.run_until_parked();
 
@@ -1325,13 +1325,13 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
             .map(|info| (info.buffer_row, info.diff_status))
             .collect::<Vec<_>>(),
         vec![
-            (Some(0), Some(DiffHunkStatus::Added)),
+            (Some(0), Some(DiffHunkStatus::added())),
             (Some(1), None),
-            (Some(1), Some(DiffHunkStatus::Removed)),
-            (Some(2), Some(DiffHunkStatus::Added)),
+            (Some(1), Some(DiffHunkStatus::removed())),
+            (Some(2), Some(DiffHunkStatus::added())),
             (Some(3), None),
-            (Some(3), Some(DiffHunkStatus::Removed)),
-            (Some(4), Some(DiffHunkStatus::Removed)),
+            (Some(3), Some(DiffHunkStatus::removed())),
+            (Some(4), Some(DiffHunkStatus::removed())),
             (Some(4), None),
             (Some(5), None)
         ]
@@ -1999,12 +1999,8 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     let id_1 = buffer_1.read_with(cx, |buffer, _| buffer.remote_id());
     let id_2 = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
-    let base_id_1 = diff_1.read_with(cx, |diff, _| {
-        diff.snapshot.base_text.as_ref().unwrap().remote_id()
-    });
-    let base_id_2 = diff_2.read_with(cx, |diff, _| {
-        diff.snapshot.base_text.as_ref().unwrap().remote_id()
-    });
+    let base_id_1 = diff_1.read_with(cx, |diff, _| diff.base_text().as_ref().unwrap().remote_id());
+    let base_id_2 = diff_2.read_with(cx, |diff, _| diff.base_text().as_ref().unwrap().remote_id());
 
     let buffer_lines = (0..=snapshot.max_row().0)
         .map(|row| {
@@ -2191,9 +2187,8 @@ impl ReferenceMultibuffer {
         let Some(diff) = self.diffs.get(&buffer_id) else {
             return;
         };
-        let diff = diff.read(cx).snapshot.clone();
         let excerpt_range = excerpt.range.to_offset(&buffer);
-        for hunk in diff.hunks_intersecting_range(range, &buffer) {
+        for hunk in diff.read(cx).hunks_intersecting_range(range, &buffer, cx) {
             let hunk_range = hunk.buffer_range.to_offset(&buffer);
             if hunk_range.start < excerpt_range.start || hunk_range.start > excerpt_range.end {
                 continue;
@@ -2226,12 +2221,12 @@ impl ReferenceMultibuffer {
             let buffer = excerpt.buffer.read(cx);
             let buffer_range = excerpt.range.to_offset(buffer);
             let diff = self.diffs.get(&buffer.remote_id()).unwrap().read(cx);
-            let diff = diff.snapshot.clone();
-            let base_buffer = diff.base_text.as_ref().unwrap();
+            // let diff = diff.snapshot.clone();
+            let base_buffer = diff.base_text().unwrap();
 
             let mut offset = buffer_range.start;
             let mut hunks = diff
-                .hunks_intersecting_range(excerpt.range.clone(), buffer)
+                .hunks_intersecting_range(excerpt.range.clone(), buffer, cx)
                 .peekable();
 
             while let Some(hunk) = hunks.next() {
@@ -2284,7 +2279,7 @@ impl ReferenceMultibuffer {
                             buffer_start: Some(
                                 base_buffer.offset_to_point(hunk.diff_base_byte_range.start),
                             ),
-                            status: Some(DiffHunkStatus::Removed),
+                            status: Some(DiffHunkStatus::Removed(hunk.secondary_status)),
                         });
                     }
 
@@ -2299,7 +2294,7 @@ impl ReferenceMultibuffer {
                         buffer_id: Some(buffer.remote_id()),
                         range: len..text.len(),
                         buffer_start: Some(buffer.offset_to_point(offset)),
-                        status: Some(DiffHunkStatus::Added),
+                        status: Some(DiffHunkStatus::Added(hunk.secondary_status)),
                     });
                     offset = hunk_range.end;
                 }
@@ -2365,8 +2360,8 @@ impl ReferenceMultibuffer {
             let buffer = excerpt.buffer.read(cx).snapshot();
             let excerpt_range = excerpt.range.to_offset(&buffer);
             let buffer_id = buffer.remote_id();
-            let diff = &self.diffs.get(&buffer_id).unwrap().read(cx).snapshot;
-            let mut hunks = diff.hunks_in_row_range(0..u32::MAX, &buffer).peekable();
+            let diff = self.diffs.get(&buffer_id).unwrap().read(cx);
+            let mut hunks = diff.hunks_in_row_range(0..u32::MAX, &buffer, cx).peekable();
             excerpt.expanded_diff_hunks.retain(|hunk_anchor| {
                 if !hunk_anchor.is_valid(&buffer) {
                     return false;
@@ -2670,7 +2665,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             expected_row_infos
                 .into_iter()
                 .filter_map(
-                    |info| if info.diff_status == Some(DiffHunkStatus::Removed) {
+                    |info| if matches!(info.diff_status, Some(DiffHunkStatus::Removed(_))) {
                         None
                     } else {
                         info.buffer_row
@@ -3027,9 +3022,9 @@ fn format_diff(
         .zip(row_infos)
         .map(|((ix, line), info)| {
             let marker = match info.diff_status {
-                Some(DiffHunkStatus::Added) => "+ ",
-                Some(DiffHunkStatus::Removed) => "- ",
-                Some(DiffHunkStatus::Modified) => unreachable!(),
+                Some(DiffHunkStatus::Added(_)) => "+ ",
+                Some(DiffHunkStatus::Removed(_)) => "- ",
+                Some(DiffHunkStatus::Modified(_)) => unreachable!(),
                 None => {
                     if has_diff && !line.is_empty() {
                         "  "

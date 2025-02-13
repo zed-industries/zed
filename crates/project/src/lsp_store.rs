@@ -56,7 +56,10 @@ use parking_lot::Mutex;
 use postage::watch;
 use rand::prelude::*;
 
-use rpc::AnyProtoClient;
+use rpc::{
+    proto::{FromProto, ToProto},
+    AnyProtoClient,
+};
 use serde::Serialize;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
@@ -5368,7 +5371,7 @@ impl LspStore {
                         project_id: *project_id,
                         worktree_id: worktree_id.to_proto(),
                         summary: Some(proto::DiagnosticSummary {
-                            path: worktree_path.to_string_lossy().to_string(),
+                            path: worktree_path.to_proto(),
                             language_server_id: server_id.0 as u64,
                             error_count: new_summary.error_count as u32,
                             warning_count: new_summary.warning_count as u32,
@@ -5856,10 +5859,8 @@ impl LspStore {
             .ok_or_else(|| anyhow!("worktree not found"))?;
         let (old_abs_path, new_abs_path) = {
             let root_path = worktree.update(&mut cx, |this, _| this.abs_path())?;
-            (
-                root_path.join(&old_path),
-                root_path.join(&envelope.payload.new_path),
-            )
+            let new_path = PathBuf::from_proto(envelope.payload.new_path.clone());
+            (root_path.join(&old_path), root_path.join(&new_path))
         };
 
         Self::will_rename_entry(
@@ -5889,7 +5890,7 @@ impl LspStore {
             if let Some(message) = envelope.payload.summary {
                 let project_path = ProjectPath {
                     worktree_id,
-                    path: Path::new(&message.path).into(),
+                    path: Arc::<Path>::from_proto(message.path),
                 };
                 let path = project_path.path.clone();
                 let server_id = LanguageServerId(message.language_server_id as usize);
@@ -5923,7 +5924,7 @@ impl LspStore {
                             project_id: *project_id,
                             worktree_id: worktree_id.to_proto(),
                             summary: Some(proto::DiagnosticSummary {
-                                path: project_path.path.to_string_lossy().to_string(),
+                                path: project_path.path.as_ref().to_proto(),
                                 language_server_id: server_id.0 as u64,
                                 error_count: summary.error_count as u32,
                                 warning_count: summary.warning_count as u32,
@@ -7122,7 +7123,7 @@ impl LspStore {
                                 project_id,
                                 worktree_id: worktree_id.to_proto(),
                                 summary: Some(proto::DiagnosticSummary {
-                                    path: path.to_string_lossy().to_string(),
+                                    path: path.as_ref().to_proto(),
                                     language_server_id: server_id.0 as u64,
                                     error_count: 0,
                                     warning_count: 0,
@@ -7776,7 +7777,7 @@ impl LspStore {
             language_server_name: symbol.language_server_name.0.to_string(),
             source_worktree_id: symbol.source_worktree_id.to_proto(),
             worktree_id: symbol.path.worktree_id.to_proto(),
-            path: symbol.path.path.to_string_lossy().to_string(),
+            path: symbol.path.path.as_ref().to_proto(),
             name: symbol.name.clone(),
             kind: unsafe { mem::transmute::<lsp::SymbolKind, i32>(symbol.kind) },
             start: Some(proto::PointUtf16 {
@@ -7797,7 +7798,7 @@ impl LspStore {
         let kind = unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialized_symbol.kind) };
         let path = ProjectPath {
             worktree_id,
-            path: PathBuf::from(serialized_symbol.path).into(),
+            path: Arc::<Path>::from_proto(serialized_symbol.path),
         };
 
         let start = serialized_symbol
@@ -8271,7 +8272,7 @@ impl DiagnosticSummary {
         path: &Path,
     ) -> proto::DiagnosticSummary {
         proto::DiagnosticSummary {
-            path: path.to_string_lossy().to_string(),
+            path: path.to_proto(),
             language_server_id: language_server_id.0 as u64,
             error_count: self.error_count as u32,
             warning_count: self.warning_count as u32,

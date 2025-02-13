@@ -8,6 +8,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use assistant_context_editor::ContextStore;
 use assistant_slash_command::SlashCommandWorkingSet;
+use buffer_diff::{assert_hunks, DiffHunkSecondaryStatus, DiffHunkStatus};
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
@@ -2613,11 +2614,11 @@ async fn test_git_diff_base_change(
             diff.base_text_string().as_deref(),
             Some(staged_text.as_str())
         );
-        diff::assert_hunks(
-            diff.snapshot.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(1..2, "", "two\n")],
+            &[(1..2, "", "two\n", DiffHunkStatus::added())],
         );
     });
 
@@ -2641,11 +2642,11 @@ async fn test_git_diff_base_change(
             diff.base_text_string().as_deref(),
             Some(staged_text.as_str())
         );
-        diff::assert_hunks(
-            diff.snapshot.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(1..2, "", "two\n")],
+            &[(1..2, "", "two\n", DiffHunkStatus::added())],
         );
     });
 
@@ -2663,11 +2664,16 @@ async fn test_git_diff_base_change(
             diff.base_text_string().as_deref(),
             Some(committed_text.as_str())
         );
-        diff::assert_hunks(
-            diff.snapshot.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(1..2, "TWO\n", "two\n")],
+            &[(
+                1..2,
+                "TWO\n",
+                "two\n",
+                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::HasSecondaryHunk),
+            )],
         );
     });
 
@@ -2689,11 +2695,11 @@ async fn test_git_diff_base_change(
             diff.base_text_string().as_deref(),
             Some(new_staged_text.as_str())
         );
-        diff::assert_hunks(
-            diff.snapshot.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(2..3, "", "three\n")],
+            &[(2..3, "", "three\n", DiffHunkStatus::added())],
         );
     });
 
@@ -2703,11 +2709,11 @@ async fn test_git_diff_base_change(
             diff.base_text_string().as_deref(),
             Some(new_staged_text.as_str())
         );
-        diff::assert_hunks(
-            diff.snapshot.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(2..3, "", "three\n")],
+            &[(2..3, "", "three\n", DiffHunkStatus::added())],
         );
     });
 
@@ -2717,11 +2723,16 @@ async fn test_git_diff_base_change(
             diff.base_text_string().as_deref(),
             Some(new_committed_text.as_str())
         );
-        diff::assert_hunks(
-            diff.snapshot.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(1..2, "TWO_HUNDRED\n", "two\n")],
+            &[(
+                1..2,
+                "TWO_HUNDRED\n",
+                "two\n",
+                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk),
+            )],
         );
     });
 
@@ -2763,11 +2774,11 @@ async fn test_git_diff_base_change(
             diff.base_text_string().as_deref(),
             Some(staged_text.as_str())
         );
-        diff::assert_hunks(
-            diff.snapshot.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(1..2, "", "two\n")],
+            &[(1..2, "", "two\n", DiffHunkStatus::added())],
         );
     });
 
@@ -2790,11 +2801,11 @@ async fn test_git_diff_base_change(
             diff.base_text_string().as_deref(),
             Some(staged_text.as_str())
         );
-        diff::assert_hunks(
-            diff.snapshot.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &staged_text,
-            &[(1..2, "", "two\n")],
+            &[(1..2, "", "two\n", DiffHunkStatus::added())],
         );
     });
 
@@ -2812,11 +2823,11 @@ async fn test_git_diff_base_change(
             diff.base_text_string().as_deref(),
             Some(new_staged_text.as_str())
         );
-        diff::assert_hunks(
-            diff.snapshot.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &new_staged_text,
-            &[(2..3, "", "three\n")],
+            &[(2..3, "", "three\n", DiffHunkStatus::added())],
         );
     });
 
@@ -2826,11 +2837,11 @@ async fn test_git_diff_base_change(
             diff.base_text_string().as_deref(),
             Some(new_staged_text.as_str())
         );
-        diff::assert_hunks(
-            diff.snapshot.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &new_staged_text,
-            &[(2..3, "", "three\n")],
+            &[(2..3, "", "three\n", DiffHunkStatus::added())],
         );
     });
 }
@@ -2884,7 +2895,10 @@ async fn test_git_branch_name(
         assert_eq!(worktrees.len(), 1);
         let worktree = worktrees[0].clone();
         let root_entry = worktree.read(cx).snapshot().root_git_entry().unwrap();
-        assert_eq!(root_entry.branch(), branch_name.map(Into::into));
+        assert_eq!(
+            root_entry.branch().map(|branch| branch.name.to_string()),
+            branch_name
+        );
     }
 
     // Smoke test branch reading
@@ -6772,7 +6786,7 @@ async fn test_remote_git_branches(
         })
     });
 
-    assert_eq!(host_branch.as_ref(), branches[2]);
+    assert_eq!(host_branch.name, branches[2]);
 
     // Also try creating a new branch
     cx_b.update(|cx| {
@@ -6793,5 +6807,5 @@ async fn test_remote_git_branches(
         })
     });
 
-    assert_eq!(host_branch.as_ref(), "totally-new-branch");
+    assert_eq!(host_branch.name, "totally-new-branch");
 }

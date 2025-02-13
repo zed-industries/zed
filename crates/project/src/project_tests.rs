@@ -1,5 +1,5 @@
 use crate::{Event, *};
-use diff::assert_hunks;
+use buffer_diff::{assert_hunks, DiffHunkSecondaryStatus, DiffHunkStatus};
 use fs::FakeFs;
 use futures::{future, StreamExt};
 use gpui::{App, SemanticVersion, UpdateGlobal};
@@ -5693,15 +5693,16 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_diff.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            unstaged_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
             &unstaged_diff.base_text_string().unwrap(),
             &[
-                (0..1, "", "// print goodbye\n"),
+                (0..1, "", "// print goodbye\n", DiffHunkStatus::added()),
                 (
                     2..3,
                     "    println!(\"hello world\");\n",
                     "    println!(\"goodbye world\");\n",
+                    DiffHunkStatus::modified(),
                 ),
             ],
         );
@@ -5723,10 +5724,15 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_diff.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            unstaged_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
-            &unstaged_diff.snapshot.base_text.as_ref().unwrap().text(),
-            &[(2..3, "", "    println!(\"goodbye world\");\n")],
+            &unstaged_diff.base_text().unwrap().text(),
+            &[(
+                2..3,
+                "",
+                "    println!(\"goodbye world\");\n",
+                DiffHunkStatus::added(),
+            )],
         );
     });
 }
@@ -5796,10 +5802,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
 
     uncommitted_diff.read_with(cx, |diff, _| {
         assert_eq!(
-            diff.snapshot
-                .base_text
-                .as_ref()
-                .and_then(|base| base.language().cloned()),
+            diff.base_text().and_then(|base| base.language().cloned()),
             Some(language)
         )
     });
@@ -5808,15 +5811,21 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     uncommitted_diff.update(cx, |uncommitted_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            uncommitted_diff.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            uncommitted_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
             &uncommitted_diff.base_text_string().unwrap(),
             &[
-                (0..1, "", "// print goodbye\n"),
+                (
+                    0..1,
+                    "",
+                    "// print goodbye\n",
+                    DiffHunkStatus::Added(DiffHunkSecondaryStatus::HasSecondaryHunk),
+                ),
                 (
                     2..3,
                     "    println!(\"hello world\");\n",
                     "    println!(\"goodbye world\");\n",
+                    DiffHunkStatus::modified(),
                 ),
             ],
         );
@@ -5838,10 +5847,15 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     uncommitted_diff.update(cx, |uncommitted_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            uncommitted_diff.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            uncommitted_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
-            &uncommitted_diff.snapshot.base_text.as_ref().unwrap().text(),
-            &[(2..3, "", "    println!(\"goodbye world\");\n")],
+            &uncommitted_diff.base_text().unwrap().text(),
+            &[(
+                2..3,
+                "",
+                "    println!(\"goodbye world\");\n",
+                DiffHunkStatus::added(),
+            )],
         );
     });
 }
@@ -5899,13 +5913,14 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     uncommitted_diff.update(cx, |uncommitted_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            uncommitted_diff.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            uncommitted_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
-            &uncommitted_diff.snapshot.base_text.as_ref().unwrap().text(),
+            &uncommitted_diff.base_text_string().unwrap(),
             &[(
                 1..2,
                 "    println!(\"hello from HEAD\");\n",
                 "    println!(\"hello from the working copy\");\n",
+                DiffHunkStatus::modified(),
             )],
         );
     });

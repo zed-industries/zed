@@ -113,6 +113,7 @@ impl Editor {
             target_bottom = target_top + 1.;
         } else {
             let selections = self.selections.all::<Point>(cx);
+
             target_top = selections
                 .first()
                 .unwrap()

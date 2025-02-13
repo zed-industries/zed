@@ -743,12 +743,20 @@ impl Database {
                             .transpose()?
                             .unwrap_or_default();
 
+                        let branch_summary = db_repository
+                            .branch_summary
+                            .as_ref()
+                            .map(|branch_summary| serde_json::from_str(&branch_summary))
+                            .transpose()?
+                            .unwrap_or_default();
+
                         worktree.updated_repositories.push(proto::RepositoryEntry {
                             work_directory_id: db_repository.work_directory_id as u64,
                             branch: db_repository.branch,
                             updated_statuses,
                             removed_statuses,
                             current_merge_conflicts,
+                            branch_summary,
                         });
                     }
                 }

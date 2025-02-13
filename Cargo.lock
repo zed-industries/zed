@@ -2024,6 +2024,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "buffer_diff"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ctor",
+ "env_logger 0.11.6",
+ "futures 0.3.31",
+ "git2",
+ "gpui",
+ "language",
+ "log",
+ "pretty_assertions",
+ "rand 0.8.5",
+ "rope",
+ "serde_json",
+ "sum_tree",
+ "text",
+ "unindent",
+ "util",
+]
+
+[[package]]
 name = "built"
 version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2606,8 +2628,6 @@ dependencies = [
  "rand 0.8.5",
  "release_channel",
  "rpc",
- "rustls 0.23.22",
- "rustls-native-certs 0.8.1",
  "schemars",
  "serde",
  "serde_json",
@@ -2741,6 +2761,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "base64 0.22.1",
+ "buffer_diff",
  "call",
  "channel",
  "chrono",
@@ -2755,7 +2776,6 @@ dependencies = [
  "dashmap 6.1.0",
  "debugger_ui",
  "derive_more",
- "diff 0.1.0",
  "editor",
  "env_logger 0.11.6",
  "envy",
@@ -3976,24 +3996,6 @@ dependencies = [
 
 [[package]]
 name = "diff"
-version = "0.1.0"
-dependencies = [
- "futures 0.3.31",
- "git2",
- "gpui",
- "language",
- "log",
- "pretty_assertions",
- "rope",
- "serde_json",
- "sum_tree",
- "text",
- "unindent",
- "util",
-]
-
-[[package]]
-name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
@@ -4155,6 +4157,7 @@ dependencies = [
  "aho-corasick",
  "anyhow",
  "assets",
+ "buffer_diff",
  "chrono",
  "client",
  "clock",
@@ -4162,7 +4165,6 @@ dependencies = [
  "convert_case 0.7.1",
  "ctor",
  "db",
- "diff 0.1.0",
  "emojis",
  "env_logger 0.11.6",
  "file_icons",
@@ -5462,15 +5464,16 @@ name = "git_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "buffer_diff",
  "collections",
  "db",
- "diff 0.1.0",
  "editor",
  "feature_flags",
  "futures 0.3.31",
  "fuzzy",
  "git",
  "gpui",
+ "itertools 0.14.0",
  "language",
  "menu",
  "multi_buffer",
@@ -5484,6 +5487,7 @@ dependencies = [
  "serde_json",
  "settings",
  "theme",
+ "time",
  "ui",
  "util",
  "windows 0.58.0",
@@ -5661,6 +5665,7 @@ dependencies = [
  "rand 0.8.5",
  "raw-window-handle",
  "refineable",
+ "reqwest_client",
  "resvg",
  "schemars",
  "seahash",
@@ -6128,6 +6133,8 @@ dependencies = [
  "futures 0.3.31",
  "http 1.2.0",
  "log",
+ "rustls 0.23.22",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "url",
@@ -7992,6 +7999,7 @@ dependencies = [
 name = "migrator"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "collections",
  "convert_case 0.7.1",
  "log",
@@ -8095,10 +8103,10 @@ name = "multi_buffer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "buffer_diff",
  "clock",
  "collections",
  "ctor",
- "diff 0.1.0",
  "env_logger 0.11.6",
  "futures 0.3.31",
  "gpui",
@@ -10110,7 +10118,7 @@ version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ae130e2f271fbc2ac3a40fb1d07180839cdbbe443c7a27e1e3c13c5cac0116d"
 dependencies = [
- "diff 0.1.13",
+ "diff",
  "yansi",
 ]
 
@@ -10203,12 +10211,12 @@ dependencies = [
  "aho-corasick",
  "anyhow",
  "async-trait",
+ "buffer_diff",
  "client",
  "clock",
  "collections",
  "dap",
  "dap_adapters",
- "diff 0.1.0",
  "env_logger 0.11.6",
  "fancy-regex 0.14.0",
  "fs",
@@ -10617,16 +10625,16 @@ dependencies = [
 
 [[package]]
 name = "quinn-udp"
-version = "0.5.8"
+version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52cd4b1eff68bf27940dd39811292c49e007f4d0b4c357358dc9b0197be6b527"
+checksum = "1c40286217b4ba3a71d644d752e6a0b71f13f1b6a2c5311acfcbe0c2418ed904"
 dependencies = [
  "cfg_aliases 0.2.1",
  "libc",
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11609,6 +11617,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustls-platform-verifier"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e012c45844a1790332c9386ed4ca3a06def221092eda277e6f079728f8ea99da"
+dependencies = [
+ "core-foundation 0.10.0",
+ "core-foundation-sys",
+ "jni",
+ "log",
+ "once_cell",
+ "rustls 0.23.22",
+ "rustls-native-certs 0.8.1",
+ "rustls-platform-verifier-android",
+ "rustls-webpki 0.102.8",
+ "security-framework 3.0.1",
+ "security-framework-sys",
+ "webpki-root-certs",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rustls-platform-verifier-android"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
+
+[[package]]
 name = "rustls-webpki"
 version = "0.101.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12153,7 +12188,6 @@ dependencies = [
  "indoc",
  "inventory",
  "log",
- "migrator",
  "paths",
  "pretty_assertions",
  "release_channel",
@@ -14501,6 +14535,7 @@ dependencies = [
  "strum",
  "theme",
  "ui_macros",
+ "util",
  "windows 0.58.0",
 ]
 
@@ -15514,6 +15549,15 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webpki-root-certs"
+version = "0.26.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09aed61f5e8d2c18344b3faa33a4c837855fe56642757754775548fee21386c4"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]
@@ -16701,7 +16745,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.174.0"
+version = "0.175.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -16768,6 +16812,7 @@ dependencies = [
  "markdown",
  "markdown_preview",
  "menu",
+ "migrator",
  "mimalloc",
  "nix",
  "node_runtime",
@@ -16928,9 +16973,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "614669bead4741b2fc352ae1967318be16949cf46f59013e548c6dbfdfc01252"
+checksum = "1bf21350eced858d129840589158a8f6895c4fa4327ae56dd8c7d6a98495bed4"
 dependencies = [
  "serde",
  "serde_json",
@@ -17149,9 +17194,12 @@ dependencies = [
  "language_models",
  "log",
  "menu",
+ "migrator",
+ "paths",
  "postage",
  "project",
  "regex",
+ "release_channel",
  "reqwest_client",
  "rpc",
  "serde",
@@ -17161,6 +17209,7 @@ dependencies = [
  "telemetry",
  "telemetry_events",
  "theme",
+ "thiserror 1.0.69",
  "tree-sitter-go",
  "tree-sitter-rust",
  "ui",
