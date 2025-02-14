@@ -1311,48 +1311,6 @@ impl Project {
         }
     }
 
-    pub fn all_breakpoints(
-        &self,
-        as_abs_path: bool,
-        cx: &mut Context<Self>,
-    ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
-        let mut all_breakpoints: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
-
-        for (project_path, breakpoints) in &self.breakpoint_store.read(cx).breakpoints {
-            let buffer = maybe!({
-                let buffer_store = self.buffer_store.read(cx);
-                let buffer_id = buffer_store.buffer_id_for_project_path(project_path)?;
-                let buffer = self.buffer_for_id(*buffer_id, cx)?;
-                Some(buffer.read(cx))
-            });
-
-            let Some(path) = maybe!({
-                if as_abs_path {
-                    let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
-                    Some(Arc::from(
-                        worktree
-                            .read(cx)
-                            .absolutize(&project_path.path)
-                            .ok()?
-                            .as_path(),
-                    ))
-                } else {
-                    Some(project_path.clone().path)
-                }
-            }) else {
-                continue;
-            };
-
-            all_breakpoints.entry(path).or_default().extend(
-                breakpoints
-                    .into_iter()
-                    .map(|bp| bp.to_serialized(buffer, project_path.clone().path)),
-            );
-        }
-
-        all_breakpoints
-    }
-
     pub fn initial_send_breakpoints(
         &self,
         session_id: &DebugSessionId,
@@ -1362,7 +1320,8 @@ impl Project {
         let mut tasks = Vec::new();
 
         for (abs_path, serialized_breakpoints) in self
-            .all_breakpoints(true, cx)
+            .breakpoint_store()
+            .read_with(cx, |store, cx| store.all_breakpoints(true, cx))
             .into_iter()
             .filter(|(_, bps)| !bps.is_empty())
         {
@@ -1410,65 +1369,11 @@ impl Project {
         })
     }
 
-    /// Get all serialized breakpoints that belong to a buffer
-    pub fn serialize_breakpoints_for_project_path(
-        &self,
-        project_path: &ProjectPath,
-        cx: &Context<Self>,
-    ) -> Option<(Arc<Path>, Vec<SerializedBreakpoint>)> {
-        let buffer = maybe!({
-            let buffer_id = self
-                .buffer_store
-                .read(cx)
-                .buffer_id_for_project_path(project_path)?;
-            Some(self.buffer_for_id(*buffer_id, cx)?.read(cx))
-        });
-
-        let worktree_path = self
-            .worktree_for_id(project_path.worktree_id, cx)?
-            .read(cx)
-            .abs_path();
-
-        Some((
-            worktree_path,
-            self.breakpoint_store
-                .read(cx)
-                .breakpoints
-                .get(&project_path)?
-                .iter()
-                .map(|bp| bp.to_serialized(buffer, project_path.path.clone()))
-                .collect(),
-        ))
-    }
-
-    /// Serialize all breakpoints to save within workspace's database
-    ///
-    /// # Return
-    /// HashMap:
-    ///     Key: A valid worktree path
-    ///     Value: All serialized breakpoints that belong to a worktree
     pub fn serialize_breakpoints(
         &self,
         cx: &Context<Self>,
     ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
-        let mut result: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
-
-        if !DebuggerSettings::get_global(cx).save_breakpoints {
-            return result;
-        }
-
-        for project_path in self.breakpoint_store.read(cx).breakpoints.keys() {
-            if let Some((worktree_path, mut serialized_breakpoint)) =
-                self.serialize_breakpoints_for_project_path(project_path, cx)
-            {
-                result
-                    .entry(worktree_path.clone())
-                    .or_default()
-                    .append(&mut serialized_breakpoint)
-            }
-        }
-
-        result
+        self.breakpoint_store.read(cx).serialize_breakpoints(cx)
     }
 
     async fn handle_toggle_ignore_breakpoints(

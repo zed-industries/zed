@@ -3,14 +3,15 @@ use crate::{
     BufferId, ProjectItem as _, ProjectPath, WorktreeStore,
 };
 use anyhow::{Context as _, Result};
-use collections::{BTreeMap, HashSet};
-use dap::SourceBreakpoint;
-use gpui::{AsyncApp, Context, Entity, EventEmitter};
+use collections::{BTreeMap, HashMap, HashSet};
+use dap::{debugger_settings::DebuggerSettings, SourceBreakpoint};
+use gpui::{App, AsyncApp, Context, Entity, EventEmitter};
 use language::{
     proto::{deserialize_anchor, serialize_anchor as serialize_text_anchor},
     Buffer, BufferSnapshot,
 };
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
+use settings::Settings;
 use settings::WorktreeId;
 use std::{
     hash::{Hash, Hasher},
@@ -18,7 +19,7 @@ use std::{
     sync::Arc,
 };
 use text::Point;
-use util::ResultExt as _;
+use util::{maybe, ResultExt as _};
 
 struct RemoteBreakpointStore {
     upstream_client: Option<AnyProtoClient>,
@@ -421,6 +422,102 @@ impl BreakpointStore {
             });
             cx.notify();
         })
+    }
+
+    fn serialize_breakpoints_for_project_path(
+        &self,
+        project_path: &ProjectPath,
+        cx: &App,
+    ) -> Option<(Arc<Path>, Vec<SerializedBreakpoint>)> {
+        let buffer = maybe!({
+            let buffer_id = self
+                .buffer_store
+                .read(cx)
+                .buffer_id_for_project_path(project_path)?;
+            Some(self.buffer_store.read(cx).get(*buffer_id)?.read(cx))
+        });
+
+        let worktree_path = self
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(project_path.worktree_id, cx)?
+            .read(cx)
+            .abs_path();
+
+        Some((
+            worktree_path,
+            self.breakpoints
+                .get(&project_path)?
+                .iter()
+                .map(|bp| bp.to_serialized(buffer, project_path.path.clone()))
+                .collect(),
+        ))
+    }
+
+    pub fn serialize_breakpoints(&self, cx: &App) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
+        let mut result: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
+
+        if !DebuggerSettings::get_global(cx).save_breakpoints {
+            return result;
+        }
+
+        for project_path in self.breakpoints.keys() {
+            if let Some((worktree_path, mut serialized_breakpoint)) =
+                self.serialize_breakpoints_for_project_path(project_path, cx)
+            {
+                result
+                    .entry(worktree_path.clone())
+                    .or_default()
+                    .append(&mut serialized_breakpoint)
+            }
+        }
+
+        result
+    }
+
+    pub fn all_breakpoints(
+        &self,
+        as_abs_path: bool,
+        cx: &App,
+    ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
+        let mut all_breakpoints: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
+
+        for (project_path, breakpoints) in &self.breakpoints {
+            let buffer = maybe!({
+                let buffer_store = self.buffer_store.read(cx);
+                let buffer_id = buffer_store.buffer_id_for_project_path(project_path)?;
+                let buffer = buffer_store.get(*buffer_id)?;
+                Some(buffer.read(cx))
+            });
+
+            let Some(path) = maybe!({
+                if as_abs_path {
+                    let worktree = self
+                        .worktree_store
+                        .read(cx)
+                        .worktree_for_id(project_path.worktree_id, cx)?;
+                    Some(Arc::from(
+                        worktree
+                            .read(cx)
+                            .absolutize(&project_path.path)
+                            .ok()?
+                            .as_path(),
+                    ))
+                } else {
+                    Some(project_path.clone().path)
+                }
+            }) else {
+                continue;
+            };
+
+            all_breakpoints.entry(path).or_default().extend(
+                breakpoints
+                    .into_iter()
+                    .map(|bp| bp.to_serialized(buffer, project_path.clone().path)),
+            );
+        }
+
+        all_breakpoints
     }
 
     #[cfg(any(test, feature = "test-support"))]
