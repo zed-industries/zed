@@ -1,17 +1,15 @@
-// @ts-check
-
 import { Octokit } from "@octokit/rest";
 import { IncomingWebhook } from "@slack/webhook";
 
 async function main() {
-  const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+  const octokit = new Octokit({ auth: process.env["GITHUB_TOKEN"] });
 
-  if (!process.env.SLACK_ISSUE_RESPONSE_WEBHOOK_URL) {
+  if (!process.env["SLACK_ISSUE_RESPONSE_WEBHOOK_URL"]) {
     throw new Error("SLACK_ISSUE_RESPONSE_WEBHOOK_URL is not set");
   }
 
   const webhook = new IncomingWebhook(
-    process.env.SLACK_ISSUE_RESPONSE_WEBHOOK_URL,
+    process.env["SLACK_ISSUE_RESPONSE_WEBHOOK_URL"],
   );
 
   const owner = "zed-industries";
@@ -58,19 +56,37 @@ async function main() {
     return `${index + 1}. ${formattedDate}: <${issue.html_url}|${sanitizedTitle}>`;
   });
 
-  const blocks = [
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: issueLines.join("\n"),
-      },
+  const sections = [];
+  /** @type {string[]} */
+  let currentSection = [];
+  let currentSectionLength = 0;
+
+  for (const issueLine of issueLines) {
+    if (currentSectionLength + issueLine.length <= 3000) {
+      currentSection.push(issueLine);
+      currentSectionLength += issueLine.length;
+    } else {
+      sections.push(currentSection);
+      currentSection = [];
+      currentSectionLength = 0;
+    }
+  }
+
+  if (currentSection.length > 0) {
+    sections.push(currentSection);
+  }
+
+  const blocks = sections.map((section) => ({
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: section.join("\n"),
     },
-  ];
+  }));
 
   console.log(JSON.stringify(blocks, undefined, 2));
 
-  await webhook.send({ blocks: blocks });
+  await webhook.send({ blocks });
 }
 
 main().catch((error) => {

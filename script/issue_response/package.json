@@ -5,6 +5,7 @@
   "main": "main.js",
   "type": "module",
   "scripts": {
+    "build": "tsc -p .",
     "start": "node main.js"
   },
   "dependencies": {
@@ -15,6 +16,9 @@
   },
   "devDependencies": {
     "@octokit/types": "^13.8.0",
-    "@slack/types": "^2.14.0"
+    "@slack/types": "^2.14.0",
+    "@tsconfig/node20": "20.1.4",
+    "@tsconfig/strictest": "2.0.5",
+    "typescript": "5.7.3"
   }
 }

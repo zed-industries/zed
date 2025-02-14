@@ -27,6 +27,15 @@ importers:
       '@slack/types':
         specifier: ^2.14.0
         version: 2.14.0
+      '@tsconfig/node20':
+        specifier: 20.1.4
+        version: 20.1.4
+      '@tsconfig/strictest':
+        specifier: 2.0.5
+        version: 2.0.5
+      typescript:
+        specifier: 5.7.3
+        version: 5.7.3
 
 packages:
 
@@ -155,6 +164,12 @@ packages:
     resolution: {integrity: sha512-JDJte2dbJCcq1/GCMBYJH6fj+YS4n5GuPjT4tF3O1NPN6pFPCR9yA/apRh9sdfhdFG7hadiRgmiQqC4GLgNkZg==}
     engines: {node: '>= 18', npm: '>= 8.6.0'}
 
+  '@tsconfig/node20@20.1.4':
+    resolution: {integrity: sha512-sqgsT69YFeLWf5NtJ4Xq/xAF8p4ZQHlmGW74Nu2tD4+g5fAsposc4ZfaaPixVu4y01BEiDCWLRDCvDM5JOsRxg==}
+
+  '@tsconfig/strictest@2.0.5':
+    resolution: {integrity: sha512-ec4tjL2Rr0pkZ5hww65c+EEPYwxOi4Ryv+0MtjeaSQRJyq322Q27eOQiFbuNgw2hpL4hB1/W/HBGk3VKS43osg==}
+
   '@types/aws-lambda@8.10.147':
     resolution: {integrity: sha512-nD0Z9fNIZcxYX5Mai2CTmFD7wX7UldCkW2ezCF8D1T5hdiLsnTWDGRpfRYntU6VjTdLQjOvyszru7I1c1oCQew==}
 
@@ -218,6 +233,11 @@ packages:
   toad-cache@3.7.0:
     resolution: {integrity: sha512-/m8M+2BJUpoJdgAHoG+baCwBT+tf2VraSfkBgl0Y00qIWt41DJ8R5B8nsEw0I58YwF5IZH6z24/2TobDKnqSWw==}
     engines: {node: '>=12'}
+
+  typescript@5.7.3:
+    resolution: {integrity: sha512-84MVSjMEHP+FQRPy3pX9sTVV/INIex71s9TL2Gm5FG/WG1SqXeKyZ0k7/blY/4FdOzI12CBy1vGc4og/eus0fw==}
+    engines: {node: '>=14.17'}
+    hasBin: true
 
   undici-types@6.20.0:
     resolution: {integrity: sha512-Ny6QZ2Nju20vw1SRHe3d9jVu6gJ+4e3+MMpqu7pqE5HT6WsTSlce++GQmK5UXS8mzV8DSYHrQH+Xrf2jVcuKNg==}
@@ -398,6 +418,10 @@ snapshots:
     transitivePeerDependencies:
       - debug
 
+  '@tsconfig/node20@20.1.4': {}
+
+  '@tsconfig/strictest@2.0.5': {}
+
   '@types/aws-lambda@8.10.147': {}
 
   '@types/node@22.13.1':
@@ -458,6 +482,8 @@ snapshots:
   proxy-from-env@1.1.0: {}
 
   toad-cache@3.7.0: {}
+
+  typescript@5.7.3: {}
 
   undici-types@6.20.0: {}
 

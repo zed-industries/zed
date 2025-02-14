@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": ["@tsconfig/node20/tsconfig.json", "@tsconfig/strictest/tsconfig.json"],
+  "compilerOptions": {
+    "checkJs": true,
+    "noEmit": true
+  },
+  "include": ["main.js"]
+}
