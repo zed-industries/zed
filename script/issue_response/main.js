@@ -54,7 +54,6 @@ async function main() {
         day: "numeric",
       },
     );
-    console.log(issue.title);
     const sanitizedTitle = issue.title
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
@@ -90,8 +89,6 @@ async function main() {
       text: section.join("").trimEnd(),
     },
   }));
-
-  console.log(JSON.stringify(blocks, undefined, 2));
 
   await webhook.send({ blocks });
 }
