@@ -107,6 +107,7 @@ pub struct Scrollbar {
     pub diagnostics: ScrollbarDiagnostics,
     pub cursors: bool,
     pub axes: ScrollbarAxes,
+    pub horizontal_height: u32,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -418,6 +419,10 @@ pub struct ScrollbarContent {
     pub cursors: Option<bool>,
     /// Forcefully enable or disable the scrollbar for each axis
     pub axes: Option<ScrollbarAxesContent>,
+    /// The height of the horizontal scrollbar (in pixels)
+    ///
+    /// Default: 15
+    pub horizontal_height: Option<u32>,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis

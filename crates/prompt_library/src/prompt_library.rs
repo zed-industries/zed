@@ -1030,7 +1030,8 @@ impl PromptLibrary {
                                                         ),
                                                         ..Default::default()
                                                     },
-                                                    scrollbar_width: Pixels::ZERO,
+                                                    vertical_scrollbar_width: Pixels::ZERO,
+                                                    horizontal_scrollbar_height: Pixels::ZERO,
                                                     syntax: cx.theme().syntax().clone(),
                                                     status: cx.theme().status().clone(),
                                                     inlay_hints_style:

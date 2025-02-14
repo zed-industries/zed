@@ -172,7 +172,7 @@ pub struct EditorElement {
 type DisplayRowDelta = u32;
 
 impl EditorElement {
-    pub(crate) const SCROLLBAR_WIDTH: Pixels = px(15.);
+    pub(crate) const VERTICAL_SCROLLBAR_WIDTH: Pixels = px(15.);
 
     pub fn new(editor: &Entity<Editor>, style: EditorStyle) -> Self {
         Self {
@@ -1346,12 +1346,12 @@ impl EditorElement {
                 Bounds::from_corners(
                     point(
                         text_bounds.bottom_left().x,
-                        text_bounds.bottom_left().y - self.style.scrollbar_width,
+                        text_bounds.bottom_left().y - self.style.horizontal_scrollbar_height,
                     ),
                     point(
                         text_bounds.bottom_right().x
                             - if axes.vertical {
-                                self.style.scrollbar_width
+                                self.style.vertical_scrollbar_width
                             } else {
                                 px(0.)
                             },
@@ -3206,7 +3206,7 @@ impl EditorElement {
 
         let viewport_bounds =
             Bounds::new(Default::default(), window.viewport_size()).extend(Edges {
-                right: -Self::SCROLLBAR_WIDTH - MENU_GAP,
+                right: -Self::VERTICAL_SCROLLBAR_WIDTH - MENU_GAP,
                 ..Default::default()
             });
 
@@ -3364,7 +3364,7 @@ impl EditorElement {
         let max_height = line_height * 12. + POPOVER_Y_PADDING;
         let viewport_bounds =
             Bounds::new(Default::default(), window.viewport_size()).extend(Edges {
-                right: -Self::SCROLLBAR_WIDTH - MENU_GAP,
+                right: -Self::VERTICAL_SCROLLBAR_WIDTH - MENU_GAP,
                 ..Default::default()
             });
         self.layout_popovers_above_or_below_line(
@@ -3938,7 +3938,7 @@ impl EditorElement {
 
                 let viewport_bounds = Bounds::new(Default::default(), window.viewport_size())
                     .extend(Edges {
-                        right: -Self::SCROLLBAR_WIDTH,
+                        right: -Self::VERTICAL_SCROLLBAR_WIDTH,
                         ..Default::default()
                     });
 
@@ -5842,7 +5842,7 @@ impl EditorElement {
     }
 
     fn scrollbar_left(&self, bounds: &Bounds<Pixels>) -> Pixels {
-        bounds.top_right().x - self.style.scrollbar_width
+        bounds.top_right().x - self.style.vertical_scrollbar_width
     }
 
     fn column_pixels(&self, column: usize, window: &mut Window, _: &mut App) -> Pixels {
@@ -6861,8 +6861,10 @@ impl Element for EditorElement {
                         .unwrap_or_default();
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
-                    let editor_width =
-                        text_width - gutter_dimensions.margin - em_width - style.scrollbar_width;
+                    let editor_width = text_width
+                        - gutter_dimensions.margin
+                        - em_width
+                        - style.vertical_scrollbar_width;
 
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
@@ -7252,7 +7254,8 @@ impl Element for EditorElement {
                         let autoscrolled = if autoscroll_horizontally {
                             editor.autoscroll_horizontally(
                                 start_row,
-                                editor_width - (letter_size.width / 2.0) + style.scrollbar_width,
+                                editor_width - (letter_size.width / 2.0)
+                                    + style.vertical_scrollbar_width,
                                 scroll_width,
                                 em_width,
                                 &line_layouts,
@@ -7343,7 +7346,8 @@ impl Element for EditorElement {
                         let autoscrolled = if autoscroll_horizontally {
                             editor.autoscroll_horizontally(
                                 start_row,
-                                editor_width - (letter_size.width / 2.0) + style.scrollbar_width,
+                                editor_width - (letter_size.width / 2.0)
+                                    + style.vertical_scrollbar_width,
                                 scroll_width,
                                 em_width,
                                 &line_layouts,
@@ -7807,7 +7811,7 @@ impl ScrollbarRangeData {
         };
 
         let right_margin = if longest_line_width + longest_line_blame_width >= editor_width {
-            letter_size.width + style.scrollbar_width
+            letter_size.width + style.vertical_scrollbar_width
         } else {
             px(0.0)
         };

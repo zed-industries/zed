@@ -274,7 +274,9 @@
       "horizontal": true,
       /// When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
       "vertical": true
-    }
+    },
+    /// The height of the horizontal scrollbar (in pixels)
+    "horizontal_height": 15
   },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,
