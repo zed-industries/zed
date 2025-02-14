@@ -10886,6 +10886,7 @@ dependencies = [
  "prost 0.9.0",
  "release_channel",
  "rpc",
+ "schemars",
  "serde",
  "serde_json",
  "shlex",
