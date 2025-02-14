@@ -270,31 +270,43 @@ impl LanguageModelRequest {
     }
 
     pub fn into_mistral(self, model: String, max_output_tokens: Option<u32>) -> mistral::Request {
-        let stream = !model.starts_with("o1-");
+        let len = self.messages.len();
+        let merged_messages =
+            self.messages
+                .into_iter()
+                .fold(Vec::with_capacity(len), |mut acc, msg| {
+                    let role = msg.role;
+                    let content = msg.string_contents();
+
+                    acc.push(match role {
+                        Role::User => mistral::RequestMessage::User { content },
+                        Role::Assistant => mistral::RequestMessage::Assistant {
+                            content: Some(content),
+                            tool_calls: Vec::new(),
+                        },
+                        Role::System => mistral::RequestMessage::System { content },
+                    });
+                    acc
+                });
+
         mistral::Request {
             model,
-            messages: self
-                .messages
+            messages: merged_messages,
+            stream: true,
+            max_tokens: max_output_tokens,
+            temperature: self.temperature,
+            response_format: None,
+            tools: self
+                .tools
                 .into_iter()
-                .map(|msg| match msg.role {
-                    Role::User => mistral::RequestMessage::User {
-                        content: msg.string_contents(),
-                    },
-                    Role::Assistant => mistral::RequestMessage::Assistant {
-                        content: Some(msg.string_contents()),
-                        tool_calls: Vec::new(),
-                    },
-                    Role::System => mistral::RequestMessage::System {
-                        content: msg.string_contents(),
+                .map(|tool| mistral::ToolDefinition::Function {
+                    function: mistral::FunctionDefinition {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: Some(tool.input_schema),
                     },
                 })
                 .collect(),
-            stream,
-            stop: self.stop,
-            temperature: self.temperature.unwrap_or(1.0),
-            max_tokens: max_output_tokens,
-            tools: Vec::new(),
-            tool_choice: None,
         }
     }
 

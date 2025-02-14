@@ -1,28 +1,16 @@
 mod supported_countries;
 
-use anyhow::{anyhow, Context as _, Result};
-use futures::{
-    io::BufReader,
-    stream::{self, BoxStream},
-    AsyncBufReadExt, AsyncReadExt, Stream, StreamExt,
-};
+use anyhow::{anyhow, Result};
+use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{
-    convert::TryFrom,
-    future::{self, Future},
-    pin::Pin,
-};
+use std::convert::TryFrom;
 use strum::EnumIter;
 
 pub use supported_countries::*;
 
 pub const MISTRAL_API_URL: &str = "https://api.mistral.ai/v1";
-
-fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
-    opt.as_ref().map_or(true, |v| v.as_ref().is_empty())
-}
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -47,7 +35,6 @@ impl TryFrom<String> for Role {
     }
 }
 
-
 impl From<Role> for String {
     fn from(val: Role) -> Self {
         match val {
@@ -62,10 +49,12 @@ impl From<Role> for String {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
+    // Premier models
     #[serde(rename = "codestral-latest", alias = "codestral-latest")]
     CodestralLatest,
     #[serde(rename = "mistral-large-latest", alias = "mistral-large-latest")]
     MistralLargeLatest,
+    // free models
     #[serde(rename = "mistral-small-latest", alias = "mistral-small-latest")]
     MistralSmallLatest,
     #[serde(rename = "open-mistral-nemo", alias = "open-mistral-nemo")]
@@ -96,7 +85,7 @@ impl Model {
             _ => Err(anyhow!("invalid model id")),
         }
     }
-    
+
     pub fn id(&self) -> &str {
         match self {
             Self::CodestralLatest => "codestral-latest",
@@ -107,7 +96,7 @@ impl Model {
             Self::Custom { name, .. } => name,
         }
     }
-    
+
     pub fn display_name(&self) -> &str {
         match self {
             Self::CodestralLatest => "codestral-latest",
@@ -120,7 +109,7 @@ impl Model {
             } => display_name.as_ref().unwrap_or(name),
         }
     }
-    
+
     pub fn max_token_count(&self) -> usize {
         match self {
             Self::CodestralLatest => 256000,
@@ -131,7 +120,7 @@ impl Model {
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
-    
+
     pub fn max_output_tokens(&self) -> Option<u32> {
         match self {
             Self::Custom {
@@ -149,15 +138,35 @@ pub struct Request {
     pub stream: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub stop: Vec<String>,
-    pub temperature: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<ToolChoice>,
+    pub temperature: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<ResponseFormat>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseFormat {
+    Text,
+    #[serde(rename = "json_object")]
+    JsonObject,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolDefinition {
+    Function { function: FunctionDefinition },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FunctionDefinition {
+    pub name: String,
+    pub description: Option<String>,
+    pub parameters: Option<Value>,
+}
+// ------
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompletionRequest {
     pub model: String,
@@ -183,20 +192,6 @@ pub enum ToolChoice {
     Required,
     None,
     Other(ToolDefinition),
-}
-
-#[derive(Clone, Deserialize, Serialize, Debug)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ToolDefinition {
-    #[allow(dead_code)]
-    Function { function: FunctionDefinition },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct FunctionDefinition {
-    pub name: String,
-    pub description: Option<String>,
-    pub parameters: Option<Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -238,70 +233,6 @@ pub struct FunctionContent {
     pub arguments: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ResponseMessageDelta {
-    pub role: Option<Role>,
-    pub content: Option<String>,
-    #[serde(default, skip_serializing_if = "is_none_or_empty")]
-    pub tool_calls: Option<Vec<ToolCallChunk>>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ToolCallChunk {
-    pub index: usize,
-    pub id: Option<String>,
-
-    // There is also an optional `type` field that would determine if a
-    // function is there. Sometimes this streams in with the `function` before
-    // it streams in the `type`
-    pub function: Option<FunctionChunk>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct FunctionChunk {
-    pub name: Option<String>,
-    pub arguments: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Usage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ChoiceDelta {
-    pub index: u32,
-    pub delta: ResponseMessageDelta,
-    pub finish_reason: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(untagged)]
-pub enum ResponseStreamResult {
-    Ok(ResponseStreamEvent),
-    Err { error: String },
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ResponseStreamEvent {
-    pub created: u32,
-    pub model: String,
-    pub choices: Vec<ChoiceDelta>,
-    pub usage: Option<Usage>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct CompletionResponse {
-    pub id: String,
-    pub object: String,
-    pub created: u64,
-    pub model: String,
-    pub choices: Vec<CompletionChoice>,
-    pub usage: Usage,
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CompletionChoice {
     pub text: String,
@@ -318,96 +249,56 @@ pub struct Response {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct Usage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Choice {
     pub index: u32,
     pub message: RequestMessage,
     pub finish_reason: Option<String>,
 }
 
-pub async fn complete(
-    client: &dyn HttpClient,
-    api_url: &str,
-    api_key: &str,
-    request: Request,
-) -> Result<Response> {
-    let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key));
-
-    let mut request_body = request;
-    request_body.stream = false;
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request_body)?))?;
-    let mut response = client.send(request).await?;
-
-    if response.status().is_success() {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-        let response: Response = serde_json::from_str(&body)?;
-        Ok(response)
-    } else {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-
-        #[derive(Deserialize)]
-        struct MistralResponse {
-            error: MistralError,
-        }
-
-        #[derive(Deserialize)]
-        struct MistralError {
-            message: String,
-        }
-
-        match serde_json::from_str::<MistralResponse>(&body) {
-            Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
-                "Failed to connect to Mistral API: {}",
-                response.error.message,
-            )),
-
-            _ => Err(anyhow!(
-                "Failed to connect to Mistral API: {} {}",
-                response.status(),
-                body,
-            )),
-        }
-    }
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StreamResponse {
+    pub id: String,
+    pub object: String,
+    pub created: u64,
+    pub model: String,
+    pub choices: Vec<StreamChoice>,
 }
 
-// implement complete_text function
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StreamChoice {
+    pub index: u32,
+    pub delta: StreamDelta,
+    pub finish_reason: Option<String>,
+}
 
-fn adapt_response_to_stream(response: Response) -> ResponseStreamEvent {
-    ResponseStreamEvent {
-        created: response.created as u32,
-        model: response.model,
-        choices: response
-            .choices
-            .into_iter()
-            .map(|choice| ChoiceDelta {
-                index: choice.index,
-                delta: ResponseMessageDelta {
-                    role: Some(match choice.message {
-                        RequestMessage::Assistant { .. } => Role::Assistant,
-                        RequestMessage::User { .. } => Role::User,
-                        RequestMessage::System { .. } => Role::System,
-                        RequestMessage::Tool { .. } => Role::Tool,
-                    }),
-                    content: match choice.message {
-                        RequestMessage::Assistant { content, .. } => content,
-                        RequestMessage::User { content } => Some(content),
-                        RequestMessage::System { content } => Some(content),
-                        RequestMessage::Tool { content, .. } => Some(content),
-                    },
-                    tool_calls: None,
-                },
-                finish_reason: choice.finish_reason,
-            })
-            .collect(),
-        usage: Some(response.usage),
-    }
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StreamDelta {
+    pub role: Option<Role>,
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCallChunk>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct ToolCallChunk {
+    pub index: usize,
+    pub id: Option<String>,
+    pub function: Option<FunctionChunk>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct FunctionChunk {
+    pub name: Option<String>,
+    pub arguments: Option<String>,
 }
 
 pub async fn stream_completion(
@@ -415,13 +306,7 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
-) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
-    if request.model.starts_with("o1") {
-        let response = complete(client, api_url, api_key, request).await;
-        let response_stream_event = response.map(adapt_response_to_stream);
-        return Ok(stream::once(future::ready(response_stream_event)).boxed());
-    }
-
+) -> Result<BoxStream<'static, Result<StreamResponse>>> {
     let uri = format!("{api_url}/chat/completions");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
@@ -431,6 +316,7 @@ pub async fn stream_completion(
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
+
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
         Ok(reader
@@ -443,10 +329,7 @@ pub async fn stream_completion(
                             None
                         } else {
                             match serde_json::from_str(line) {
-                                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
-                                Ok(ResponseStreamResult::Err { error }) => {
-                                    Some(Err(anyhow!(error)))
-                                }
+                                Ok(response) => Some(Ok(response)),
                                 Err(error) => Some(Err(anyhow!(error))),
                             }
                         }
@@ -458,153 +341,10 @@ pub async fn stream_completion(
     } else {
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-
-        #[derive(Deserialize)]
-        struct MistralResponse {
-            error: MistralError,
-        }
-
-        #[derive(Deserialize)]
-        struct MistralError {
-            message: String,
-        }
-
-        match serde_json::from_str::<MistralResponse>(&body) {
-            Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
-                "Failed to connect to Mistral API: {}",
-                response.error.message,
-            )),
-
-            _ => Err(anyhow!(
-                "Failed to connect to Mistral API: {} {}",
-                response.status(),
-                body,
-            )),
-        }
+        Err(anyhow!(
+            "Failed to connect to Mistral API: {} {}",
+            response.status(),
+            body,
+        ))
     }
-}
-
-#[derive(Copy, Clone, Serialize, Deserialize)]
-pub enum MistralEmbeddingModel {
-    #[serde(rename = "mistral-embed")]
-    MistralEmbed,
-}
-
-#[derive(Serialize)]
-struct MistralEmbeddingRequest<'a> {
-    model: MistralEmbeddingModel,
-    input: Vec<&'a str>,
-}
-
-#[derive(Deserialize)]
-pub struct MistralEmbeddingResponse {
-    pub data: Vec<MistralEmbedding>,
-}
-
-#[derive(Deserialize)]
-pub struct MistralEmbedding {
-    pub embedding: Vec<f32>,
-}
-
-pub fn embed<'a>(
-    client: &dyn HttpClient,
-    api_url: &str,
-    api_key: &str,
-    model: MistralEmbeddingModel,
-    texts: impl IntoIterator<Item = &'a str>,
-) -> impl 'static + Future<Output = Result<MistralEmbeddingResponse>> {
-    let uri = format!("{api_url}/embeddings");
-
-    let request = MistralEmbeddingRequest {
-        model,
-        input: texts.into_iter().collect(),
-    };
-    let body = AsyncBody::from(serde_json::to_string(&request).unwrap());
-    let request = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .body(body)
-        .map(|request| client.send(request));
-
-    async move {
-        let mut response = request?.await?;
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-
-        if response.status().is_success() {
-            let response: MistralEmbeddingResponse =
-                serde_json::from_str(&body).context("failed to parse Mistral embedding response")?;
-            Ok(response)
-        } else {
-            Err(anyhow!(
-                "error during embedding, status: {:?}, body: {:?}",
-                response.status(),
-                body
-            ))
-        }
-    }
-}
-
-pub async fn extract_tool_args_from_events(
-    tool_name: String,
-    mut events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
-) -> Result<impl Send + Stream<Item = Result<String>>> {
-    let mut tool_use_index = None;
-    let mut first_chunk = None;
-    while let Some(event) = events.next().await {
-        let call = event?.choices.into_iter().find_map(|choice| {
-            choice.delta.tool_calls?.into_iter().find_map(|call| {
-                if call.function.as_ref()?.name.as_deref()? == tool_name {
-                    Some(call)
-                } else {
-                    None
-                }
-            })
-        });
-        if let Some(call) = call {
-            tool_use_index = Some(call.index);
-            first_chunk = call.function.and_then(|func| func.arguments);
-            break;
-        }
-    }
-
-    let Some(tool_use_index) = tool_use_index else {
-        return Err(anyhow!("tool not used"));
-    };
-
-    Ok(events.filter_map(move |event| {
-        let result = match event {
-            Err(error) => Some(Err(error)),
-            Ok(ResponseStreamEvent { choices, .. }) => choices.into_iter().find_map(|choice| {
-                choice.delta.tool_calls?.into_iter().find_map(|call| {
-                    if call.index == tool_use_index {
-                        let func = call.function?;
-                        let mut arguments = func.arguments?;
-                        if let Some(mut first_chunk) = first_chunk.take() {
-                            first_chunk.push_str(&arguments);
-                            arguments = first_chunk
-                        }
-                        Some(Ok(arguments))
-                    } else {
-                        None
-                    }
-                })
-            }),
-        };
-
-        async move { result }
-    }))
-}
-
-pub fn extract_text_from_events(
-    response: impl Stream<Item = Result<ResponseStreamEvent>>,
-) -> impl Stream<Item = Result<String>> {
-    response.filter_map(|response| async move {
-        match response {
-            Ok(mut response) => Some(Ok(response.choices.pop()?.delta.content?)),
-            Err(error) => Some(Err(error)),
-        }
-    })
 }

@@ -16,9 +16,9 @@ use crate::provider::{
     deepseek::DeepSeekSettings,
     google::GoogleSettings,
     lmstudio::LmStudioSettings,
+    mistral::MistralSettings,
     ollama::OllamaSettings,
     open_ai::OpenAiSettings,
-    mistral::MistralSettings,
 };
 
 /// Initializes the language model settings.
@@ -364,6 +364,17 @@ impl settings::Settings for AllLanguageModelSettings {
                     .google
                     .as_ref()
                     .and_then(|s| s.available_models.clone()),
+            );
+
+            // Mistral
+            let mistral = value.mistral.clone();
+            merge(
+                &mut settings.mistral.api_url,
+                mistral.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.mistral.available_models,
+                mistral.as_ref().and_then(|s| s.available_models.clone()),
             );
         }
 

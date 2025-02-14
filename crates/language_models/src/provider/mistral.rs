@@ -11,10 +11,8 @@ use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
-use mistral::{
-    stream_completion, FunctionDefinition, ResponseStreamEvent, ToolChoice, ToolDefinition,
-};
 
+use futures::stream::BoxStream;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -225,8 +223,10 @@ impl MistralLanguageModel {
         &self,
         request: mistral::Request,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
-    {
+    ) -> BoxFuture<
+        'static,
+        Result<futures::stream::BoxStream<'static, Result<mistral::StreamResponse>>>,
+    > {
         let http_client = self.http_client.clone();
         let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).mistral;
@@ -237,7 +237,8 @@ impl MistralLanguageModel {
 
         let future = self.request_limiter.stream(async move {
             let api_key = api_key.ok_or_else(|| anyhow!("Missing Mistral API Key"))?;
-            let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request =
+                mistral::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
             Ok(response)
         });
@@ -278,33 +279,57 @@ impl LanguageModel for MistralLanguageModel {
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
-        _cx: &App,
+        cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
-        // There is no endpoint for this _yet_ in Ollama
-        // see: https://github.com/ollama/ollama/issues/1716 and https://github.com/ollama/ollama/issues/3582
-        let token_count = request
-            .messages
-            .iter()
-            .map(|msg| msg.string_contents().chars().count())
-            .sum::<usize>()
-            / 4;
+        cx.background_executor()
+            .spawn(async move {
+                let messages = request
+                    .messages
+                    .into_iter()
+                    .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+                        role: match message.role {
+                            Role::User => "user".into(),
+                            Role::Assistant => "assistant".into(),
+                            Role::System => "system".into(),
+                        },
+                        content: Some(message.string_contents()),
+                        name: None,
+                        function_call: None,
+                    })
+                    .collect::<Vec<_>>();
 
-        async move { Ok(token_count) }.boxed()
+                tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
+            })
+            .boxed()
     }
 
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
-    > {
-        let request = request.into_mistral(self.model.id().into(), self.max_output_tokens());
-        let completions = self.stream_completion(request, cx);
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+        let request = request.into_mistral(self.model.id().to_string(), self.max_output_tokens());
+        let stream = self.stream_completion(request, cx);
+
         async move {
-            Ok(mistral::extract_text_from_events(completions.await?)
-                .map(|result| result.map(LanguageModelCompletionEvent::Text))
+            let stream = stream.await?;
+            Ok(stream
+                .map(|result| {
+                    result.and_then(|response| {
+                        response
+                            .choices
+                            .first()
+                            .ok_or_else(|| anyhow!("Empty response"))
+                            .map(|choice| {
+                                choice
+                                    .delta
+                                    .content
+                                    .clone()
+                                    .unwrap_or_default()
+                                    .map(LanguageModelCompletionEvent::Text)
+                            })
+                    })
+                })
                 .boxed())
         }
         .boxed()
@@ -319,15 +344,8 @@ impl LanguageModel for MistralLanguageModel {
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
         let mut request = request.into_mistral(self.model.id().into(), self.max_output_tokens());
-        request.tool_choice = Some(ToolChoice::Other(ToolDefinition::Function {
-            function: FunctionDefinition {
-                name: tool_name.clone(),
-                description: None,
-                parameters: None,
-            },
-        }));
-        request.tools = vec![ToolDefinition::Function {
-            function: FunctionDefinition {
+        request.tools = vec![mistral::ToolDefinition::Function {
+            function: mistral::FunctionDefinition {
                 name: tool_name.clone(),
                 description: Some(tool_description),
                 parameters: Some(schema),
@@ -337,17 +355,35 @@ impl LanguageModel for MistralLanguageModel {
         let response = self.stream_completion(request, cx);
         self.request_limiter
             .run(async move {
-                let response = response.await?;
-                Ok(
-                    mistral::extract_tool_args_from_events(tool_name, Box::pin(response))
-                        .await?
-                        .boxed(),
-                )
+                let stream = response.await?;
+
+                let tool_args_stream = stream
+                    .filter_map(move |response| async move {
+                        match response {
+                            Ok(response) => {
+                                for choice in response.choices {
+                                    if let Some(tool_calls) = choice.delta.tool_calls {
+                                        for tool_call in tool_calls {
+                                            if let Some(function) = tool_call.function {
+                                                if let Some(args) = function.arguments {
+                                                    return Some(Ok(args));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                None
+                            }
+                            Err(e) => Some(Err(e)),
+                        }
+                    })
+                    .boxed();
+
+                Ok(tool_args_stream)
             })
             .boxed()
     }
 }
-
 
 struct ConfigurationView {
     api_key_editor: Entity<Editor>,
@@ -359,7 +395,7 @@ impl ConfigurationView {
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", cx);
+            editor.set_placeholder_text("0aBCDEFGhIjKLmNOpqrSTUVwxyzabCDE1f2", cx);
             editor
         });
 
