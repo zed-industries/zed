@@ -148,7 +148,7 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Ai
+        IconName::AiMistral
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
