@@ -80,10 +80,11 @@ impl ThemeRegistry {
         registry.insert_theme_families([crate::fallback_themes::zed_default_themes()]);
 
         let default_icon_theme = crate::default_icon_theme();
-        registry.state.write().icon_themes.insert(
-            default_icon_theme.name.clone(),
-            Arc::new(default_icon_theme),
-        );
+        registry
+            .state
+            .write()
+            .icon_themes
+            .insert(default_icon_theme.name.clone(), default_icon_theme);
 
         registry
     }
@@ -280,6 +281,8 @@ impl ThemeRegistry {
                     collapsed: icon_theme.chevron_icons.collapsed.map(resolve_icon_path),
                     expanded: icon_theme.chevron_icons.expanded.map(resolve_icon_path),
                 },
+                file_stems: HashMap::default(),
+                file_suffixes: HashMap::default(),
                 file_icons: icon_theme
                     .file_icons
                     .into_iter()

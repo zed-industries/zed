@@ -1,3 +1,5 @@
+use std::sync::{Arc, LazyLock};
+
 use collections::HashMap;
 use gpui::SharedString;
 
@@ -348,12 +350,25 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("zig", "icons/file_icons/zig.svg"),
 ];
 
+/// Returns a mapping of file associations to icon keys.
+fn icon_keys_by_association(
+    associations_by_icon_key: &[(&str, &[&str])],
+) -> HashMap<String, String> {
+    let mut icon_keys_by_association = HashMap::default();
+    for (icon_key, associations) in associations_by_icon_key {
+        for association in *associations {
+            icon_keys_by_association.insert(association.to_string(), icon_key.to_string());
+        }
+    }
+
+    icon_keys_by_association
+}
+
 /// The name of the default icon theme.
 pub(crate) const DEFAULT_ICON_THEME_NAME: &str = "Zed (Default)";
 
-/// Returns the default icon theme.
-pub fn default_icon_theme() -> IconTheme {
-    IconTheme {
+static DEFAULT_ICON_THEME: LazyLock<Arc<IconTheme>> = LazyLock::new(|| {
+    Arc::new(IconTheme {
         id: "zed".into(),
         name: DEFAULT_ICON_THEME_NAME.into(),
         appearance: Appearance::Dark,
@@ -365,6 +380,8 @@ pub fn default_icon_theme() -> IconTheme {
             collapsed: Some("icons/file_icons/chevron_right.svg".into()),
             expanded: Some("icons/file_icons/chevron_down.svg".into()),
         },
+        file_stems: icon_keys_by_association(FILE_STEMS_BY_ICON_KEY),
+        file_suffixes: icon_keys_by_association(FILE_SUFFIXES_BY_ICON_KEY),
         file_icons: HashMap::from_iter(FILE_ICONS.into_iter().map(|(ty, path)| {
             (
                 ty.to_string(),
@@ -373,5 +390,10 @@ pub fn default_icon_theme() -> IconTheme {
                 },
             )
         })),
-    }
+    })
+});
+
+/// Returns the default icon theme.
+pub fn default_icon_theme() -> Arc<IconTheme> {
+    DEFAULT_ICON_THEME.clone()
 }
