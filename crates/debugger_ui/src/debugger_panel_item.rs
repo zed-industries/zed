@@ -16,7 +16,7 @@ use gpui::{
 use project::debugger::dap_session::{DebugSession, ThreadId};
 use rpc::proto::{self, DebuggerThreadStatus, PeerId, SetDebuggerPanelItem};
 use settings::Settings;
-use ui::{prelude::*, Indicator, Tooltip};
+use ui::{prelude::*, ContextMenu, Indicator, PopoverMenu, Tooltip};
 use workspace::{
     item::{self, Item, ItemEvent},
     FollowableItem, ViewId, Workspace,
@@ -796,153 +796,197 @@ impl Render for DebugPanelItem {
                     .items_start()
                     .child(
                         h_flex()
-                            .p_1()
-                            .border_b_1()
                             .w_full()
+                            .border_b_1()
                             .border_color(cx.theme().colors().border_variant)
-                            .gap_2()
-                            .map(|this| {
-                                if thread_status == ThreadStatus::Running {
-                                    this.child(
-                                        IconButton::new("debug-pause", IconName::DebugPause)
-                                            .icon_size(IconSize::Small)
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.pause_thread(cx);
-                                            }))
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::text("Pause program")(window, cx)
-                                            }),
-                                    )
-                                } else {
-                                    this.child(
-                                        IconButton::new("debug-continue", IconName::DebugContinue)
-                                            .icon_size(IconSize::Small)
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.continue_thread(cx)
-                                            }))
-                                            .disabled(thread_status != ThreadStatus::Stopped)
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::text("Continue program")(window, cx)
-                                            }),
-                                    )
-                                }
-                            })
-                            .when(
-                                capabilities
-                                    .as_ref()
-                                    .map(|caps| caps.supports_step_back)
-                                    .flatten()
-                                    .unwrap_or(false),
-                                |this| {
-                                    this.child(
-                                        IconButton::new("debug-step-back", IconName::DebugStepBack)
-                                            .icon_size(IconSize::Small)
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.step_back(cx);
-                                            }))
-                                            .disabled(thread_status != ThreadStatus::Stopped)
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::text("Step back")(window, cx)
-                                            }),
-                                    )
-                                },
-                            )
+                            .justify_between()
                             .child(
-                                IconButton::new("debug-step-over", IconName::DebugStepOver)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(|this, _, _window, cx| {
-                                        this.step_over(cx);
-                                    }))
-                                    .disabled(thread_status != ThreadStatus::Stopped)
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text("Step over")(window, cx)
-                                    }),
-                            )
-                            .child(
-                                IconButton::new("debug-step-in", IconName::DebugStepInto)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(|this, _, _window, cx| {
-                                        this.step_in(cx);
-                                    }))
-                                    .disabled(thread_status != ThreadStatus::Stopped)
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text("Step in")(window, cx)
-                                    }),
-                            )
-                            .child(
-                                IconButton::new("debug-step-out", IconName::DebugStepOut)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(|this, _, _window, cx| {
-                                        this.step_out(cx);
-                                    }))
-                                    .disabled(thread_status != ThreadStatus::Stopped)
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text("Step out")(window, cx)
-                                    }),
-                            )
-                            .child(
-                                IconButton::new("debug-restart", IconName::DebugRestart)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(|this, _, _window, cx| {
-                                        this.restart_client(cx);
-                                    }))
-                                    .disabled(
-                                        !capabilities
+                                h_flex()
+                                    .p_1()
+                                    .w_full()
+                                    .gap_2()
+                                    .map(|this| {
+                                        if thread_status == ThreadStatus::Running {
+                                            this.child(
+                                                IconButton::new(
+                                                    "debug-pause",
+                                                    IconName::DebugPause,
+                                                )
+                                                .icon_size(IconSize::Small)
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.pause_thread(cx);
+                                                }))
+                                                .tooltip(move |window, cx| {
+                                                    Tooltip::text("Pause program")(window, cx)
+                                                }),
+                                            )
+                                        } else {
+                                            this.child(
+                                                IconButton::new(
+                                                    "debug-continue",
+                                                    IconName::DebugContinue,
+                                                )
+                                                .icon_size(IconSize::Small)
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.continue_thread(cx)
+                                                }))
+                                                .disabled(thread_status != ThreadStatus::Stopped)
+                                                .tooltip(move |window, cx| {
+                                                    Tooltip::text("Continue program")(window, cx)
+                                                }),
+                                            )
+                                        }
+                                    })
+                                    .when(
+                                        capabilities
                                             .as_ref()
-                                            .map(|caps| caps.supports_restart_request)
+                                            .map(|caps| caps.supports_step_back)
                                             .flatten()
-                                            .unwrap_or_default(),
+                                            .unwrap_or(false),
+                                        |this| {
+                                            this.child(
+                                                IconButton::new(
+                                                    "debug-step-back",
+                                                    IconName::DebugStepBack,
+                                                )
+                                                .icon_size(IconSize::Small)
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.step_back(cx);
+                                                }))
+                                                .disabled(thread_status != ThreadStatus::Stopped)
+                                                .tooltip(move |window, cx| {
+                                                    Tooltip::text("Step back")(window, cx)
+                                                }),
+                                            )
+                                        },
                                     )
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text("Restart")(window, cx)
-                                    }),
-                            )
-                            .child(
-                                IconButton::new("debug-stop", IconName::DebugStop)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(|this, _, _window, cx| {
-                                        this.stop_thread(cx);
-                                    }))
-                                    .disabled(
-                                        thread_status != ThreadStatus::Stopped
-                                            && thread_status != ThreadStatus::Running,
+                                    .child(
+                                        IconButton::new("debug-step-over", IconName::DebugStepOver)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.step_over(cx);
+                                            }))
+                                            .disabled(thread_status != ThreadStatus::Stopped)
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text("Step over")(window, cx)
+                                            }),
                                     )
-                                    .tooltip(move |window, cx| Tooltip::text("Stop")(window, cx)),
-                            )
-                            .child(
-                                IconButton::new("debug-disconnect", IconName::DebugDisconnect)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(|this, _, _window, cx| {
-                                        this.disconnect_client(cx);
-                                    }))
-                                    .disabled(
-                                        thread_status == ThreadStatus::Exited
-                                            || thread_status == ThreadStatus::Ended,
+                                    .child(
+                                        IconButton::new("debug-step-in", IconName::DebugStepInto)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.step_in(cx);
+                                            }))
+                                            .disabled(thread_status != ThreadStatus::Stopped)
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text("Step in")(window, cx)
+                                            }),
                                     )
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text("Disconnect")(window, cx)
-                                    }),
+                                    .child(
+                                        IconButton::new("debug-step-out", IconName::DebugStepOut)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.step_out(cx);
+                                            }))
+                                            .disabled(thread_status != ThreadStatus::Stopped)
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text("Step out")(window, cx)
+                                            }),
+                                    )
+                                    .child(
+                                        IconButton::new("debug-restart", IconName::DebugRestart)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.restart_client(cx);
+                                            }))
+                                            .disabled(
+                                                !capabilities
+                                                    .as_ref()
+                                                    .map(|caps| caps.supports_restart_request)
+                                                    .flatten()
+                                                    .unwrap_or_default(),
+                                            )
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text("Restart")(window, cx)
+                                            }),
+                                    )
+                                    .child(
+                                        IconButton::new("debug-stop", IconName::DebugStop)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.stop_thread(cx);
+                                            }))
+                                            .disabled(
+                                                thread_status != ThreadStatus::Stopped
+                                                    && thread_status != ThreadStatus::Running,
+                                            )
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text("Stop")(window, cx)
+                                            }),
+                                    )
+                                    .child(
+                                        IconButton::new(
+                                            "debug-disconnect",
+                                            IconName::DebugDisconnect,
+                                        )
+                                        .icon_size(IconSize::Small)
+                                        .on_click(cx.listener(|this, _, _window, cx| {
+                                            this.disconnect_client(cx);
+                                        }))
+                                        .disabled(
+                                            thread_status == ThreadStatus::Exited
+                                                || thread_status == ThreadStatus::Ended,
+                                        )
+                                        .tooltip(
+                                            move |window, cx| {
+                                                Tooltip::text("Disconnect")(window, cx)
+                                            },
+                                        ),
+                                    )
+                                    .child(
+                                        IconButton::new(
+                                            "debug-ignore-breakpoints",
+                                            if self.session.read(cx).ignore_breakpoints() {
+                                                IconName::DebugIgnoreBreakpoints
+                                            } else {
+                                                IconName::DebugBreakpoint
+                                            },
+                                        )
+                                        .icon_size(IconSize::Small)
+                                        .on_click(cx.listener(|this, _, _window, cx| {
+                                            this.toggle_ignore_breakpoints(cx);
+                                        }))
+                                        .disabled(
+                                            thread_status == ThreadStatus::Exited
+                                                || thread_status == ThreadStatus::Ended,
+                                        )
+                                        .tooltip(
+                                            move |window, cx| {
+                                                Tooltip::text("Ignore breakpoints")(window, cx)
+                                            },
+                                        ),
+                                    ),
                             )
+                            //.child(h_flex())
                             .child(
-                                IconButton::new(
-                                    "debug-ignore-breakpoints",
-                                    if self.session.read(cx).ignore_breakpoints() {
-                                        IconName::DebugIgnoreBreakpoints
-                                    } else {
-                                        IconName::DebugBreakpoint
-                                    },
-                                )
-                                .icon_size(IconSize::Small)
-                                .on_click(cx.listener(|this, _, _window, cx| {
-                                    this.toggle_ignore_breakpoints(cx);
-                                }))
-                                .disabled(
-                                    thread_status == ThreadStatus::Exited
-                                        || thread_status == ThreadStatus::Ended,
-                                )
-                                .tooltip(move |window, cx| {
-                                    Tooltip::text("Ignore breakpoints")(window, cx)
-                                }),
+                                h_flex().p_1().mx_2().w_3_4().justify_end().child(
+                                    PopoverMenu::new("thread-list")
+                                        .trigger(
+                                            Button::new("thread-list-trigger", "Threads")
+                                                .style(ButtonStyle::Filled)
+                                                .disabled(thread_status != ThreadStatus::Stopped)
+                                                .size(ButtonSize::Compact),
+                                        )
+                                        .menu(|window, cx| {
+                                            Some(ContextMenu::build(window, cx, |this, _, _| {
+                                                this.entry("Thread 1", None, |_, _| {}).entry(
+                                                    "Thread 2",
+                                                    None,
+                                                    |_, _| {},
+                                                )
+                                            }))
+                                        }),
+                                ),
                             ),
                     )
                     .child(
