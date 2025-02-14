@@ -177,7 +177,6 @@ impl From<Arc<DebugAdapterClient>> for Mode {
 impl Mode {
     fn request_local<R: DapCommand>(
         connection: &Arc<DebugAdapterClient>,
-        caps: &Capabilities,
         request: R,
         cx: &mut Context<Client>,
     ) -> Task<Result<R::Response>>
@@ -185,13 +184,6 @@ impl Mode {
         <R::DapRequest as dap::requests::Request>::Response: 'static,
         <R::DapRequest as dap::requests::Request>::Arguments: 'static + Send,
     {
-        if !request.is_supported(&caps) {
-            return Task::ready(Err(anyhow!(
-                "Request {} is not supported",
-                R::DapRequest::COMMAND
-            )));
-        }
-
         let request = Arc::new(request);
 
         let request_clone = request.clone();
@@ -209,7 +201,6 @@ impl Mode {
 
     fn request_dap<R: DapCommand>(
         &self,
-        caps: &Capabilities,
         client_id: DebugAdapterClientId,
         request: R,
         cx: &mut Context<Client>,
@@ -220,7 +211,7 @@ impl Mode {
     {
         match self {
             Mode::Local(debug_adapter_client) => {
-                Self::request_local(&debug_adapter_client, caps, request, cx)
+                Self::request_local(&debug_adapter_client, request, cx)
             }
             Mode::Remote(remote_connection) => {
                 remote_connection.request_remote(request, client_id, cx)
@@ -367,7 +358,10 @@ impl Client {
         process_result: impl FnOnce(&mut Self, &T::Response, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> Task<Option<T::Response>> {
-        let request = mode.request_dap(&capabilities, client_id, request, cx);
+        if !request.is_supported(&capabilities) {
+            return Task::ready(None);
+        }
+        let request = mode.request_dap(client_id, request, cx);
         cx.spawn(|this, mut cx| async move {
             let result = request.await.log_err()?;
             this.update(&mut cx, |this, cx| {
