@@ -10526,6 +10526,24 @@ impl Editor {
         self.go_to_hunk_after_position(&snapshot, selection.head(), window, cx);
     }
 
+    fn hunk_after_position(
+        &self,
+        snapshot: &EditorSnapshot,
+        position: Point,
+    ) -> Option<MultiBufferDiffHunk> {
+        let mut hunk = snapshot
+            .buffer_snapshot
+            .diff_hunks_in_range(position..snapshot.buffer_snapshot.max_point())
+            .find(|hunk| hunk.row_range.start.0 > position.row);
+        if hunk.is_none() {
+            hunk = snapshot
+                .buffer_snapshot
+                .diff_hunks_in_range(Point::zero()..position)
+                .find(|hunk| hunk.row_range.end.0 < position.row)
+        }
+        hunk
+    }
+
     fn go_to_hunk_after_position(
         &mut self,
         snapshot: &EditorSnapshot,

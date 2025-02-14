@@ -9054,7 +9054,24 @@ fn diff_hunk_controls(
                         editor.update(cx, |editor, cx| {
                             let snapshot = editor.snapshot(window, cx);
                             let position = hunk_range.end.to_point(&snapshot.buffer_snapshot);
-                            editor.go_to_hunk_after_position(&snapshot, position, window, cx);
+                            let Some(next_hunk) = editor.hunk_after_position(&snapshot, position)
+                            else {
+                                return;
+                            };
+                            let next_hunk_start_point = Point::new(next_hunk.row_range.start.0, 0);
+                            let next_hunk_display_start =
+                                snapshot.point_to_display_point(next_hunk_start_point, Bias::Left);
+                            let row_delta = next_hunk_display_start.row().0 as i32 - row as i32;
+                            let scroll_delta = row_delta as f32;
+                            editor.apply_scroll_delta(
+                                gpui::Point::new(0., scroll_delta),
+                                window,
+                                cx,
+                            );
+                            editor.change_selections(None, window, cx, |s| {
+                                let point = Point::new(next_hunk.row_range.start.0, 0);
+                                s.select_ranges([point..point]);
+                            });
                             editor.expand_selected_diff_hunks(cx);
                         });
                     }
@@ -9080,10 +9097,27 @@ fn diff_hunk_controls(
             })
             .on_click({
                 let editor = editor.clone();
-                move |_event, _window, cx| {
+                move |_event, window, cx| {
                     editor.update(cx, |editor, cx| {
                         editor
                             .stage_or_unstage_diff_hunks(&[hunk_range.start..hunk_range.start], cx);
+                        let snapshot = editor.snapshot(window, cx);
+                        let position = hunk_range.end.to_point(&snapshot.buffer_snapshot);
+                        let Some(next_hunk) = editor.hunk_after_position(&snapshot, position)
+                        else {
+                            return;
+                        };
+                        let next_hunk_start_point = Point::new(next_hunk.row_range.start.0, 0);
+                        let next_hunk_display_start =
+                            snapshot.point_to_display_point(next_hunk_start_point, Bias::Left);
+                        let row_delta = next_hunk_display_start.row().0 as i32 - row as i32;
+                        let scroll_delta = row_delta as f32;
+                        editor.apply_scroll_delta(gpui::Point::new(0., scroll_delta), window, cx);
+                        editor.change_selections(None, window, cx, |s| {
+                            let point = Point::new(next_hunk.row_range.start.0, 0);
+                            s.select_ranges([point..point]);
+                        });
+                        editor.expand_selected_diff_hunks(cx);
                     });
                 }
             }),
