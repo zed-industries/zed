@@ -456,6 +456,7 @@ impl RenderOnce for Button {
     }
 }
 
+// View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Button {
     fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
         v_flex()

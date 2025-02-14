@@ -1,28 +1,48 @@
 use futures::Future;
 use git::blame::BlameEntry;
-use git::Oid;
+use git::PullRequest;
 use gpui::{
     App, Asset, ClipboardItem, Element, ParentElement, Render, ScrollHandle,
     StatefulInteractiveElement, WeakEntity,
 };
+use language::ParsedMarkdown;
 use settings::Settings;
 use std::hash::Hash;
 use theme::ThemeSettings;
-use time::UtcOffset;
+use time::{OffsetDateTime, UtcOffset};
+use time_format::format_local_timestamp;
 use ui::{prelude::*, tooltip_container, Avatar, Divider, IconButtonShape};
+use url::Url;
 use workspace::Workspace;
 
-use crate::git::blame::{CommitDetails, GitRemote};
+use crate::git::blame::GitRemote;
 use crate::EditorStyle;
 
+#[derive(Clone, Debug)]
+pub struct CommitDetails {
+    pub sha: SharedString,
+    pub committer_name: SharedString,
+    pub committer_email: SharedString,
+    pub commit_time: OffsetDateTime,
+    pub message: Option<ParsedCommitMessage>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ParsedCommitMessage {
+    pub message: SharedString,
+    pub parsed_message: ParsedMarkdown,
+    pub permalink: Option<Url>,
+    pub pull_request: Option<PullRequest>,
+    pub remote: Option<GitRemote>,
+}
+
 struct CommitAvatar<'a> {
-    details: Option<&'a CommitDetails>,
-    sha: Oid,
+    commit: &'a CommitDetails,
 }
 
 impl<'a> CommitAvatar<'a> {
-    fn new(details: Option<&'a CommitDetails>, sha: Oid) -> Self {
-        Self { details, sha }
+    fn new(details: &'a CommitDetails) -> Self {
+        Self { commit: details }
     }
 }
 
@@ -30,14 +50,16 @@ impl<'a> CommitAvatar<'a> {
     fn render(
         &'a self,
         window: &mut Window,
-        cx: &mut Context<BlameEntryTooltip>,
+        cx: &mut Context<CommitTooltip>,
     ) -> Option<impl IntoElement> {
         let remote = self
-            .details
+            .commit
+            .message
+            .as_ref()
             .and_then(|details| details.remote.as_ref())
             .filter(|remote| remote.host_supports_avatars())?;
 
-        let avatar_url = CommitAvatarAsset::new(remote.clone(), self.sha);
+        let avatar_url = CommitAvatarAsset::new(remote.clone(), self.commit.sha.clone());
 
         let element = match window.use_asset::<CommitAvatarAsset>(&avatar_url, cx) {
             // Loading or no avatar found
@@ -54,7 +76,7 @@ impl<'a> CommitAvatar<'a> {
 
 #[derive(Clone, Debug)]
 struct CommitAvatarAsset {
-    sha: Oid,
+    sha: SharedString,
     remote: GitRemote,
 }
 
@@ -66,7 +88,7 @@ impl Hash for CommitAvatarAsset {
 }
 
 impl CommitAvatarAsset {
-    fn new(remote: GitRemote, sha: Oid) -> Self {
+    fn new(remote: GitRemote, sha: SharedString) -> Self {
         Self { remote, sha }
     }
 }
@@ -91,50 +113,78 @@ impl Asset for CommitAvatarAsset {
     }
 }
 
-pub(crate) struct BlameEntryTooltip {
-    blame_entry: BlameEntry,
-    details: Option<CommitDetails>,
+pub struct CommitTooltip {
+    commit: CommitDetails,
     editor_style: EditorStyle,
     workspace: Option<WeakEntity<Workspace>>,
     scroll_handle: ScrollHandle,
 }
 
-impl BlameEntryTooltip {
-    pub(crate) fn new(
-        blame_entry: BlameEntry,
-        details: Option<CommitDetails>,
-        style: &EditorStyle,
+impl CommitTooltip {
+    pub fn blame_entry(
+        blame: BlameEntry,
+        details: Option<ParsedCommitMessage>,
+        style: EditorStyle,
+        workspace: Option<WeakEntity<Workspace>>,
+    ) -> Self {
+        let commit_time = blame
+            .committer_time
+            .and_then(|t| OffsetDateTime::from_unix_timestamp(t).ok())
+            .unwrap_or(OffsetDateTime::now_utc());
+        Self::new(
+            CommitDetails {
+                sha: blame.sha.to_string().into(),
+                commit_time,
+                committer_name: blame
+                    .committer_name
+                    .unwrap_or("<no name>".to_string())
+                    .into(),
+                committer_email: blame.committer_email.unwrap_or("".to_string()).into(),
+                message: details,
+            },
+            style,
+            workspace,
+        )
+    }
+
+    pub fn new(
+        commit: CommitDetails,
+        editor_style: EditorStyle,
         workspace: Option<WeakEntity<Workspace>>,
     ) -> Self {
         Self {
-            editor_style: style.clone(),
-            blame_entry,
-            details,
+            editor_style,
+            commit,
             workspace,
             scroll_handle: ScrollHandle::new(),
         }
     }
 }
 
-impl Render for BlameEntryTooltip {
+impl Render for CommitTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let avatar =
-            CommitAvatar::new(self.details.as_ref(), self.blame_entry.sha).render(window, cx);
+        let avatar = CommitAvatar::new(&self.commit).render(window, cx);
 
-        let author = self
-            .blame_entry
-            .author
-            .clone()
-            .unwrap_or("<no name>".to_string());
+        let author = self.commit.committer_name.clone();
 
-        let author_email = self.blame_entry.author_mail.clone();
+        let author_email = self.commit.committer_email.clone();
 
-        let short_commit_id = self.blame_entry.sha.display_short();
-        let full_sha = self.blame_entry.sha.to_string().clone();
-        let absolute_timestamp = blame_entry_absolute_timestamp(&self.blame_entry);
+        let short_commit_id = self
+            .commit
+            .sha
+            .get(0..8)
+            .map(|sha| sha.to_string().into())
+            .unwrap_or_else(|| self.commit.sha.clone());
+        let full_sha = self.commit.sha.to_string().clone();
+        let absolute_timestamp = format_local_timestamp(
+            self.commit.commit_time,
+            OffsetDateTime::now_utc(),
+            time_format::TimestampFormat::MediumAbsolute,
+        );
 
         let message = self
-            .details
+            .commit
+            .message
             .as_ref()
             .map(|details| {
                 crate::render_parsed_markdown(
@@ -149,7 +199,8 @@ impl Render for BlameEntryTooltip {
             .unwrap_or("<no commit message>".into_any());
 
         let pull_request = self
-            .details
+            .commit
+            .message
             .as_ref()
             .and_then(|details| details.pull_request.clone());
 
@@ -171,7 +222,7 @@ impl Render for BlameEntryTooltip {
                                 .flex_wrap()
                                 .children(avatar)
                                 .child(author)
-                                .when_some(author_email, |this, author_email| {
+                                .when(!author_email.is_empty(), |this| {
                                     this.child(
                                         div()
                                             .text_color(cx.theme().colors().text_muted)
@@ -231,12 +282,16 @@ impl Render for BlameEntryTooltip {
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
                                             .disabled(
-                                                self.details.as_ref().map_or(true, |details| {
-                                                    details.permalink.is_none()
-                                                }),
+                                                self.commit
+                                                    .message
+                                                    .as_ref()
+                                                    .map_or(true, |details| {
+                                                        details.permalink.is_none()
+                                                    }),
                                             )
                                             .when_some(
-                                                self.details
+                                                self.commit
+                                                    .message
                                                     .as_ref()
                                                     .and_then(|details| details.permalink.clone()),
                                                 |this, url| {
@@ -283,8 +338,4 @@ fn blame_entry_timestamp(blame_entry: &BlameEntry, format: time_format::Timestam
 
 pub fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
     blame_entry_timestamp(blame_entry, time_format::TimestampFormat::Relative)
-}
-
-fn blame_entry_absolute_timestamp(blame_entry: &BlameEntry) -> String {
-    blame_entry_timestamp(blame_entry, time_format::TimestampFormat::MediumAbsolute)
 }

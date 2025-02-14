@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.174.0"
+version = "0.175.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -77,6 +77,7 @@ log.workspace = true
 markdown.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
+migrator.workspace = true
 mimalloc = { version = "0.1", optional = true }
 nix = { workspace = true, features = ["pthread", "signal"] }
 node_runtime.workspace = true

@@ -1,0 +1,13 @@
+{
+	"dependencies": {
+		"@octokit/rest": "^21.1.0",
+		"@slack/webhook": "^7.0.4",
+		"date-fns": "^4.1.0",
+		"octokit": "^4.1.0"
+	},
+	"devDependencies": {
+		"@octokit/types": "^13.8.0",
+		"@slack/types": "^2.14.0",
+		"ts-node": "^10.9.2"
+	}
+}

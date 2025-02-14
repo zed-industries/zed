@@ -99,7 +99,7 @@ impl KeyBinding {
                         keystroke.key.to_string()
                     }
                 } else {
-                    capitalize(&keystroke.key)
+                    util::capitalize(&keystroke.key)
                 };
                 Key::new(&key, color).size(self.size).into_any_element()
             }
@@ -134,7 +134,7 @@ impl RenderOnce for KeyBinding {
                         self.platform_style,
                         None,
                         self.size,
-                        false,
+                        true,
                     ))
                     .map(|el| el.child(self.render_key(&keystroke, None)))
             }))
@@ -170,10 +170,12 @@ pub fn render_modifiers(
     platform_style: PlatformStyle,
     color: Option<Color>,
     size: Option<AbsoluteLength>,
-    standalone: bool,
+    trailing_separator: bool,
 ) -> impl Iterator<Item = AnyElement> {
+    #[derive(Clone)]
     enum KeyOrIcon {
         Key(&'static str),
+        Plus,
         Icon(IconName),
     }
 
@@ -225,23 +227,34 @@ pub fn render_modifiers(
         .into_iter()
         .filter(|modifier| modifier.enabled)
         .collect::<Vec<_>>();
-    let last_ix = filtered.len().saturating_sub(1);
 
-    filtered
+    let platform_keys = filtered
         .into_iter()
-        .enumerate()
-        .flat_map(move |(ix, modifier)| match platform_style {
-            PlatformStyle::Mac => vec![modifier.mac],
-            PlatformStyle::Linux if standalone && ix == last_ix => vec![modifier.linux],
-            PlatformStyle::Linux => vec![modifier.linux, KeyOrIcon::Key("+")],
-            PlatformStyle::Windows if standalone && ix == last_ix => {
-                vec![modifier.windows]
-            }
-            PlatformStyle::Windows => vec![modifier.windows, KeyOrIcon::Key("+")],
+        .map(move |modifier| match platform_style {
+            PlatformStyle::Mac => Some(modifier.mac),
+            PlatformStyle::Linux => Some(modifier.linux),
+            PlatformStyle::Windows => Some(modifier.windows),
+        });
+
+    let separator = match platform_style {
+        PlatformStyle::Mac => None,
+        PlatformStyle::Linux => Some(KeyOrIcon::Plus),
+        PlatformStyle::Windows => Some(KeyOrIcon::Plus),
+    };
+
+    let platform_keys = itertools::intersperse(platform_keys, separator.clone());
+
+    platform_keys
+        .chain(if modifiers.modified() && trailing_separator {
+            Some(separator)
+        } else {
+            None
         })
+        .flatten()
         .map(move |key_or_icon| match key_or_icon {
             KeyOrIcon::Key(key) => Key::new(key, color).size(size).into_any_element(),
             KeyOrIcon::Icon(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
+            KeyOrIcon::Plus => "+".into_any_element(),
         })
 }
 
@@ -255,7 +268,9 @@ pub struct Key {
 impl RenderOnce for Key {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let single_char = self.key.len() == 1;
-        let size = self.size.unwrap_or(px(14.).into());
+        let size = self
+            .size
+            .unwrap_or_else(|| TextSize::default().rems(cx).into());
 
         div()
             .py_0()
@@ -411,23 +426,15 @@ fn keystroke_text(
             if !keystroke.modifiers.shift && key.len() == 1 {
                 key
             } else {
-                &capitalize(key)
+                &util::capitalize(key)
             }
         }
-        key => &capitalize(key),
+        key => &util::capitalize(key),
     };
 
     text.push_str(key);
 
     text
-}
-
-fn capitalize(str: &str) -> String {
-    let mut chars = str.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
-    }
 }
 
 #[cfg(test)]

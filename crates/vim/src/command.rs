@@ -8,6 +8,7 @@ use editor::{
     Bias, Editor, ToPoint,
 };
 use gpui::{actions, impl_internal_actions, Action, App, Context, Global, Window};
+use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
@@ -64,6 +65,95 @@ pub struct WithCount {
     action: WrappedAction,
 }
 
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+pub enum VimOption {
+    Wrap(bool),
+    Number(bool),
+    RelativeNumber(bool),
+}
+
+impl VimOption {
+    fn possible_commands(query: &str) -> Vec<CommandInterceptResult> {
+        let mut prefix_of_options = Vec::new();
+        let mut options = query.split(" ").collect::<Vec<_>>();
+        let prefix = options.pop().unwrap_or_default();
+        for option in options {
+            if let Some(opt) = Self::from(option) {
+                prefix_of_options.push(opt)
+            } else {
+                return vec![];
+            }
+        }
+
+        Self::possibilities(&prefix)
+            .map(|possible| {
+                let mut options = prefix_of_options.clone();
+                options.push(possible);
+
+                CommandInterceptResult {
+                    string: format!(
+                        "set {}",
+                        options.iter().map(|opt| opt.to_string()).join(" ")
+                    ),
+                    action: VimSet { options }.boxed_clone(),
+                    positions: vec![],
+                }
+            })
+            .collect()
+    }
+
+    fn possibilities(query: &str) -> impl Iterator<Item = Self> + '_ {
+        [
+            (None, VimOption::Wrap(true)),
+            (None, VimOption::Wrap(false)),
+            (None, VimOption::Number(true)),
+            (None, VimOption::Number(false)),
+            (None, VimOption::RelativeNumber(true)),
+            (None, VimOption::RelativeNumber(false)),
+            (Some("rnu"), VimOption::RelativeNumber(true)),
+            (Some("nornu"), VimOption::RelativeNumber(false)),
+        ]
+        .into_iter()
+        .filter(move |(prefix, option)| prefix.unwrap_or(option.to_string()).starts_with(query))
+        .map(|(_, option)| option)
+    }
+
+    fn from(option: &str) -> Option<Self> {
+        match option {
+            "wrap" => Some(Self::Wrap(true)),
+            "nowrap" => Some(Self::Wrap(false)),
+
+            "number" => Some(Self::Number(true)),
+            "nu" => Some(Self::Number(true)),
+            "nonumber" => Some(Self::Number(false)),
+            "nonu" => Some(Self::Number(false)),
+
+            "relativenumber" => Some(Self::RelativeNumber(true)),
+            "rnu" => Some(Self::RelativeNumber(true)),
+            "norelativenumber" => Some(Self::RelativeNumber(false)),
+            "nornu" => Some(Self::RelativeNumber(false)),
+
+            _ => None,
+        }
+    }
+
+    fn to_string(&self) -> &'static str {
+        match self {
+            VimOption::Wrap(true) => "wrap",
+            VimOption::Wrap(false) => "nowrap",
+            VimOption::Number(true) => "number",
+            VimOption::Number(false) => "nonumber",
+            VimOption::RelativeNumber(true) => "relativenumber",
+            VimOption::RelativeNumber(false) => "norelativenumber",
+        }
+    }
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+pub struct VimSet {
+    options: Vec<VimOption>,
+}
+
 #[derive(Debug)]
 struct WrappedAction(Box<dyn Action>);
 
@@ -76,7 +166,8 @@ impl_internal_actions!(
         WithRange,
         WithCount,
         OnMatchingLines,
-        ShellExec
+        ShellExec,
+        VimSet,
     ]
 );
 
@@ -100,6 +191,26 @@ impl Deref for WrappedAction {
 }
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
+    // Vim::action(editor, cx, |vim, action: &StartOfLine, window, cx| {
+    Vim::action(editor, cx, |vim, action: &VimSet, window, cx| {
+        for option in action.options.iter() {
+            vim.update_editor(window, cx, |_, editor, _, cx| match option {
+                VimOption::Wrap(true) => {
+                    editor
+                        .set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+                }
+                VimOption::Wrap(false) => {
+                    editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+                }
+                VimOption::Number(enabled) => {
+                    editor.set_show_line_numbers(*enabled, cx);
+                }
+                VimOption::RelativeNumber(enabled) => {
+                    editor.set_relative_line_number(Some(*enabled), cx);
+                }
+            });
+        }
+    });
     Vim::action(editor, cx, |vim, _: &VisualCommand, window, cx| {
         let Some(workspace) = vim.workspace(window) else {
             return;
@@ -808,7 +919,7 @@ fn wrap_count(action: Box<dyn Action>, range: &CommandRange) -> Option<Box<dyn A
     })
 }
 
-pub fn command_interceptor(mut input: &str, cx: &App) -> Option<CommandInterceptResult> {
+pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptResult> {
     // NOTE: We also need to support passing arguments to commands like :w
     // (ideally with filename autocompletion).
     while input.starts_with(':') {
@@ -834,6 +945,8 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Option<CommandIntercept
             }
             .boxed_clone(),
         )
+    } else if query.starts_with("se ") || query.starts_with("set ") {
+        return VimOption::possible_commands(query.split_once(" ").unwrap().1);
     } else if query.starts_with('s') {
         let mut substitute = "substitute".chars().peekable();
         let mut query = query.chars().peekable();
@@ -886,11 +999,11 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Option<CommandIntercept
     if let Some(action) = action {
         let string = input.to_string();
         let positions = generate_positions(&string, &(range_prefix + query));
-        return Some(CommandInterceptResult {
+        return vec![CommandInterceptResult {
             action,
             string,
             positions,
-        });
+        }];
     }
 
     for command in commands(cx).iter() {
@@ -901,14 +1014,14 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Option<CommandIntercept
             }
             let positions = generate_positions(&string, &(range_prefix + query));
 
-            return Some(CommandInterceptResult {
+            return vec![CommandInterceptResult {
                 action,
                 string,
                 positions,
-            });
+            }];
         }
     }
-    None
+    return Vec::default();
 }
 
 fn generate_positions(string: &str, query: &str) -> Vec<usize> {
@@ -982,7 +1095,12 @@ impl OnMatchingLines {
 
         let command: String = chars.collect();
 
-        let action = WrappedAction(command_interceptor(&command, cx)?.action);
+        let action = WrappedAction(
+            command_interceptor(&command, cx)
+                .first()?
+                .action
+                .boxed_clone(),
+        );
 
         Some(Self {
             range,
@@ -1577,12 +1695,10 @@ mod test {
         // conflict!
         cx.simulate_keystrokes("i @ escape");
         cx.simulate_keystrokes(": w enter");
-        assert!(cx.has_pending_prompt());
-        // "Cancel"
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Cancel");
+
         assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "oops\n");
         assert!(!cx.has_pending_prompt());
-        // force overwrite
         cx.simulate_keystrokes(": w ! enter");
         assert!(!cx.has_pending_prompt());
         assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "@@\n");

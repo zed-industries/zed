@@ -186,8 +186,6 @@ actions!(
         NewDirectory,
         NewFile,
         Copy,
-        CopyPath,
-        CopyRelativePath,
         Duplicate,
         RevealInFileManager,
         RemoveFromProject,
@@ -730,8 +728,11 @@ impl ProjectPanel {
                                 }
                             })
                             .separator()
-                            .action("Copy Path", Box::new(CopyPath))
-                            .action("Copy Relative Path", Box::new(CopyRelativePath))
+                            .action("Copy Path", Box::new(zed_actions::workspace::CopyPath))
+                            .action(
+                                "Copy Relative Path",
+                                Box::new(zed_actions::workspace::CopyRelativePath),
+                            )
                             .separator()
                             .when(!is_root || !cfg!(target_os = "windows"), |menu| {
                                 menu.action("Rename", Box::new(Rename))
@@ -2161,7 +2162,12 @@ impl ProjectPanel {
         self.paste(&Paste {}, window, cx);
     }
 
-    fn copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut Context<Self>) {
+    fn copy_path(
+        &mut self,
+        _: &zed_actions::workspace::CopyPath,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let abs_file_paths = {
             let project = self.project.read(cx);
             self.effective_entries()
@@ -2185,7 +2191,12 @@ impl ProjectPanel {
         }
     }
 
-    fn copy_relative_path(&mut self, _: &CopyRelativePath, _: &mut Window, cx: &mut Context<Self>) {
+    fn copy_relative_path(
+        &mut self,
+        _: &zed_actions::workspace::CopyRelativePath,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let file_paths = {
             let project = self.project.read(cx);
             self.effective_entries()
@@ -3994,7 +4005,7 @@ impl ProjectPanel {
                                                     .when(
                                                         index == active_index
                                                             && (is_active || is_marked),
-                                                        |this| this.underline(true),
+                                                        |this| this.underline(),
                                                     ),
                                             );
 
@@ -7223,8 +7234,8 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor().clone());
-        fs.as_fake().insert_tree("/root", json!({})).await;
-        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+        fs.as_fake().insert_tree(path!("/root"), json!({})).await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -7247,7 +7258,7 @@ mod tests {
             .unwrap();
 
         cx.executor().run_until_parked();
-        cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/new")));
+        cx.simulate_new_path_selection(|_| Some(PathBuf::from(path!("/root/new"))));
         save_task.await.unwrap();
 
         // Rename the file
@@ -9551,7 +9562,7 @@ mod tests {
             cx.has_pending_prompt(),
             "Should have a prompt after the deletion"
         );
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Delete");
         assert!(
             !cx.has_pending_prompt(),
             "Should have no prompts after prompt was replied to"

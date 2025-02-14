@@ -133,6 +133,7 @@ pub struct MultiBufferDiffHunk {
     pub diff_base_byte_range: Range<usize>,
     /// Whether or not this hunk also appears in the 'secondary diff'.
     pub secondary_status: DiffHunkSecondaryStatus,
+    pub secondary_diff_base_byte_range: Option<Range<usize>>,
 }
 
 impl MultiBufferDiffHunk {
@@ -148,11 +149,14 @@ impl MultiBufferDiffHunk {
 }
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
-pub struct PathKey(String);
+pub struct PathKey {
+    namespace: &'static str,
+    path: Arc<Path>,
+}
 
 impl PathKey {
-    pub fn namespaced(namespace: &str, path: &Path) -> Self {
-        Self(format!("{}/{}", namespace, path.to_string_lossy()))
+    pub fn namespaced(namespace: &'static str, path: Arc<Path>) -> Self {
+        Self { namespace, path }
     }
 }
 
@@ -2191,7 +2195,11 @@ impl MultiBuffer {
             let secondary_diff_insertion = new_diff
                 .secondary_diff()
                 .map_or(true, |secondary_diff| secondary_diff.base_text().is_none());
-            new_diff = BufferDiff::build_with_single_insertion(secondary_diff_insertion, cx);
+            new_diff = BufferDiff::build_with_single_insertion(
+                secondary_diff_insertion,
+                buffer.snapshot(),
+                cx,
+            );
         }
 
         let mut snapshot = self.snapshot.borrow_mut();
@@ -3477,6 +3485,7 @@ impl MultiBufferSnapshot {
                 buffer_range: hunk.buffer_range.clone(),
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                 secondary_status: hunk.secondary_status,
+                secondary_diff_base_byte_range: hunk.secondary_diff_base_byte_range,
             })
         })
     }
@@ -3846,6 +3855,7 @@ impl MultiBufferSnapshot {
                         buffer_range: hunk.buffer_range.clone(),
                         diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                         secondary_status: hunk.secondary_status,
+                        secondary_diff_base_byte_range: hunk.secondary_diff_base_byte_range,
                     });
                 }
             }
@@ -4234,6 +4244,21 @@ impl MultiBufferSnapshot {
         }
 
         indent
+    }
+
+    pub fn is_line_whitespace_upto<T>(&self, position: T) -> bool
+    where
+        T: ToOffset,
+    {
+        for char in self.reversed_chars_at(position) {
+            if !char.is_whitespace() {
+                return false;
+            }
+            if char == '\n' {
+                return true;
+            }
+        }
+        return true;
     }
 
     pub fn prev_non_blank_row(&self, mut row: MultiBufferRow) -> Option<MultiBufferRow> {
@@ -5922,6 +5947,10 @@ impl MultiBufferSnapshot {
     pub fn show_headers(&self) -> bool {
         self.show_headers
     }
+
+    pub fn diff_for_buffer_id(&self, buffer_id: BufferId) -> Option<&BufferDiffSnapshot> {
+        self.diffs.get(&buffer_id)
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -7121,7 +7150,7 @@ impl<'a> Iterator for ReversedMultiBufferChunks<'a> {
             self.offset -= 1;
             Some("\n")
         } else {
-            let chunk = self.current_chunks.as_mut().unwrap().next().unwrap();
+            let chunk = self.current_chunks.as_mut().unwrap().next()?;
             self.offset -= chunk.len();
             Some(chunk)
         }

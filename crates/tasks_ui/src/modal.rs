@@ -1022,7 +1022,7 @@ mod tests {
 
         let _rs_file = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/b.rs"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(path!("/dir/b.rs")), true, window, cx)
             })
             .await
             .unwrap();
