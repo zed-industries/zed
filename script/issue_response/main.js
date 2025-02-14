@@ -5,8 +5,13 @@ import { IncomingWebhook } from "@slack/webhook";
 
 async function main() {
   const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+
+  if (!process.env.SLACK_ISSUE_RESPONSE_WEBHOOK_URL) {
+    throw new Error("SLACK_ISSUE_RESPONSE_WEBHOOK_URL is not set");
+  }
+
   const webhook = new IncomingWebhook(
-    process.env.SLACK_ISSUE_RESPONSE_WEBHOOK_URL!,
+    process.env.SLACK_ISSUE_RESPONSE_WEBHOOK_URL,
   );
 
   const owner = "zed-industries";
