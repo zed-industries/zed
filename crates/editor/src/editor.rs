@@ -510,15 +510,6 @@ enum EditPredictionSettings {
     },
 }
 
-impl EditPredictionSettings {
-    pub fn is_enabled(&self) -> bool {
-        match self {
-            EditPredictionSettings::Disabled => false,
-            EditPredictionSettings::Enabled { .. } => true,
-        }
-    }
-}
-
 enum InlineCompletionHighlight {}
 
 pub enum MenuInlineCompletionsPolicy {
@@ -5326,11 +5317,6 @@ impl Editor {
 
         self.edit_prediction_settings =
             self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
-
-        if !self.edit_prediction_settings.is_enabled() {
-            self.discard_inline_completion(false, cx);
-            return None;
-        }
 
         self.edit_prediction_cursor_on_leading_whitespace =
             multibuffer.is_line_whitespace_upto(cursor);
