@@ -4321,11 +4321,7 @@ impl Project {
         self.lsp_store.read(cx).supplementary_language_servers()
     }
 
-    pub fn any_language_server_supports_inlay_hints<'a>(
-        &self,
-        buffer: &Buffer,
-        cx: &mut App,
-    ) -> bool {
+    pub fn any_language_server_supports_inlay_hints(&self, buffer: &Buffer, cx: &mut App) -> bool {
         self.lsp_store.update(cx, |this, cx| {
             this.language_servers_for_local_buffer(buffer, cx)
                 .any(
@@ -4338,7 +4334,7 @@ impl Project {
         })
     }
 
-    pub fn language_server_id_for_name<'a>(
+    pub fn language_server_id_for_name(
         &self,
         buffer: &Buffer,
         name: &str,
@@ -4356,15 +4352,7 @@ impl Project {
         })
     }
 
-    pub fn has_language_servers_for<'a>(&self, buffer: &Buffer, cx: &mut App) -> bool {
-        self.lsp_store.update(cx, |this, cx| {
-            this.language_servers_for_local_buffer(buffer, cx)
-                .next()
-                .is_some()
-        })
-    }
-
-    pub fn la<'a>(&self, buffer: &Buffer, cx: &mut App) -> bool {
+    pub fn has_language_servers_for(&self, buffer: &Buffer, cx: &mut App) -> bool {
         self.lsp_store.update(cx, |this, cx| {
             this.language_servers_for_local_buffer(buffer, cx)
                 .next()
