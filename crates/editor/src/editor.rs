@@ -170,7 +170,7 @@ use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize, Key,
     Tooltip,
 };
-use util::{defer, maybe, post_inc, RangeExt, ResultExt, TakeUntilExt, TryFutureExt};
+use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
 use workspace::notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt};
 use workspace::{
@@ -5994,52 +5994,23 @@ impl Editor {
             } => {
                 let first_edit_row = edits.first()?.0.start.text_anchor.to_point(&snapshot).row;
 
-                let highlighted_edits = crate::inline_completion_edit_text(
+                let (highlighted_edits, has_more_lines) = crate::inline_completion_edit_text(
                     &snapshot,
                     &edits,
                     edit_preview.as_ref()?,
                     true,
                     cx,
-                );
+                )
+                .first_line_preview();
 
-                let len_total = highlighted_edits.text.len();
-                let first_line = &highlighted_edits.text
-                    [..highlighted_edits.text.find('\n').unwrap_or(len_total)];
-                let first_line_len = first_line.len();
-
-                let first_highlight_start = highlighted_edits
-                    .highlights
-                    .first()
-                    .map_or(0, |(range, _)| range.start);
-                let drop_prefix_len = first_line
-                    .char_indices()
-                    .find(|(_, c)| !c.is_whitespace())
-                    .map_or(first_highlight_start, |(ix, _)| {
-                        ix.min(first_highlight_start)
-                    });
-
-                let preview_text = &first_line[drop_prefix_len..];
-                let preview_len = preview_text.len();
-                let highlights = highlighted_edits
-                    .highlights
-                    .into_iter()
-                    .take_until(|(range, _)| range.start > first_line_len)
-                    .map(|(range, style)| {
-                        (
-                            range.start - drop_prefix_len
-                                ..(range.end - drop_prefix_len).min(preview_len),
-                            style,
-                        )
-                    });
-
-                let styled_text = gpui::StyledText::new(SharedString::new(preview_text))
-                    .with_highlights(&style.text, highlights);
+                let styled_text = gpui::StyledText::new(highlighted_edits.text)
+                    .with_highlights(&style.text, highlighted_edits.highlights);
 
                 let preview = h_flex()
                     .gap_1()
                     .min_w_16()
                     .child(styled_text)
-                    .when(len_total > first_line_len, |parent| parent.child("…"));
+                    .when(has_more_lines, |parent| parent.child("…"));
 
                 let left = if first_edit_row != cursor_point.row {
                     render_relative_row_jump("", cursor_point.row, first_edit_row)
