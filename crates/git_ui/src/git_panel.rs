@@ -202,7 +202,6 @@ pub struct GitPanel {
     width: Option<Pixels>,
     workspace: WeakEntity<Workspace>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
-    recently_reverted_buffers: HashSet<Entity<Buffer>>,
 }
 
 fn commit_message_editor(
@@ -309,7 +308,6 @@ impl GitPanel {
                 update_visible_entries_task: Task::ready(()),
                 width: Some(px(360.)),
                 context_menu: None,
-                recently_reverted_buffers: HashSet::new(),
                 workspace,
             };
             git_panel.schedule_update(false, window, cx);
@@ -735,10 +733,6 @@ impl GitPanel {
             })?;
 
             futures::future::join_all(tasks).await;
-            this.update(&mut cx, |this, _| {
-                this.recently_reverted_buffers
-                    .extend(buffers.into_iter().filter_map(Result::ok));
-            })?;
 
             Ok(())
         });
@@ -1093,7 +1087,6 @@ impl GitPanel {
                 this.pending_commit.take();
                 match result {
                     Ok(()) => {
-                        this.recently_reverted_buffers.clear();
                         this.commit_editor
                             .update(cx, |editor, cx| editor.clear(window, cx));
                     }
