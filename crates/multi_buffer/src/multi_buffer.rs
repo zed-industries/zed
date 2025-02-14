@@ -281,11 +281,26 @@ enum DiffTransform {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug)]
 struct DiffTransformHunkInfo {
     excerpt_id: ExcerptId,
     hunk_start_anchor: text::Anchor,
     hunk_secondary_status: DiffHunkSecondaryStatus,
+}
+
+impl Eq for DiffTransformHunkInfo {}
+
+impl PartialEq for DiffTransformHunkInfo {
+    fn eq(&self, other: &DiffTransformHunkInfo) -> bool {
+        self.excerpt_id == other.excerpt_id && self.hunk_start_anchor == other.hunk_start_anchor
+    }
+}
+
+impl std::hash::Hash for DiffTransformHunkInfo {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.excerpt_id.hash(state);
+        self.hunk_start_anchor.hash(state);
+    }
 }
 
 #[derive(Clone)]
@@ -2989,7 +3004,7 @@ impl MultiBuffer {
                     let was_previously_expanded = old_expanded_hunks.contains(&hunk_info);
                     let should_expand_hunk = match &change_kind {
                         DiffChangeKind::DiffUpdated { base_changed: true } => {
-                            self.all_diff_hunks_expanded
+                            self.all_diff_hunks_expanded || was_previously_expanded
                         }
                         DiffChangeKind::ExpandOrCollapseHunks { expand } => {
                             let intersects = hunk_buffer_range.is_empty()
