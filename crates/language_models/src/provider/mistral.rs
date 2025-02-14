@@ -498,7 +498,7 @@ impl Render for ConfigurationView {
         const INSTRUCTIONS: [&str; 4] = [
             "To use Zed's assistant with Mistral, you need to add an API key. Follow these steps:",
             " - Create one by visiting:",
-            " - Ensure your Mistral account has credits or maybe you're using free version",
+            " - Ensure your Mistral account has credits",
             " - Paste your API key below and hit enter to start using the assistant",
         ];
 
@@ -538,12 +538,6 @@ impl Render for ConfigurationView {
                 .child(
                     Label::new(
                         format!("You can also assign the {MISTRAL_API_KEY_VAR} environment variable and restart Zed."),
-                    )
-                    .size(LabelSize::Small),
-                )
-                .child(
-                    Label::new(
-                        "Note that having a subscription for another service like GitHub Copilot won't work.".to_string(),
                     )
                     .size(LabelSize::Small),
                 )
