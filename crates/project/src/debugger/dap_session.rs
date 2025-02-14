@@ -358,7 +358,7 @@ impl Client {
         process_result: impl FnOnce(&mut Self, &T::Response, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> Task<Option<T::Response>> {
-        if !request.is_supported(&capabilities) {
+        if !T::is_supported(&capabilities) {
             return Task::ready(None);
         }
         let request = mode.request_dap(client_id, request, cx);

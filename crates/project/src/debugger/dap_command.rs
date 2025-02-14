@@ -1344,7 +1344,7 @@ impl DapCommand for super::dap_session::CompletionsQuery {
         Ok(message)
     }
 
-    fn is_supported(&self, capabilities: &Capabilities) -> bool {
+    fn is_supported(capabilities: &Capabilities) -> bool {
         capabilities
             .supports_completions_request
             .unwrap_or_default()
