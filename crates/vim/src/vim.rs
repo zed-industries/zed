@@ -215,7 +215,7 @@ pub fn init(cx: &mut App) {
             };
 
             let theme = ThemeSettings::get_global(cx);
-            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
+            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
 
             let desired_size = if let Some(count) = Vim::take_count(cx) {
                 height * count
@@ -233,7 +233,7 @@ pub fn init(cx: &mut App) {
             };
             let Ok(width) = window
                 .text_system()
-                .advance(font_id, theme.buffer_font_size(), 'm')
+                .advance(font_id, theme.buffer_font_size(cx), 'm')
             else {
                 return;
             };
@@ -248,7 +248,7 @@ pub fn init(cx: &mut App) {
             };
             let Ok(width) = window
                 .text_system()
-                .advance(font_id, theme.buffer_font_size(), 'm')
+                .advance(font_id, theme.buffer_font_size(cx), 'm')
             else {
                 return;
             };
@@ -258,14 +258,14 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &ResizePaneUp, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             let theme = ThemeSettings::get_global(cx);
-            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
+            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
             workspace.resize_pane(Axis::Vertical, height * count, window, cx);
         });
 
         workspace.register_action(|workspace, _: &ResizePaneDown, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             let theme = ThemeSettings::get_global(cx);
-            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
+            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
             workspace.resize_pane(Axis::Vertical, -height * count, window, cx);
         });
 
