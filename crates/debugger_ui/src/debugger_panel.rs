@@ -17,7 +17,7 @@ use gpui::{
 };
 use project::{
     debugger::{
-        dap_session::{DebugSessionId, ThreadId},
+        dap_session::ThreadId,
         dap_store::{DapStore, DapStoreEvent},
     },
     terminals::TerminalKind,
@@ -412,7 +412,6 @@ impl DebugPanel {
 
     fn handle_start_debugging_request(
         &mut self,
-        session_id: &DebugSessionId,
         client_id: DebugAdapterClientId,
         seq: u64,
         request_args: Option<Value>,
@@ -433,7 +432,6 @@ impl DebugPanel {
 
     fn handle_run_in_terminal_request(
         &mut self,
-        session_id: &DebugSessionId,
         client_id: DebugAdapterClientId,
         seq: u64,
         request_args: Option<Value>,
@@ -596,7 +594,6 @@ impl DebugPanel {
 
     fn handle_debug_client_started(
         &self,
-        session_id: &DebugSessionId,
         client_id: DebugAdapterClientId,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -678,7 +675,6 @@ impl DebugPanel {
 
     fn handle_debug_client_events(
         &mut self,
-        session_id: &DebugSessionId,
         client_id: DebugAdapterClientId,
         event: &Events,
         window: &mut Window,
@@ -716,7 +712,6 @@ impl DebugPanel {
 
     fn handle_initialized_event(
         &mut self,
-        session_id: &DebugSessionId,
         client_id: DebugAdapterClientId,
         capabilities: &Option<Capabilities>,
         cx: &mut Context<Self>,
@@ -735,7 +730,7 @@ impl DebugPanel {
             this.update(&mut cx, |debug_panel, cx| {
                 debug_panel.workspace.update(cx, |workspace, cx| {
                     workspace.project().update(cx, |project, cx| {
-                        project.initial_send_breakpoints(&session_id, client_id, cx)
+                        project.initial_send_breakpoints(client_id, cx)
                     })
                 })
             })??
@@ -762,7 +757,6 @@ impl DebugPanel {
 
     fn handle_stopped_event(
         &mut self,
-        session_id: &DebugSessionId,
         client_id: DebugAdapterClientId,
         event: &StoppedEvent,
         window: &mut Window,
@@ -889,7 +883,6 @@ impl DebugPanel {
 
     fn handle_terminated_event(
         &mut self,
-        session_id: &DebugSessionId,
         client_id: DebugAdapterClientId,
         event: &Option<TerminatedEvent>,
         cx: &mut Context<Self>,

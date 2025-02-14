@@ -334,6 +334,9 @@ impl Client {
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
+    pub fn configuration(&self) -> DebugAdapterConfig {
+        Configuration::default()
+    }
 
     pub(crate) fn _wait_for_request<R: DapCommand + PartialEq + Eq + Hash>(
         &self,
@@ -910,77 +913,5 @@ impl Client {
             )
             .detach();
         }
-    }
-}
-
-impl DebugSession {
-    pub fn ignore_breakpoints(&self) -> bool {
-        self.ignore_breakpoints
-    }
-
-    pub fn set_ignore_breakpoints(&mut self, ignore: bool, cx: &mut Context<Self>) {
-        self.ignore_breakpoints = ignore;
-        cx.notify();
-    }
-
-    pub fn client_state(&self, client_id: DebugAdapterClientId) -> Option<Entity<Client>> {
-        self.states.get(&client_id).cloned()
-    }
-
-    pub(super) fn client_ids(&self) -> impl Iterator<Item = DebugAdapterClientId> + '_ {
-        self.states.keys().copied()
-    }
-
-    pub fn clients(&self, cx: &App) -> Vec<Arc<DebugAdapterClient>> {
-        self.states
-            .values()
-            .filter_map(|state| state.read(cx).adapter_client())
-            .collect()
-    }
-
-    pub fn add_client(
-        &mut self,
-        client: impl Into<Mode>,
-        client_id: DebugAdapterClientId,
-        cx: &mut Context<DebugSession>,
-    ) {
-        if !self.states.contains_key(&client_id) {
-            let mode = client.into();
-            let state = cx.new(|_cx| Client {
-                client_id,
-                modules: Vec::default(),
-                loaded_sources: Vec::default(),
-                threads: IndexMap::default(),
-                requests: HashMap::default(),
-                capabilities: Default::default(),
-                mode,
-            });
-
-            self.states.insert(client_id, state);
-        }
-    }
-
-    pub(crate) fn client_by_id(
-        &self,
-        client_id: impl Borrow<DebugAdapterClientId>,
-    ) -> Option<Entity<Client>> {
-        self.states.get(client_id.borrow()).cloned()
-    }
-
-    pub(crate) fn shutdown_client(
-        &mut self,
-        client_id: DebugAdapterClientId,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(client) = self.states.remove(&client_id) {
-            client.update(cx, |this, cx| {
-                this.shutdown(cx);
-            })
-        }
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn clients_len(&self) -> usize {
-        self.states.len()
     }
 }

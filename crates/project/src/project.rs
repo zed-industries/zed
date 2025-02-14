@@ -275,12 +275,11 @@ pub enum Event {
         notification_id: SharedString,
     },
     LanguageServerPrompt(LanguageServerPromptRequest),
-    DebugClientStarted((DebugSessionId, DebugAdapterClientId)),
+    DebugClientStarted(DebugAdapterClientId),
     DebugClientShutdown(DebugAdapterClientId),
     SetDebugClient(SetDebuggerPanelItem),
     ActiveDebugLineChanged,
     DebugClientEvent {
-        session_id: DebugSessionId,
         client_id: DebugAdapterClientId,
         message: Message,
     },
@@ -1339,7 +1338,6 @@ impl Project {
 
     pub fn initial_send_breakpoints(
         &self,
-        session_id: &DebugSessionId,
         client_id: DebugAdapterClientId,
         cx: &mut Context<Self>,
     ) -> Task<()> {
@@ -1376,7 +1374,7 @@ impl Project {
         &mut self,
         config: DebugAdapterConfig,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(Entity<DebugSession>, Arc<DebugAdapterClient>)>> {
+    ) -> Task<Result<Arc<DebugAdapterClient>>> {
         let worktree = maybe!({
             if let Some(cwd) = &config.cwd {
                 Some(self.find_worktree(cwd.as_path(), cx)?.0)
@@ -1466,7 +1464,6 @@ impl Project {
             if let Some((_, _)) = project.dap_store.read(cx).downstream_client() {
                 project
                     .toggle_ignore_breakpoints(
-                        &DebugSessionId::from_proto(envelope.payload.session_id),
                         DebugAdapterClientId::from_proto(envelope.payload.client_id),
                         cx,
                     )
@@ -1477,7 +1474,6 @@ impl Project {
 
     pub fn toggle_ignore_breakpoints(
         &self,
-        session_id: &DebugSessionId,
         client_id: DebugAdapterClientId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -1485,7 +1481,6 @@ impl Project {
             if let Some((upstream_client, project_id)) = store.upstream_client() {
                 upstream_client
                     .send(proto::ToggleIgnoreBreakpoints {
-                        session_id: session_id.to_proto(),
                         client_id: client_id.to_proto(),
                         project_id,
                     })
@@ -1501,7 +1496,7 @@ impl Project {
                     .send(proto::IgnoreBreakpointState {
                         client_id: client_id.to_proto(),
                         project_id: *project_id,
-                        ignore: store.ignore_breakpoints(client_id, cx),
+                        ignore: store.ignore_breakpoints(&client_id, cx),
                     })
                     .log_err();
             }
@@ -2776,7 +2771,6 @@ impl Project {
             }
             DapStoreEvent::DebugClientEvent { client_id, message } => {
                 cx.emit(Event::DebugClientEvent {
-                    session_id: *session_id,
                     client_id: *client_id,
                     message: message.clone(),
                 });
