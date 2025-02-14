@@ -7,6 +7,7 @@
 	},
 	"devDependencies": {
 		"@octokit/types": "^13.8.0",
-		"@slack/types": "^2.14.0"
+		"@slack/types": "^2.14.0",
+		"ts-node": "^10.9.2"
 	}
 }
