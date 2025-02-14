@@ -14147,9 +14147,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-elixir"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23d7310aea06158653d18959123a64262bfbf122b7437899dea0c338654a51d3"
+checksum = "e45d444647b4fd53d8fd32474c1b8bedc1baa22669ce3a78d083e365fa9a2d3f"
 dependencies = [
  "cc",
  "tree-sitter-language",
