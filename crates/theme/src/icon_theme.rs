@@ -77,8 +77,6 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("diff", "icons/file_icons/diff.svg"),
     ("docker", "icons/file_icons/docker.svg"),
     ("document", "icons/file_icons/book.svg"),
-    ("dotnet_sln", "icons/file_icons/file.svg"),
-    ("dotnet_suo", "icons/file_icons/file.svg"),
     ("elixir", "icons/file_icons/elixir.svg"),
     ("elm", "icons/file_icons/elm.svg"),
     ("erlang", "icons/file_icons/erlang.svg"),
@@ -137,6 +135,8 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("vbproj", "icons/file_icons/file.svg"),
     ("vcs", "icons/file_icons/git.svg"),
     ("video", "icons/file_icons/video.svg"),
+    ("vs_sln", "icons/file_icons/file.svg"),
+    ("vs_suo", "icons/file_icons/file.svg"),
     ("vue", "icons/file_icons/vue.svg"),
     ("zig", "icons/file_icons/zig.svg"),
 ];
