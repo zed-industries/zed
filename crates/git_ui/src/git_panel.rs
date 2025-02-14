@@ -686,7 +686,6 @@ impl GitPanel {
     }
 
     fn perform_checkout(&mut self, repo_paths: Vec<RepoPath>, cx: &mut Context<Self>) {
-        let this = cx.entity().downgrade();
         let workspace = self.workspace.clone();
         let Some(active_repository) = self.active_repository.clone() else {
             return;
