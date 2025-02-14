@@ -180,6 +180,15 @@ pub fn poll_read_buf(
     Poll::Ready(Ok(n))
 }
 
+fn redact_error(mut error: reqwest::Error) -> reqwest::Error {
+    if let Some(url) = error.url_mut() {
+        if url.query_pairs().any(|(key, _)| key == "key") {
+            url.set_query(Some("key=REDACTED"));
+        }
+    }
+    error
+}
+
 impl http_client::HttpClient for ReqwestClient {
     fn proxy(&self) -> Option<&http::Uri> {
         self.proxy.as_ref()
@@ -217,7 +226,10 @@ impl http_client::HttpClient for ReqwestClient {
 
         let handle = self.handle.clone();
         async move {
-            let mut response = handle.spawn(async { request.send().await }).await??;
+            let mut response = handle
+                .spawn(async { request.send().await })
+                .await?
+                .map_err(|e| redact_error(e))?;
 
             let headers = mem::take(response.headers_mut());
             let mut builder = http::Response::builder()
