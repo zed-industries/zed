@@ -544,7 +544,7 @@ fn register_actions(
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
                         let ui_font_size = theme::get_ui_font_size(cx) + px(1.0);
-                        settings
+                        let _ = settings
                             .ui_font_size
                             .insert(theme::clamp_font_size(ui_font_size).0);
                     });
@@ -561,7 +561,7 @@ fn register_actions(
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
                         let ui_font_size = theme::get_ui_font_size(cx) - px(1.0);
-                        settings
+                        let _ = settings
                             .ui_font_size
                             .insert(theme::clamp_font_size(ui_font_size).0);
                     });
@@ -590,7 +590,7 @@ fn register_actions(
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
                         let buffer_font_size = theme::get_buffer_font_size(cx) + px(1.0);
-                        settings
+                        let _ = settings
                             .buffer_font_size
                             .insert(theme::clamp_font_size(buffer_font_size).0);
                     });
@@ -607,7 +607,7 @@ fn register_actions(
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
                         let buffer_font_size = theme::get_buffer_font_size(cx) - px(1.0);
-                        settings
+                        let _ = settings
                             .buffer_font_size
                             .insert(theme::clamp_font_size(buffer_font_size).0);
                     });
