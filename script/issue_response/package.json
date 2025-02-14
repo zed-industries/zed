@@ -1,4 +1,11 @@
 {
+  "name": "issue_response",
+  "version": "1.0.0",
+  "private": true,
+  "main": "main.ts",
+  "scripts": {
+    "run": "ts-node main.ts"
+  },
   "dependencies": {
     "@octokit/rest": "^21.1.0",
     "@slack/webhook": "^7.0.4",
