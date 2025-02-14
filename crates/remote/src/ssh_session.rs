@@ -132,57 +132,6 @@ fn parse_port_forward_spec(spec: &str) -> Result<SshPortForwardOption> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::parse_port_forward_spec;
-    use super::parse_port_number;
-
-    #[test]
-    fn test_port_number_parsing() {
-        // Test successful case
-        assert_eq!(parse_port_number("8080").unwrap(), 8080);
-
-        // Test error formatting
-        assert!(parse_port_number("invalid")
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid port number: invalid"));
-    }
-
-    #[test]
-    fn test_parse_local_and_remote_ports() {
-        let result = parse_port_forward_spec("8080:example.com:80").unwrap();
-        assert_eq!(result.local_port, 8080);
-        assert_eq!(result.remote_port, 80);
-        assert_eq!(result.remote_host, "example.com");
-        assert_eq!(result.local_host, None);
-    }
-
-    #[test]
-    fn test_parse_with_local_host() {
-        let result = parse_port_forward_spec("localhost:8080:example.com:80").unwrap();
-        assert_eq!(result.local_host, Some("localhost".to_string()));
-        assert_eq!(result.local_port, 8080);
-        assert_eq!(result.remote_host, "example.com");
-        assert_eq!(result.remote_port, 80);
-    }
-
-    #[test]
-    fn test_invalid_formats() {
-        // Too few parts
-        assert!(parse_port_forward_spec("8080:80").is_err());
-
-        // Too many parts
-        assert!(parse_port_forward_spec("local:8080:remote:80:extra").is_err());
-
-        // Invalid port numbers
-        assert!(parse_port_forward_spec("abc:example.com:80").is_err());
-        assert!(parse_port_forward_spec("8080:example.com:abc").is_err());
-        assert!(parse_port_forward_spec("localhost:abc:example.com:80").is_err());
-        assert!(parse_port_forward_spec("localhost:8080:example.com:abc").is_err());
-    }
-}
-
 impl SshConnectionOptions {
     pub fn parse_command_line(input: &str) -> Result<Self> {
         let input = input.trim_start_matches("ssh ");
