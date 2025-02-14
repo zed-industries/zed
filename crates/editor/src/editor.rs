@@ -12502,10 +12502,7 @@ impl Editor {
         snapshot: &MultiBufferSnapshot,
     ) -> bool {
         let mut hunks = self.diff_hunks_in_ranges(ranges, &snapshot);
-        hunks.any(|hunk| {
-            log::debug!("considering {hunk:?}");
-            hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk
-        })
+        hunks.any(|hunk| hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk)
     }
 
     pub fn toggle_staged_selected_diff_hunks(
@@ -14160,15 +14157,13 @@ impl Editor {
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).diff_for(buffer_id).is_none() {
                     if let Some(project) = &self.project {
-                        self.load_diff_task = Some(
-                            get_uncommitted_diff_for_buffer(
-                                project,
-                                [buffer.clone()],
-                                self.buffer.clone(),
-                                cx,
-                            )
-                            .shared(),
-                        );
+                        get_uncommitted_diff_for_buffer(
+                            project,
+                            [buffer.clone()],
+                            self.buffer.clone(),
+                            cx,
+                        )
+                        .detach();
                     }
                 }
                 cx.emit(EditorEvent::ExcerptsAdded {
