@@ -3120,6 +3120,7 @@ impl LspStore {
                 }
             }
             BufferStoreEvent::BufferDropped(_) => {}
+            BufferStoreEvent::BufferOpened { .. } => {}
         }
     }
 

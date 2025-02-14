@@ -108,7 +108,9 @@ use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange}
 use linked_editing_ranges::refresh_linked_ranges;
 use mouse_context_menu::MouseContextMenu;
 use project::{
-    debugger::breakpoint_store::{BreakpointEditAction, BreakpointStoreEvent},
+    debugger::breakpoint_store::{
+        self, BreakpointEditAction, BreakpointStore, BreakpointStoreEvent,
+    },
     ProjectPath,
 };
 pub use proposed_changes_editor::{
@@ -762,6 +764,7 @@ pub struct Editor {
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
     pub dap_store: Option<Entity<DapStore>>,
+    pub breakpoint_store: Option<Entity<BreakpointStore>>,
     /// Allow's a user to create a breakpoint by selecting this indicator
     /// It should be None while a user is not hovering over the gutter
     /// Otherwise it represents the point that the breakpoint will be shown
@@ -1332,11 +1335,15 @@ impl Editor {
             None
         };
 
-        let dap_store = if mode == EditorMode::Full {
-            project.as_ref().map(|project| project.read(cx).dap_store())
-        } else {
-            None
+        let (dap_store, breakpoint_store) = match (mode, project.as_ref()) {
+            (EditorMode::Full, Some(project)) => {
+                let dap_store = project.read(cx).dap_store();
+                let breakpoint_store = project.read(cx).breakpoint_store();
+                (Some(dap_store), Some(breakpoint_store))
+            }
+            _ => (None, None),
         };
+
         let mut code_action_providers = Vec::new();
         let mut load_uncommitted_diff = None;
         if let Some(project) = project.clone() {
@@ -1466,6 +1473,7 @@ impl Editor {
             blame_subscription: None,
             tasks: Default::default(),
             dap_store,
+            breakpoint_store,
             gutter_breakpoint_indicator: None,
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
@@ -7428,13 +7436,9 @@ impl Editor {
         edit_action: BreakpointEditAction,
         cx: &mut Context<Self>,
     ) {
-        let Some(project) = &self.project else {
+        let Some(breakpoint_store) = &self.breakpoint_store else {
             return;
         };
-
-        if self.dap_store.is_none() {
-            return;
-        }
 
         let Some(buffer_id) = breakpoint_position.buffer_id else {
             return;
@@ -7451,8 +7455,8 @@ impl Editor {
             return;
         };
 
-        project.update(cx, |project, cx| {
-            project.toggle_breakpoint(
+        breakpoint_store.update(cx, |breakpoint_store, cx| {
+            breakpoint_store.toggle_breakpoint(
                 buffer_id,
                 Breakpoint {
                     cached_position: cache_position,
@@ -7465,6 +7469,11 @@ impl Editor {
         });
 
         cx.notify();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn breakpoint_store(&self) -> Option<Entity<BreakpointStore>> {
+        self.breakpoint_store.clone()
     }
 
     pub fn prepare_revert_change(

@@ -2472,7 +2472,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
         editor
-            .dap_store
+            .breakpoint_store()
             .clone()
             .unwrap()
             .read(cx)
@@ -2481,7 +2481,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
         editor
-            .dap_store
+            .breakpoint_store()
             .clone()
             .unwrap()
             .read(cx)
@@ -2505,7 +2505,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
         editor
-            .dap_store
+            .breakpoint_store()
             .clone()
             .unwrap()
             .read(cx)
@@ -2514,7 +2514,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
         editor
-            .dap_store
+            .breakpoint_store()
             .clone()
             .unwrap()
             .read(cx)
@@ -2538,7 +2538,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
         editor
-            .dap_store
+            .breakpoint_store()
             .clone()
             .unwrap()
             .read(cx)
@@ -2547,7 +2547,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
         editor
-            .dap_store
+            .breakpoint_store()
             .clone()
             .unwrap()
             .read(cx)
@@ -2571,7 +2571,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
         editor
-            .dap_store
+            .breakpoint_store()
             .clone()
             .unwrap()
             .read(cx)
@@ -2580,7 +2580,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
         editor
-            .dap_store
+            .breakpoint_store()
             .clone()
             .unwrap()
             .read(cx)

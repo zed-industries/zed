@@ -29,7 +29,7 @@ use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::FakeFs;
 use project::{
-    debugger::dap_store::BreakpointKind,
+    debugger::breakpoint_store::BreakpointKind,
     lsp_command::SIGNATURE_HELP_HIGHLIGHT_CURRENT,
     project_settings::{LspSettings, ProjectSettings},
 };
@@ -15719,7 +15719,7 @@ async fn assert_highlighted_edits(
 
 #[track_caller]
 fn assert_breakpoint(
-    breakpoints: &BTreeMap<ProjectPath, std::collections::HashSet<Breakpoint>>,
+    breakpoints: &BTreeMap<ProjectPath, collections::HashSet<Breakpoint>>,
     project_path: &ProjectPath,
     expected: Vec<(u32, BreakpointKind)>,
 ) {
@@ -15839,7 +15839,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .dap_store()
+            .breakpoint_store()
             .read(cx)
             .breakpoints()
             .clone()
@@ -15863,7 +15863,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .dap_store()
+            .breakpoint_store()
             .read(cx)
             .breakpoints()
             .clone()
@@ -15887,7 +15887,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .dap_store()
+            .breakpoint_store()
             .read(cx)
             .breakpoints()
             .clone()
@@ -15951,7 +15951,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .dap_store()
+            .breakpoint_store()
             .read(cx)
             .breakpoints()
             .clone()
@@ -15974,7 +15974,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .dap_store()
+            .breakpoint_store()
             .read(cx)
             .breakpoints()
             .clone()
@@ -15996,7 +15996,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .dap_store()
+            .breakpoint_store()
             .read(cx)
             .breakpoints()
             .clone()
@@ -16018,7 +16018,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .dap_store()
+            .breakpoint_store()
             .read(cx)
             .breakpoints()
             .clone()
@@ -16043,7 +16043,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .dap_store()
+            .breakpoint_store()
             .read(cx)
             .breakpoints()
             .clone()

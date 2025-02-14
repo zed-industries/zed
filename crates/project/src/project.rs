@@ -694,7 +694,12 @@ impl Project {
                 )
             });
 
-            let breakpoint_store = cx.new(|_| BreakpointStore::local());
+            let buffer_store = cx.new(|cx| BufferStore::local(worktree_store.clone(), cx));
+            cx.subscribe(&buffer_store, Self::on_buffer_store_event)
+                .detach();
+
+            let breakpoint_store = cx
+                .new(|cx| BreakpointStore::local(buffer_store.clone(), worktree_store.clone(), cx));
 
             let dap_store = cx.new(|cx| {
                 DapStore::new_local(
@@ -710,11 +715,6 @@ impl Project {
             });
             cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
             cx.subscribe(&breakpoint_store, Self::on_breakpoint_store_event)
-                .detach();
-
-            let buffer_store = cx
-                .new(|cx| BufferStore::local(worktree_store.clone(), breakpoint_store.clone(), cx));
-            cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
             let image_store = cx.new(|cx| ImageStore::local(worktree_store.clone(), cx));
@@ -891,8 +891,15 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let breakpoint_store =
-                cx.new(|_| BreakpointStore::remote(SSH_PROJECT_ID, client.clone().into()));
+            let breakpoint_store = cx.new(|cx| {
+                BreakpointStore::remote(
+                    SSH_PROJECT_ID,
+                    client.clone().into(),
+                    buffer_store.clone(),
+                    worktree_store.clone(),
+                    cx,
+                )
+            });
 
             let dap_store = cx.new(|_| {
                 DapStore::new_remote(
@@ -1084,7 +1091,16 @@ impl Project {
         let environment = cx.update(|cx| ProjectEnvironment::new(&worktree_store, None, cx))?;
 
         let breakpoint_store = cx.new(|cx| {
-            let mut bp_store = BreakpointStore::remote(SSH_PROJECT_ID, client.clone().into());
+            let mut bp_store = {
+                BreakpointStore::remote(
+                    SSH_PROJECT_ID,
+                    client.clone().into(),
+                    buffer_store.clone(),
+                    worktree_store.clone(),
+                    cx,
+                )
+            };
+
             bp_store.set_breakpoints_from_proto(response.payload.breakpoints, cx);
             bp_store
         })?;
@@ -1553,37 +1569,13 @@ impl Project {
         })
     }
 
-    /// Sends updated breakpoint information of one file to all active debug adapters
+    /// Toggles a breakpoint
+    ///
+    /// Also sends updated breakpoint information of one file to all active debug adapters
     ///
     /// This function is called whenever a breakpoint is toggled, and it doesn't need
     /// to send breakpoints from closed files because those breakpoints can't change
     /// without opening a buffer.
-    pub fn toggle_breakpoint(
-        &self,
-        buffer_id: BufferId,
-        breakpoint: Breakpoint,
-        edit_action: BreakpointEditAction,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(buffer) = self.buffer_for_id(buffer_id, cx) else {
-            return;
-        };
-
-        if let Some(project_path) = buffer.read(cx).project_path(cx) {
-            self.dap_store.update(cx, |dap_store, cx| {
-                dap_store
-                    .breakpoint_store()
-                    .update(cx, |breakpoint_store, cx| {
-                        breakpoint_store.toggle_breakpoint_for_buffer(
-                            &project_path,
-                            breakpoint,
-                            edit_action,
-                            cx,
-                        )
-                    })
-            });
-        }
-    }
 
     #[cfg(any(test, feature = "test-support"))]
     pub async fn example(
@@ -2707,6 +2699,7 @@ impl Project {
                         .log_err();
                 }
             }
+            BufferStoreEvent::BufferOpened { .. } => {}
         }
     }
 
