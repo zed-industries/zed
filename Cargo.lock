@@ -7977,7 +7977,7 @@ dependencies = [
 
 [[package]]
 name = "mistral"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
