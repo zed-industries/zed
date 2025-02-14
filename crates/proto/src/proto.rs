@@ -483,6 +483,7 @@ messages!(
     (DapCompletionResponse, Background),
     (DapThreadsRequest, Background),
     (DapThreadsResponse, Background),
+    (DapTerminateRequest, Background)
 );
 
 request_messages!(
@@ -638,6 +639,7 @@ request_messages!(
     (DapEvaluateRequest, DapEvaluateResponse),
     (DapCompletionRequest, DapCompletionResponse),
     (DapThreadsRequest, DapThreadsResponse),
+    (DapTerminateRequest, Ack)
 );
 
 entity_messages!(
@@ -760,6 +762,7 @@ entity_messages!(
     DapEvaluateRequest,
     DapCompletionRequest,
     DapThreadsRequest,
+    DapTerminateRequest
 );
 
 entity_messages!(

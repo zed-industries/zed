@@ -1489,7 +1489,7 @@ impl Project {
                 return Vec::new();
             }
 
-            store.toggle_ignore_breakpoints(session_id, cx);
+            store.toggle_ignore_breakpoints(&client_id, cx);
 
             if let Some((downstream_client, project_id)) = store.downstream_client() {
                 downstream_client
@@ -1528,7 +1528,7 @@ impl Project {
                             .into_iter()
                             .map(|breakpoint| breakpoint.to_source_breakpoint(buffer))
                             .collect::<Vec<_>>(),
-                        store.ignore_breakpoints(session_id, cx),
+                        store.ignore_breakpoints(&client_id, cx),
                         false,
                         cx,
                     ),

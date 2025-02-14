@@ -96,7 +96,7 @@ impl LocalDapStore {
 }
 
 pub struct RemoteDapStore {
-    upstream_client: Option<AnyProtoClient>,
+    upstream_client: AnyProtoClient,
     upstream_project_id: u64,
     event_queue: Option<VecDeque<DapStoreEvent>>,
 }
@@ -175,7 +175,7 @@ impl DapStore {
     ) -> Self {
         Self {
             mode: DapStoreMode::Remote(RemoteDapStore {
-                upstream_client: Some(upstream_client),
+                upstream_client: upstream_client,
                 upstream_project_id: project_id,
                 event_queue: Some(VecDeque::default()),
             }),
@@ -218,15 +218,11 @@ impl DapStore {
     pub fn upstream_client(&self) -> Option<(AnyProtoClient, u64)> {
         match &self.mode {
             DapStoreMode::Remote(RemoteDapStore {
-                upstream_client: Some(upstream_client),
+                upstream_client,
                 upstream_project_id,
                 ..
             }) => Some((upstream_client.clone(), *upstream_project_id)),
 
-            DapStoreMode::Remote(RemoteDapStore {
-                upstream_client: None,
-                ..
-            }) => None,
             DapStoreMode::Local(_) => None,
         }
     }
@@ -241,17 +237,21 @@ impl DapStore {
         ignore: Option<bool>,
         cx: &mut Context<Self>,
     ) {
-        self.clients.insert(
-            client_id,
-            cx.new(|_| {
-                debugger::client::Client::remote(
-                    client_id,
-                    "Remote-Debug".to_owned(),
-                    ignore.unwrap_or(false),
-                )
-            }),
-        );
-        debug_assert!(matches!(self.mode, DapStoreMode::Remote(_)));
+        if let DapStoreMode::Remote(remote) = &self.mode {
+            self.clients.insert(
+                client_id,
+                cx.new(|_| {
+                    debugger::client::Client::remote(
+                        client_id,
+                        remote.upstream_client.clone(),
+                        remote.upstream_project_id,
+                        ignore.unwrap_or(false),
+                    )
+                }),
+            );
+        } else {
+            debug_assert!(false);
+        }
     }
 
     pub fn client_by_id(
@@ -431,20 +431,6 @@ impl DapStore {
 
                 store.clients.insert(Arc::new(client), client_id);
 
-                session.update(cx, |session, cx| {
-                    session.add_client(Arc::new(client), client_id, cx);
-                    let local_session = session
-                        .as_local_mut()
-                        .expect("Only local sessions should attempt to reconnect");
-
-                    local_session.update_configuration(
-                        |old_config| {
-                            *old_config = config.clone();
-                        },
-                        cx,
-                    );
-                });
-
                 // don't emit this event ourself in tests, so we can add request,
                 // response and event handlers for this client
                 if !cfg!(any(test, feature = "test-support")) {
@@ -558,8 +544,6 @@ impl DapStore {
         let start_client_task = self.start_client_internal(delegate, config.clone(), cx);
 
         cx.spawn(|this, mut cx| async move {
-            let session = cx.new(|_| DebugSession::new_local(session_id, config))?;
-
             let client = match start_client_task.await {
                 Ok(client) => client,
                 Err(error) => {
@@ -573,18 +557,14 @@ impl DapStore {
             };
 
             this.update(&mut cx, |store, cx| {
-                session.update(cx, |session, cx| {
-                    session.add_client(client.clone(), client.id(), cx);
-                });
-
                 let client_id = client.id();
 
-                store.sessions.insert(session_id, session.clone());
+                store.clients.insert(client_id, client);
 
                 cx.emit(DapStoreEvent::DebugClientStarted(client_id));
                 cx.notify();
 
-                (session, client)
+                client
             })
         })
     }
@@ -1005,6 +985,7 @@ impl DapStore {
     // let returned_value = client.modules(); // this is a cheap getter.
 
     pub fn shutdown_clients(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let mut tasks = vec![];
         for client_id in self.clients.keys().cloned().collect::<Vec<_>>() {
             tasks.push(self.shutdown_client(&client_id, cx));
         }
