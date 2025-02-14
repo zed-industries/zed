@@ -1,6 +1,13 @@
 import { Octokit } from "@octokit/rest";
 import { IncomingWebhook } from "@slack/webhook";
 
+/**
+ * The maximum length of the `text` in a section block.
+ *
+ * [Slack Docs](https://api.slack.com/reference/block-kit/blocks#section)
+ */
+const SECTION_BLOCK_TEXT_LIMIT = 3000;
+
 async function main() {
   const octokit = new Octokit({ auth: process.env["GITHUB_TOKEN"] });
 
@@ -62,7 +69,7 @@ async function main() {
   let currentSectionLength = 0;
 
   for (const issueLine of issueLines) {
-    if (currentSectionLength + issueLine.length <= 3000) {
+    if (currentSectionLength + issueLine.length <= SECTION_BLOCK_TEXT_LIMIT) {
       currentSection.push(issueLine);
       currentSectionLength += issueLine.length;
     } else {
