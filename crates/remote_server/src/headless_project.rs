@@ -9,7 +9,7 @@ use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
-    debugger::dap_store::DapStore,
+    debugger::breakpoint_store::BreakpointStore,
     git::GitStore,
     project_settings::SettingsObserver,
     search::SearchQuery,
@@ -93,6 +93,8 @@ impl HeadlessProject {
             )
         });
 
+        let breakpoint_store = cx.new(|_| BreakpointStore::local());
+
         let dap_store = cx.new(|cx| {
             DapStore::new_local(
                 http_client.clone(),
@@ -101,13 +103,14 @@ impl HeadlessProject {
                 languages.clone(),
                 environment.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
+                breakpoint_store.clone(),
                 cx,
             )
         });
 
         let buffer_store = cx.new(|cx| {
             let mut buffer_store =
-                BufferStore::local(worktree_store.clone(), dap_store.clone(), cx);
+                BufferStore::local(worktree_store.clone(), breakpoint_store.clone(), cx);
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });

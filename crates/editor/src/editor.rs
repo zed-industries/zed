@@ -108,7 +108,7 @@ use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange}
 use linked_editing_ranges::refresh_linked_ranges;
 use mouse_context_menu::MouseContextMenu;
 use project::{
-    debugger::dap_store::{BreakpointEditAction, DapStoreEvent},
+    debugger::breakpoint_store::{BreakpointEditAction, BreakpointStoreEvent},
     ProjectPath,
 };
 pub use proposed_changes_editor::{
@@ -136,7 +136,10 @@ use multi_buffer::{
 };
 use parking_lot::Mutex;
 use project::{
-    debugger::dap_store::{Breakpoint, BreakpointKind, DapStore},
+    debugger::{
+        breakpoint_store::{Breakpoint, BreakpointKind},
+        dap_store::DapStore,
+    },
     lsp_store::{FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
@@ -5546,7 +5549,7 @@ impl Editor {
 
         let snapshot = self.snapshot(window, cx);
 
-        let breakpoints = dap_store.read(cx).breakpoints();
+        let breakpoints = &dap_store.read(cx).breakpoint_store().read(cx).breakpoints;
 
         if let Some(buffer) = self.buffer.read(cx).as_singleton() {
             let buffer = buffer.read(cx);
@@ -7356,8 +7359,12 @@ impl Editor {
             .summary_for_anchor::<Point>(&breakpoint_position)
             .row;
 
-        let bp = self.dap_store.clone()?.read_with(cx, |store, _cx| {
-            store.breakpoint_at_row(row, &project_path, buffer_snapshot)
+        let bp = self.dap_store.clone()?.read_with(cx, |dap_store, cx| {
+            dap_store.breakpoint_store().read(cx).breakpoint_at_row(
+                row,
+                &project_path,
+                buffer_snapshot,
+            )
         })?;
 
         Some((bp.active_position?, bp.kind))
@@ -14725,10 +14732,12 @@ impl Editor {
 
                 if let Some(dap_store) = &self.dap_store {
                     if let Some(project_path) = self.project_path(cx) {
-                        dap_store.update(cx, |_, cx| {
-                            cx.emit(DapStoreEvent::BreakpointsChanged {
-                                project_path,
-                                source_changed: true,
+                        dap_store.update(cx, |dap_store, cx| {
+                            dap_store.breakpoint_store().update(cx, |_, cx| {
+                                cx.emit(BreakpointStoreEvent::BreakpointsChanged {
+                                    project_path,
+                                    source_changed: true,
+                                });
                             });
                         });
                     }

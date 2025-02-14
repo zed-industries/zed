@@ -4702,17 +4702,24 @@ impl Workspace {
             // Add unopened breakpoints to project before opening any items
             workspace.update(&mut cx, |workspace, cx| {
                 workspace.project().update(cx, |project, cx| {
-                    project.dap_store().update(cx, |store, cx| {
-                        for worktree in project.worktrees(cx) {
-                            let (worktree_id, worktree_path) =
-                                worktree.read_with(cx, |tree, _cx| (tree.id(), tree.abs_path()));
+                    project.dap_store().update(cx, |dap_store, cx| {
+                        dap_store
+                            .breakpoint_store()
+                            .update(cx, |breakpoint_store, cx| {
+                                for worktree in project.worktrees(cx) {
+                                    let (worktree_id, worktree_path) = worktree
+                                        .read_with(cx, |tree, _cx| (tree.id(), tree.abs_path()));
 
-                            if let Some(serialized_breakpoints) =
-                                serialized_workspace.breakpoints.remove(&worktree_path)
-                            {
-                                store.deserialize_breakpoints(worktree_id, serialized_breakpoints);
-                            }
-                        }
+                                    if let Some(serialized_breakpoints) =
+                                        serialized_workspace.breakpoints.remove(&worktree_path)
+                                    {
+                                        breakpoint_store.deserialize_breakpoints(
+                                            worktree_id,
+                                            serialized_breakpoints,
+                                        );
+                                    }
+                                }
+                            })
                     });
                 })
             })?;

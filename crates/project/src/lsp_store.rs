@@ -3128,8 +3128,12 @@ impl LspStore {
         if let Some(local) = self.as_local_mut() {
             local.initialize_buffer(buffer, cx);
 
-            local.dap_store.update(cx, |store, cx| {
-                store.sync_open_breakpoints_to_closed_breakpoints(buffer, cx);
+            local.dap_store.update(cx, |dap_store, cx| {
+                dap_store
+                    .breakpoint_store()
+                    .update(cx, |breakpoint_store, cx| {
+                        breakpoint_store.sync_open_breakpoints_to_closed_breakpoints(buffer, cx);
+                    });
             });
         }
 

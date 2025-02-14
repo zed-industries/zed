@@ -11,7 +11,7 @@ use db::sqlez::{
 };
 use gpui::{AsyncWindowContext, Entity, WeakEntity};
 use itertools::Itertools as _;
-use project::debugger::dap_store::SerializedBreakpoint;
+use project::debugger::breakpoint_store::SerializedBreakpoint;
 use project::Project;
 use remote::ssh_session::SshProjectId;
 use serde::{Deserialize, Serialize};

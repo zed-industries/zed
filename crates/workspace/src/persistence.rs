@@ -12,7 +12,7 @@ use client::DevServerProjectId;
 use collections::HashMap;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
-use project::debugger::dap_store::{BreakpointKind, SerializedBreakpoint};
+use project::debugger::breakpoint_store::{BreakpointKind, SerializedBreakpoint};
 
 use language::{LanguageName, Toolchain};
 use project::WorktreeId;

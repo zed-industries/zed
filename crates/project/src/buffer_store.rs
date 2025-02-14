@@ -1,5 +1,5 @@
 use crate::{
-    debugger::dap_store::DapStore,
+    debugger::breakpoint_store::BreakpointStore,
     lsp_store::OpenLspBufferHandle,
     search::SearchQuery,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
@@ -317,7 +317,7 @@ struct RemoteBufferStore {
 struct LocalBufferStore {
     local_buffer_ids_by_path: HashMap<ProjectPath, BufferId>,
     local_buffer_ids_by_entry_id: HashMap<ProjectEntryId, BufferId>,
-    dap_store: Entity<DapStore>,
+    breakpoint_store: Entity<BreakpointStore>,
     worktree_store: Entity<WorktreeStore>,
     _subscription: Subscription,
 }
@@ -1242,14 +1242,14 @@ impl BufferStore {
     /// Creates a buffer store, optionally retaining its buffers.
     pub fn local(
         worktree_store: Entity<WorktreeStore>,
-        dap_store: Entity<DapStore>,
+        breakpoint_store: Entity<BreakpointStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
             state: BufferStoreState::Local(LocalBufferStore {
                 local_buffer_ids_by_path: Default::default(),
                 local_buffer_ids_by_entry_id: Default::default(),
-                dap_store,
+                breakpoint_store,
                 worktree_store: worktree_store.clone(),
                 _subscription: cx.subscribe(&worktree_store, |this, _, event, cx| {
                     if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
@@ -1291,14 +1291,14 @@ impl BufferStore {
         }
     }
 
-    pub fn dap_on_buffer_open(
+    pub fn breakpoint_store_on_buffer_open(
         &mut self,
         project_path: &ProjectPath,
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) {
         if let Some(local_store) = self.as_local_mut() {
-            local_store.dap_store.update(cx, |store, cx| {
+            local_store.breakpoint_store.update(cx, |store, cx| {
                 store.on_open_buffer(&project_path, buffer, cx);
             });
         }
@@ -1338,7 +1338,7 @@ impl BufferStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         if let Some(buffer) = self.get_by_path(&project_path, cx) {
-            self.dap_on_buffer_open(&project_path, &buffer, cx);
+            self.breakpoint_store_on_buffer_open(&project_path, &buffer, cx);
 
             return Task::ready(Ok(buffer));
         }
@@ -1368,7 +1368,7 @@ impl BufferStore {
                                 this.loading_buffers.remove(&project_path);
 
                                 let buffer = load_result.map_err(Arc::new)?;
-                                this.dap_on_buffer_open(&project_path, &buffer, cx);
+                                this.breakpoint_store_on_buffer_open(&project_path, &buffer, cx);
                                 Ok(buffer)
                             })?
                         })

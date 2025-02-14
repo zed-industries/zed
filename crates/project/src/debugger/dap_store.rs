@@ -1,4 +1,5 @@
 use super::{
+    breakpoint_store::BreakpointStore,
     // Will need to uncomment this once we implement rpc message handler again
     // dap_command::{
     //     ContinueCommand, DapCommand, DisconnectCommand, NextCommand, PauseCommand, RestartCommand,
@@ -8,7 +9,7 @@ use super::{
     dap_command::DapCommand,
     dap_session::{self, DebugSession, DebugSessionId},
 };
-use crate::{project_settings::ProjectSettings, ProjectEnvironment, ProjectItem as _, ProjectPath};
+use crate::{project_settings::ProjectSettings, ProjectEnvironment, ProjectPath};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
@@ -31,10 +32,7 @@ use fs::Fs;
 use futures::future::Shared;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
-use language::{
-    proto::{deserialize_anchor, serialize_anchor as serialize_text_anchor},
-    BinaryStatus, Buffer, BufferSnapshot, LanguageRegistry, LanguageToolchainStore,
-};
+use language::{BinaryStatus, BufferSnapshot, LanguageRegistry, LanguageToolchainStore};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use rpc::{
@@ -46,9 +44,9 @@ use settings::{Settings as _, WorktreeId};
 use smol::lock::Mutex;
 use std::{
     borrow::Borrow,
-    collections::{BTreeMap, HashSet},
+    collections::HashSet,
     ffi::OsStr,
-    hash::{Hash, Hasher},
+    hash::Hash,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -57,7 +55,6 @@ use std::{
 };
 use std::{collections::VecDeque, sync::atomic::AtomicU32};
 use task::{AttachConfig, DebugAdapterConfig, DebugRequestType};
-use text::Point;
 use util::{merge_json_value_into, ResultExt as _};
 use worktree::Worktree;
 
@@ -70,10 +67,6 @@ pub enum DapStoreEvent {
         message: Message,
     },
     Notification(String),
-    BreakpointsChanged {
-        project_path: ProjectPath,
-        source_changed: bool,
-    },
     ActiveDebugLineChanged,
     RemoteHasInitialized,
     SetDebugPanelItem(SetDebuggerPanelItem),
@@ -117,7 +110,7 @@ pub struct RemoteDapStore {
 pub struct DapStore {
     mode: DapStoreMode,
     downstream_client: Option<(AnyProtoClient, u64)>,
-    breakpoints: BTreeMap<ProjectPath, HashSet<Breakpoint>>,
+    breakpoint_store: Entity<BreakpointStore>,
     active_debug_line: Option<(DebugAdapterClientId, ProjectPath, u32)>,
     sessions: HashMap<DebugSessionId, Entity<DebugSession>>,
     client_by_session: HashMap<DebugAdapterClientId, DebugSessionId>,
@@ -134,7 +127,6 @@ impl DapStore {
         client.add_entity_message_handler(Self::handle_set_active_debug_line);
         client.add_entity_message_handler(Self::handle_set_debug_client_capabilities);
         client.add_entity_message_handler(Self::handle_set_debug_panel_item);
-        client.add_entity_message_handler(Self::handle_synchronize_breakpoints);
         client.add_entity_message_handler(Self::handle_update_debug_adapter);
         client.add_entity_message_handler(Self::handle_update_thread_status);
         client.add_entity_message_handler(Self::handle_ignore_breakpoint_state);
@@ -163,6 +155,7 @@ impl DapStore {
         language_registry: Arc<LanguageRegistry>,
         environment: Entity<ProjectEnvironment>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
+        breakpoint_store: Entity<BreakpointStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.on_app_quit(Self::shutdown_sessions).detach();
@@ -180,13 +173,17 @@ impl DapStore {
             }),
             downstream_client: None,
             active_debug_line: None,
-            breakpoints: Default::default(),
+            breakpoint_store,
             sessions: Default::default(),
             client_by_session: Default::default(),
         }
     }
 
-    pub fn new_remote(project_id: u64, upstream_client: AnyProtoClient) -> Self {
+    pub fn new_remote(
+        project_id: u64,
+        upstream_client: AnyProtoClient,
+        breakpoint_store: Entity<BreakpointStore>,
+    ) -> Self {
         Self {
             mode: DapStoreMode::Remote(RemoteDapStore {
                 upstream_client: Some(upstream_client),
@@ -195,7 +192,7 @@ impl DapStore {
             }),
             downstream_client: None,
             active_debug_line: None,
-            breakpoints: Default::default(),
+            breakpoint_store,
             sessions: Default::default(),
             client_by_session: Default::default(),
         }
@@ -302,7 +299,7 @@ impl DapStore {
     pub fn client_by_id(
         &self,
         client_id: impl Borrow<DebugAdapterClientId>,
-        cx: &Context<Self>,
+        cx: &App,
     ) -> Option<(Entity<DebugSession>, Entity<dap_session::Client>)> {
         let client_id = client_id.borrow();
         let session = self.session_by_client_id(client_id)?;
@@ -393,14 +390,8 @@ impl DapStore {
         }
     }
 
-    pub fn on_file_rename(&mut self, old_project_path: ProjectPath, new_project_path: ProjectPath) {
-        if let Some(breakpoints) = self.breakpoints.remove(&old_project_path) {
-            self.breakpoints.insert(new_project_path, breakpoints);
-        }
-    }
-
-    pub fn breakpoints(&self) -> &BTreeMap<ProjectPath, HashSet<Breakpoint>> {
-        &self.breakpoints
+    pub fn breakpoint_store(&self) -> &Entity<BreakpointStore> {
+        &self.breakpoint_store
     }
 
     async fn handle_session_has_shutdown(
@@ -461,84 +452,6 @@ impl DapStore {
             session.update(cx, |session, cx| {
                 session.set_ignore_breakpoints(!session.ignore_breakpoints(), cx);
             });
-        }
-    }
-
-    pub fn breakpoint_at_row(
-        &self,
-        row: u32,
-        project_path: &ProjectPath,
-        buffer_snapshot: BufferSnapshot,
-    ) -> Option<Breakpoint> {
-        let breakpoint_set = self.breakpoints.get(project_path)?;
-
-        breakpoint_set
-            .iter()
-            .find(|bp| bp.point_for_buffer_snapshot(&buffer_snapshot).row == row)
-            .cloned()
-    }
-
-    pub fn on_open_buffer(
-        &mut self,
-        project_path: &ProjectPath,
-        buffer: &Entity<Buffer>,
-        cx: &mut Context<Self>,
-    ) {
-        let entry = self.breakpoints.remove(project_path).unwrap_or_default();
-        let mut set_bp: HashSet<Breakpoint> = HashSet::default();
-
-        let buffer = buffer.read(cx);
-
-        for mut bp in entry.into_iter() {
-            bp.set_active_position(&buffer);
-            set_bp.insert(bp);
-        }
-
-        self.breakpoints.insert(project_path.clone(), set_bp);
-
-        cx.notify();
-    }
-
-    pub fn deserialize_breakpoints(
-        &mut self,
-        worktree_id: WorktreeId,
-        serialize_breakpoints: Vec<SerializedBreakpoint>,
-    ) {
-        for serialize_breakpoint in serialize_breakpoints {
-            self.breakpoints
-                .entry(ProjectPath {
-                    worktree_id,
-                    path: serialize_breakpoint.path.clone(),
-                })
-                .or_default()
-                .insert(Breakpoint {
-                    active_position: None,
-                    cached_position: serialize_breakpoint.position,
-                    kind: serialize_breakpoint.kind,
-                });
-        }
-    }
-
-    pub fn sync_open_breakpoints_to_closed_breakpoints(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(project_path) = buffer.read(cx).project_path(cx) else {
-            return;
-        };
-
-        if let Some(breakpoint_set) = self.breakpoints.remove(&project_path) {
-            let breakpoint_iter = breakpoint_set.into_iter().map(|mut bp| {
-                bp.cached_position = bp.point_for_buffer(buffer.read(cx)).row;
-                bp.active_position = None;
-                bp
-            });
-
-            self.breakpoints
-                .insert(project_path, breakpoint_iter.collect::<HashSet<_>>());
-
-            cx.notify();
         }
     }
 
@@ -1319,31 +1232,6 @@ impl DapStore {
         cx.notify();
     }
 
-    pub fn set_breakpoints_from_proto(
-        &mut self,
-        breakpoints: Vec<proto::SynchronizeBreakpoints>,
-        cx: &mut Context<Self>,
-    ) {
-        let mut new_breakpoints = BTreeMap::new();
-        for project_breakpoints in breakpoints {
-            let Some(project_path) = project_breakpoints.project_path else {
-                continue;
-            };
-
-            new_breakpoints.insert(
-                ProjectPath::from_proto(project_path),
-                project_breakpoints
-                    .breakpoints
-                    .into_iter()
-                    .filter_map(Breakpoint::from_proto)
-                    .collect::<HashSet<_>>(),
-            );
-        }
-
-        std::mem::swap(&mut self.breakpoints, &mut new_breakpoints);
-        cx.notify();
-    }
-
     async fn handle_shutdown_session_request(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::DapShutdownSession>,
@@ -1406,41 +1294,6 @@ impl DapStore {
 
     //     Ok(T::response_to_proto(&client_id, response))
     // }
-
-    async fn handle_synchronize_breakpoints(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::SynchronizeBreakpoints>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        let project_path = ProjectPath::from_proto(
-            envelope
-                .payload
-                .project_path
-                .context("Invalid Breakpoint call")?,
-        );
-
-        this.update(&mut cx, |store, cx| {
-            let breakpoints = envelope
-                .payload
-                .breakpoints
-                .into_iter()
-                .filter_map(Breakpoint::from_proto)
-                .collect::<HashSet<_>>();
-
-            if breakpoints.is_empty() {
-                store.breakpoints.remove(&project_path);
-            } else {
-                store.breakpoints.insert(project_path.clone(), breakpoints);
-            }
-
-            cx.emit(DapStoreEvent::BreakpointsChanged {
-                project_path,
-                source_changed: false,
-            });
-
-            cx.notify();
-        })
-    }
 
     async fn handle_set_debug_panel_item(
         this: Entity<Self>,
@@ -1543,58 +1396,6 @@ impl DapStore {
         })
     }
 
-    pub fn toggle_breakpoint_for_buffer(
-        &mut self,
-        project_path: &ProjectPath,
-        mut breakpoint: Breakpoint,
-        edit_action: BreakpointEditAction,
-        cx: &mut Context<Self>,
-    ) {
-        let upstream_client = self.upstream_client();
-
-        let breakpoint_set = self.breakpoints.entry(project_path.clone()).or_default();
-
-        match edit_action {
-            BreakpointEditAction::Toggle => {
-                if !breakpoint_set.remove(&breakpoint) {
-                    breakpoint_set.insert(breakpoint);
-                }
-            }
-            BreakpointEditAction::EditLogMessage(log_message) => {
-                if !log_message.is_empty() {
-                    breakpoint.kind = BreakpointKind::Log(log_message.clone());
-                    breakpoint_set.remove(&breakpoint);
-                    breakpoint_set.insert(breakpoint);
-                } else if matches!(&breakpoint.kind, BreakpointKind::Log(_)) {
-                    breakpoint_set.remove(&breakpoint);
-                }
-            }
-        }
-
-        if let Some((client, project_id)) = upstream_client.or(self.downstream_client.clone()) {
-            client
-                .send(client::proto::SynchronizeBreakpoints {
-                    project_id,
-                    project_path: Some(project_path.to_proto()),
-                    breakpoints: breakpoint_set
-                        .iter()
-                        .filter_map(|breakpoint| breakpoint.to_proto())
-                        .collect(),
-                })
-                .log_err();
-        }
-
-        if breakpoint_set.is_empty() {
-            self.breakpoints.remove(project_path);
-        }
-
-        cx.emit(DapStoreEvent::BreakpointsChanged {
-            project_path: project_path.clone(),
-            source_changed: false,
-        });
-        cx.notify();
-    }
-
     pub fn send_breakpoints(
         &self,
         client_id: DebugAdapterClientId,
@@ -1602,7 +1403,7 @@ impl DapStore {
         mut breakpoints: Vec<SourceBreakpoint>,
         ignore: bool,
         source_changed: bool,
-        cx: &Context<Self>,
+        cx: &App,
     ) -> Task<Result<()>> {
         let Some(client) = self
             .client_by_id(client_id, cx)
@@ -1646,15 +1447,17 @@ impl DapStore {
         absolute_path: PathBuf,
         buffer_snapshot: Option<BufferSnapshot>,
         source_changed: bool,
-        cx: &Context<Self>,
+        cx: &App,
     ) -> Task<Result<()>> {
         let source_breakpoints = self
+            .breakpoint_store
+            .read(cx)
             .breakpoints
             .get(project_path)
             .cloned()
             .unwrap_or_default()
             .iter()
-            .map(|bp| bp.source_for_snapshot(buffer_snapshot.as_ref()))
+            .map(|breakpoint| breakpoint.source_for_snapshot(buffer_snapshot.as_ref()))
             .collect::<Vec<_>>();
 
         let mut tasks = Vec::new();
@@ -1694,249 +1497,12 @@ impl DapStore {
         _: &mut Context<Self>,
     ) {
         self.downstream_client = Some((downstream_client.clone(), project_id));
-
-        for (project_path, breakpoints) in self.breakpoints.iter() {
-            downstream_client
-                .send(proto::SynchronizeBreakpoints {
-                    project_id,
-                    project_path: Some(project_path.to_proto()),
-                    breakpoints: breakpoints
-                        .iter()
-                        .filter_map(|breakpoint| breakpoint.to_proto())
-                        .collect(),
-                })
-                .log_err();
-        }
     }
 
     pub fn unshared(&mut self, cx: &mut Context<Self>) {
         self.downstream_client.take();
 
         cx.notify();
-    }
-}
-
-type LogMessage = Arc<str>;
-
-#[derive(Clone, Debug)]
-pub enum BreakpointEditAction {
-    Toggle,
-    EditLogMessage(LogMessage),
-}
-
-#[derive(Clone, Debug)]
-pub enum BreakpointKind {
-    Standard,
-    Log(LogMessage),
-}
-
-impl BreakpointKind {
-    pub fn to_int(&self) -> i32 {
-        match self {
-            BreakpointKind::Standard => 0,
-            BreakpointKind::Log(_) => 1,
-        }
-    }
-
-    pub fn log_message(&self) -> Option<LogMessage> {
-        match self {
-            BreakpointKind::Standard => None,
-            BreakpointKind::Log(message) => Some(message.clone()),
-        }
-    }
-}
-
-impl PartialEq for BreakpointKind {
-    fn eq(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-}
-
-impl Eq for BreakpointKind {}
-
-impl Hash for BreakpointKind {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        std::mem::discriminant(self).hash(state);
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Breakpoint {
-    pub active_position: Option<text::Anchor>,
-    pub cached_position: u32,
-    pub kind: BreakpointKind,
-}
-
-// Custom implementation for PartialEq, Eq, and Hash is done
-// to get toggle breakpoint to solely be based on a breakpoint's
-// location. Otherwise, a user can get in situation's where there's
-// overlapping breakpoint's with them being aware.
-impl PartialEq for Breakpoint {
-    fn eq(&self, other: &Self) -> bool {
-        match (&self.active_position, &other.active_position) {
-            (None, None) => self.cached_position == other.cached_position,
-            (None, Some(_)) => false,
-            (Some(_), None) => false,
-            (Some(self_position), Some(other_position)) => self_position == other_position,
-        }
-    }
-}
-
-impl Eq for Breakpoint {}
-
-impl Hash for Breakpoint {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        if self.active_position.is_some() {
-            self.active_position.hash(state);
-        } else {
-            self.cached_position.hash(state);
-        }
-    }
-}
-
-impl Breakpoint {
-    pub fn to_source_breakpoint(&self, buffer: &Buffer) -> SourceBreakpoint {
-        let line = self
-            .active_position
-            .map(|position| buffer.summary_for_anchor::<Point>(&position).row)
-            .unwrap_or(self.cached_position) as u64;
-
-        let log_message = match &self.kind {
-            BreakpointKind::Standard => None,
-            BreakpointKind::Log(message) => Some(message.clone().to_string()),
-        };
-
-        SourceBreakpoint {
-            line,
-            condition: None,
-            hit_condition: None,
-            log_message,
-            column: None,
-            mode: None,
-        }
-    }
-
-    pub fn set_active_position(&mut self, buffer: &Buffer) {
-        if self.active_position.is_none() {
-            self.active_position =
-                Some(buffer.breakpoint_anchor(Point::new(self.cached_position, 0)));
-        }
-    }
-
-    pub fn point_for_buffer(&self, buffer: &Buffer) -> Point {
-        self.active_position
-            .map(|position| buffer.summary_for_anchor::<Point>(&position))
-            .unwrap_or(Point::new(self.cached_position, 0))
-    }
-
-    pub fn point_for_buffer_snapshot(&self, buffer_snapshot: &BufferSnapshot) -> Point {
-        self.active_position
-            .map(|position| buffer_snapshot.summary_for_anchor::<Point>(&position))
-            .unwrap_or(Point::new(self.cached_position, 0))
-    }
-
-    pub fn source_for_snapshot(&self, snapshot: Option<&BufferSnapshot>) -> SourceBreakpoint {
-        let line = match snapshot {
-            Some(snapshot) => self
-                .active_position
-                .map(|position| snapshot.summary_for_anchor::<Point>(&position).row)
-                .unwrap_or(self.cached_position) as u64,
-            None => self.cached_position as u64,
-        };
-
-        let log_message = match &self.kind {
-            BreakpointKind::Standard => None,
-            BreakpointKind::Log(log_message) => Some(log_message.clone().to_string()),
-        };
-
-        SourceBreakpoint {
-            line,
-            condition: None,
-            hit_condition: None,
-            log_message,
-            column: None,
-            mode: None,
-        }
-    }
-
-    pub fn to_serialized(&self, buffer: Option<&Buffer>, path: Arc<Path>) -> SerializedBreakpoint {
-        match buffer {
-            Some(buffer) => SerializedBreakpoint {
-                position: self
-                    .active_position
-                    .map(|position| buffer.summary_for_anchor::<Point>(&position).row)
-                    .unwrap_or(self.cached_position),
-                path,
-                kind: self.kind.clone(),
-            },
-            None => SerializedBreakpoint {
-                position: self.cached_position,
-                path,
-                kind: self.kind.clone(),
-            },
-        }
-    }
-
-    pub fn to_proto(&self) -> Option<client::proto::Breakpoint> {
-        Some(client::proto::Breakpoint {
-            position: if let Some(position) = &self.active_position {
-                Some(serialize_text_anchor(position))
-            } else {
-                None
-            },
-            cached_position: self.cached_position,
-            kind: match self.kind {
-                BreakpointKind::Standard => proto::BreakpointKind::Standard.into(),
-                BreakpointKind::Log(_) => proto::BreakpointKind::Log.into(),
-            },
-            message: if let BreakpointKind::Log(message) = &self.kind {
-                Some(message.to_string())
-            } else {
-                None
-            },
-        })
-    }
-
-    pub fn from_proto(breakpoint: client::proto::Breakpoint) -> Option<Self> {
-        Some(Self {
-            active_position: if let Some(position) = breakpoint.position.clone() {
-                deserialize_anchor(position)
-            } else {
-                None
-            },
-            cached_position: breakpoint.cached_position,
-            kind: match proto::BreakpointKind::from_i32(breakpoint.kind) {
-                Some(proto::BreakpointKind::Log) => {
-                    BreakpointKind::Log(breakpoint.message.clone().unwrap_or_default().into())
-                }
-                None | Some(proto::BreakpointKind::Standard) => BreakpointKind::Standard,
-            },
-        })
-    }
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct SerializedBreakpoint {
-    pub position: u32,
-    pub path: Arc<Path>,
-    pub kind: BreakpointKind,
-}
-
-impl SerializedBreakpoint {
-    pub fn to_source_breakpoint(&self) -> SourceBreakpoint {
-        let log_message = match &self.kind {
-            BreakpointKind::Standard => None,
-            BreakpointKind::Log(message) => Some(message.clone().to_string()),
-        };
-
-        SourceBreakpoint {
-            line: self.position as u64,
-            condition: None,
-            hit_condition: None,
-            log_message,
-            column: None,
-            mode: None,
-        }
     }
 }
 

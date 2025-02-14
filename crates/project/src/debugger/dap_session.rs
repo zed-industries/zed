@@ -16,7 +16,6 @@ use gpui::{App, AppContext, Context, Entity, Task};
 use rpc::AnyProtoClient;
 use serde_json::Value;
 use std::borrow::Borrow;
-use std::collections::btree_map::Entry as BTreeMapEntry;
 use std::u64;
 use std::{
     any::Any,
@@ -411,6 +410,7 @@ impl Client {
                         .iter()
                         .map(|thread| (ThreadId(thread.id), Thread::from(thread.clone()))),
                 );
+                cx.notify();
             },
             cx,
         );
