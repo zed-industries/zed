@@ -401,7 +401,7 @@ impl VariableList {
         }
     }
 
-    pub(crate) fn to_proto(&self) -> proto::DebuggerVariableList {
+    pub(crate) fn _to_proto(&self) -> proto::DebuggerVariableList {
         let variables = self
             .variables
             .iter()

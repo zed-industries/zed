@@ -51,10 +51,7 @@ use dap::{
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
 use debugger::{
-    breakpoint_store::{
-        Breakpoint, BreakpointEditAction, BreakpointStore, BreakpointStoreEvent,
-        SerializedBreakpoint,
-    },
+    breakpoint_store::{BreakpointStore, BreakpointStoreEvent, SerializedBreakpoint},
     dap_store::{DapStore, DapStoreEvent},
 };
 pub use environment::ProjectEnvironment;

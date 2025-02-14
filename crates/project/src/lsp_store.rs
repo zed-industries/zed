@@ -39,9 +39,9 @@ use language::{
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter,
     CodeLabel, CompletionDocumentation, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
-    File as _, Language, LanguageName, LanguageRegistry, LanguageToolchainStore, LocalFile,
-    LspAdapter, LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
-    Transaction, Unclipped,
+    File as _, Language, LanguageRegistry, LanguageToolchainStore, LocalFile, LspAdapter,
+    LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
+    Unclipped,
 };
 use lsp::{
     notification::DidRenameFiles, CodeActionKind, CompletionContext, DiagnosticSeverity,

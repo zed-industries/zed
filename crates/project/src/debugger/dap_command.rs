@@ -18,7 +18,7 @@ pub(crate) trait DapCommand: 'static + Send + Sync + std::fmt::Debug {
     type DapRequest: 'static + Send + dap::requests::Request;
     type ProtoRequest: 'static + Send + proto::RequestMessage;
 
-    fn is_supported(capabilities: &Capabilities) -> bool {
+    fn is_supported(_capabilities: &Capabilities) -> bool {
         true
     }
 

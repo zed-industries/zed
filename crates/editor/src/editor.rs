@@ -80,13 +80,13 @@ use code_context_menus::{
 use git::blame::GitBlame;
 use gpui::{
     div, impl_actions, point, prelude::*, pulsating_between, px, relative, size, Action, Animation,
-    AnimationExt, AnyElement, App, AsyncWindowContext, AvailableSpace, Background, Bounds,
-    ClickEvent, ClipboardEntry, ClipboardItem, Context, DispatchPhase, ElementId, Entity,
-    EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight,
-    Global, HighlightStyle, Hsla, InteractiveText, KeyContext, Modifiers, MouseButton,
-    MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled,
-    StyledText, Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
-    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    AnimationExt, AnyElement, App, AsyncWindowContext, AvailableSpace, Bounds, ClickEvent,
+    ClipboardEntry, ClipboardItem, Context, DispatchPhase, ElementId, Entity, EntityInputHandler,
+    EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight, Global,
+    HighlightStyle, Hsla, InteractiveText, KeyContext, Modifiers, MouseButton, MouseDownEvent,
+    PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText, Subscription,
+    Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
+    WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -108,9 +108,7 @@ use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange}
 use linked_editing_ranges::refresh_linked_ranges;
 use mouse_context_menu::MouseContextMenu;
 use project::{
-    debugger::breakpoint_store::{
-        self, BreakpointEditAction, BreakpointStore, BreakpointStoreEvent,
-    },
+    debugger::breakpoint_store::{BreakpointEditAction, BreakpointStore, BreakpointStoreEvent},
     ProjectPath,
 };
 pub use proposed_changes_editor::{

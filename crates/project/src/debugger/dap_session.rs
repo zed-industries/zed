@@ -7,7 +7,6 @@ use super::dap_command::{
 use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap, IndexMap};
 use dap::client::{DebugAdapterClient, DebugAdapterClientId};
-use dap::requests::Request;
 use dap::{
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, SteppingGranularity,
 };
@@ -52,15 +51,15 @@ impl ThreadId {
 
 #[derive(Clone)]
 pub struct Variable {
-    dap: dap::Variable,
-    variables: Vec<Variable>,
+    _dap: dap::Variable,
+    _variables: Vec<Variable>,
 }
 
 impl From<dap::Variable> for Variable {
     fn from(dap: dap::Variable) -> Self {
         Self {
-            dap,
-            variables: vec![],
+            _dap: dap,
+            _variables: vec![],
         }
     }
 }

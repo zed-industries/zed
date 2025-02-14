@@ -37,7 +37,7 @@ pub enum ThreadItem {
 }
 
 impl ThreadItem {
-    fn to_proto(&self) -> proto::DebuggerThreadItem {
+    fn _to_proto(&self) -> proto::DebuggerThreadItem {
         match self {
             ThreadItem::Console => proto::DebuggerThreadItem::Console,
             ThreadItem::LoadedSource => proto::DebuggerThreadItem::LoadedSource,
@@ -65,7 +65,7 @@ pub struct DebugPanelItem {
     show_console_indicator: bool,
     module_list: Entity<ModuleList>,
     active_thread_item: ThreadItem,
-    workspace: WeakEntity<Workspace>,
+    _workspace: WeakEntity<Workspace>,
     client_id: DebugAdapterClientId,
     thread_state: Entity<ThreadState>,
     variable_list: Entity<VariableList>,
@@ -176,7 +176,7 @@ impl DebugPanelItem {
             session,
             console,
             thread_id,
-            workspace,
+            _workspace: workspace,
             module_list,
             thread_state,
             focus_handle,
@@ -475,7 +475,7 @@ impl DebugPanelItem {
             .map(|state| state.read(cx).capabilities().clone())
     }
 
-    fn clear_highlights(&self, cx: &mut Context<Self>) {
+    fn clear_highlights(&self, _cx: &mut Context<Self>) {
         // TODO(debugger): make this work again
         // if let Some((_, project_path, _)) = self.dap_store.read(cx).active_debug_line() {
         //     self.workspace
