@@ -149,11 +149,14 @@ impl MultiBufferDiffHunk {
 }
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
-pub struct PathKey(String);
+pub struct PathKey {
+    namespace: &'static str,
+    path: Arc<Path>,
+}
 
 impl PathKey {
-    pub fn namespaced(namespace: &str, path: &Path) -> Self {
-        Self(format!("{}/{}", namespace, path.to_string_lossy()))
+    pub fn namespaced(namespace: &'static str, path: Arc<Path>) -> Self {
+        Self { namespace, path }
     }
 }
 

@@ -111,6 +111,7 @@ pub trait GitRepository: Send + Sync {
     fn branch_exits(&self, _: &str) -> Result<bool>;
 
     fn reset(&self, commit: &str, mode: ResetMode) -> Result<()>;
+    fn checkout_files(&self, commit: &str, paths: &[RepoPath]) -> Result<()>;
 
     fn show(&self, commit: &str) -> Result<CommitDetails>;
 
@@ -227,6 +228,31 @@ impl GitRepository for RealGitRepository {
         if !output.status.success() {
             return Err(anyhow!(
                 "Failed to reset:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(())
+    }
+
+    fn checkout_files(&self, commit: &str, paths: &[RepoPath]) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let working_directory = self
+            .repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")?
+            .to_path_buf();
+
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["checkout", commit, "--"])
+            .args(paths.iter().map(|path| path.as_ref()))
+            .output()?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to checkout files:\n{}",
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
@@ -614,6 +640,10 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn reset(&self, _: &str, _: ResetMode) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn checkout_files(&self, _: &str, _: &[RepoPath]) -> Result<()> {
         unimplemented!()
     }
 

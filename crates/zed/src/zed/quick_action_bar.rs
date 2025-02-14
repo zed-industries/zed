@@ -97,10 +97,11 @@ impl Render for QuickActionBar {
             show_inline_completions,
             inline_completion_enabled,
         ) = {
+            let supports_inlay_hints =
+                editor.update(cx, |editor, cx| editor.supports_inlay_hints(cx));
             let editor = editor.read(cx);
             let selection_menu_enabled = editor.selection_menu_enabled(cx);
             let inlay_hints_enabled = editor.inlay_hints_enabled();
-            let supports_inlay_hints = editor.supports_inlay_hints(cx);
             let git_blame_inline_enabled = editor.git_blame_inline_enabled();
             let show_git_blame_gutter = editor.show_git_blame_gutter();
             let auto_signature_help_enabled = editor.auto_signature_help_enabled(cx);
@@ -472,13 +473,22 @@ impl ToolbarItemView for QuickActionBar {
             self._inlay_hints_enabled_subscription.take();
 
             if let Some(editor) = active_item.downcast::<Editor>() {
-                let mut inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
-                let mut supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
+                let (mut inlay_hints_enabled, mut supports_inlay_hints) =
+                    editor.update(cx, |editor, cx| {
+                        (
+                            editor.inlay_hints_enabled(),
+                            editor.supports_inlay_hints(cx),
+                        )
+                    });
                 self._inlay_hints_enabled_subscription =
                     Some(cx.observe(&editor, move |_, editor, cx| {
-                        let editor = editor.read(cx);
-                        let new_inlay_hints_enabled = editor.inlay_hints_enabled();
-                        let new_supports_inlay_hints = editor.supports_inlay_hints(cx);
+                        let (new_inlay_hints_enabled, new_supports_inlay_hints) =
+                            editor.update(cx, |editor, cx| {
+                                (
+                                    editor.inlay_hints_enabled(),
+                                    editor.supports_inlay_hints(cx),
+                                )
+                            });
                         let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
                             || supports_inlay_hints != new_supports_inlay_hints;
                         inlay_hints_enabled = new_inlay_hints_enabled;

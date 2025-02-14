@@ -1,9 +1,9 @@
 use crate::git_panel_settings::StatusStyle;
 use crate::repository_selector::RepositorySelectorPopoverMenu;
-use crate::ProjectDiff;
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
+use crate::{project_diff, ProjectDiff};
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::commit_tooltip::CommitTooltip;
@@ -13,6 +13,7 @@ use editor::{
 };
 use git::repository::{CommitDetails, ResetMode};
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
+use git::{DiscardTrackedChanges, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::*;
 use itertools::Itertools;
 use language::{markdown, Buffer, File, ParsedMarkdown};
@@ -26,13 +27,13 @@ use project::{
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration, usize};
+use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
     prelude::*, ButtonLike, Checkbox, ContextMenu, Divider, DividerColor, ElevationIndex, ListItem,
     ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
-use workspace::SaveIntent;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotificationId},
@@ -50,6 +51,21 @@ actions!(
         ToggleFillCoAuthors,
     ]
 );
+
+fn prompt<T>(msg: &str, detail: Option<&str>, window: &mut Window, cx: &mut App) -> Task<Result<T>>
+where
+    T: IntoEnumIterator + VariantNames + 'static,
+{
+    let rx = window.prompt(PromptLevel::Info, msg, detail, &T::VARIANTS, cx);
+    cx.spawn(|_| async move { Ok(T::iter().nth(rx.await?).unwrap()) })
+}
+
+#[derive(strum::EnumIter, strum::VariantNames)]
+#[strum(serialize_all = "title_case")]
+enum TrashCancel {
+    Trash,
+    Cancel,
+}
 
 const GIT_PANEL_KEY: &str = "GitPanel";
 
@@ -112,8 +128,8 @@ impl GitHeaderEntry {
     pub fn title(&self) -> &'static str {
         match self.header {
             Section::Conflict => "Conflicts",
-            Section::Tracked => "Changes",
-            Section::New => "New",
+            Section::Tracked => "Tracked",
+            Section::New => "Untracked",
         }
     }
 }
@@ -142,9 +158,17 @@ pub struct GitStatusEntry {
     pub(crate) is_staged: Option<bool>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TargetStatus {
+    Staged,
+    Unstaged,
+    Reverted,
+    Unchanged,
+}
+
 struct PendingOperation {
     finished: bool,
-    will_become_staged: bool,
+    target_status: TargetStatus,
     repo_paths: HashSet<RepoPath>,
     op_id: usize,
 }
@@ -599,7 +623,7 @@ impl GitPanel {
         });
     }
 
-    fn revert(
+    fn revert_selected(
         &mut self,
         _: &editor::actions::RevertFile,
         window: &mut Window,
@@ -608,28 +632,37 @@ impl GitPanel {
         maybe!({
             let list_entry = self.entries.get(self.selected_entry?)?.clone();
             let entry = list_entry.status_entry()?;
-            let active_repo = self.active_repository.as_ref()?;
+            self.revert_entry(&entry, window, cx);
+            Some(())
+        });
+    }
+
+    fn revert_entry(
+        &mut self,
+        entry: &GitStatusEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        maybe!({
+            let active_repo = self.active_repository.clone()?;
             let path = active_repo
                 .read(cx)
                 .repo_path_to_project_path(&entry.repo_path)?;
             let workspace = self.workspace.clone();
 
             if entry.status.is_staged() != Some(false) {
-                self.update_staging_area_for_entries(false, vec![entry.repo_path.clone()], cx);
+                self.perform_stage(false, vec![entry.repo_path.clone()], cx);
             }
+            let filename = path.path.file_name()?.to_string_lossy();
 
-            if entry.status.is_created() {
-                let prompt = window.prompt(
-                    PromptLevel::Info,
-                    "Do you want to trash this file?",
-                    None,
-                    &["Trash", "Cancel"],
-                    cx,
-                );
+            if !entry.status.is_created() {
+                self.perform_checkout(vec![entry.repo_path.clone()], cx);
+            } else {
+                let prompt = prompt(&format!("Trash {}?", filename), None, window, cx);
                 cx.spawn_in(window, |_, mut cx| async move {
-                    match prompt.await {
-                        Ok(0) => {}
-                        _ => return Ok(()),
+                    match prompt.await? {
+                        TrashCancel::Trash => {}
+                        TrashCancel::Cancel => return Ok(()),
                     }
                     let task = workspace.update(&mut cx, |workspace, cx| {
                         workspace
@@ -647,43 +680,233 @@ impl GitPanel {
                     cx,
                     |e, _, _| Some(format!("{e}")),
                 );
-                return Some(());
             }
-
-            let open_path = workspace.update(cx, |workspace, cx| {
-                workspace.open_path_preview(path, None, true, false, window, cx)
-            });
-
-            cx.spawn_in(window, |_, mut cx| async move {
-                let item = open_path?.await?;
-                let editor = cx.update(|_, cx| {
-                    item.act_as::<Editor>(cx)
-                        .ok_or_else(|| anyhow::anyhow!("didn't open editor"))
-                })??;
-
-                if let Some(task) =
-                    editor.update(&mut cx, |editor, _| editor.wait_for_diff_to_load())?
-                {
-                    task.await
-                };
-
-                editor.update_in(&mut cx, |editor, window, cx| {
-                    editor.revert_file(&Default::default(), window, cx);
-                })?;
-
-                workspace
-                    .update_in(&mut cx, |workspace, window, cx| {
-                        workspace.save_active_item(SaveIntent::Save, window, cx)
-                    })?
-                    .await?;
-                Ok(())
-            })
-            .detach_and_prompt_err("Failed to open file", window, cx, |e, _, _| {
-                Some(format!("{e}"))
-            });
-
             Some(())
         });
+    }
+
+    fn perform_checkout(&mut self, repo_paths: Vec<RepoPath>, cx: &mut Context<Self>) {
+        let workspace = self.workspace.clone();
+        let Some(active_repository) = self.active_repository.clone() else {
+            return;
+        };
+
+        let op_id = self.pending.iter().map(|p| p.op_id).max().unwrap_or(0) + 1;
+        self.pending.push(PendingOperation {
+            op_id,
+            target_status: TargetStatus::Reverted,
+            repo_paths: repo_paths.iter().cloned().collect(),
+            finished: false,
+        });
+        self.update_visible_entries(cx);
+        let task = cx.spawn(|_, mut cx| async move {
+            let tasks: Vec<_> = workspace.update(&mut cx, |workspace, cx| {
+                workspace.project().update(cx, |project, cx| {
+                    repo_paths
+                        .iter()
+                        .filter_map(|repo_path| {
+                            let path = active_repository
+                                .read(cx)
+                                .repo_path_to_project_path(&repo_path)?;
+                            Some(project.open_buffer(path, cx))
+                        })
+                        .collect()
+                })
+            })?;
+
+            let buffers = futures::future::join_all(tasks).await;
+
+            active_repository
+                .update(&mut cx, |repo, _| repo.checkout_files("HEAD", repo_paths))?
+                .await??;
+
+            let tasks: Vec<_> = cx.update(|cx| {
+                buffers
+                    .iter()
+                    .filter_map(|buffer| {
+                        buffer.as_ref().ok()?.update(cx, |buffer, cx| {
+                            buffer.is_dirty().then(|| buffer.reload(cx))
+                        })
+                    })
+                    .collect()
+            })?;
+
+            futures::future::join_all(tasks).await;
+
+            Ok(())
+        });
+
+        cx.spawn(|this, mut cx| async move {
+            let result = task.await;
+
+            this.update(&mut cx, |this, cx| {
+                for pending in this.pending.iter_mut() {
+                    if pending.op_id == op_id {
+                        pending.finished = true;
+                        if result.is_err() {
+                            pending.target_status = TargetStatus::Unchanged;
+                            this.update_visible_entries(cx);
+                        }
+                        break;
+                    }
+                }
+                result
+                    .map_err(|e| {
+                        this.show_err_toast(e, cx);
+                    })
+                    .ok();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn discard_tracked_changes(
+        &mut self,
+        _: &DiscardTrackedChanges,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entries = self
+            .entries
+            .iter()
+            .filter_map(|entry| entry.status_entry().cloned())
+            .filter(|status_entry| !status_entry.status.is_created())
+            .collect::<Vec<_>>();
+
+        match entries.len() {
+            0 => return,
+            1 => return self.revert_entry(&entries[0], window, cx),
+            _ => {}
+        }
+        let details = entries
+            .iter()
+            .filter_map(|entry| entry.repo_path.0.file_name())
+            .map(|filename| filename.to_string_lossy())
+            .join("\n");
+
+        #[derive(strum::EnumIter, strum::VariantNames)]
+        #[strum(serialize_all = "title_case")]
+        enum DiscardCancel {
+            DiscardTrackedChanges,
+            Cancel,
+        }
+        let prompt = prompt(
+            "Discard changes to these files?",
+            Some(&details),
+            window,
+            cx,
+        );
+        cx.spawn(|this, mut cx| async move {
+            match prompt.await {
+                Ok(DiscardCancel::DiscardTrackedChanges) => {
+                    this.update(&mut cx, |this, cx| {
+                        let repo_paths = entries.into_iter().map(|entry| entry.repo_path).collect();
+                        this.perform_checkout(repo_paths, cx);
+                    })
+                    .ok();
+                }
+                _ => {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn clean_all(&mut self, _: &TrashUntrackedFiles, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.workspace.clone();
+        let Some(active_repo) = self.active_repository.clone() else {
+            return;
+        };
+        let to_delete = self
+            .entries
+            .iter()
+            .filter_map(|entry| entry.status_entry())
+            .filter(|status_entry| status_entry.status.is_created())
+            .cloned()
+            .collect::<Vec<_>>();
+
+        match to_delete.len() {
+            0 => return,
+            1 => return self.revert_entry(&to_delete[0], window, cx),
+            _ => {}
+        };
+
+        let details = to_delete
+            .iter()
+            .map(|entry| {
+                entry
+                    .repo_path
+                    .0
+                    .file_name()
+                    .map(|f| f.to_string_lossy())
+                    .unwrap_or_default()
+            })
+            .join("\n");
+
+        let prompt = prompt("Trash these files?", Some(&details), window, cx);
+        cx.spawn_in(window, |this, mut cx| async move {
+            match prompt.await? {
+                TrashCancel::Trash => {}
+                TrashCancel::Cancel => return Ok(()),
+            }
+            let tasks = workspace.update(&mut cx, |workspace, cx| {
+                to_delete
+                    .iter()
+                    .filter_map(|entry| {
+                        workspace.project().update(cx, |project, cx| {
+                            let project_path = active_repo
+                                .read(cx)
+                                .repo_path_to_project_path(&entry.repo_path)?;
+                            project.delete_file(project_path, true, cx)
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })?;
+            let to_unstage = to_delete
+                .into_iter()
+                .filter_map(|entry| {
+                    if entry.status.is_staged() != Some(false) {
+                        Some(entry.repo_path.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            this.update(&mut cx, |this, cx| {
+                this.perform_stage(false, to_unstage, cx)
+            })?;
+            for task in tasks {
+                task.await?;
+            }
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to trash files", window, cx, |e, _, _| {
+            Some(format!("{e}"))
+        });
+    }
+
+    fn stage_all(&mut self, _: &StageAll, _window: &mut Window, cx: &mut Context<Self>) {
+        let repo_paths = self
+            .entries
+            .iter()
+            .filter_map(|entry| entry.status_entry())
+            .filter(|status_entry| status_entry.is_staged != Some(true))
+            .map(|status_entry| status_entry.repo_path.clone())
+            .collect::<Vec<_>>();
+        self.perform_stage(true, repo_paths, cx);
+    }
+
+    fn unstage_all(&mut self, _: &UnstageAll, _window: &mut Window, cx: &mut Context<Self>) {
+        let repo_paths = self
+            .entries
+            .iter()
+            .filter_map(|entry| entry.status_entry())
+            .filter(|status_entry| status_entry.is_staged != Some(false))
+            .map(|status_entry| status_entry.repo_path.clone())
+            .collect::<Vec<_>>();
+        self.perform_stage(false, repo_paths, cx);
     }
 
     fn toggle_staged_for_entry(
@@ -720,22 +943,21 @@ impl GitPanel {
                 (goal_staged_state, entries)
             }
         };
-        self.update_staging_area_for_entries(stage, repo_paths, cx);
+        self.perform_stage(stage, repo_paths, cx);
     }
 
-    fn update_staging_area_for_entries(
-        &mut self,
-        stage: bool,
-        repo_paths: Vec<RepoPath>,
-        cx: &mut Context<Self>,
-    ) {
+    fn perform_stage(&mut self, stage: bool, repo_paths: Vec<RepoPath>, cx: &mut Context<Self>) {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
         let op_id = self.pending.iter().map(|p| p.op_id).max().unwrap_or(0) + 1;
         self.pending.push(PendingOperation {
             op_id,
-            will_become_staged: stage,
+            target_status: if stage {
+                TargetStatus::Staged
+            } else {
+                TargetStatus::Unstaged
+            },
             repo_paths: repo_paths.iter().cloned().collect(),
             finished: false,
         });
@@ -1105,6 +1327,14 @@ impl GitPanel {
             let is_new = entry.status.is_created();
             let is_staged = entry.status.is_staged();
 
+            if self.pending.iter().any(|pending| {
+                pending.target_status == TargetStatus::Reverted
+                    && !pending.finished
+                    && pending.repo_paths.contains(&entry.repo_path)
+            }) {
+                continue;
+            }
+
             let display_name = if difference > 1 {
                 // Show partial path for deeply nested files
                 entry
@@ -1236,7 +1466,12 @@ impl GitPanel {
     fn entry_is_staged(&self, entry: &GitStatusEntry) -> Option<bool> {
         for pending in self.pending.iter().rev() {
             if pending.repo_paths.contains(&entry.repo_path) {
-                return Some(pending.will_become_staged);
+                match pending.target_status {
+                    TargetStatus::Staged => return Some(true),
+                    TargetStatus::Unstaged => return Some(false),
+                    TargetStatus::Reverted => continue,
+                    TargetStatus::Unchanged => continue,
+                }
             }
         }
         entry.is_staged
@@ -1246,6 +1481,10 @@ impl GitPanel {
         self.tracked_staged_count > 0
             || self.new_staged_count > 0
             || self.conflicted_staged_count > 0
+    }
+
+    fn has_conflicts(&self) -> bool {
+        self.conflicted_count > 0
     }
 
     fn has_tracked_changes(&self) -> bool {
@@ -1316,10 +1555,17 @@ impl GitPanel {
                 .is_above_project()
         });
 
-        self.panel_header_container(window, cx)
-            .when(all_repositories.len() > 1 || has_repo_above, |el| {
-                el.child(self.render_repository_selector(cx))
-            })
+        self.panel_header_container(window, cx).when(
+            all_repositories.len() > 1 || has_repo_above,
+            |el| {
+                el.child(
+                    Label::new("Repository")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(self.render_repository_selector(cx))
+            },
+        )
     }
 
     pub fn render_repository_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1701,6 +1947,12 @@ impl GitPanel {
                 .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
                 .track_scroll(self.scroll_handle.clone()),
             )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    this.deploy_panel_context_menu(event.position, window, cx)
+                }),
+            )
             .children(self.render_scrollbar(cx))
     }
 
@@ -1743,7 +1995,7 @@ impl GitPanel {
         repo.update(cx, |repo, cx| repo.show(sha, cx))
     }
 
-    fn deploy_context_menu(
+    fn deploy_entry_context_menu(
         &mut self,
         position: Point<Pixels>,
         ix: usize,
@@ -1768,7 +2020,38 @@ impl GitPanel {
                 .action("Open Diff", Confirm.boxed_clone())
                 .action("Open File", SecondaryConfirm.boxed_clone())
         });
+        self.selected_entry = Some(ix);
+        self.set_context_menu(context_menu, position, window, cx);
+    }
 
+    fn deploy_panel_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
+            context_menu
+                .action("Stage All", StageAll.boxed_clone())
+                .action("Unstage All", UnstageAll.boxed_clone())
+                .action("Open Diff", project_diff::Diff.boxed_clone())
+                .separator()
+                .action(
+                    "Discard Tracked Changes",
+                    DiscardTrackedChanges.boxed_clone(),
+                )
+                .action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
+        });
+        self.set_context_menu(context_menu, position, window, cx);
+    }
+
+    fn set_context_menu(
+        &mut self,
+        context_menu: Entity<ContextMenu>,
+        position: Point<Pixels>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -1782,7 +2065,6 @@ impl GitPanel {
                 cx.notify();
             },
         );
-        self.selected_entry = Some(ix);
         self.context_menu = Some((context_menu, position, subscription));
         cx.notify();
     }
@@ -1834,14 +2116,14 @@ impl GitPanel {
 
         let mut is_staged: ToggleState = self.entry_is_staged(entry).into();
 
-        if !self.has_staged_changes() && !entry.status.is_created() {
+        if !self.has_staged_changes() && !self.has_conflicts() && !entry.status.is_created() {
             is_staged = ToggleState::Selected;
         }
 
         let checkbox = Checkbox::new(id, is_staged)
             .disabled(!has_write_access)
             .fill()
-            .placeholder(!self.has_staged_changes())
+            .placeholder(!self.has_staged_changes() && !self.has_conflicts())
             .elevation(ElevationIndex::Surface)
             .on_click({
                 let entry = entry.clone();
@@ -1888,7 +2170,8 @@ impl GitPanel {
                     })
                     .on_secondary_mouse_down(cx.listener(
                         move |this, event: &MouseDownEvent, window, cx| {
-                            this.deploy_context_menu(event.position, ix, window, cx)
+                            this.deploy_entry_context_menu(event.position, ix, window, cx);
+                            cx.stop_propagation();
                         },
                     ))
                     .child(
@@ -1921,12 +2204,7 @@ impl GitPanel {
 impl Render for GitPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
-        let has_entries = self
-            .active_repository
-            .as_ref()
-            .map_or(false, |active_repository| {
-                active_repository.read(cx).entry_count() > 0
-            });
+        let has_entries = self.entries.len() > 0;
         let room = self
             .workspace
             .upgrade()
@@ -1959,10 +2237,14 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::close_panel))
             .on_action(cx.listener(Self::open_diff))
             .on_action(cx.listener(Self::open_file))
-            .on_action(cx.listener(Self::revert))
+            .on_action(cx.listener(Self::revert_selected))
             .on_action(cx.listener(Self::focus_changes_list))
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::toggle_staged_for_selected))
+            .on_action(cx.listener(Self::stage_all))
+            .on_action(cx.listener(Self::unstage_all))
+            .on_action(cx.listener(Self::discard_tracked_changes))
+            .on_action(cx.listener(Self::clean_all))
             .when(has_write_access && has_co_authors, |git_panel| {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })

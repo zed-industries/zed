@@ -16,6 +16,7 @@ use crate::provider::{
     deepseek::DeepSeekSettings,
     google::GoogleSettings,
     lmstudio::LmStudioSettings,
+    mistral::MistralSettings,
     ollama::OllamaSettings,
     open_ai::OpenAiSettings,
 };
@@ -63,6 +64,7 @@ pub struct AllLanguageModelSettings {
     pub copilot_chat: CopilotChatSettings,
     pub lmstudio: LmStudioSettings,
     pub deepseek: DeepSeekSettings,
+    pub mistral: MistralSettings,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -76,6 +78,7 @@ pub struct AllLanguageModelSettingsContent {
     pub google: Option<GoogleSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub copilot_chat: Option<CopilotChatSettingsContent>,
+    pub mistral: Option<MistralSettingsContent>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -169,6 +172,12 @@ pub struct LmStudioSettingsContent {
 pub struct DeepseekSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::deepseek::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct MistralSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<provider::mistral::AvailableModel>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -355,6 +364,17 @@ impl settings::Settings for AllLanguageModelSettings {
                     .google
                     .as_ref()
                     .and_then(|s| s.available_models.clone()),
+            );
+
+            // Mistral
+            let mistral = value.mistral.clone();
+            merge(
+                &mut settings.mistral.api_url,
+                mistral.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.mistral.available_models,
+                mistral.as_ref().and_then(|s| s.available_models.clone()),
             );
         }
 

@@ -27,7 +27,7 @@ jobs:
       - run: pnpm install --dir script/issue_response
 
       - name: Run Issue Response
-        run: pnpm exec ts-node script/issue_response/main.ts
+        run: pnpm run --dir script/issue_response start
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SLACK_ISSUE_RESPONSE_WEBHOOK_URL: ${{ secrets.SLACK_ISSUE_RESPONSE_WEBHOOK_URL }}

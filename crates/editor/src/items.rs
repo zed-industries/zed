@@ -1401,11 +1401,9 @@ impl SearchableItem for Editor {
         cx: &mut Context<Self>,
     ) {
         self.unfold_ranges(matches, false, false, cx);
-        let mut ranges = Vec::new();
-        for m in matches {
-            ranges.push(self.range_for_match(m))
-        }
-        self.change_selections(None, window, cx, |s| s.select_ranges(ranges));
+        self.change_selections(None, window, cx, |s| {
+            s.select_ranges(matches.iter().cloned())
+        });
     }
     fn replace(
         &mut self,
