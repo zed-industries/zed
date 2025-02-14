@@ -1,5 +1,3 @@
-mod supported_countries;
-
 use anyhow::{anyhow, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
@@ -7,8 +5,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::TryFrom;
 use strum::EnumIter;
-
-pub use supported_countries::*;
 
 pub const MISTRAL_API_URL: &str = "https://api.mistral.ai/v1";
 
