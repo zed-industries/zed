@@ -11,6 +11,7 @@
     "MERGE_MSG": "vcs",
     "NOTES_EDITMSG": "vcs",
     "R": "r",
+    "Rmd":"rmarkdown",
     "RData":"storage",
     "TAG_EDITMSG": "vcs",
     "aac": "audio",
