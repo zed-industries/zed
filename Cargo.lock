@@ -11090,6 +11090,7 @@ dependencies = [
  "gpui",
  "http_client",
  "log",
+ "regex",
  "reqwest 0.12.8",
  "serde",
  "smol",
