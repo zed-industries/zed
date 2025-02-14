@@ -16,7 +16,7 @@ use gpui::{
 use project::debugger::dap_session::{DebugSession, ThreadId};
 use rpc::proto::{self, DebuggerThreadStatus, PeerId, SetDebuggerPanelItem};
 use settings::Settings;
-use ui::{prelude::*, ContextMenu, Indicator, PopoverMenu, Tooltip};
+use ui::{prelude::*, ContextMenu, DropdownMenu, Indicator, PopoverMenu, Tooltip};
 use workspace::{
     item::{self, Item, ItemEvent},
     FollowableItem, ViewId, Workspace,
@@ -779,7 +779,7 @@ impl FollowableItem for DebugPanelItem {
 }
 
 impl Render for DebugPanelItem {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let thread_status = self.thread_state.read(cx).status;
         let active_thread_item = &self.active_thread_item;
 
@@ -968,26 +968,19 @@ impl Render for DebugPanelItem {
                                     ),
                             )
                             //.child(h_flex())
-                            .child(
-                                h_flex().p_1().mx_2().w_3_4().justify_end().child(
-                                    PopoverMenu::new("thread-list")
-                                        .trigger(
-                                            Button::new("thread-list-trigger", "Threads")
-                                                .style(ButtonStyle::Filled)
-                                                .disabled(thread_status != ThreadStatus::Stopped)
-                                                .size(ButtonSize::Compact),
+                            .child(h_flex().p_1().mx_2().w_3_4().justify_end().child(
+                                DropdownMenu::new(
+                                    "thread-list",
+                                    "Threads",
+                                    ContextMenu::build(window, cx, |this, _, _| {
+                                        this.entry("Thread 1", None, |_, _| {}).entry(
+                                            "Thread 2",
+                                            None,
+                                            |_, _| {},
                                         )
-                                        .menu(|window, cx| {
-                                            Some(ContextMenu::build(window, cx, |this, _, _| {
-                                                this.entry("Thread 1", None, |_, _| {}).entry(
-                                                    "Thread 2",
-                                                    None,
-                                                    |_, _| {},
-                                                )
-                                            }))
-                                        }),
+                                    }),
                                 ),
-                            ),
+                            )),
                     )
                     .child(
                         h_flex()
