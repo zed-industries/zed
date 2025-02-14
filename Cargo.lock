@@ -15495,6 +15495,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "install_cli",
+ "language",
  "picker",
  "project",
  "schemars",
