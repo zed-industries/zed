@@ -29,6 +29,7 @@ use rpc::{
     AnyProtoClient, EntityMessageSubscriber, ErrorExt, ProtoClient, ProtoMessageHandlerSet,
     RpcError,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smol::{
     fs,
@@ -60,7 +61,7 @@ pub struct SshSocket {
     socket_path: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
 pub struct SshPortForwardOption {
     pub local_host: Option<String>,
     pub local_port: u16,

@@ -52,20 +52,7 @@ impl SshSettings {
                     host,
                     port,
                     username,
-                    port_forwards: match conn.port_forwards {
-                        Some(forwards) => Some(
-                            forwards
-                                .into_iter()
-                                .map(|v| SshPortForwardOption {
-                                    local_host: v.local_host,
-                                    local_port: v.local_port,
-                                    remote_host: v.remote_host,
-                                    remote_port: v.remote_port,
-                                })
-                                .collect(),
-                        ),
-                        None => None,
-                    },
+                    port_forwards: conn.port_forwards,
                     password: None,
                 };
             }
@@ -77,14 +64,6 @@ impl SshSettings {
             ..Default::default()
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
-pub struct SshPortForward {
-    pub local_host: Option<String>,
-    pub local_port: u16,
-    pub remote_host: String,
-    pub remote_port: u16,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -110,7 +89,7 @@ pub struct SshConnection {
     pub upload_binary_over_ssh: Option<bool>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub port_forwards: Option<Vec<SshPortForward>>,
+    pub port_forwards: Option<Vec<SshPortForwardOption>>,
 }
 
 impl From<SshConnection> for SshConnectionOptions {
@@ -123,20 +102,7 @@ impl From<SshConnection> for SshConnectionOptions {
             args: Some(val.args),
             nickname: val.nickname,
             upload_binary_over_ssh: val.upload_binary_over_ssh.unwrap_or_default(),
-            port_forwards: match val.port_forwards {
-                Some(forwards) => Some(
-                    forwards
-                        .into_iter()
-                        .map(|v| SshPortForwardOption {
-                            local_host: v.local_host,
-                            local_port: v.local_port,
-                            remote_host: v.remote_host,
-                            remote_port: v.remote_port,
-                        })
-                        .collect(),
-                ),
-                None => None,
-            },
+            port_forwards: val.port_forwards,
         }
     }
 }
