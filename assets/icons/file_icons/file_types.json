@@ -12,7 +12,7 @@
     "NOTES_EDITMSG": "vcs",
     "R": "r",
     "Rmd":"rmarkdown",
-    "RData":"storage",
+    "RData":"rdata",
     "TAG_EDITMSG": "vcs",
     "aac": "audio",
     "accdb": "storage",
