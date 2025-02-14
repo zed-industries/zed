@@ -45,12 +45,10 @@ impl From<Role> for String {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    // Premier models
     #[serde(rename = "codestral-latest", alias = "codestral-latest")]
     CodestralLatest,
     #[serde(rename = "mistral-large-latest", alias = "mistral-large-latest")]
     MistralLargeLatest,
-    // free models
     #[serde(rename = "mistral-small-latest", alias = "mistral-small-latest")]
     MistralSmallLatest,
     #[serde(rename = "open-mistral-nemo", alias = "open-mistral-nemo")]
@@ -162,7 +160,7 @@ pub struct FunctionDefinition {
     pub description: Option<String>,
     pub parameters: Option<Value>,
 }
-// ------
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompletionRequest {
     pub model: String,
