@@ -3,7 +3,7 @@ use std::any::{Any, TypeId};
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use collections::HashSet;
-use editor::{scroll::Autoscroll, Editor, EditorEvent};
+use editor::{scroll::Autoscroll, Editor, EditorEvent, ToPoint};
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
 use gpui::{
@@ -180,13 +180,6 @@ impl ProjectDiff {
         };
         let repo = git_repo.read(cx);
 
-        let Some(abs_path) = repo
-            .repo_path_to_project_path(&entry.repo_path)
-            .and_then(|project_path| self.project.read(cx).absolute_path(&project_path, cx))
-        else {
-            return;
-        };
-
         let namespace = if repo.has_conflict(&entry.repo_path) {
             CONFLICT_NAMESPACE
         } else if entry.status.is_created() {
@@ -195,22 +188,19 @@ impl ProjectDiff {
             TRACKED_NAMESPACE
         };
 
-        let path_key = PathKey::namespaced(namespace, &abs_path);
+        let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
 
         self.scroll_to_path(path_key, window, cx)
     }
 
     fn scroll_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
-        dbg!("scroll to path");
         if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
             self.editor.update(cx, |editor, cx| {
                 editor.change_selections(Some(Autoscroll::focused()), window, cx, |s| {
-                    dbg!("doing it");
                     s.select_ranges([position..position]);
                 })
             })
         } else {
-            dbg!("waiting");
             self.pending_scroll = Some(path_key);
         }
     }
@@ -225,7 +215,12 @@ impl ProjectDiff {
         match event {
             EditorEvent::ScrollPositionChanged { .. } => editor.update(cx, |editor, cx| {
                 let anchor = editor.scroll_manager.anchor().anchor;
-                let Some((_, buffer, _)) = self.multibuffer.read(cx).excerpt_containing(anchor, cx)
+                let multibuffer = self.multibuffer.read(cx);
+                let snapshot = multibuffer.snapshot(cx);
+                let mut point = anchor.to_point(&snapshot);
+                point.row = (point.row + 1).min(snapshot.max_row().0);
+
+                let Some((_, buffer, _)) = self.multibuffer.read(cx).excerpt_containing(point, cx)
                 else {
                     return;
                 };
@@ -269,9 +264,6 @@ impl ProjectDiff {
                 let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path) else {
                     continue;
                 };
-                let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
-                    continue;
-                };
                 let namespace = if repo.has_conflict(&entry.repo_path) {
                     CONFLICT_NAMESPACE
                 } else if entry.status.is_created() {
@@ -279,7 +271,7 @@ impl ProjectDiff {
                 } else {
                     TRACKED_NAMESPACE
                 };
-                let path_key = PathKey::namespaced(namespace, &abs_path);
+                let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
 
                 previous_paths.remove(&path_key);
                 let load_buffer = self

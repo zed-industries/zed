@@ -2208,7 +2208,6 @@ impl Editor {
 
         if changed {
             if let Some(autoscroll) = autoscroll {
-                dbg!(std::backtrace::Backtrace::force_capture());
                 self.request_autoscroll(autoscroll, cx);
             }
             self.selections_did_change(true, &old_cursor_position, request_completions, window, cx);
