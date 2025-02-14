@@ -15489,12 +15489,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "copilot",
  "db",
  "editor",
  "fuzzy",
  "gpui",
  "install_cli",
+ "language",
  "picker",
  "project",
  "schemars",
