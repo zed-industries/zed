@@ -1711,7 +1711,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                "/root",
+                path!("/root"),
                 json!({
                     "a": {
                     },
@@ -1721,7 +1721,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/a/new")],
+                &[PathBuf::from(path!("/root/a/new"))],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,

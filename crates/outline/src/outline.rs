@@ -370,6 +370,7 @@ mod tests {
     use language::{Language, LanguageConfig, LanguageMatcher};
     use project::{FakeFs, Project};
     use serde_json::json;
+    use util::path;
     use workspace::{AppState, Workspace};
 
     #[gpui::test]
@@ -377,7 +378,7 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "a.rs": indoc!{"
                     struct SingleLine; // display line 0
@@ -391,7 +392,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
 
         let (workspace, cx) =
@@ -402,7 +403,9 @@ mod tests {
             })
         });
         let _buffer = project
-            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
             .await
             .unwrap();
         let editor = workspace

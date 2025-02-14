@@ -134,7 +134,7 @@ use project::{
     lsp_store::{FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
-    LspStore, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
+    PrepareRenameResponse, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
 };
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
@@ -1492,9 +1492,8 @@ impl Editor {
 
             if let Some(buffer) = buffer.read(cx).as_singleton() {
                 if let Some(project) = this.project.as_ref() {
-                    let lsp_store = project.read(cx).lsp_store();
-                    let handle = lsp_store.update(cx, |lsp_store, cx| {
-                        lsp_store.register_buffer_with_language_servers(&buffer, cx)
+                    let handle = project.update(cx, |project, cx| {
+                        project.register_buffer_with_language_servers(&buffer, cx)
                     });
                     this.registered_buffers
                         .insert(buffer.read(cx).remote_id(), handle);
@@ -1891,16 +1890,14 @@ impl Editor {
 
     fn register_buffers_with_language_servers(&mut self, cx: &mut Context<Self>) {
         let buffers = self.buffer.read(cx).all_buffers();
-        let Some(lsp_store) = self.lsp_store(cx) else {
+        let Some(project) = self.project.as_ref() else {
             return;
         };
-        lsp_store.update(cx, |lsp_store, cx| {
+        project.update(cx, |project, cx| {
             for buffer in buffers {
                 self.registered_buffers
                     .entry(buffer.read(cx).remote_id())
-                    .or_insert_with(|| {
-                        lsp_store.register_buffer_with_language_servers(&buffer, cx)
-                    });
+                    .or_insert_with(|| project.register_buffer_with_language_servers(&buffer, cx));
             }
         })
     }
@@ -2100,14 +2097,14 @@ impl Editor {
             };
             if let Some(buffer_id) = new_cursor_position.buffer_id {
                 if !self.registered_buffers.contains_key(&buffer_id) {
-                    if let Some(lsp_store) = self.lsp_store(cx) {
-                        lsp_store.update(cx, |lsp_store, cx| {
+                    if let Some(project) = self.project.as_ref() {
+                        project.update(cx, |project, cx| {
                             let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
                                 return;
                             };
                             self.registered_buffers.insert(
                                 buffer_id,
-                                lsp_store.register_buffer_with_language_servers(&buffer, cx),
+                                project.register_buffer_with_language_servers(&buffer, cx),
                             );
                         })
                     }
@@ -11638,7 +11635,10 @@ impl Editor {
         if let Some(project) = self.project.clone() {
             self.buffer.update(cx, |multi_buffer, cx| {
                 project.update(cx, |project, cx| {
-                    project.restart_language_servers_for_buffers(multi_buffer.all_buffers(), cx);
+                    project.restart_language_servers_for_buffers(
+                        multi_buffer.all_buffers().into_iter().collect(),
+                        cx,
+                    );
                 });
             })
         }
@@ -14051,12 +14051,6 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn lsp_store(&self, cx: &App) -> Option<Entity<LspStore>> {
-        self.project
-            .as_ref()
-            .map(|project| project.read(cx).lsp_store())
-    }
-
     fn on_buffer_changed(&mut self, _: Entity<MultiBuffer>, cx: &mut Context<Self>) {
         cx.notify();
     }
@@ -14083,11 +14077,11 @@ impl Editor {
                 if let Some(buffer) = buffer_edited {
                     let buffer_id = buffer.read(cx).remote_id();
                     if !self.registered_buffers.contains_key(&buffer_id) {
-                        if let Some(lsp_store) = self.lsp_store(cx) {
-                            lsp_store.update(cx, |lsp_store, cx| {
+                        if let Some(project) = self.project.as_ref() {
+                            project.update(cx, |project, cx| {
                                 self.registered_buffers.insert(
                                     buffer_id,
-                                    lsp_store.register_buffer_with_language_servers(&buffer, cx),
+                                    project.register_buffer_with_language_servers(&buffer, cx),
                                 );
                             })
                         }
@@ -14097,28 +14091,23 @@ impl Editor {
                 cx.emit(SearchEvent::MatchesInvalidated);
                 if *singleton_buffer_edited {
                     if let Some(project) = &self.project {
-                        let project = project.read(cx);
                         #[allow(clippy::mutable_key_type)]
-                        let languages_affected = multibuffer
-                            .read(cx)
-                            .all_buffers()
-                            .into_iter()
-                            .filter_map(|buffer| {
-                                let buffer = buffer.read(cx);
-                                let language = buffer.language()?;
-                                if project.is_local()
-                                    && project
-                                        .language_servers_for_local_buffer(buffer, cx)
-                                        .count()
-                                        == 0
-                                {
-                                    None
-                                } else {
-                                    Some(language)
-                                }
-                            })
-                            .cloned()
-                            .collect::<HashSet<_>>();
+                        let languages_affected = multibuffer.update(cx, |multibuffer, cx| {
+                            multibuffer
+                                .all_buffers()
+                                .into_iter()
+                                .filter_map(|buffer| {
+                                    buffer.update(cx, |buffer, cx| {
+                                        let language = buffer.language()?;
+                                        let should_discard = project.update(cx, |project, cx| {
+                                            project.is_local()
+                                                && !project.has_language_servers_for(buffer, cx)
+                                        });
+                                        should_discard.not().then_some(language.clone())
+                                    })
+                                })
+                                .collect::<HashSet<_>>()
+                        });
                         if !languages_affected.is_empty() {
                             self.refresh_inlay_hints(
                                 InlayHintRefreshReason::BufferEdited(languages_affected),
@@ -14711,15 +14700,18 @@ impl Editor {
         self.handle_input(text, window, cx);
     }
 
-    pub fn supports_inlay_hints(&self, cx: &App) -> bool {
+    pub fn supports_inlay_hints(&self, cx: &mut App) -> bool {
         let Some(provider) = self.semantics_provider.as_ref() else {
             return false;
         };
 
         let mut supports = false;
-        self.buffer().read(cx).for_each_buffer(|buffer| {
-            supports |= provider.supports_inlay_hints(buffer, cx);
+        self.buffer().update(cx, |this, cx| {
+            this.for_each_buffer(|buffer| {
+                supports |= provider.supports_inlay_hints(buffer, cx);
+            });
         });
+
         supports
     }
 
@@ -15267,7 +15259,7 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<InlayHint>>>;
 
-    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &App) -> bool;
+    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool;
 
     fn document_highlights(
         &self,
@@ -15661,17 +15653,13 @@ impl SemanticsProvider for Entity<Project> {
         }))
     }
 
-    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
+    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
         // TODO: make this work for remote projects
-        self.read(cx)
-            .language_servers_for_local_buffer(buffer.read(cx), cx)
-            .any(
-                |(_, server)| match server.capabilities().inlay_hint_provider {
-                    Some(lsp::OneOf::Left(enabled)) => enabled,
-                    Some(lsp::OneOf::Right(_)) => true,
-                    None => false,
-                },
-            )
+        self.update(cx, |this, cx| {
+            buffer.update(cx, |buffer, cx| {
+                this.any_language_server_supports_inlay_hints(buffer, cx)
+            })
+        })
     }
 
     fn inlay_hints(
