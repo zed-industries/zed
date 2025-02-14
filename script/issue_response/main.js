@@ -62,6 +62,8 @@ async function main() {
     },
   ];
 
+  console.log(JSON.stringify(blocks, undefined, 2));
+
   await webhook.send({ blocks: blocks });
 }
 
