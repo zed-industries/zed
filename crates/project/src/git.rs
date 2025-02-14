@@ -65,6 +65,11 @@ pub enum Message {
         commit: SharedString,
         reset_mode: ResetMode,
     },
+    CheckoutFiles {
+        repo: GitRepo,
+        commit: SharedString,
+        paths: Vec<RepoPath>,
+    },
     Stage(GitRepo, Vec<RepoPath>),
     Unstage(GitRepo, Vec<RepoPath>),
     SetIndexText(GitRepo, RepoPath, Option<String>),
@@ -106,6 +111,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_commit);
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
+        client.add_entity_request_handler(Self::handle_checkout_files);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
         client.add_entity_request_handler(Self::handle_set_index_text);
     }
@@ -121,8 +127,6 @@ impl GitStore {
         event: &WorktreeStoreEvent,
         cx: &mut Context<'_, Self>,
     ) {
-        // TODO inspect the event
-
         let mut new_repositories = Vec::new();
         let mut new_active_index = None;
         let this = cx.weak_entity();
@@ -276,6 +280,36 @@ impl GitStore {
                                     ResetMode::Soft => git_reset::ResetMode::Soft.into(),
                                     ResetMode::Mixed => git_reset::ResetMode::Mixed.into(),
                                 },
+                            })
+                            .await?;
+                    }
+                }
+                Ok(())
+            }
+
+            Message::CheckoutFiles {
+                repo,
+                commit,
+                paths,
+            } => {
+                match repo {
+                    GitRepo::Local(repo) => repo.checkout_files(&commit, &paths)?,
+                    GitRepo::Remote {
+                        project_id,
+                        client,
+                        worktree_id,
+                        work_directory_id,
+                    } => {
+                        client
+                            .request(proto::GitCheckoutFiles {
+                                project_id: project_id.0,
+                                worktree_id: worktree_id.to_proto(),
+                                work_directory_id: work_directory_id.to_proto(),
+                                commit: commit.into(),
+                                paths: paths
+                                    .into_iter()
+                                    .map(|p| p.to_string_lossy().to_string())
+                                    .collect(),
                             })
                             .await?;
                     }
@@ -502,6 +536,30 @@ impl GitStore {
         Ok(proto::Ack {})
     }
 
+    async fn handle_checkout_files(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCheckoutFiles>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+        let paths = envelope
+            .payload
+            .paths
+            .iter()
+            .map(|s| RepoPath::from_str(s))
+            .collect();
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.checkout_files(&envelope.payload.commit, paths)
+            })?
+            .await??;
+        Ok(proto::Ack {})
+    }
+
     async fn handle_open_commit_message_buffer(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::OpenCommitMessageBuffer>,
@@ -710,6 +768,26 @@ impl Repository {
             })?;
             Ok(buffer)
         })
+    }
+
+    pub fn checkout_files(
+        &self,
+        commit: &str,
+        paths: Vec<RepoPath>,
+    ) -> oneshot::Receiver<Result<()>> {
+        let (result_tx, result_rx) = futures::channel::oneshot::channel();
+        let commit = commit.to_string().into();
+        self.update_sender
+            .unbounded_send((
+                Message::CheckoutFiles {
+                    repo: self.git_repo.clone(),
+                    commit,
+                    paths,
+                },
+                result_tx,
+            ))
+            .ok();
+        result_rx
     }
 
     pub fn reset(&self, commit: &str, reset_mode: ResetMode) -> oneshot::Receiver<Result<()>> {
