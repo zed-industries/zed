@@ -63,9 +63,11 @@ pub struct SshSocket {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
 pub struct SshPortForwardOption {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub local_host: Option<String>,
     pub local_port: u16,
-    pub remote_host: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_host: Option<String>,
     pub remote_port: u16,
 }
 
@@ -111,7 +113,7 @@ fn parse_port_forward_spec(spec: &str) -> Result<SshPortForwardOption> {
             Ok(SshPortForwardOption {
                 local_host: Some(parts[0].to_string()),
                 local_port,
-                remote_host: parts[2].to_string(),
+                remote_host: Some(parts[2].to_string()),
                 remote_port,
             })
         }
@@ -122,7 +124,7 @@ fn parse_port_forward_spec(spec: &str) -> Result<SshPortForwardOption> {
             Ok(SshPortForwardOption {
                 local_host: None,
                 local_port,
-                remote_host: parts[1].to_string(),
+                remote_host: Some(parts[1].to_string()),
                 remote_port,
             })
         }
@@ -301,12 +303,20 @@ impl SshConnectionOptions {
         let mut args = self.args.iter().flatten().cloned().collect::<Vec<String>>();
 
         if let Some(forwards) = &self.port_forwards {
-            args.extend(forwards.iter().map(|pf| match &pf.local_host {
-                Some(host) => format!(
-                    "-L {}:{}:{}:{}",
-                    host, pf.local_port, pf.remote_host, pf.remote_port
-                ),
-                None => format!("-L {}:{}:{}", pf.local_port, pf.remote_host, pf.remote_port),
+            args.extend(forwards.iter().map(|pf| {
+                let local_host = match &pf.local_host {
+                    Some(host) => host,
+                    None => "localhost",
+                };
+                let remote_host = match &pf.remote_host {
+                    Some(host) => host,
+                    None => "localhost",
+                };
+
+                format!(
+                    "-L{}:{}:{}:{}",
+                    local_host, pf.local_port, remote_host, pf.remote_port
+                )
             }));
         }
 
