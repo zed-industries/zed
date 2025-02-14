@@ -84,12 +84,12 @@ members = [
     "crates/media",
     "crates/menu",
     "crates/migrator",
+    "crates/mistral",
     "crates/multi_buffer",
     "crates/node_runtime",
     "crates/notifications",
     "crates/ollama",
     "crates/open_ai",
-    "crates/mistral",
     "crates/outline",
     "crates/outline_panel",
     "crates/panel",
@@ -284,12 +284,12 @@ markdown_preview = { path = "crates/markdown_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
 migrator = { path = "crates/migrator" }
+mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
 open_ai = { path = "crates/open_ai" }
-mistral = { path = "crates/mistral" }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 paths = { path = "crates/paths" }
