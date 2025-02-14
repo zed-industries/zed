@@ -5332,7 +5332,7 @@ impl LspStore {
         })
     }
 
-    pub(crate) fn language_servers_for_local_buffer<'a>(
+    pub fn language_servers_for_local_buffer<'a>(
         &'a self,
         buffer: &Buffer,
         cx: &mut App,

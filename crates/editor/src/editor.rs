@@ -13865,11 +13865,7 @@ impl Editor {
                                         let language = buffer.language()?;
                                         let should_discard = project.update(cx, |project, cx| {
                                             project.is_local()
-                                                && project.for_language_servers_for_local_buffer(
-                                                    buffer,
-                                                    |it| it.count() == 0,
-                                                    cx,
-                                                )
+                                                && !project.has_language_servers_for(buffer, cx)
                                         });
                                         should_discard.not().then_some(language.clone())
                                     })
@@ -14476,7 +14472,7 @@ impl Editor {
         self.buffer().update(cx, |this, cx| {
             this.for_each_buffer(|buffer| {
                 supports |= provider.supports_inlay_hints(buffer, cx);
-            })
+            });
         });
 
         supports
@@ -15418,21 +15414,9 @@ impl SemanticsProvider for Entity<Project> {
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
         // TODO: make this work for remote projects
-        buffer.update(cx, |buffer, cx| {
-            self.update(cx, |this, cx| {
-                this.for_language_servers_for_local_buffer(
-                    buffer,
-                    |mut it| {
-                        it.any(
-                            |(_, server)| match server.capabilities().inlay_hint_provider {
-                                Some(lsp::OneOf::Left(enabled)) => enabled,
-                                Some(lsp::OneOf::Right(_)) => true,
-                                None => false,
-                            },
-                        )
-                    },
-                    cx,
-                )
+        self.update(cx, |this, cx| {
+            buffer.update(cx, |buffer, cx| {
+                this.any_language_server_supports_inlay_hints(buffer, cx)
             })
         })
     }

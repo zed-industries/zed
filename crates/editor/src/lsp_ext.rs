@@ -35,19 +35,7 @@ where
                 Entry::Vacant(vacant_entry) => {
                     let language_server_id = buffer.update(cx, |buffer, cx| {
                         project.update(cx, |project, cx| {
-                            project.for_language_servers_for_local_buffer(
-                                buffer,
-                                |mut it| {
-                                    it.find_map(|(adapter, server)| {
-                                        if adapter.name.0.as_ref() == language_server_name {
-                                            Some(server.server_id())
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                },
-                                cx,
-                            )
+                            project.language_server_id_for_name(buffer, language_server_name, cx)
                         })
                     });
                     vacant_entry.insert(language_server_id)

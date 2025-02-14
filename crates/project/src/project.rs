@@ -57,14 +57,13 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent,
-    CachedLspAdapter, Capability, CodeLabel, CompletionDocumentation, File as _, Language,
-    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList,
-    Transaction, Unclipped,
+    language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent, Capability,
+    CodeLabel, CompletionDocumentation, File as _, Language, LanguageName, LanguageRegistry,
+    PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction, Unclipped,
 };
 use lsp::{
-    CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer,
-    LanguageServerId, LanguageServerName, MessageActionItem,
+    CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServerId,
+    LanguageServerName, MessageActionItem,
 };
 use lsp_command::*;
 use lsp_store::{LspFormatTarget, OpenLspBufferHandle};
@@ -4322,24 +4321,54 @@ impl Project {
         self.lsp_store.read(cx).supplementary_language_servers()
     }
 
-    pub fn language_server_for_id(
-        &self,
-        id: LanguageServerId,
-        cx: &App,
-    ) -> Option<Arc<LanguageServer>> {
-        self.lsp_store.read(cx).language_server_for_id(id)
-    }
-
-    pub fn for_language_servers_for_local_buffer<R: 'static>(
+    pub fn any_language_server_supports_inlay_hints<'a>(
         &self,
         buffer: &Buffer,
-        callback: impl FnOnce(
-            Box<dyn Iterator<Item = (&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> + '_>,
-        ) -> R,
         cx: &mut App,
-    ) -> R {
+    ) -> bool {
         self.lsp_store.update(cx, |this, cx| {
-            callback(Box::new(this.language_servers_for_local_buffer(buffer, cx)))
+            this.language_servers_for_local_buffer(buffer, cx)
+                .any(
+                    |(_, server)| match server.capabilities().inlay_hint_provider {
+                        Some(lsp::OneOf::Left(enabled)) => enabled,
+                        Some(lsp::OneOf::Right(_)) => true,
+                        None => false,
+                    },
+                )
+        })
+    }
+
+    pub fn language_server_id_for_name<'a>(
+        &self,
+        buffer: &Buffer,
+        name: &str,
+        cx: &mut App,
+    ) -> Option<LanguageServerId> {
+        self.lsp_store.update(cx, |this, cx| {
+            this.language_servers_for_local_buffer(buffer, cx)
+                .find_map(|(adapter, server)| {
+                    if adapter.name.0 == name {
+                        Some(server.server_id())
+                    } else {
+                        None
+                    }
+                })
+        })
+    }
+
+    pub fn has_language_servers_for<'a>(&self, buffer: &Buffer, cx: &mut App) -> bool {
+        self.lsp_store.update(cx, |this, cx| {
+            this.language_servers_for_local_buffer(buffer, cx)
+                .next()
+                .is_some()
+        })
+    }
+
+    pub fn la<'a>(&self, buffer: &Buffer, cx: &mut App) -> bool {
+        self.lsp_store.update(cx, |this, cx| {
+            this.language_servers_for_local_buffer(buffer, cx)
+                .next()
+                .is_some()
         })
     }
 
