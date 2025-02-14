@@ -11320,6 +11320,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         0,
         "Should not restart LSP server on an unrelated LSP settings change"
     );
+
     update_test_project_settings(cx, |project_settings| {
         project_settings.lsp.insert(
             language_server_name.into(),
@@ -11332,13 +11333,13 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
             },
         );
     });
-
     cx.executor().run_until_parked();
     assert_eq!(
         server_restarts.load(atomic::Ordering::Acquire),
         1,
         "Should restart LSP server on a related LSP settings change"
     );
+
     update_test_project_settings(cx, |project_settings| {
         project_settings.lsp.insert(
             language_server_name.into(),
@@ -11357,6 +11358,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         1,
         "Should not restart LSP server on a related LSP settings change that is the same"
     );
+
     update_test_project_settings(cx, |project_settings| {
         project_settings.lsp.insert(
             language_server_name.into(),
@@ -14043,6 +14045,59 @@ async fn test_edit_after_expanded_modification_hunk(
         }"#
         .unindent(),
     );
+}
+
+#[gpui::test]
+async fn test_stage_and_unstage_added_file_hunk(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_editor(|editor, _, cx| {
+        editor.set_expand_all_diff_hunks(cx);
+    });
+
+    let working_copy = r#"
+            ˇfn main() {
+                println!("hello, world!");
+            }
+        "#
+    .unindent();
+
+    cx.set_state(&working_copy);
+    executor.run_until_parked();
+
+    cx.assert_state_with_diff(
+        r#"
+            + ˇfn main() {
+            +     println!("hello, world!");
+            + }
+        "#
+        .unindent(),
+    );
+    cx.assert_index_text(None);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_staged_selected_diff_hunks(&ToggleStagedSelectedDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_index_text(Some(&working_copy.replace("ˇ", "")));
+    cx.assert_state_with_diff(
+        r#"
+            + ˇfn main() {
+            +     println!("hello, world!");
+            + }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_staged_selected_diff_hunks(&ToggleStagedSelectedDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_index_text(None);
 }
 
 async fn setup_indent_guides_editor(
