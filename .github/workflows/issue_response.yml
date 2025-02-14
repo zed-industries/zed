@@ -27,7 +27,7 @@ jobs:
       - run: pnpm install --dir script/issue_response
 
       - name: Run Issue Response
-        run: pnpm run --dir script/issue_response run
+        run: pnpm run --dir script/issue_response start
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SLACK_ISSUE_RESPONSE_WEBHOOK_URL: ${{ secrets.SLACK_ISSUE_RESPONSE_WEBHOOK_URL }}
