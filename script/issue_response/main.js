@@ -60,7 +60,7 @@ async function main() {
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;");
 
-    return `${index + 1}. ${formattedDate}: <${issue.html_url}|${sanitizedTitle}>`;
+    return `${index + 1}. ${formattedDate}: <${issue.html_url}|${sanitizedTitle}>\n`;
   });
 
   const sections = [];
@@ -87,7 +87,7 @@ async function main() {
     type: "section",
     text: {
       type: "mrkdwn",
-      text: section.join("\n"),
+      text: section.join("").trimEnd(),
     },
   }));
 
