@@ -2361,7 +2361,7 @@ impl MultiBuffer {
         self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], true, cx);
     }
 
-    pub fn all_diff_hunks_expanded(&mut self) -> bool {
+    pub fn all_diff_hunks_expanded(&self) -> bool {
         self.all_diff_hunks_expanded
     }
 
@@ -2401,6 +2401,9 @@ impl MultiBuffer {
         expand: bool,
         cx: &mut Context<Self>,
     ) {
+        if self.all_diff_hunks_expanded && !expand {
+            return;
+        }
         self.sync(cx);
         let mut snapshot = self.snapshot.borrow_mut();
         let mut excerpt_edits = Vec::new();
