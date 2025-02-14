@@ -371,7 +371,7 @@ impl GitRepository for RealGitRepository {
             "%(contents:subject)",
         ]
         .join("%00");
-        let args = vec!["for-each-ref", "refs/heads/*", "--format", &fields];
+        let args = vec!["for-each-ref", "refs/heads/**/*", "--format", &fields];
 
         let output = new_std_command(&self.git_binary_path)
             .current_dir(&working_directory)

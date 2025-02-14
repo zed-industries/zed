@@ -25,9 +25,9 @@ use util::{maybe, ResultExt};
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
 
 pub struct GitStore {
+    buffer_store: Entity<BufferStore>,
     pub(super) project_id: Option<ProjectId>,
     pub(super) client: Option<AnyProtoClient>,
-    buffer_store: Entity<BufferStore>,
     repositories: Vec<Entity<Repository>>,
     active_index: Option<usize>,
     update_sender: mpsc::UnboundedSender<(Message, oneshot::Sender<Result<()>>)>,
@@ -378,10 +378,10 @@ impl GitStore {
             .collect();
 
         repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.stage_entries(entries)
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.stage_entries(entries, cx)
             })?
-            .await??;
+            .await?;
         Ok(proto::Ack {})
     }
 
@@ -404,10 +404,10 @@ impl GitStore {
             .collect();
 
         repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.unstage_entries(entries)
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.unstage_entries(entries, cx)
             })?
-            .await??;
+            .await?;
 
         Ok(proto::Ack {})
     }
@@ -762,48 +762,102 @@ impl Repository {
         }
     }
 
-    pub fn stage_entries(&self, entries: Vec<RepoPath>) -> oneshot::Receiver<Result<()>> {
-        let (result_tx, result_rx) = futures::channel::oneshot::channel();
-        if entries.is_empty() {
-            result_tx.send(Ok(())).ok();
-            return result_rx;
-        }
-        self.update_sender
-            .unbounded_send((Message::Stage(self.git_repo.clone(), entries), result_tx))
-            .ok();
-        result_rx
+    fn buffer_store(&self, cx: &App) -> Option<Entity<BufferStore>> {
+        Some(self.git_store.upgrade()?.read(cx).buffer_store.clone())
     }
 
-    pub fn unstage_entries(&self, entries: Vec<RepoPath>) -> oneshot::Receiver<Result<()>> {
+    pub fn stage_entries(&self, entries: Vec<RepoPath>, cx: &mut App) -> Task<anyhow::Result<()>> {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
         if entries.is_empty() {
-            result_tx.send(Ok(())).ok();
-            return result_rx;
+            return Task::ready(Ok(()));
         }
-        self.update_sender
-            .unbounded_send((Message::Unstage(self.git_repo.clone(), entries), result_tx))
-            .ok();
-        result_rx
+
+        let mut save_futures = Vec::new();
+        if let Some(buffer_store) = self.buffer_store(cx) {
+            buffer_store.update(cx, |buffer_store, cx| {
+                for path in &entries {
+                    let Some(path) = self.repository_entry.unrelativize(path) else {
+                        continue;
+                    };
+                    let project_path = (self.worktree_id, path).into();
+                    if let Some(buffer) = buffer_store.get_by_path(&project_path, cx) {
+                        save_futures.push(buffer_store.save_buffer(buffer, cx));
+                    }
+                }
+            })
+        }
+
+        let update_sender = self.update_sender.clone();
+        let git_repo = self.git_repo.clone();
+        cx.spawn(|_| async move {
+            for save_future in save_futures {
+                save_future.await?;
+            }
+            update_sender
+                .unbounded_send((Message::Stage(git_repo, entries), result_tx))
+                .ok();
+            result_rx.await.anyhow()??;
+            Ok(())
+        })
     }
 
-    pub fn stage_all(&self) -> oneshot::Receiver<Result<()>> {
+    pub fn unstage_entries(
+        &self,
+        entries: Vec<RepoPath>,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<()>> {
+        let (result_tx, result_rx) = futures::channel::oneshot::channel();
+        if entries.is_empty() {
+            return Task::ready(Ok(()));
+        }
+
+        let mut save_futures = Vec::new();
+        if let Some(buffer_store) = self.buffer_store(cx) {
+            buffer_store.update(cx, |buffer_store, cx| {
+                for path in &entries {
+                    let Some(path) = self.repository_entry.unrelativize(path) else {
+                        continue;
+                    };
+                    let project_path = (self.worktree_id, path).into();
+                    if let Some(buffer) = buffer_store.get_by_path(&project_path, cx) {
+                        save_futures.push(buffer_store.save_buffer(buffer, cx));
+                    }
+                }
+            })
+        }
+
+        let update_sender = self.update_sender.clone();
+        let git_repo = self.git_repo.clone();
+        cx.spawn(|_| async move {
+            for save_future in save_futures {
+                save_future.await?;
+            }
+            update_sender
+                .unbounded_send((Message::Unstage(git_repo, entries), result_tx))
+                .ok();
+            result_rx.await.anyhow()??;
+            Ok(())
+        })
+    }
+
+    pub fn stage_all(&self, cx: &mut App) -> Task<anyhow::Result<()>> {
         let to_stage = self
             .repository_entry
             .status()
             .filter(|entry| !entry.status.is_staged().unwrap_or(false))
             .map(|entry| entry.repo_path.clone())
             .collect();
-        self.stage_entries(to_stage)
+        self.stage_entries(to_stage, cx)
     }
 
-    pub fn unstage_all(&self) -> oneshot::Receiver<Result<()>> {
+    pub fn unstage_all(&self, cx: &mut App) -> Task<anyhow::Result<()>> {
         let to_unstage = self
             .repository_entry
             .status()
             .filter(|entry| entry.status.is_staged().unwrap_or(true))
             .map(|entry| entry.repo_path.clone())
             .collect();
-        self.unstage_entries(to_unstage)
+        self.unstage_entries(to_unstage, cx)
     }
 
     /// Get a count of all entries in the active repository, including

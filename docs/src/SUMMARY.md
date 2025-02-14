@@ -45,6 +45,7 @@
 - [Prompts](./assistant/prompting.md)
 - [Context Servers](./assistant/context-servers.md)
   - [Model Context Protocol](./assistant/model-context-protocol.md)
+- [Model Improvement](./model-improvement.md)
 
 # Extensions
 

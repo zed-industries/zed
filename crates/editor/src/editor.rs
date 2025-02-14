@@ -143,7 +143,7 @@ use project::{
     lsp_store::{FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
-    LspStore, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
+    PrepareRenameResponse, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
 };
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
@@ -171,12 +171,15 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
-use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
+use theme::{
+    observe_buffer_font_size_adjustment, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme,
+    ThemeColors, ThemeSettings,
+};
 use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize, Key,
     Tooltip,
 };
-use util::{defer, maybe, post_inc, RangeExt, ResultExt, TakeUntilExt, TryFutureExt};
+use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
 use workspace::notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt};
 use workspace::{
@@ -203,8 +206,7 @@ pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
-pub(crate) const EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT: &str =
-    "edit_prediction_requires_modifier";
+pub(crate) const EDIT_PREDICTION_CONFLICT_KEY_CONTEXT: &str = "edit_prediction_conflict";
 
 pub fn render_parsed_markdown(
     element_id: impl Into<ElementId>,
@@ -516,15 +518,6 @@ enum EditPredictionSettings {
         show_in_menu: bool,
         preview_requires_modifier: bool,
     },
-}
-
-impl EditPredictionSettings {
-    pub fn is_enabled(&self) -> bool {
-        match self {
-            EditPredictionSettings::Disabled => false,
-            EditPredictionSettings::Enabled { .. } => true,
-        }
-    }
 }
 
 enum InlineCompletionHighlight {}
@@ -1480,6 +1473,7 @@ impl Editor {
                 cx.observe_in(&display_map, window, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                 cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
+                observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
                 cx.observe_window_activation(window, |editor, window, cx| {
                     let active = window.is_window_active();
                     editor.blink_manager.update(cx, |blink_manager, cx| {
@@ -1525,9 +1519,8 @@ impl Editor {
 
             if let Some(buffer) = buffer.read(cx).as_singleton() {
                 if let Some(project) = this.project.as_ref() {
-                    let lsp_store = project.read(cx).lsp_store();
-                    let handle = lsp_store.update(cx, |lsp_store, cx| {
-                        lsp_store.register_buffer_with_language_servers(&buffer, cx)
+                    let handle = project.update(cx, |project, cx| {
+                        project.register_buffer_with_language_servers(&buffer, cx)
                     });
                     this.registered_buffers
                         .insert(buffer.read(cx).remote_id(), handle);
@@ -1572,13 +1565,10 @@ impl Editor {
             key_context.add("renaming");
         }
 
-        let mut showing_completions = false;
-
         match self.context_menu.borrow().as_ref() {
             Some(CodeContextMenu::Completions(_)) => {
                 key_context.add("menu");
                 key_context.add("showing_completions");
-                showing_completions = true;
             }
             Some(CodeContextMenu::CodeActions(_)) => {
                 key_context.add("menu");
@@ -1606,15 +1596,11 @@ impl Editor {
         }
 
         if has_active_edit_prediction {
-            key_context.add("copilot_suggestion");
-            key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
-            if showing_completions
-                || self.edit_prediction_requires_modifier()
-                // Require modifier key when the cursor is on leading whitespace, to allow `tab`
-                // bindings to insert tab characters.
-                || (self.edit_prediction_requires_modifier_in_leading_space && self.edit_prediction_cursor_on_leading_whitespace)
-            {
-                key_context.add(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT);
+            if self.edit_prediction_in_conflict() {
+                key_context.add(EDIT_PREDICTION_CONFLICT_KEY_CONTEXT);
+            } else {
+                key_context.add(EDIT_PREDICTION_KEY_CONTEXT);
+                key_context.add("copilot_suggestion");
             }
         }
 
@@ -1625,18 +1611,52 @@ impl Editor {
         key_context
     }
 
+    pub fn edit_prediction_in_conflict(&self) -> bool {
+        if !self.show_edit_predictions_in_menu() {
+            return false;
+        }
+
+        let showing_completions = self
+            .context_menu
+            .borrow()
+            .as_ref()
+            .map_or(false, |context| {
+                matches!(context, CodeContextMenu::Completions(_))
+            });
+
+        showing_completions
+            || self.edit_prediction_requires_modifier()
+            // Require modifier key when the cursor is on leading whitespace, to allow `tab`
+            // bindings to insert tab characters.
+            || (self.edit_prediction_requires_modifier_in_leading_space && self.edit_prediction_cursor_on_leading_whitespace)
+    }
+
     pub fn accept_edit_prediction_keybind(
         &self,
         window: &Window,
         cx: &App,
     ) -> AcceptEditPredictionBinding {
         let key_context = self.key_context_internal(true, window, cx);
+        let in_conflict = self.edit_prediction_in_conflict();
+
         AcceptEditPredictionBinding(
             window
                 .bindings_for_action_in_context(&AcceptEditPrediction, key_context)
                 .into_iter()
+                .filter(|binding| {
+                    !in_conflict
+                        || binding
+                            .keystrokes()
+                            .first()
+                            .map_or(false, |keystroke| keystroke.modifiers.modified())
+                })
                 .rev()
-                .next(),
+                .min_by_key(|binding| {
+                    binding
+                        .keystrokes()
+                        .first()
+                        .map_or(u8::MAX, |k| k.modifiers.number_of_modifiers())
+                }),
         )
     }
 
@@ -1897,16 +1917,14 @@ impl Editor {
 
     fn register_buffers_with_language_servers(&mut self, cx: &mut Context<Self>) {
         let buffers = self.buffer.read(cx).all_buffers();
-        let Some(lsp_store) = self.lsp_store(cx) else {
+        let Some(project) = self.project.as_ref() else {
             return;
         };
-        lsp_store.update(cx, |lsp_store, cx| {
+        project.update(cx, |project, cx| {
             for buffer in buffers {
                 self.registered_buffers
                     .entry(buffer.read(cx).remote_id())
-                    .or_insert_with(|| {
-                        lsp_store.register_buffer_with_language_servers(&buffer, cx)
-                    });
+                    .or_insert_with(|| project.register_buffer_with_language_servers(&buffer, cx));
             }
         })
     }
@@ -2106,14 +2124,14 @@ impl Editor {
             };
             if let Some(buffer_id) = new_cursor_position.buffer_id {
                 if !self.registered_buffers.contains_key(&buffer_id) {
-                    if let Some(lsp_store) = self.lsp_store(cx) {
-                        lsp_store.update(cx, |lsp_store, cx| {
+                    if let Some(project) = self.project.as_ref() {
+                        project.update(cx, |project, cx| {
                             let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
                                 return;
                             };
                             self.registered_buffers.insert(
                                 buffer_id,
-                                lsp_store.register_buffer_with_language_servers(&buffer, cx),
+                                project.register_buffer_with_language_servers(&buffer, cx),
                             );
                         })
                     }
@@ -5324,11 +5342,6 @@ impl Editor {
         self.edit_prediction_settings =
             self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
 
-        if !self.edit_prediction_settings.is_enabled() {
-            self.discard_inline_completion(false, cx);
-            return None;
-        }
-
         self.edit_prediction_cursor_on_leading_whitespace =
             multibuffer.is_line_whitespace_upto(cursor);
 
@@ -6243,52 +6256,23 @@ impl Editor {
             } => {
                 let first_edit_row = edits.first()?.0.start.text_anchor.to_point(&snapshot).row;
 
-                let highlighted_edits = crate::inline_completion_edit_text(
+                let (highlighted_edits, has_more_lines) = crate::inline_completion_edit_text(
                     &snapshot,
                     &edits,
                     edit_preview.as_ref()?,
                     true,
                     cx,
-                );
+                )
+                .first_line_preview();
 
-                let len_total = highlighted_edits.text.len();
-                let first_line = &highlighted_edits.text
-                    [..highlighted_edits.text.find('\n').unwrap_or(len_total)];
-                let first_line_len = first_line.len();
-
-                let first_highlight_start = highlighted_edits
-                    .highlights
-                    .first()
-                    .map_or(0, |(range, _)| range.start);
-                let drop_prefix_len = first_line
-                    .char_indices()
-                    .find(|(_, c)| !c.is_whitespace())
-                    .map_or(first_highlight_start, |(ix, _)| {
-                        ix.min(first_highlight_start)
-                    });
-
-                let preview_text = &first_line[drop_prefix_len..];
-                let preview_len = preview_text.len();
-                let highlights = highlighted_edits
-                    .highlights
-                    .into_iter()
-                    .take_until(|(range, _)| range.start > first_line_len)
-                    .map(|(range, style)| {
-                        (
-                            range.start - drop_prefix_len
-                                ..(range.end - drop_prefix_len).min(preview_len),
-                            style,
-                        )
-                    });
-
-                let styled_text = gpui::StyledText::new(SharedString::new(preview_text))
-                    .with_highlights(&style.text, highlights);
+                let styled_text = gpui::StyledText::new(highlighted_edits.text)
+                    .with_highlights(&style.text, highlighted_edits.highlights);
 
                 let preview = h_flex()
                     .gap_1()
                     .min_w_16()
                     .child(styled_text)
-                    .when(len_total > first_line_len, |parent| parent.child("…"));
+                    .when(has_more_lines, |parent| parent.child("…"));
 
                 let left = if first_edit_row != cursor_point.row {
                     render_relative_row_jump("", cursor_point.row, first_edit_row)
@@ -7211,10 +7195,10 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let selections = self.selections.all(cx).into_iter().map(|s| s.range());
-        self.revert_hunks_in_ranges(selections, window, cx);
+        self.discard_hunks_in_ranges(selections, window, cx);
     }
 
-    fn revert_hunks_in_ranges(
+    fn discard_hunks_in_ranges(
         &mut self,
         ranges: impl Iterator<Item = Range<Point>>,
         window: &mut Window,
@@ -12139,7 +12123,10 @@ impl Editor {
         if let Some(project) = self.project.clone() {
             self.buffer.update(cx, |multi_buffer, cx| {
                 project.update(cx, |project, cx| {
-                    project.restart_language_servers_for_buffers(multi_buffer.all_buffers(), cx);
+                    project.restart_language_servers_for_buffers(
+                        multi_buffer.all_buffers().into_iter().collect(),
+                        cx,
+                    );
                 });
             })
         }
@@ -12993,10 +12980,7 @@ impl Editor {
         snapshot: &MultiBufferSnapshot,
     ) -> bool {
         let mut hunks = self.diff_hunks_in_ranges(ranges, &snapshot);
-        hunks.any(|hunk| {
-            log::debug!("considering {hunk:?}");
-            hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk
-        })
+        hunks.any(|hunk| hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk)
     }
 
     pub fn toggle_staged_selected_diff_hunks(
@@ -13597,7 +13581,12 @@ impl Editor {
         }
     }
 
-    pub fn copy_path(&mut self, _: &CopyPath, _window: &mut Window, cx: &mut Context<Self>) {
+    pub fn copy_path(
+        &mut self,
+        _: &zed_actions::workspace::CopyPath,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(path) = self.target_file_abs_path(cx) {
             if let Some(path) = path.to_str() {
                 cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
@@ -13607,7 +13596,7 @@ impl Editor {
 
     pub fn copy_relative_path(
         &mut self,
-        _: &CopyRelativePath,
+        _: &zed_actions::workspace::CopyRelativePath,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -14170,14 +14159,14 @@ impl Editor {
         &self,
         window: &mut Window,
         cx: &mut App,
-    ) -> BTreeMap<DisplayRow, Background> {
+    ) -> BTreeMap<DisplayRow, Hsla> {
         let snapshot = self.snapshot(window, cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
             .iter()
             .flat_map(|(_, highlighted_rows)| highlighted_rows.iter())
             .fold(
-                BTreeMap::<DisplayRow, Background>::new(),
+                BTreeMap::<DisplayRow, Hsla>::new(),
                 |mut unique_rows, highlight| {
                     let start = highlight.range.start.to_display_point(&snapshot);
                     let end = highlight.range.end.to_display_point(&snapshot);
@@ -14194,7 +14183,7 @@ impl Editor {
                             used_highlight_orders.entry(row).or_insert(highlight.index);
                         if highlight.index >= *used_index {
                             *used_index = highlight.index;
-                            unique_rows.insert(DisplayRow(row), highlight.color.into());
+                            unique_rows.insert(DisplayRow(row), highlight.color);
                         }
                     }
                     unique_rows
@@ -14584,12 +14573,6 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn lsp_store(&self, cx: &App) -> Option<Entity<LspStore>> {
-        self.project
-            .as_ref()
-            .map(|project| project.read(cx).lsp_store())
-    }
-
     fn on_buffer_changed(&mut self, _: Entity<MultiBuffer>, cx: &mut Context<Self>) {
         cx.notify();
     }
@@ -14616,11 +14599,11 @@ impl Editor {
                 if let Some(buffer) = buffer_edited {
                     let buffer_id = buffer.read(cx).remote_id();
                     if !self.registered_buffers.contains_key(&buffer_id) {
-                        if let Some(lsp_store) = self.lsp_store(cx) {
-                            lsp_store.update(cx, |lsp_store, cx| {
+                        if let Some(project) = self.project.as_ref() {
+                            project.update(cx, |project, cx| {
                                 self.registered_buffers.insert(
                                     buffer_id,
-                                    lsp_store.register_buffer_with_language_servers(&buffer, cx),
+                                    project.register_buffer_with_language_servers(&buffer, cx),
                                 );
                             })
                         }
@@ -14630,28 +14613,23 @@ impl Editor {
                 cx.emit(SearchEvent::MatchesInvalidated);
                 if *singleton_buffer_edited {
                     if let Some(project) = &self.project {
-                        let project = project.read(cx);
                         #[allow(clippy::mutable_key_type)]
-                        let languages_affected = multibuffer
-                            .read(cx)
-                            .all_buffers()
-                            .into_iter()
-                            .filter_map(|buffer| {
-                                let buffer = buffer.read(cx);
-                                let language = buffer.language()?;
-                                if project.is_local()
-                                    && project
-                                        .language_servers_for_local_buffer(buffer, cx)
-                                        .count()
-                                        == 0
-                                {
-                                    None
-                                } else {
-                                    Some(language)
-                                }
-                            })
-                            .cloned()
-                            .collect::<HashSet<_>>();
+                        let languages_affected = multibuffer.update(cx, |multibuffer, cx| {
+                            multibuffer
+                                .all_buffers()
+                                .into_iter()
+                                .filter_map(|buffer| {
+                                    buffer.update(cx, |buffer, cx| {
+                                        let language = buffer.language()?;
+                                        let should_discard = project.update(cx, |project, cx| {
+                                            project.is_local()
+                                                && !project.has_language_servers_for(buffer, cx)
+                                        });
+                                        should_discard.not().then_some(language.clone())
+                                    })
+                                })
+                                .collect::<HashSet<_>>()
+                        });
                         if !languages_affected.is_empty() {
                             self.refresh_inlay_hints(
                                 InlayHintRefreshReason::BufferEdited(languages_affected),
@@ -14680,15 +14658,13 @@ impl Editor {
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).diff_for(buffer_id).is_none() {
                     if let Some(project) = &self.project {
-                        self.load_diff_task = Some(
-                            get_uncommitted_diff_for_buffer(
-                                project,
-                                [buffer.clone()],
-                                self.buffer.clone(),
-                                cx,
-                            )
-                            .shared(),
-                        );
+                        get_uncommitted_diff_for_buffer(
+                            project,
+                            [buffer.clone()],
+                            self.buffer.clone(),
+                            cx,
+                        )
+                        .detach();
                     }
                 }
                 cx.emit(EditorEvent::ExcerptsAdded {
@@ -15260,15 +15236,18 @@ impl Editor {
         self.handle_input(text, window, cx);
     }
 
-    pub fn supports_inlay_hints(&self, cx: &App) -> bool {
+    pub fn supports_inlay_hints(&self, cx: &mut App) -> bool {
         let Some(provider) = self.semantics_provider.as_ref() else {
             return false;
         };
 
         let mut supports = false;
-        self.buffer().read(cx).for_each_buffer(|buffer| {
-            supports |= provider.supports_inlay_hints(buffer, cx);
+        self.buffer().update(cx, |this, cx| {
+            this.for_each_buffer(|buffer| {
+                supports |= provider.supports_inlay_hints(buffer, cx);
+            });
         });
+
         supports
     }
 
@@ -15816,7 +15795,7 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<InlayHint>>>;
 
-    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &App) -> bool;
+    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool;
 
     fn document_highlights(
         &self,
@@ -16210,17 +16189,13 @@ impl SemanticsProvider for Entity<Project> {
         }))
     }
 
-    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
+    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
         // TODO: make this work for remote projects
-        self.read(cx)
-            .language_servers_for_local_buffer(buffer.read(cx), cx)
-            .any(
-                |(_, server)| match server.capabilities().inlay_hint_provider {
-                    Some(lsp::OneOf::Left(enabled)) => enabled,
-                    Some(lsp::OneOf::Right(_)) => true,
-                    None => false,
-                },
-            )
+        self.update(cx, |this, cx| {
+            buffer.update(cx, |buffer, cx| {
+                this.any_language_server_supports_inlay_hints(buffer, cx)
+            })
+        })
     }
 
     fn inlay_hints(
@@ -16682,7 +16657,7 @@ impl Render for Editor {
                 font_family: settings.buffer_font.family.clone(),
                 font_features: settings.buffer_font.features.clone(),
                 font_fallbacks: settings.buffer_font.fallbacks.clone(),
-                font_size: settings.buffer_font_size().into(),
+                font_size: settings.buffer_font_size(cx).into(),
                 font_weight: settings.buffer_font.weight,
                 line_height: relative(settings.buffer_line_height.value()),
                 ..Default::default()

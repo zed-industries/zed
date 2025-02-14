@@ -49,7 +49,6 @@ gpui.workspace = true
 http_client.workspace = true
 indoc.workspace = true
 inline_completion.workspace = true
-inventory.workspace = true
 itertools.workspace = true
 language.workspace = true
 linkify.workspace = true

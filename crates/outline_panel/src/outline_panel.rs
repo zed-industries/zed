@@ -67,8 +67,6 @@ actions!(
     [
         CollapseAllEntries,
         CollapseSelectedEntry,
-        CopyPath,
-        CopyRelativePath,
         ExpandAllEntries,
         ExpandSelectedEntry,
         FoldDirectory,
@@ -1361,8 +1359,11 @@ impl OutlinePanel {
                     menu.action("Fold Directory", Box::new(FoldDirectory))
                 })
                 .separator()
-                .action("Copy Path", Box::new(CopyPath))
-                .action("Copy Relative Path", Box::new(CopyRelativePath))
+                .action("Copy Path", Box::new(zed_actions::workspace::CopyPath))
+                .action(
+                    "Copy Relative Path",
+                    Box::new(zed_actions::workspace::CopyRelativePath),
+                )
         });
         window.focus(&context_menu.focus_handle(cx));
         let subscription = cx.subscribe(&context_menu, |outline_panel, _, _: &DismissEvent, cx| {
@@ -1827,7 +1828,12 @@ impl OutlinePanel {
         })
     }
 
-    fn copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut Context<Self>) {
+    fn copy_path(
+        &mut self,
+        _: &zed_actions::workspace::CopyPath,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(clipboard_text) = self
             .selected_entry()
             .and_then(|entry| self.abs_path(entry, cx))
@@ -1837,7 +1843,12 @@ impl OutlinePanel {
         }
     }
 
-    fn copy_relative_path(&mut self, _: &CopyRelativePath, _: &mut Window, cx: &mut Context<Self>) {
+    fn copy_relative_path(
+        &mut self,
+        _: &zed_actions::workspace::CopyRelativePath,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(clipboard_text) = self
             .selected_entry()
             .and_then(|entry| match entry {
@@ -5158,6 +5169,7 @@ mod tests {
     use project::FakeFs;
     use search::project_search::{self, perform_project_search};
     use serde_json::json;
+    use util::path;
     use workspace::OpenVisible;
 
     use super::*;
@@ -5535,8 +5547,8 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
-        populate_with_test_ra_project(&fs, "/rust-analyzer").await;
-        let project = Project::test(fs.clone(), ["/rust-analyzer".as_ref()], cx).await;
+        populate_with_test_ra_project(&fs, path!("/rust-analyzer")).await;
+        let project = Project::test(fs.clone(), [path!("/rust-analyzer").as_ref()], cx).await;
         project.read_with(cx, |project, _| {
             project.languages().add(Arc::new(rust_lang()))
         });
@@ -5580,15 +5592,17 @@ mod tests {
                     );
                 });
         });
-        let all_matches = r#"/rust-analyzer/
+        let root_path = format!("{}/", path!("/rust-analyzer"));
+        let all_matches = format!(
+            r#"{root_path}
   crates/
     ide/src/
       inlay_hints/
         fn_lifetime_fn.rs
-          search: match config.param_names_for_lifetime_elision_hints {
-          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
-          search: Some(it) if config.param_names_for_lifetime_elision_hints => {
-          search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
+          search: match config.param_names_for_lifetime_elision_hints {{
+          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {{
+          search: Some(it) if config.param_names_for_lifetime_elision_hints => {{
+          search: InlayHintsConfig {{ param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG }},
       inlay_hints.rs
         search: pub param_names_for_lifetime_elision_hints: bool,
         search: param_names_for_lifetime_elision_hints: self
@@ -5599,7 +5613,8 @@ mod tests {
         analysis_stats.rs
           search: param_names_for_lifetime_elision_hints: true,
       config.rs
-        search: param_names_for_lifetime_elision_hints: self"#;
+        search: param_names_for_lifetime_elision_hints: self"#
+        );
         let select_first_in_all_matches = |line_to_select: &str| {
             assert!(all_matches.contains(line_to_select));
             all_matches.replacen(
@@ -5910,7 +5925,7 @@ mod tests {
     async fn test_navigating_in_singleton(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let root = "/root";
+        let root = path!("/root");
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             root,
@@ -5957,7 +5972,7 @@ struct OutlineEntryExcerpt {
 
         let _editor = workspace
             .update(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/root/src/lib.rs"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(path!("/root/src/lib.rs")), true, window, cx)
             })
             .unwrap()
             .await

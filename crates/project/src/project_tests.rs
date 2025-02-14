@@ -1407,14 +1407,13 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
         })
         .await
         .unwrap();
-
     // Simulate diagnostics starting to update.
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.start_progress(progress_token).await;
 
     // Restart the server before the diagnostics finish updating.
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers([buffer], cx);
+        project.restart_language_servers_for_buffers(vec![buffer], cx);
     });
     let mut events = cx.events(&project);
 
@@ -1519,7 +1518,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     });
 
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers([buffer.clone()], cx);
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], cx);
     });
 
     // The diagnostics are cleared.
@@ -1573,10 +1572,10 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
         diagnostics: Vec::new(),
     });
     cx.executor().run_until_parked();
-
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers([buffer.clone()], cx);
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], cx);
     });
+
     let mut fake_server = fake_servers.next().await.unwrap();
     let notification = fake_server
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
@@ -1783,7 +1782,6 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     fs.insert_tree(path!("/dir"), json!({ "a.rs": text })).await;
 
     let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
     language_registry.add(rust_lang());
@@ -1802,8 +1800,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let _handle = lsp_store.update(cx, |lsp_store, cx| {
-        lsp_store.register_buffer_with_language_servers(&buffer, cx)
+    let _handle = project.update(cx, |project, cx| {
+        project.register_buffer_with_language_servers(&buffer, cx)
     });
 
     let mut fake_server = fake_servers.next().await.unwrap();
@@ -2618,7 +2616,6 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
             ),
         )))
     });
-
     let mut definitions = project
         .update(cx, |project, cx| project.definition(&buffer, 22, cx))
         .await
@@ -3382,7 +3379,7 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        path!("/dir"),
         json!({
             "a": {
                 "file1": "",
@@ -3391,7 +3388,7 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs, [Path::new("/dir")], cx).await;
+    let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
     let tree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let tree_id = tree.update(cx, |tree, _| tree.id());
 

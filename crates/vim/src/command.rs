@@ -1696,12 +1696,10 @@ mod test {
         // conflict!
         cx.simulate_keystrokes("i @ escape");
         cx.simulate_keystrokes(": w enter");
-        assert!(cx.has_pending_prompt());
-        // "Cancel"
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Cancel");
+
         assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "oops\n");
         assert!(!cx.has_pending_prompt());
-        // force overwrite
         cx.simulate_keystrokes(": w ! enter");
         assert!(!cx.has_pending_prompt());
         assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "@@\n");

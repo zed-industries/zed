@@ -4176,7 +4176,6 @@ dependencies = [
  "http_client",
  "indoc",
  "inline_completion",
- "inventory",
  "itertools 0.14.0",
  "language",
  "linkify",
@@ -9100,6 +9099,7 @@ dependencies = [
  "util",
  "workspace",
  "worktree",
+ "zed_actions",
 ]
 
 [[package]]
@@ -10298,6 +10298,7 @@ dependencies = [
  "util",
  "workspace",
  "worktree",
+ "zed_actions",
 ]
 
 [[package]]
@@ -15608,12 +15609,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
- "copilot",
  "db",
  "editor",
  "fuzzy",
  "gpui",
  "install_cli",
+ "language",
  "picker",
  "project",
  "schemars",
@@ -16369,6 +16370,7 @@ dependencies = [
  "ui",
  "util",
  "uuid",
+ "zed_actions",
 ]
 
 [[package]]

@@ -13,7 +13,7 @@ use rope::Point;
 use settings::Settings;
 use std::time::Duration;
 use text::Bias;
-use theme::ThemeSettings;
+use theme::{get_ui_font_size, ThemeSettings};
 use ui::{
     prelude::*, ButtonLike, KeyBinding, PopoverMenu, PopoverMenuHandle, Switch, TintColor, Tooltip,
 };
@@ -369,11 +369,7 @@ impl Render for MessageEditor {
                             .anchor(gpui::Corner::BottomLeft)
                             .offset(gpui::Point {
                                 x: px(0.0),
-                                y: px(-ThemeSettings::clamp_font_size(
-                                    ThemeSettings::get_global(cx).ui_font_size,
-                                )
-                                .0 * 2.0)
-                                    - px(4.0),
+                                y: (-get_ui_font_size(cx) * 2) - px(4.0),
                             })
                             .with_handle(self.inline_context_picker_menu_handle.clone()),
                     )
