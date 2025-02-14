@@ -1574,7 +1574,7 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
     project.update(cx, |project, cx| {
         project.restart_language_servers_for_buffers(vec![buffer.clone()], cx);
     });
-    cx.run_until_parked();
+
     let mut fake_server = fake_servers.next().await.unwrap();
     let notification = fake_server
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
@@ -1751,12 +1751,6 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
             });
         })
     });
-    let _rs_buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
-        })
-        .await
-        .unwrap();
     let mut fake_rust_server_2 = fake_rust_servers.next().await.unwrap();
     assert_eq!(
         fake_rust_server_2
@@ -2586,28 +2580,25 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     fs.insert_tree(
         path!("/dir"),
         json!({
+            "a.rs": "const fn a() { A }",
             "b.rs": "const y: i32 = crate::a()",
         }),
     )
     .await;
-    fs.insert_tree(
-        "/another_dir",
-        json!({
-        "a.rs": "const fn a() { A }"}),
-    )
-    .await;
 
-    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/dir/b.rs").as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
     let (buffer, _handle) = project
         .update(cx, |project, cx| {
             project.open_local_buffer_with_lsp(path!("/dir/b.rs"), cx)
         })
         .await
         .unwrap();
+
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.handle_request::<lsp::request::GotoDefinition, _, _>(|params, _| async move {
         let params = params.text_document_position_params;
@@ -2619,7 +2610,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
 
         Ok(Some(lsp::GotoDefinitionResponse::Scalar(
             lsp::Location::new(
-                lsp::Url::from_file_path(path!("/another_dir/a.rs")).unwrap(),
+                lsp::Url::from_file_path(path!("/dir/a.rs")).unwrap(),
                 lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
             ),
         )))
@@ -2644,14 +2635,14 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
                 .as_local()
                 .unwrap()
                 .abs_path(cx),
-            Path::new(path!("/another_dir/a.rs")),
+            Path::new(path!("/dir/a.rs")),
         );
         assert_eq!(definition.target.range.to_offset(target_buffer), 9..10);
         assert_eq!(
             list_worktrees(&project, cx),
             [
-                (path!("/another_dir/a.rs").as_ref(), false),
-                (path!("/dir").as_ref(), true)
+                (path!("/dir/a.rs").as_ref(), false),
+                (path!("/dir/b.rs").as_ref(), true)
             ],
         );
 
@@ -2660,7 +2651,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         assert_eq!(
             list_worktrees(&project, cx),
-            [(path!("/dir").as_ref(), true)]
+            [(path!("/dir/b.rs").as_ref(), true)]
         );
     });
 
