@@ -1,3 +1,5 @@
+// @ts-check
+
 import { Octokit } from "@octokit/rest";
 import { IncomingWebhook } from "@slack/webhook";
 
