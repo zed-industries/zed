@@ -682,6 +682,7 @@ pub struct Editor {
     next_completion_id: CompletionId,
     available_code_actions: Option<(Location, Rc<[AvailableCodeAction]>)>,
     code_actions_task: Option<Task<Result<()>>>,
+    selection_highlight_task: Option<Task<()>>,
     document_highlights_task: Option<Task<()>>,
     linked_editing_range_task: Option<Task<Option<()>>>,
     linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
@@ -1385,6 +1386,7 @@ impl Editor {
             code_action_providers,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
+            selection_highlight_task: Default::default(),
             document_highlights_task: Default::default(),
             linked_editing_range_task: Default::default(),
             pending_rename: Default::default(),
@@ -4733,7 +4735,7 @@ impl Editor {
             self.clear_background_highlights::<SelectedTextHighlight>(cx);
             return;
         }
-        if self.selections.count() != 1 {
+        if self.selections.count() != 1 || self.selections.line_mode {
             self.clear_background_highlights::<SelectedTextHighlight>(cx);
             return;
         }
@@ -4743,7 +4745,7 @@ impl Editor {
             return;
         }
         let buffer = self.buffer().read(cx).snapshot(cx);
-        cx.spawn_in(window, |editor, mut cx| async move {
+        self.selection_highlight_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
             let matches = cx
                 .background_executor()
                 .spawn(async move {
@@ -4797,9 +4799,8 @@ impl Editor {
                         )
                     }
                 })
-                .ok();
-        })
-        .detach();
+                .log_err();
+        }));
     }
 
     pub fn refresh_inline_completion(
