@@ -6965,6 +6965,7 @@ dependencies = [
  "image",
  "lmstudio",
  "log",
+ "mistral",
  "ollama",
  "open_ai",
  "parking_lot",
@@ -7012,6 +7013,7 @@ dependencies = [
  "language_model",
  "lmstudio",
  "menu",
+ "mistral",
  "ollama",
  "open_ai",
  "project",
@@ -7971,6 +7973,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "359f76430b20a79f9e20e115b3428614e654f04fab314482fc0fda0ebd3c6044"
 dependencies = [
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "mistral"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "http_client",
+ "schemars",
+ "serde",
+ "serde_json",
+ "strum",
 ]
 
 [[package]]
