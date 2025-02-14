@@ -1080,7 +1080,7 @@ impl Project {
         let environment = cx.update(|cx| ProjectEnvironment::new(&worktree_store, None, cx))?;
 
         let breakpoint_store = cx.new(|cx| {
-            let mut bp_store = BreakpointStore::remote(SSH_PROJECT_ID, client.clone().into());
+            let mut bp_store = BreakpointStore::remote(remote_id, client.clone().into());
             bp_store.set_breakpoints_from_proto(response.payload.breakpoints, cx);
             bp_store
         })?;

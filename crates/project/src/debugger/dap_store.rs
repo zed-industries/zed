@@ -244,7 +244,7 @@ impl DapStore {
         self.clients.insert(
             client_id,
             cx.new(|_| {
-                debugger::client::Client::new(
+                debugger::client::Client::remote(
                     client_id,
                     "Remote-Debug".to_owned(),
                     ignore.unwrap_or(false),
@@ -760,8 +760,6 @@ impl DapStore {
 
         let config = client.read(cx).configuration();
 
-        let session_id = *session_id;
-
         let request_args = args.unwrap_or_else(|| StartDebuggingRequestArguments {
             configuration: config.initialize_args.clone().unwrap_or_default(),
             request: match config.request {
@@ -1007,25 +1005,6 @@ impl DapStore {
     // let returned_value = client.modules(); // this is a cheap getter.
 
     pub fn shutdown_clients(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        let Some(_) = self.as_local() else {
-            if let Some((upstream_client, project_id)) = self.upstream_client() {
-                return cx.background_executor().spawn(async move {
-                    upstream_client
-                        .request(proto::DapShutdownSession {
-                            project_id,
-                            session_id: None,
-                        })
-                        .await
-                        .log_err();
-
-                    ()
-                });
-            }
-            return Task::ready(());
-        };
-
-        let mut tasks = Vec::new();
-
         for client_id in self.clients.keys().cloned().collect::<Vec<_>>() {
             tasks.push(self.shutdown_client(&client_id, cx));
         }
@@ -1042,7 +1021,7 @@ impl DapStore {
     ) -> Task<Result<()>> {
         let Some(_) = self.as_local_mut() else {
             if let Some((upstream_client, project_id)) = self.upstream_client() {
-                let future = upstream_client.request(proto::DapShutdownSession {
+                let future = upstream_client.request(proto::DapShutdownClient {
                     project_id,
                     session_id: Some(client_id.to_proto()),
                 });
@@ -1085,43 +1064,6 @@ impl DapStore {
             })
             .detach();
         }
-    }
-
-    pub fn set_debug_sessions_from_proto(
-        &mut self,
-        debug_sessions: Vec<proto::DebuggerSession>,
-        cx: &mut Context<Self>,
-    ) {
-        for session in debug_sessions.into_iter() {
-            let ignore_breakpoints = Some(session.ignore_breakpoints);
-
-            self.add_remote_session(ignore_breakpoints, cx);
-
-            for debug_client in session.clients {
-                if let DapStoreMode::Remote(remote) = &mut self.mode {
-                    if let Some(queue) = &mut remote.event_queue {
-                        debug_client.debug_panel_items.into_iter().for_each(|item| {
-                            queue.push_back(DapStoreEvent::SetDebugPanelItem(item));
-                        });
-                    }
-                    cx.emit(DapStoreEvent::RemoteHasInitialized);
-                }
-
-                let client = DebugAdapterClientId::from_proto(debug_client.client_id);
-
-                self.add_client_to_session(session_id, client);
-
-                self.update_capabilities_for_client(
-                    client,
-                    &dap::proto_conversions::capabilities_from_proto(
-                        &debug_client.capabilities.unwrap_or_default(),
-                    ),
-                    cx,
-                );
-            }
-        }
-
-        cx.notify();
     }
 
     async fn _handle_dap_command_2<T: DapCommand + PartialEq + Eq + Hash>(

@@ -335,7 +335,7 @@ impl Client {
         &self.capabilities
     }
     pub fn configuration(&self) -> DebugAdapterConfig {
-        Configuration::default()
+        DebugAdapterConfig::default()
     }
 
     pub(crate) fn _wait_for_request<R: DapCommand + PartialEq + Eq + Hash>(

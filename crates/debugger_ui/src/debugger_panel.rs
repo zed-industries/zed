@@ -161,20 +161,13 @@ impl DebugPanel {
                         project::Event::DebugClientStarted((session_id, client_id)) => {
                             this.handle_debug_client_started(session_id, *client_id, window, cx);
                         }
-                        project::Event::DebugClientEvent {
-                            session_id,
-                            client_id,
-                            message,
-                        } => match message {
+                        project::Event::DebugClientEvent { client_id, message } => match message {
                             Message::Event(event) => {
-                                this.handle_debug_client_events(
-                                    session_id, *client_id, event, window, cx,
-                                );
+                                this.handle_debug_client_events(*client_id, event, window, cx);
                             }
                             Message::Request(request) => {
                                 if StartDebugging::COMMAND == request.command {
                                     this.handle_start_debugging_request(
-                                        session_id,
                                         *client_id,
                                         request.seq,
                                         request.arguments.clone(),
@@ -182,7 +175,6 @@ impl DebugPanel {
                                     );
                                 } else if RunInTerminal::COMMAND == request.command {
                                     this.handle_run_in_terminal_request(
-                                        session_id,
                                         *client_id,
                                         request.seq,
                                         request.arguments.clone(),

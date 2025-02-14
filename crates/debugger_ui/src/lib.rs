@@ -41,7 +41,7 @@ pub fn init(cx: &mut App) {
                 |workspace: &mut Workspace, _: &ShutdownDebugAdapters, _window, cx| {
                     workspace.project().update(cx, |project, cx| {
                         project.dap_store().update(cx, |store, cx| {
-                            store.shutdown_sessions(cx).detach();
+                            store.shutdown_clients(cx).detach();
                         })
                     })
                 },
