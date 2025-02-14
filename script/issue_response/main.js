@@ -49,7 +49,7 @@ async function main() {
         day: "numeric",
       },
     );
-    return `${index + 1}. ${formattedDate}: <${issue.html_url}|${issue.title}>`;
+    return `${index + 1}. ${formattedDate}: [${issue.title}](${issue.html_url})`;
   });
 
   const blocks = [
