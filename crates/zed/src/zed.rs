@@ -541,12 +541,16 @@ fn register_actions(
         .register_action({
             let fs = app_state.fs.clone();
             move |_, action: &zed_actions::IncreaseUiFontSize, _window, cx| {
-                theme::adjust_ui_font_size(cx, |size| {
-                    *size += px(1.0);
-                });
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
-                        let _ = settings.ui_font_size.insert(theme::get_ui_font_size(cx).0);
+                        let ui_font_size = theme::get_ui_font_size(cx) + px(1.0);
+                        let _ = settings
+                            .ui_font_size
+                            .insert(theme::clamp_font_size(ui_font_size).0);
+                    });
+                } else {
+                    theme::adjust_ui_font_size(cx, |size| {
+                        *size += px(1.0);
                     });
                 }
             }
@@ -554,12 +558,16 @@ fn register_actions(
         .register_action({
             let fs = app_state.fs.clone();
             move |_, action: &zed_actions::DecreaseUiFontSize, _window, cx| {
-                theme::adjust_ui_font_size(cx, |size| {
-                    *size -= px(1.0);
-                });
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
-                        let _ = settings.ui_font_size.insert(theme::get_ui_font_size(cx).0);
+                        let ui_font_size = theme::get_ui_font_size(cx) - px(1.0);
+                        let _ = settings
+                            .ui_font_size
+                            .insert(theme::clamp_font_size(ui_font_size).0);
+                    });
+                } else {
+                    theme::adjust_ui_font_size(cx, |size| {
+                        *size -= px(1.0);
                     });
                 }
             }
@@ -567,25 +575,28 @@ fn register_actions(
         .register_action({
             let fs = app_state.fs.clone();
             move |_, action: &zed_actions::ResetUiFontSize, _window, cx| {
-                theme::reset_ui_font_size(cx);
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, _| {
-                        let _ = settings.ui_font_size.take();
+                        settings.ui_font_size = None;
                     });
+                } else {
+                    theme::reset_ui_font_size(cx);
                 }
             }
         })
         .register_action({
             let fs = app_state.fs.clone();
             move |_, action: &zed_actions::IncreaseBufferFontSize, _window, cx| {
-                theme::adjust_buffer_font_size(cx, |size| {
-                    *size += px(1.0);
-                });
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                        let buffer_font_size = theme::get_buffer_font_size(cx) + px(1.0);
                         let _ = settings
                             .buffer_font_size
-                            .insert(theme::get_buffer_font_size(cx).0);
+                            .insert(theme::clamp_font_size(buffer_font_size).0);
+                    });
+                } else {
+                    theme::adjust_buffer_font_size(cx, |size| {
+                        *size += px(1.0);
                     });
                 }
             }
@@ -593,14 +604,16 @@ fn register_actions(
         .register_action({
             let fs = app_state.fs.clone();
             move |_, action: &zed_actions::DecreaseBufferFontSize, _window, cx| {
-                theme::adjust_buffer_font_size(cx, |size| {
-                    *size -= px(1.0);
-                });
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                        let buffer_font_size = theme::get_buffer_font_size(cx) - px(1.0);
                         let _ = settings
                             .buffer_font_size
-                            .insert(theme::get_buffer_font_size(cx).0);
+                            .insert(theme::clamp_font_size(buffer_font_size).0);
+                    });
+                } else {
+                    theme::adjust_buffer_font_size(cx, |size| {
+                        *size -= px(1.0);
                     });
                 }
             }
@@ -608,11 +621,12 @@ fn register_actions(
         .register_action({
             let fs = app_state.fs.clone();
             move |_, action: &zed_actions::ResetBufferFontSize, _window, cx| {
-                theme::reset_buffer_font_size(cx);
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, _| {
-                        let _ = settings.buffer_font_size.take();
+                        settings.buffer_font_size = None;
                     });
+                } else {
+                    theme::reset_buffer_font_size(cx);
                 }
             }
         })
