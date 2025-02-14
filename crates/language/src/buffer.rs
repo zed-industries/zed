@@ -622,6 +622,41 @@ impl HighlightedText {
         gpui::StyledText::new(self.text.clone())
             .with_highlights(default_style, self.highlights.iter().cloned())
     }
+
+    /// Returns the first line without leading whitespace unless highlighted
+    /// and a boolean indicating if there are more lines after
+    pub fn first_line_preview(self) -> (Self, bool) {
+        let newline_ix = self.text.find('\n').unwrap_or(self.text.len());
+        let first_line = &self.text[..newline_ix];
+
+        // Trim leading whitespace, unless an edit starts prior to it.
+        let mut preview_start_ix = first_line.len() - first_line.trim_start().len();
+        if let Some((first_highlight_range, _)) = self.highlights.first() {
+            preview_start_ix = preview_start_ix.min(first_highlight_range.start);
+        }
+
+        let preview_text = &first_line[preview_start_ix..];
+        let preview_highlights = self
+            .highlights
+            .into_iter()
+            .take_while(|(range, _)| range.start < newline_ix)
+            .filter_map(|(mut range, highlight)| {
+                range.start = range.start.saturating_sub(preview_start_ix);
+                range.end = range.end.saturating_sub(preview_start_ix).min(newline_ix);
+                if range.is_empty() {
+                    None
+                } else {
+                    Some((range, highlight))
+                }
+            });
+
+        let preview = Self {
+            text: SharedString::new(preview_text),
+            highlights: preview_highlights.collect(),
+        };
+
+        (preview, self.text.len() > newline_ix)
+    }
 }
 
 impl HighlightedTextBuilder {
