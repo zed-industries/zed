@@ -635,7 +635,7 @@ impl HighlightedText {
             preview_start_ix = preview_start_ix.min(first_highlight_range.start);
         }
 
-        let preview_text = &self.text[preview_start_ix..];
+        let preview_text = &first_line[preview_start_ix..];
         let preview_highlights = self
             .highlights
             .into_iter()

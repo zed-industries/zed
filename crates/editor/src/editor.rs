@@ -136,7 +136,7 @@ use project::{
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
     LspStore, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
 };
-use rand::{distributions::uniform::SampleRange, prelude::*};
+use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{
@@ -170,7 +170,7 @@ use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize, Key,
     Tooltip,
 };
-use util::{defer, maybe, post_inc, RangeExt, ResultExt, TakeUntilExt, TryFutureExt};
+use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
 use workspace::notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt};
 use workspace::{
