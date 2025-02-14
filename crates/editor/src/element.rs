@@ -91,6 +91,7 @@ enum DisplayDiffHunk {
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
         expanded: bool,
+        is_primary: bool,
     },
 }
 
@@ -1605,6 +1606,7 @@ impl EditorElement {
                                 hunk.buffer_range.clone(),
                             ),
                             expanded,
+                            is_primary: true,
                         },
                         None,
                     ));
@@ -1620,6 +1622,7 @@ impl EditorElement {
                                 hunk.buffer_range,
                             ),
                             expanded,
+                            is_primary: false,
                         },
                         None,
                     ));
@@ -1644,6 +1647,7 @@ impl EditorElement {
                                 hunk.buffer_range,
                             ),
                             expanded,
+                            is_primary: true,
                         },
                         None,
                     ));
@@ -4205,14 +4209,29 @@ impl EditorElement {
             newest_cursor_position,
         ];
 
-        for (hunk, _) in display_hunks {
+        let mut display_hunks = display_hunks.iter().peekable();
+        while let Some((hunk, _)) = display_hunks.next() {
             if let DisplayDiffHunk::Unfolded {
                 display_row_range,
                 multi_buffer_range,
                 status,
+                is_primary: true,
                 ..
             } = &hunk
             {
+                let mut display_row_range = display_row_range.clone();
+                if let Some((
+                    DisplayDiffHunk::Unfolded {
+                        display_row_range: secondary_display_row_range,
+                        is_primary: false,
+                        ..
+                    },
+                    _,
+                )) = display_hunks.peek()
+                {
+                    display_row_range.end = secondary_display_row_range.end;
+                }
+
                 if display_row_range.start < row_range.start
                     || display_row_range.start >= row_range.end
                 {
