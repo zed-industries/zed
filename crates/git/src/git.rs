@@ -37,8 +37,8 @@ actions!(
         // editor::RevertSelectedHunks
         StageAll,
         UnstageAll,
-        RevertAll,
-        CleanAll,
+        DiscardTrackedChanges,
+        TrashUntrackedFiles,
         Uncommit,
         Commit,
         ClearCommitMessage

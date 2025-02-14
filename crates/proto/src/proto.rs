@@ -441,6 +441,7 @@ messages!(
     (InstallExtension, Background),
     (RegisterBufferWithLanguageServers, Background),
     (GitReset, Background),
+    (GitCheckoutFiles, Background),
     (GitShow, Background),
     (GitCommitDetails, Background),
     (SetIndexText, Background),
@@ -579,6 +580,7 @@ request_messages!(
     (RegisterBufferWithLanguageServers, Ack),
     (GitShow, GitCommitDetails),
     (GitReset, Ack),
+    (GitCheckoutFiles, Ack),
     (SetIndexText, Ack),
 );
 
@@ -674,6 +676,7 @@ entity_messages!(
     RegisterBufferWithLanguageServers,
     GitShow,
     GitReset,
+    GitCheckoutFiles,
     SetIndexText,
 );
 

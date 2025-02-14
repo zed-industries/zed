@@ -5370,6 +5370,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
+ "strum",
  "theme",
  "time",
  "ui",
