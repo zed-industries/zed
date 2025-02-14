@@ -201,13 +201,16 @@ impl ProjectDiff {
     }
 
     fn scroll_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
+        dbg!("scroll to path");
         if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
             self.editor.update(cx, |editor, cx| {
                 editor.change_selections(Some(Autoscroll::focused()), window, cx, |s| {
+                    dbg!("doing it");
                     s.select_ranges([position..position]);
                 })
             })
         } else {
+            dbg!("waiting");
             self.pending_scroll = Some(path_key);
         }
     }
@@ -344,12 +347,9 @@ impl ProjectDiff {
                 .contains_focused(window, cx)
         {
             self.focus_handle.focus(window);
-        } else if self.focus_handle.contains_focused(window, cx)
-            && !self.multibuffer.read(cx).is_empty()
-        {
+        } else if self.focus_handle.is_focused(window) && !self.multibuffer.read(cx).is_empty() {
             self.editor.update(cx, |editor, cx| {
                 editor.focus_handle(cx).focus(window);
-                editor.move_to_beginning(&Default::default(), window, cx);
             });
         }
         if self.pending_scroll.as_ref() == Some(&path_key) {

@@ -1505,6 +1505,7 @@ impl MultiBuffer {
             // it's hard to distinguish between a manually expanded excerpt, and one that
             // got smaller because of a missing diff.
             if existing_start == new.context.start && existing_end == new.context.end {
+                dbg!("inserting", to_insert.len());
                 new_excerpt_ids.append(&mut self.insert_excerpts_after(
                     insert_after,
                     buffer.clone(),
@@ -1520,12 +1521,14 @@ impl MultiBuffer {
             }
         }
 
+        dbg!("inserting", to_insert.len());
         new_excerpt_ids.append(&mut self.insert_excerpts_after(
             insert_after,
             buffer,
             to_insert,
             cx,
         ));
+        dbg!("removing", to_remove.len());
         self.remove_excerpts(to_remove, cx);
         if new_excerpt_ids.is_empty() {
             self.buffers_by_path.remove(&path);
