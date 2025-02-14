@@ -67,4 +67,7 @@ async function main() {
   await webhook.send({ blocks: blocks });
 }
 
-main().catch((error) => console.error("An error occurred:", error));
+main().catch((error) => {
+  console.error("An error occurred:", error);
+  process.exit(1);
+});
