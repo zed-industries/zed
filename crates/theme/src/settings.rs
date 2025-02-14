@@ -474,7 +474,7 @@ impl ThemeSettingsContent {
 
             *icon_theme_to_update = icon_theme_name.to_string();
         } else {
-            self.theme = Some(ThemeSelection::Static(icon_theme_name.to_string()));
+            self.icon_theme = Some(IconThemeSelection::Static(icon_theme_name.to_string()));
         }
     }
 
