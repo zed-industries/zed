@@ -29,10 +29,7 @@ use git::Repository;
 pub mod search_history;
 mod yarn;
 
-use crate::{
-    debugger::dap_session::{DebugSession, DebugSessionId},
-    git::GitStore,
-};
+use crate::git::GitStore;
 
 use anyhow::{anyhow, Context as _, Result};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -1502,9 +1499,9 @@ impl Project {
             if let Some((downstream_client, project_id)) = store.downstream_client() {
                 downstream_client
                     .send(proto::IgnoreBreakpointState {
-                        session_id: session_id.to_proto(),
+                        client_id: client_id.to_proto(),
                         project_id: *project_id,
-                        ignore: store.ignore_breakpoints(session_id, cx),
+                        ignore: store.ignore_breakpoints(client_id, cx),
                     })
                     .log_err();
             }
@@ -2777,11 +2774,7 @@ impl Project {
             DapStoreEvent::DebugClientShutdown(client_id) => {
                 cx.emit(Event::DebugClientShutdown(*client_id));
             }
-            DapStoreEvent::DebugClientEvent {
-                session_id,
-                client_id,
-                message,
-            } => {
+            DapStoreEvent::DebugClientEvent { client_id, message } => {
                 cx.emit(Event::DebugClientEvent {
                     session_id: *session_id,
                     client_id: *client_id,

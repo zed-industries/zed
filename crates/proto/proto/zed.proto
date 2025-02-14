@@ -342,32 +342,28 @@ message Envelope {
         DapTerminateThreadsRequest dap_terminate_threads_request = 318;
         DapTerminateRequest dap_terminate_request = 319;
         DapRestartRequest dap_restart_request = 320;
-        DapShutdownSession dap_shutdown_session = 321;
-        UpdateThreadStatus update_thread_status = 322;
-        VariablesRequest variables_request = 323;
-        DapVariables dap_variables = 324;
-        DapRestartStackFrameRequest dap_restart_stack_frame_request = 325;
-        IgnoreBreakpointState ignore_breakpoint_state = 326;
-        ToggleIgnoreBreakpoints toggle_ignore_breakpoints = 327;
-        DebuggerSessionEnded debugger_session_ended = 328;
-        DapModulesRequest dap_modules_request = 329;
-        DapModulesResponse dap_modules_response = 330;
-        DapLoadedSourcesRequest dap_loaded_sources_request = 331;
-        DapLoadedSourcesResponse dap_loaded_sources_response = 332;
-        ActiveDebugSessionsRequest active_debug_sessions_request = 333;
-        ActiveDebugSessionsResponse active_debug_sessions_response = 334;
-        DapStackTraceRequest dap_stack_trace_request = 335;
-        DapStackTraceResponse dap_stack_trace_response = 336;
-        DapScopesRequest dap_scopes_request = 337;
-        DapScopesResponse dap_scopes_response = 338;
-        DapSetVariableValueRequest dap_set_variable_value_request = 339;
-        DapSetVariableValueResponse dap_set_variable_value_response = 340;
-        DapEvaluateRequest dap_evaluate_request = 341;
-        DapEvaluateResponse dap_evaluate_response = 342;
-        DapCompletionRequest dap_completion_request = 343;
-        DapCompletionResponse dap_completion_response = 344;
-        DapThreadsRequest dap_threads_request = 345;
-        DapThreadsResponse dap_threads_response = 346; // current max
+        UpdateThreadStatus update_thread_status = 321;
+        VariablesRequest variables_request = 322;
+        DapVariables dap_variables = 323;
+        DapRestartStackFrameRequest dap_restart_stack_frame_request = 324;
+        IgnoreBreakpointState ignore_breakpoint_state = 325;
+        ToggleIgnoreBreakpoints toggle_ignore_breakpoints = 326;
+        DapModulesRequest dap_modules_request = 327;
+        DapModulesResponse dap_modules_response = 328;
+        DapLoadedSourcesRequest dap_loaded_sources_request = 329;
+        DapLoadedSourcesResponse dap_loaded_sources_response = 330;
+        DapStackTraceRequest dap_stack_trace_request = 331;
+        DapStackTraceResponse dap_stack_trace_response = 332;
+        DapScopesRequest dap_scopes_request = 333;
+        DapScopesResponse dap_scopes_response = 334;
+        DapSetVariableValueRequest dap_set_variable_value_request = 335;
+        DapSetVariableValueResponse dap_set_variable_value_response = 336;
+        DapEvaluateRequest dap_evaluate_request = 337;
+        DapEvaluateResponse dap_evaluate_response = 338;
+        DapCompletionRequest dap_completion_request = 339;
+        DapCompletionResponse dap_completion_response = 340;
+        DapThreadsRequest dap_threads_request = 341;
+        DapThreadsResponse dap_threads_response = 342; // current max
     }
 
     reserved 87 to 88;
@@ -2560,51 +2556,37 @@ enum BreakpointKind {
     Log = 1;
 }
 
-message DebuggerSessionEnded {
-    uint64 project_id = 1;
-    uint64 session_id = 2;
-}
 
-message ActiveDebugSessionsRequest {
-    uint64 project_id = 1;
-}
 
-message ActiveDebugSessionsResponse {
-    repeated DebuggerSession sessions = 1;
-}
-
-message DebuggerSession {
-    uint64 session_id = 1;
-    bool ignore_breakpoints = 2;
-    repeated DebugClient clients = 3;
+message ActiveDebugClientsResponse {
+    repeated DebugClient clients = 1;
 }
 
 message DebugClient {
     uint64 client_id = 1;
     SetDebugClientCapabilities capabilities = 2;
-    repeated SetDebuggerPanelItem debug_panel_items = 3;
+    bool ignore_breakpoints = 3;
+    repeated SetDebuggerPanelItem debug_panel_items = 4;
 }
 
 message ShutdownDebugClient {
-    uint64 session_id = 1;
+    uint64 project_id = 1;
     uint64 client_id = 2;
-    uint64 project_id = 3;
 }
 
 message SetDebugClientCapabilities {
-    uint64 session_id = 1;
-    uint64 client_id = 2;
-    uint64 project_id = 3;
-    bool supports_loaded_sources_request = 4;
-    bool supports_modules_request = 5;
-    bool supports_restart_request = 6;
-    bool supports_set_expression = 7;
-    bool supports_single_thread_execution_requests = 8;
-    bool supports_step_back = 9;
-    bool supports_stepping_granularity = 10;
-    bool supports_terminate_threads_request = 11;
-    bool supports_restart_frame_request = 12;
-    bool supports_clipboard_context = 13;
+    uint64 client_id = 1;
+    uint64 project_id = 2;
+    bool supports_loaded_sources_request = 3;
+    bool supports_modules_request = 4;
+    bool supports_restart_request = 5;
+    bool supports_set_expression = 6;
+    bool supports_single_thread_execution_requests = 7;
+    bool supports_step_back = 8;
+    bool supports_stepping_granularity = 9;
+    bool supports_terminate_threads_request = 10;
+    bool supports_restart_frame_request = 11;
+    bool supports_clipboard_context = 12;
 }
 
 message Breakpoint {
@@ -2736,13 +2718,12 @@ message VariablesRequest {
     uint64 project_id = 1;
     uint64 client_id = 2;
     uint64 thread_id = 3;
-    uint64 session_id = 4;
-    uint64 stack_frame_id = 5;
-    uint64 variables_reference = 6;
-    optional VariablesArgumentsFilter filter = 7;
-    optional uint64 start = 8;
-    optional uint64 count = 9;
-    optional ValueFormat format = 10;
+    uint64 stack_frame_id = 4;
+    uint64 variables_reference = 5;
+    optional VariablesArgumentsFilter filter = 6;
+    optional uint64 start = 7;
+    optional uint64 count = 8;
+    optional ValueFormat format = 9;
 }
 
 
@@ -2910,20 +2891,14 @@ message DapRestartStackFrameRequest {
     uint64 stack_frame_id = 3;
 }
 
-message DapShutdownSession {
-    uint64 project_id = 1;
-    optional uint64 session_id = 2; // Shutdown all sessions if this is None
-}
-
 message ToggleIgnoreBreakpoints {
     uint64 project_id = 1;
     uint64 client_id = 2;
-    uint64 session_id = 3;
 }
 
 message IgnoreBreakpointState {
     uint64 project_id = 1;
-    uint64 session_id = 2;
+    uint64 client_id = 2;
     bool ignore = 3;
 }
 
@@ -3034,24 +3009,22 @@ message DebuggerModuleList {
 
 message SetDebuggerPanelItem {
     uint64 project_id = 1;
-    uint64 session_id = 2;
-    uint64 client_id = 3;
-    uint64 thread_id = 4;
-    string session_name = 5;
-    DebuggerConsole console = 6;
-    optional DebuggerModuleList module_list = 7; // We only send this when it's supported and once per client
-    DebuggerThreadItem active_thread_item = 8;
-    DebuggerThreadState thread_state = 9;
-    DebuggerVariableList variable_list = 10;
-    DebuggerStackFrameList stack_frame_list = 11;
-    DebuggerLoadedSourceList loaded_source_list = 12;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+    string session_name = 4;
+    DebuggerConsole console = 5;
+    optional DebuggerModuleList module_list = 6; // We only send this when it's supported and once per client
+    DebuggerThreadItem active_thread_item = 7;
+    DebuggerThreadState thread_state = 8;
+    DebuggerVariableList variable_list = 9;
+    DebuggerStackFrameList stack_frame_list = 10;
+    DebuggerLoadedSourceList loaded_source_list = 11;
 }
 
 message UpdateDebugAdapter {
     uint64 project_id = 1;
     uint64 client_id = 2;
     optional uint64 thread_id = 3;
-    uint64 session_id = 4;
     oneof variant {
         DebuggerThreadState thread_state = 5;
         DebuggerStackFrameList stack_frame_list = 6;
@@ -3060,8 +3033,6 @@ message UpdateDebugAdapter {
         DapOutputEvent output_event = 9;
     }
 }
-
-
 
 message DapVariables {
     uint64 client_id = 1;

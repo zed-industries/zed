@@ -90,7 +90,7 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).id(), cx)
+            dap_store.shutdown_client(&session.read(cx).id(), cx)
         })
     });
 
@@ -201,7 +201,7 @@ async fn test_show_attach_modal_and_select_process(
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).id(), cx)
+            dap_store.shutdown_client(&session.read(cx).id(), cx)
         })
     });
 

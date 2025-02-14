@@ -27,20 +27,6 @@ use task::DebugAdapterConfig;
 use text::{PointUtf16, ToPointUtf16};
 use util::ResultExt;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(transparent)]
-pub struct DebugSessionId(pub usize);
-
-impl DebugSessionId {
-    pub fn from_proto(session_id: u64) -> Self {
-        Self(session_id as usize)
-    }
-
-    pub fn to_proto(&self) -> u64 {
-        self.0 as u64
-    }
-}
-
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Ord, Eq)]
 #[repr(transparent)]
 pub struct ThreadId(pub u64);
@@ -226,6 +212,7 @@ pub struct Client {
 
     pub(super) capabilities: Capabilities,
     client_id: DebugAdapterClientId,
+    ignore_breakpoints: bool,
     modules: Vec<dap::Module>,
     loaded_sources: Vec<dap::Source>,
     threads: IndexMap<ThreadId, Thread>,
@@ -308,6 +295,42 @@ impl CompletionsQuery {
 }
 
 impl Client {
+    pub(crate) fn local(adapter: Arc<DebugAdapterClient>, capabilities: Capabilities) -> Self {
+        let client_id = adapter.id();
+
+        Self {
+            mode: Mode::Local(adapter),
+            client_id,
+            capabilities,
+            ignore_breakpoints: false,
+            requests: HashMap::default(),
+            modules: Vec::default(),
+            loaded_sources: Vec::default(),
+            threads: IndexMap::default(),
+        }
+    }
+
+    pub(crate) fn remote(
+        client_id: DebugAdapterClientId,
+        client: AnyProtoClient,
+        upstream_project_id: u64,
+        ignore_breakpoints: bool,
+    ) -> Self {
+        Self {
+            mode: Mode::Remote(RemoteConnection {
+                client,
+                upstream_project_id,
+            }),
+            client_id,
+            capabilities: Capabilities::default(),
+            ignore_breakpoints,
+            requests: HashMap::default(),
+            modules: Vec::default(),
+            loaded_sources: Vec::default(),
+            threads: IndexMap::default(),
+        }
+    }
+
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
@@ -426,6 +449,12 @@ impl Client {
         &self.modules
     }
 
+    pub(crate) fn set_ignore_breakpoints(&mut self, ignore: bool) {
+        self.ignore_breakpoints = ignore;
+    }
+    pub(crate) fn breakpoints_enabled(&self) -> bool {
+        self.ignore_breakpoints
+    }
     pub fn handle_module_event(&mut self, event: &dap::ModuleEvent, cx: &mut Context<Self>) {
         match event.reason {
             dap::ModuleEventReason::New => self.modules.push(event.module.clone()),
@@ -497,7 +526,7 @@ impl Client {
         }
     }
 
-    fn shutdown(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn shutdown(&mut self, cx: &mut Context<Self>) {
         if self
             .capabilities
             .supports_terminate_request
@@ -777,13 +806,11 @@ impl Client {
         &mut self,
         thread_id: ThreadId,
         stack_frame_id: u64,
-        session_id: DebugSessionId,
         variables_reference: u64,
         cx: &mut Context<Self>,
     ) -> Vec<Variable> {
         let command = VariablesCommand {
             stack_frame_id,
-            session_id,
             thread_id: thread_id.0,
             variables_reference,
             filter: None,
@@ -886,85 +913,7 @@ impl Client {
     }
 }
 
-pub struct DebugSession {
-    id: DebugSessionId,
-    mode: DebugSessionMode,
-    pub(super) states: BTreeMap<DebugAdapterClientId, Entity<Client>>,
-    ignore_breakpoints: bool,
-}
-
-pub enum DebugSessionMode {
-    Local(LocalDebugSession),
-    Remote(RemoteDebugSession),
-}
-
-pub struct LocalDebugSession {
-    configuration: DebugAdapterConfig,
-}
-
-impl LocalDebugSession {
-    pub fn configuration(&self) -> &DebugAdapterConfig {
-        &self.configuration
-    }
-
-    pub fn update_configuration(
-        &mut self,
-        f: impl FnOnce(&mut DebugAdapterConfig),
-        cx: &mut Context<DebugSession>,
-    ) {
-        f(&mut self.configuration);
-        cx.notify();
-    }
-}
-
-pub struct RemoteDebugSession {
-    label: String,
-}
-
 impl DebugSession {
-    pub fn new_local(id: DebugSessionId, configuration: DebugAdapterConfig) -> Self {
-        Self {
-            id,
-            ignore_breakpoints: false,
-            states: BTreeMap::default(),
-            mode: DebugSessionMode::Local(LocalDebugSession { configuration }),
-        }
-    }
-
-    pub fn as_local(&self) -> Option<&LocalDebugSession> {
-        match &self.mode {
-            DebugSessionMode::Local(local) => Some(local),
-            _ => None,
-        }
-    }
-
-    pub fn as_local_mut(&mut self) -> Option<&mut LocalDebugSession> {
-        match &mut self.mode {
-            DebugSessionMode::Local(local) => Some(local),
-            _ => None,
-        }
-    }
-
-    pub fn new_remote(id: DebugSessionId, label: String, ignore_breakpoints: bool) -> Self {
-        Self {
-            id,
-            ignore_breakpoints,
-            states: BTreeMap::default(),
-            mode: DebugSessionMode::Remote(RemoteDebugSession { label }),
-        }
-    }
-
-    pub fn id(&self) -> DebugSessionId {
-        self.id
-    }
-
-    pub fn name(&self) -> String {
-        match &self.mode {
-            DebugSessionMode::Local(local) => local.configuration.label.clone(),
-            DebugSessionMode::Remote(remote) => remote.label.clone(),
-        }
-    }
-
     pub fn ignore_breakpoints(&self) -> bool {
         self.ignore_breakpoints
     }

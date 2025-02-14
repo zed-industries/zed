@@ -665,7 +665,7 @@ impl DebugPanel {
                         ));
 
                         store
-                            .shutdown_session(&session_id, cx)
+                            .shutdown_client(&session_id, cx)
                             .detach_and_log_err(cx);
                     });
                 })?;
@@ -723,7 +723,7 @@ impl DebugPanel {
     ) {
         if let Some(capabilities) = capabilities {
             self.dap_store.update(cx, |store, cx| {
-                store.update_capabilities_for_client(&session_id, client_id, capabilities, cx);
+                store.update_capabilities_for_client(client_id, capabilities, cx);
             });
 
             cx.emit(DebugPanelEvent::CapabilitiesChanged(client_id));
@@ -925,7 +925,7 @@ impl DebugPanel {
                 });
             } else {
                 store
-                    .shutdown_session(&session_id, cx)
+                    .shutdown_client(&session_id, cx)
                     .detach_and_log_err(cx);
             }
         });
@@ -1145,7 +1145,7 @@ impl DebugPanel {
         cx: &mut Context<Self>,
     ) {
         self.dap_store.update(cx, |store, cx| {
-            store.update_capabilities_for_client(session_id, client_id, &event.capabilities, cx);
+            store.update_capabilities_for_client(client_id, &event.capabilities, cx);
         });
 
         cx.emit(DebugPanelEvent::CapabilitiesChanged(client_id));

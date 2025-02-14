@@ -1,5 +1,6 @@
 use super::{
     breakpoint_store::BreakpointStore,
+    client::{self, Client},
     // Will need to uncomment this once we implement rpc message handler again
     // dap_command::{
     //     ContinueCommand, DapCommand, DisconnectCommand, NextCommand, PauseCommand, RestartCommand,
@@ -7,9 +8,11 @@ use super::{
     //     TerminateCommand, TerminateThreadsCommand, VariablesCommand,
     // },
     dap_command::DapCommand,
-    dap_session::{self, DebugSession, DebugSessionId},
 };
-use crate::{project_settings::ProjectSettings, ProjectEnvironment, ProjectPath};
+use crate::{
+    debugger, project_settings::ProjectSettings, DebugAdapterClientState, ProjectEnvironment,
+    ProjectPath,
+};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
@@ -44,7 +47,7 @@ use settings::{Settings as _, WorktreeId};
 use smol::lock::Mutex;
 use std::{
     borrow::Borrow,
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     ffi::OsStr,
     hash::Hash,
     path::{Path, PathBuf},
@@ -59,10 +62,9 @@ use util::{merge_json_value_into, ResultExt as _};
 use worktree::Worktree;
 
 pub enum DapStoreEvent {
-    DebugClientStarted((DebugSessionId, DebugAdapterClientId)),
+    DebugClientStarted((DebugAdapterClientId)),
     DebugClientShutdown(DebugAdapterClientId),
     DebugClientEvent {
-        session_id: DebugSessionId,
         client_id: DebugAdapterClientId,
         message: Message,
     },
@@ -84,7 +86,6 @@ pub struct LocalDapStore {
     fs: Arc<dyn Fs>,
     node_runtime: NodeRuntime,
     next_client_id: AtomicU32,
-    next_session_id: AtomicUsize,
     http_client: Arc<dyn HttpClient>,
     environment: Entity<ProjectEnvironment>,
     language_registry: Arc<LanguageRegistry>,
@@ -94,10 +95,6 @@ pub struct LocalDapStore {
 impl LocalDapStore {
     fn next_client_id(&self) -> DebugAdapterClientId {
         DebugAdapterClientId(self.next_client_id.fetch_add(1, SeqCst))
-    }
-
-    fn next_session_id(&self) -> DebugSessionId {
-        DebugSessionId(self.next_session_id.fetch_add(1, SeqCst))
     }
 }
 
@@ -112,8 +109,7 @@ pub struct DapStore {
     downstream_client: Option<(AnyProtoClient, u64)>,
     breakpoint_store: Entity<BreakpointStore>,
     active_debug_line: Option<(DebugAdapterClientId, ProjectPath, u32)>,
-    sessions: HashMap<DebugSessionId, Entity<DebugSession>>,
-    client_by_session: HashMap<DebugAdapterClientId, DebugSessionId>,
+    clients: BTreeMap<DebugAdapterClientId, Entity<Client>>,
 }
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
@@ -169,13 +165,11 @@ impl DapStore {
                 toolchain_store,
                 language_registry,
                 next_client_id: Default::default(),
-                next_session_id: Default::default(),
             }),
             downstream_client: None,
             active_debug_line: None,
             breakpoint_store,
-            sessions: Default::default(),
-            client_by_session: Default::default(),
+            clients: Default::default(),
         }
     }
 
@@ -193,8 +187,7 @@ impl DapStore {
             downstream_client: None,
             active_debug_line: None,
             breakpoint_store,
-            sessions: Default::default(),
-            client_by_session: Default::default(),
+            clients: Default::default(),
         }
     }
 
@@ -247,66 +240,33 @@ impl DapStore {
         self.downstream_client.as_ref()
     }
 
-    pub fn add_remote_session(
+    pub fn add_remote_client(
         &mut self,
-        session_id: DebugSessionId,
+        client_id: DebugAdapterClientId,
         ignore: Option<bool>,
         cx: &mut Context<Self>,
     ) {
-        self.sessions.entry(session_id).or_insert(cx.new(|_| {
-            DebugSession::new_remote(
-                session_id,
-                "Remote-Debug".to_owned(),
-                ignore.unwrap_or(false),
-            )
-        }));
+        self.clients.insert(
+            client_id,
+            cx.new(|_| {
+                debugger::client::Client::new(
+                    client_id,
+                    "Remote-Debug".to_owned(),
+                    ignore.unwrap_or(false),
+                )
+            }),
+        );
         debug_assert!(matches!(self.mode, DapStoreMode::Remote(_)));
-    }
-
-    pub fn add_client_to_session(
-        &mut self,
-        session_id: DebugSessionId,
-        client_id: DebugAdapterClientId,
-    ) {
-        self.sessions.entry(session_id).and_modify(|_| {
-            let existing_value = self.client_by_session.insert(client_id, session_id);
-            debug_assert!(existing_value.map_or(true, |old| old == session_id));
-        });
-    }
-
-    pub fn remove_session(&mut self, session_id: DebugSessionId) {
-        self.sessions.remove(&session_id);
-        self.client_by_session.retain(|_, id| *id != session_id);
-    }
-
-    pub fn sessions(&self) -> impl Iterator<Item = Entity<DebugSession>> + '_ {
-        self.sessions.values().cloned()
-    }
-
-    pub fn session_by_id(&self, session_id: &DebugSessionId) -> Option<Entity<DebugSession>> {
-        self.sessions.get(session_id).cloned()
-    }
-
-    pub fn session_by_client_id(
-        &self,
-        client_id: impl Borrow<DebugAdapterClientId>,
-    ) -> Option<Entity<DebugSession>> {
-        self.sessions
-            .get(self.client_by_session.get(client_id.borrow())?)
-            .cloned()
     }
 
     pub fn client_by_id(
         &self,
         client_id: impl Borrow<DebugAdapterClientId>,
-        cx: &App,
-    ) -> Option<(Entity<DebugSession>, Entity<dap_session::Client>)> {
+    ) -> Option<Entity<client::Client>> {
         let client_id = client_id.borrow();
-        let session = self.session_by_client_id(client_id)?;
+        let client = self.clients.get(client_id).cloned();
 
-        let client = session.read(cx).client_by_id(*client_id)?;
-
-        Some((session, client))
+        client
     }
 
     pub fn capabilities_by_id(
@@ -315,28 +275,20 @@ impl DapStore {
         cx: &App,
     ) -> Option<Capabilities> {
         let client_id = client_id.borrow();
-        self.session_by_client_id(client_id).and_then(|session| {
-            session
-                .read(cx)
-                .client_state(*client_id)
-                .map(|state| state.read(cx).capabilities.clone())
-        })
+        self.clients
+            .get(client_id)
+            .map(|client| client.read(cx).capabilities.clone())
     }
 
     pub fn update_capabilities_for_client(
         &mut self,
-        session_id: &DebugSessionId,
         client_id: DebugAdapterClientId,
         capabilities: &Capabilities,
         cx: &mut Context<Self>,
     ) {
-        if let Some((client, _)) = self.client_by_id(client_id, cx) {
+        if let Some(client) = self.client_by_id(client_id) {
             client.update(cx, |this, cx| {
-                if let Some(state) = this.client_state(client_id) {
-                    state.update(cx, |this, _| {
-                        this.capabilities = this.capabilities.merge(capabilities.clone());
-                    });
-                }
+                this.capabilities = this.capabilities.merge(capabilities.clone());
             });
         }
 
@@ -347,7 +299,6 @@ impl DapStore {
                 .send(dap::proto_conversions::capabilities_to_proto(
                     &capabilities,
                     *project_id,
-                    session_id.to_proto(),
                     client_id.to_proto(),
                 ))
                 .log_err();
@@ -394,29 +345,17 @@ impl DapStore {
         &self.breakpoint_store
     }
 
-    async fn handle_session_has_shutdown(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::DebuggerSessionEnded>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |this, _| {
-            this.remove_session(DebugSessionId::from_proto(envelope.payload.session_id));
-        })?;
-
-        Ok(())
-    }
-
     async fn handle_ignore_breakpoint_state(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::IgnoreBreakpointState>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        let session_id = DebugSessionId::from_proto(envelope.payload.session_id);
+        let client_id = DebugAdapterClientId::from_proto(envelope.payload.client_id);
 
         this.update(&mut cx, |this, cx| {
-            if let Some(session) = this.session_by_id(&session_id) {
-                session.update(cx, |session, cx| {
-                    session.set_ignore_breakpoints(envelope.payload.ignore, cx)
+            if let Some(client) = this.client_by_id(&client_id) {
+                client.update(cx, |client, cx| {
+                    client.set_ignore_breakpoints(envelope.payload.ignore)
                 });
             }
         })?;
@@ -426,38 +365,37 @@ impl DapStore {
 
     pub fn set_ignore_breakpoints(
         &mut self,
-        session_id: &DebugSessionId,
+        session_id: &DebugAdapterClientId,
         ignore: bool,
         cx: &mut Context<Self>,
     ) {
-        if let Some(session) = self.session_by_id(session_id) {
-            session.update(cx, |session, cx| {
-                session.set_ignore_breakpoints(ignore, cx);
+        if let Some(session) = self.client_by_id(session_id) {
+            session.update(cx, |session, _| {
+                session.set_ignore_breakpoints(ignore);
             });
         }
     }
 
-    pub fn ignore_breakpoints(&self, session_id: &DebugSessionId, cx: &App) -> bool {
-        self.session_by_id(session_id)
-            .map(|session| session.read(cx).ignore_breakpoints())
+    pub fn ignore_breakpoints(&self, client_id: &DebugAdapterClientId, cx: &App) -> bool {
+        self.client_by_id(client_id)
+            .map(|client| client.read(cx).breakpoints_enabled())
             .unwrap_or_default()
     }
 
     pub fn toggle_ignore_breakpoints(
         &mut self,
-        session_id: &DebugSessionId,
+        client_id: &DebugAdapterClientId,
         cx: &mut Context<Self>,
     ) {
-        if let Some(session) = self.session_by_id(session_id) {
-            session.update(cx, |session, cx| {
-                session.set_ignore_breakpoints(!session.ignore_breakpoints(), cx);
+        if let Some(client) = self.client_by_id(client_id) {
+            client.update(cx, |client, _| {
+                client.set_ignore_breakpoints(!client.breakpoints_enabled());
             });
         }
     }
 
     fn reconnect_client(
         &mut self,
-        session_id: &DebugSessionId,
         adapter: Arc<dyn DebugAdapter>,
         binary: DebugAdapterBinary,
         config: DebugAdapterConfig,
@@ -469,7 +407,6 @@ impl DapStore {
             )));
         }
 
-        let session_id = *session_id;
         let client_id = self.as_local().unwrap().next_client_id();
 
         cx.spawn(|dap_store, mut cx| async move {
@@ -482,11 +419,7 @@ impl DapStore {
                         move |message, cx| {
                             dap_store
                                 .update(cx, |_, cx| {
-                                    cx.emit(DapStoreEvent::DebugClientEvent {
-                                        session_id,
-                                        client_id,
-                                        message,
-                                    })
+                                    cx.emit(DapStoreEvent::DebugClientEvent { client_id, message })
                                 })
                                 .log_err();
                         }
@@ -496,9 +429,12 @@ impl DapStore {
                 .await?;
 
             dap_store.update(&mut cx, |store, cx| {
-                store.client_by_session.insert(client_id, session_id);
+                cx.new(|cx| {
+                    let client_state =
+                        debugger::client::Client::local(Arc::new(client), capabilities);
+                });
 
-                let session = store.session_by_id(&session_id).unwrap();
+                store.clients.insert(Arc::new(client), client_id);
 
                 session.update(cx, |session, cx| {
                     session.add_client(Arc::new(client), client_id, cx);
@@ -517,7 +453,7 @@ impl DapStore {
                 // don't emit this event ourself in tests, so we can add request,
                 // response and event handlers for this client
                 if !cfg!(any(test, feature = "test-support")) {
-                    cx.emit(DapStoreEvent::DebugClientStarted((session_id, client_id)));
+                    cx.emit(DapStoreEvent::DebugClientStarted(client_id));
                 }
 
                 cx.notify();
@@ -527,7 +463,6 @@ impl DapStore {
 
     fn start_client_internal(
         &mut self,
-        session_id: DebugSessionId,
         delegate: DapAdapterDelegate,
         config: DebugAdapterConfig,
         cx: &mut Context<Self>,
@@ -629,7 +564,6 @@ impl DapStore {
             }),
         );
 
-        let session_id = local_store.next_session_id();
         let start_client_task =
             self.start_client_internal(session_id, delegate, config.clone(), cx);
 
@@ -668,22 +602,17 @@ impl DapStore {
 
     pub fn initialize(
         &mut self,
-        session_id: &DebugSessionId,
         client_id: DebugAdapterClientId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self
-            .client_by_id(client_id, cx)
-            .and_then(|(_, client)| client.read(cx).adapter_client())
+            .client_by_id(client_id)
+            .and_then(|client| client.read(cx).adapter_client())
         else {
-            return Task::ready(Err(anyhow!(
-                "Could not find debug client: {:?} for session {:?}",
-                client_id,
-                session_id
-            )));
+            return Task::ready(Err(
+                anyhow!("Could not find debug client: {:?}", client_id,),
+            ));
         };
-
-        let session_id = *session_id;
 
         cx.spawn(|this, mut cx| async move {
             let capabilities = client
@@ -708,7 +637,7 @@ impl DapStore {
                 .await?;
 
             this.update(&mut cx, |store, cx| {
-                store.update_capabilities_for_client(&session_id, client_id, &capabilities, cx);
+                store.update_capabilities_for_client(client_id, &capabilities, cx);
             })
         })
     }
@@ -719,8 +648,8 @@ impl DapStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self
-            .client_by_id(client_id, cx)
-            .and_then(|(_, client)| client.read(cx).adapter_client())
+            .client_by_id(client_id)
+            .and_then(|client| client.read(cx).adapter_client())
         else {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
@@ -743,13 +672,12 @@ impl DapStore {
 
     pub fn launch(
         &mut self,
-        session_id: &DebugSessionId,
         client_id: DebugAdapterClientId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let Some((session, client)) = self
-            .client_by_id(client_id, cx)
-            .and_then(|(session, client)| Some((session, client.read(cx).adapter_client()?)))
+        let Some(client) = self
+            .client_by_id(client_id)
+            .and_then(|client| Some(client.read(cx).adapter_client()?))
         else {
             return Task::ready(Err(anyhow!(
                 "Could not find debug client: {:?} for session {:?}",
@@ -1069,8 +997,8 @@ impl DapStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self
-            .client_by_id(client_id, cx)
-            .and_then(|(_, client)| client.read(cx).adapter_client())
+            .client_by_id(client_id)
+            .and_then(|client| client.read(cx).adapter_client())
         else {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
@@ -1132,7 +1060,7 @@ impl DapStore {
         let mut tasks = Vec::new();
 
         for session_id in self.sessions.keys().cloned().collect::<Vec<_>>() {
-            tasks.push(self.shutdown_session(&session_id, cx));
+            tasks.push(self.shutdown_client(&session_id, cx));
         }
 
         cx.background_executor().spawn(async move {
@@ -1140,16 +1068,16 @@ impl DapStore {
         })
     }
 
-    pub fn shutdown_session(
+    pub fn shutdown_client(
         &mut self,
-        session_id: &DebugSessionId,
+        client_id: &DebugAdapterClientId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(_) = self.as_local_mut() else {
             if let Some((upstream_client, project_id)) = self.upstream_client() {
                 let future = upstream_client.request(proto::DapShutdownSession {
                     project_id,
-                    session_id: Some(session_id.to_proto()),
+                    session_id: Some(client_id.to_proto()),
                 });
 
                 return cx
@@ -1160,15 +1088,14 @@ impl DapStore {
             return Task::ready(Err(anyhow!("Cannot shutdown session on remote side")));
         };
 
-        let Some(session) = self.sessions.remove(session_id) else {
-            return Task::ready(Err(anyhow!("Could not find session: {:?}", session_id)));
+        let Some(client) = self.clients.remove(client_id) else {
+            return Task::ready(Err(anyhow!("Could not find session: {:?}", client_id)));
         };
 
-        for client_id in session.read(cx).client_ids().collect::<Vec<_>>() {
-            session.update(cx, |this, cx| {
-                this.shutdown_client(client_id, cx);
-            });
-        }
+        client.update(cx, |this, cx| {
+            this.shutdown(cx);
+        });
+
         Task::ready(Ok(()))
     }
 
@@ -1199,10 +1126,9 @@ impl DapStore {
         cx: &mut Context<Self>,
     ) {
         for session in debug_sessions.into_iter() {
-            let session_id = DebugSessionId::from_proto(session.session_id);
             let ignore_breakpoints = Some(session.ignore_breakpoints);
 
-            self.add_remote_session(session_id, ignore_breakpoints, cx);
+            self.add_remote_session(ignore_breakpoints, cx);
 
             for debug_client in session.clients {
                 if let DapStoreMode::Remote(remote) = &mut self.mode {
@@ -1219,7 +1145,6 @@ impl DapStore {
                 self.add_client_to_session(session_id, client);
 
                 self.update_capabilities_for_client(
-                    &session_id,
                     client,
                     &dap::proto_conversions::capabilities_from_proto(
                         &debug_client.capabilities.unwrap_or_default(),
@@ -1230,24 +1155,6 @@ impl DapStore {
         }
 
         cx.notify();
-    }
-
-    async fn handle_shutdown_session_request(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::DapShutdownSession>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::Ack> {
-        if let Some(session_id) = envelope.payload.session_id {
-            this.update(&mut cx, |dap_store, cx| {
-                dap_store.shutdown_session(&DebugSessionId::from_proto(session_id), cx)
-            })?
-            .await?;
-        } else {
-            this.update(&mut cx, |dap_store, cx| dap_store.shutdown_sessions(cx))?
-                .await;
-        }
-
-        Ok(proto::Ack {})
     }
 
     async fn _handle_dap_command_2<T: DapCommand + PartialEq + Eq + Hash>(
@@ -1332,7 +1239,6 @@ impl DapStore {
     ) -> Result<()> {
         this.update(&mut cx, |dap_store, cx| {
             dap_store.update_capabilities_for_client(
-                &DebugSessionId::from_proto(envelope.payload.session_id),
                 DebugAdapterClientId::from_proto(envelope.payload.client_id),
                 &dap::proto_conversions::capabilities_from_proto(&envelope.payload),
                 cx,

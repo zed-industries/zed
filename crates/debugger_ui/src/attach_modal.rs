@@ -236,7 +236,7 @@ impl PickerDelegate for AttachModalDelegate {
         self.candidates.take();
 
         self.dap_store.update(cx, |store, cx| {
-            store.shutdown_session(&self.session_id, cx).detach();
+            store.shutdown_client(&self.session_id, cx).detach();
         });
 
         cx.emit(DismissEvent);

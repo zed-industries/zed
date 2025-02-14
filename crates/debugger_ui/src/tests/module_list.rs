@@ -225,7 +225,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(&session.read(cx).id(), cx)
+            dap_store.shutdown_client(&session.read(cx).id(), cx)
         })
     });
 
