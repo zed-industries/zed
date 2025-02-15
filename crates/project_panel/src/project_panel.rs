@@ -18,8 +18,8 @@ use file_icons::FileIcons;
 use git::status::GitSummary;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
-    AnyElement, App,  AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent,
-    Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
+    AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
+    DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton,
     MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
     Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window,
