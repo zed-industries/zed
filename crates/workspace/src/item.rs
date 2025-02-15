@@ -1257,6 +1257,19 @@ pub mod test {
                 is_dirty: false,
             })
         }
+
+        pub fn new_dirty(id: u64, path: &str, cx: &mut App) -> Entity<Self> {
+            let entry_id = Some(ProjectEntryId::from_proto(id));
+            let project_path = Some(ProjectPath {
+                worktree_id: WorktreeId::from_usize(0),
+                path: Path::new(path).into(),
+            });
+            cx.new(|_| Self {
+                entry_id,
+                project_path,
+                is_dirty: true,
+            })
+        }
     }
 
     impl TestItem {
@@ -1460,10 +1473,17 @@ pub mod test {
             _: bool,
             _: Entity<Project>,
             _window: &mut Window,
-            _: &mut Context<Self>,
+            cx: &mut Context<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.save_count += 1;
             self.is_dirty = false;
+            for item in &self.project_items {
+                item.update(cx, |item, _| {
+                    if item.is_dirty {
+                        item.is_dirty = false;
+                    }
+                })
+            }
             Task::ready(Ok(()))
         }
 

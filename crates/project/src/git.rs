@@ -25,9 +25,9 @@ use util::{maybe, ResultExt};
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
 
 pub struct GitStore {
+    buffer_store: Entity<BufferStore>,
     pub(super) project_id: Option<ProjectId>,
     pub(super) client: Option<AnyProtoClient>,
-    buffer_store: Entity<BufferStore>,
     repositories: Vec<Entity<Repository>>,
     active_index: Option<usize>,
     update_sender: mpsc::UnboundedSender<(Message, oneshot::Sender<Result<()>>)>,
@@ -65,6 +65,11 @@ pub enum Message {
         repo: GitRepo,
         commit: SharedString,
         reset_mode: ResetMode,
+    },
+    CheckoutFiles {
+        repo: GitRepo,
+        commit: SharedString,
+        paths: Vec<RepoPath>,
     },
     Stage(GitRepo, Vec<RepoPath>),
     Unstage(GitRepo, Vec<RepoPath>),
@@ -107,6 +112,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_commit);
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
+        client.add_entity_request_handler(Self::handle_checkout_files);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
         client.add_entity_request_handler(Self::handle_set_index_text);
     }
@@ -122,8 +128,6 @@ impl GitStore {
         event: &WorktreeStoreEvent,
         cx: &mut Context<'_, Self>,
     ) {
-        // TODO inspect the event
-
         let mut new_repositories = Vec::new();
         let mut new_active_index = None;
         let this = cx.weak_entity();
@@ -305,6 +309,36 @@ impl GitStore {
                 }
                 Ok(())
             }
+
+            Message::CheckoutFiles {
+                repo,
+                commit,
+                paths,
+            } => {
+                match repo {
+                    GitRepo::Local(repo) => repo.checkout_files(&commit, &paths)?,
+                    GitRepo::Remote {
+                        project_id,
+                        client,
+                        worktree_id,
+                        work_directory_id,
+                    } => {
+                        client
+                            .request(proto::GitCheckoutFiles {
+                                project_id: project_id.0,
+                                worktree_id: worktree_id.to_proto(),
+                                work_directory_id: work_directory_id.to_proto(),
+                                commit: commit.into(),
+                                paths: paths
+                                    .into_iter()
+                                    .map(|p| p.to_string_lossy().to_string())
+                                    .collect(),
+                            })
+                            .await?;
+                    }
+                }
+                Ok(())
+            }
             Message::Unstage(repo, paths) => {
                 match repo {
                     GitRepo::Local(repo) => repo.unstage_paths(&paths)?,
@@ -401,10 +435,10 @@ impl GitStore {
             .collect();
 
         repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.stage_entries(entries)
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.stage_entries(entries, cx)
             })?
-            .await??;
+            .await?;
         Ok(proto::Ack {})
     }
 
@@ -427,10 +461,10 @@ impl GitStore {
             .collect();
 
         repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.unstage_entries(entries)
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.unstage_entries(entries, cx)
             })?
-            .await??;
+            .await?;
 
         Ok(proto::Ack {})
     }
@@ -520,6 +554,30 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.reset(&envelope.payload.commit, mode)
+            })?
+            .await??;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_checkout_files(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCheckoutFiles>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+        let paths = envelope
+            .payload
+            .paths
+            .iter()
+            .map(|s| RepoPath::from_str(s))
+            .collect();
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.checkout_files(&envelope.payload.commit, paths)
             })?
             .await??;
         Ok(proto::Ack {})
@@ -742,6 +800,26 @@ impl Repository {
         })
     }
 
+    pub fn checkout_files(
+        &self,
+        commit: &str,
+        paths: Vec<RepoPath>,
+    ) -> oneshot::Receiver<Result<()>> {
+        let (result_tx, result_rx) = futures::channel::oneshot::channel();
+        let commit = commit.to_string().into();
+        self.update_sender
+            .unbounded_send((
+                Message::CheckoutFiles {
+                    repo: self.git_repo.clone(),
+                    commit,
+                    paths,
+                },
+                result_tx,
+            ))
+            .ok();
+        result_rx
+    }
+
     pub fn reset(&self, commit: &str, reset_mode: ResetMode) -> oneshot::Receiver<Result<()>> {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
         let commit = commit.to_string().into();
@@ -792,48 +870,102 @@ impl Repository {
         }
     }
 
-    pub fn stage_entries(&self, entries: Vec<RepoPath>) -> oneshot::Receiver<Result<()>> {
-        let (result_tx, result_rx) = futures::channel::oneshot::channel();
-        if entries.is_empty() {
-            result_tx.send(Ok(())).ok();
-            return result_rx;
-        }
-        self.update_sender
-            .unbounded_send((Message::Stage(self.git_repo.clone(), entries), result_tx))
-            .ok();
-        result_rx
+    fn buffer_store(&self, cx: &App) -> Option<Entity<BufferStore>> {
+        Some(self.git_store.upgrade()?.read(cx).buffer_store.clone())
     }
 
-    pub fn unstage_entries(&self, entries: Vec<RepoPath>) -> oneshot::Receiver<Result<()>> {
+    pub fn stage_entries(&self, entries: Vec<RepoPath>, cx: &mut App) -> Task<anyhow::Result<()>> {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
         if entries.is_empty() {
-            result_tx.send(Ok(())).ok();
-            return result_rx;
+            return Task::ready(Ok(()));
         }
-        self.update_sender
-            .unbounded_send((Message::Unstage(self.git_repo.clone(), entries), result_tx))
-            .ok();
-        result_rx
+
+        let mut save_futures = Vec::new();
+        if let Some(buffer_store) = self.buffer_store(cx) {
+            buffer_store.update(cx, |buffer_store, cx| {
+                for path in &entries {
+                    let Some(path) = self.repository_entry.unrelativize(path) else {
+                        continue;
+                    };
+                    let project_path = (self.worktree_id, path).into();
+                    if let Some(buffer) = buffer_store.get_by_path(&project_path, cx) {
+                        save_futures.push(buffer_store.save_buffer(buffer, cx));
+                    }
+                }
+            })
+        }
+
+        let update_sender = self.update_sender.clone();
+        let git_repo = self.git_repo.clone();
+        cx.spawn(|_| async move {
+            for save_future in save_futures {
+                save_future.await?;
+            }
+            update_sender
+                .unbounded_send((Message::Stage(git_repo, entries), result_tx))
+                .ok();
+            result_rx.await.anyhow()??;
+            Ok(())
+        })
     }
 
-    pub fn stage_all(&self) -> oneshot::Receiver<Result<()>> {
+    pub fn unstage_entries(
+        &self,
+        entries: Vec<RepoPath>,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<()>> {
+        let (result_tx, result_rx) = futures::channel::oneshot::channel();
+        if entries.is_empty() {
+            return Task::ready(Ok(()));
+        }
+
+        let mut save_futures = Vec::new();
+        if let Some(buffer_store) = self.buffer_store(cx) {
+            buffer_store.update(cx, |buffer_store, cx| {
+                for path in &entries {
+                    let Some(path) = self.repository_entry.unrelativize(path) else {
+                        continue;
+                    };
+                    let project_path = (self.worktree_id, path).into();
+                    if let Some(buffer) = buffer_store.get_by_path(&project_path, cx) {
+                        save_futures.push(buffer_store.save_buffer(buffer, cx));
+                    }
+                }
+            })
+        }
+
+        let update_sender = self.update_sender.clone();
+        let git_repo = self.git_repo.clone();
+        cx.spawn(|_| async move {
+            for save_future in save_futures {
+                save_future.await?;
+            }
+            update_sender
+                .unbounded_send((Message::Unstage(git_repo, entries), result_tx))
+                .ok();
+            result_rx.await.anyhow()??;
+            Ok(())
+        })
+    }
+
+    pub fn stage_all(&self, cx: &mut App) -> Task<anyhow::Result<()>> {
         let to_stage = self
             .repository_entry
             .status()
             .filter(|entry| !entry.status.is_staged().unwrap_or(false))
             .map(|entry| entry.repo_path.clone())
             .collect();
-        self.stage_entries(to_stage)
+        self.stage_entries(to_stage, cx)
     }
 
-    pub fn unstage_all(&self) -> oneshot::Receiver<Result<()>> {
+    pub fn unstage_all(&self, cx: &mut App) -> Task<anyhow::Result<()>> {
         let to_unstage = self
             .repository_entry
             .status()
             .filter(|entry| entry.status.is_staged().unwrap_or(true))
             .map(|entry| entry.repo_path.clone())
             .collect();
-        self.unstage_entries(to_unstage)
+        self.unstage_entries(to_unstage, cx)
     }
 
     /// Get a count of all entries in the active repository, including

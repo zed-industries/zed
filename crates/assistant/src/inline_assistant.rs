@@ -1704,7 +1704,7 @@ impl PromptEditor {
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, cx);
-            editor.set_placeholder_text(Self::placeholder_text(codegen.read(cx), window), cx);
+            editor.set_placeholder_text(Self::placeholder_text(codegen.read(cx), window, cx), cx);
             editor
         });
 
@@ -1783,7 +1783,10 @@ impl PromptEditor {
         self.editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(Self::placeholder_text(self.codegen.read(cx), window), cx);
+            editor.set_placeholder_text(
+                Self::placeholder_text(self.codegen.read(cx), window, cx),
+                cx,
+            );
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, window, cx);
             if focus {
@@ -1794,8 +1797,8 @@ impl PromptEditor {
         self.subscribe_to_editor(window, cx);
     }
 
-    fn placeholder_text(codegen: &Codegen, window: &Window) -> String {
-        let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, window)
+    fn placeholder_text(codegen: &Codegen, window: &Window, cx: &App) -> String {
+        let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, window, cx)
             .map(|keybinding| format!(" • {keybinding} for context"))
             .unwrap_or_default();
 
@@ -2084,12 +2087,13 @@ impl PromptEditor {
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
-                            cx.new(|_| {
+                            cx.new(|cx| {
                                 let mut tooltip = Tooltip::new("Previous Alternative").key_binding(
                                     KeyBinding::for_action_in(
                                         &CyclePreviousInlineAssist,
                                         &focus_handle,
                                         window,
+                                        cx,
                                     ),
                                 );
                                 if !disabled && current_index != 0 {
@@ -2126,12 +2130,13 @@ impl PromptEditor {
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
-                            cx.new(|_| {
+                            cx.new(|cx| {
                                 let mut tooltip = Tooltip::new("Next Alternative").key_binding(
                                     KeyBinding::for_action_in(
                                         &CycleNextInlineAssist,
                                         &focus_handle,
                                         window,
+                                        cx,
                                     ),
                                 );
                                 if !disabled && current_index != total_models - 1 {

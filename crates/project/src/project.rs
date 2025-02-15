@@ -9,6 +9,7 @@ pub mod lsp_ext_command;
 pub mod lsp_store;
 pub mod prettier_store;
 pub mod project_settings;
+mod project_tree;
 pub mod search;
 mod task_inventory;
 pub mod task_store;
@@ -56,17 +57,16 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent,
-    CachedLspAdapter, Capability, CodeLabel, CompletionDocumentation, File as _, Language,
-    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList,
-    Transaction, Unclipped,
+    language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent, Capability,
+    CodeLabel, CompletionDocumentation, File as _, Language, LanguageName, LanguageRegistry,
+    PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction, Unclipped,
 };
 use lsp::{
-    CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer,
-    LanguageServerId, LanguageServerName, MessageActionItem,
+    CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServerId,
+    LanguageServerName, MessageActionItem,
 };
 use lsp_command::*;
-use lsp_store::LspFormatTarget;
+use lsp_store::{LspFormatTarget, OpenLspBufferHandle};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
@@ -481,6 +481,7 @@ pub struct DocumentHighlight {
 pub struct Symbol {
     pub language_server_name: LanguageServerName,
     pub source_worktree_id: WorktreeId,
+    pub source_language_server_id: LanguageServerId,
     pub path: ProjectPath,
     pub label: CodeLabel,
     pub name: String,
@@ -1970,7 +1971,7 @@ impl Project {
     pub fn open_buffer(
         &mut self,
         path: impl Into<ProjectPath>,
-        cx: &mut Context<Self>,
+        cx: &mut App,
     ) -> Task<Result<Entity<Buffer>>> {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
@@ -1988,13 +1989,22 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<(Entity<Buffer>, lsp_store::OpenLspBufferHandle)>> {
         let buffer = self.open_buffer(path, cx);
-        let lsp_store = self.lsp_store().clone();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let buffer = buffer.await?;
-            let handle = lsp_store.update(&mut cx, |lsp_store, cx| {
-                lsp_store.register_buffer_with_language_servers(&buffer, cx)
+            let handle = this.update(&mut cx, |project, cx| {
+                project.register_buffer_with_language_servers(&buffer, cx)
             })?;
             Ok((buffer, handle))
+        })
+    }
+
+    pub fn register_buffer_with_language_servers(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> OpenLspBufferHandle {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.register_buffer_with_language_servers(&buffer, false, cx)
         })
     }
 
@@ -2616,7 +2626,7 @@ impl Project {
 
     pub fn restart_language_servers_for_buffers(
         &mut self,
-        buffers: impl IntoIterator<Item = Entity<Buffer>>,
+        buffers: Vec<Entity<Buffer>>,
         cx: &mut Context<Self>,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
@@ -4228,14 +4238,43 @@ impl Project {
         self.lsp_store.read(cx).supplementary_language_servers()
     }
 
-    pub fn language_servers_for_local_buffer<'a>(
-        &'a self,
-        buffer: &'a Buffer,
-        cx: &'a App,
-    ) -> impl Iterator<Item = (&'a Arc<CachedLspAdapter>, &'a Arc<LanguageServer>)> {
-        self.lsp_store
-            .read(cx)
-            .language_servers_for_local_buffer(buffer, cx)
+    pub fn any_language_server_supports_inlay_hints(&self, buffer: &Buffer, cx: &mut App) -> bool {
+        self.lsp_store.update(cx, |this, cx| {
+            this.language_servers_for_local_buffer(buffer, cx)
+                .any(
+                    |(_, server)| match server.capabilities().inlay_hint_provider {
+                        Some(lsp::OneOf::Left(enabled)) => enabled,
+                        Some(lsp::OneOf::Right(_)) => true,
+                        None => false,
+                    },
+                )
+        })
+    }
+
+    pub fn language_server_id_for_name(
+        &self,
+        buffer: &Buffer,
+        name: &str,
+        cx: &mut App,
+    ) -> Option<LanguageServerId> {
+        self.lsp_store.update(cx, |this, cx| {
+            this.language_servers_for_local_buffer(buffer, cx)
+                .find_map(|(adapter, server)| {
+                    if adapter.name.0 == name {
+                        Some(server.server_id())
+                    } else {
+                        None
+                    }
+                })
+        })
+    }
+
+    pub fn has_language_servers_for(&self, buffer: &Buffer, cx: &mut App) -> bool {
+        self.lsp_store.update(cx, |this, cx| {
+            this.language_servers_for_local_buffer(buffer, cx)
+                .next()
+                .is_some()
+        })
     }
 
     pub fn buffer_store(&self) -> &Entity<BufferStore> {

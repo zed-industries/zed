@@ -540,65 +540,94 @@ fn register_actions(
         })
         .register_action({
             let fs = app_state.fs.clone();
-            move |_, _: &zed_actions::IncreaseUiFontSize, _window, cx| {
-                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
-                    let buffer_font_size = ThemeSettings::clamp_font_size(
-                        ThemeSettings::get_global(cx).ui_font_size + px(1.),
-                    );
-
-                    let _ = settings.ui_font_size.insert(buffer_font_size.into());
-                });
+            move |_, action: &zed_actions::IncreaseUiFontSize, _window, cx| {
+                if action.persist {
+                    update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                        let ui_font_size = theme::get_ui_font_size(cx) + px(1.0);
+                        let _ = settings
+                            .ui_font_size
+                            .insert(theme::clamp_font_size(ui_font_size).0);
+                    });
+                } else {
+                    theme::adjust_ui_font_size(cx, |size| {
+                        *size += px(1.0);
+                    });
+                }
             }
         })
         .register_action({
             let fs = app_state.fs.clone();
-            move |_, _: &zed_actions::DecreaseUiFontSize, _window, cx| {
-                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
-                    let buffer_font_size = ThemeSettings::clamp_font_size(
-                        ThemeSettings::get_global(cx).ui_font_size - px(1.),
-                    );
-
-                    let _ = settings.ui_font_size.insert(buffer_font_size.into());
-                });
+            move |_, action: &zed_actions::DecreaseUiFontSize, _window, cx| {
+                if action.persist {
+                    update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                        let ui_font_size = theme::get_ui_font_size(cx) - px(1.0);
+                        let _ = settings
+                            .ui_font_size
+                            .insert(theme::clamp_font_size(ui_font_size).0);
+                    });
+                } else {
+                    theme::adjust_ui_font_size(cx, |size| {
+                        *size -= px(1.0);
+                    });
+                }
             }
         })
         .register_action({
             let fs = app_state.fs.clone();
-            move |_, _: &zed_actions::ResetUiFontSize, _window, cx| {
-                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, _| {
-                    let _ = settings.ui_font_size.take();
-                });
+            move |_, action: &zed_actions::ResetUiFontSize, _window, cx| {
+                if action.persist {
+                    update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, _| {
+                        settings.ui_font_size = None;
+                    });
+                } else {
+                    theme::reset_ui_font_size(cx);
+                }
             }
         })
         .register_action({
             let fs = app_state.fs.clone();
-            move |_, _: &zed_actions::IncreaseBufferFontSize, _window, cx| {
-                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
-                    let buffer_font_size = ThemeSettings::clamp_font_size(
-                        ThemeSettings::get_global(cx).buffer_font_size() + px(1.),
-                    );
-
-                    let _ = settings.buffer_font_size.insert(buffer_font_size.into());
-                });
+            move |_, action: &zed_actions::IncreaseBufferFontSize, _window, cx| {
+                if action.persist {
+                    update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                        let buffer_font_size = theme::get_buffer_font_size(cx) + px(1.0);
+                        let _ = settings
+                            .buffer_font_size
+                            .insert(theme::clamp_font_size(buffer_font_size).0);
+                    });
+                } else {
+                    theme::adjust_buffer_font_size(cx, |size| {
+                        *size += px(1.0);
+                    });
+                }
             }
         })
         .register_action({
             let fs = app_state.fs.clone();
-            move |_, _: &zed_actions::DecreaseBufferFontSize, _window, cx| {
-                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
-                    let buffer_font_size = ThemeSettings::clamp_font_size(
-                        ThemeSettings::get_global(cx).buffer_font_size() - px(1.),
-                    );
-                    let _ = settings.buffer_font_size.insert(buffer_font_size.into());
-                });
+            move |_, action: &zed_actions::DecreaseBufferFontSize, _window, cx| {
+                if action.persist {
+                    update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                        let buffer_font_size = theme::get_buffer_font_size(cx) - px(1.0);
+                        let _ = settings
+                            .buffer_font_size
+                            .insert(theme::clamp_font_size(buffer_font_size).0);
+                    });
+                } else {
+                    theme::adjust_buffer_font_size(cx, |size| {
+                        *size -= px(1.0);
+                    });
+                }
             }
         })
         .register_action({
             let fs = app_state.fs.clone();
-            move |_, _: &zed_actions::ResetBufferFontSize, _window, cx| {
-                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, _| {
-                    let _ = settings.buffer_font_size.take();
-                });
+            move |_, action: &zed_actions::ResetBufferFontSize, _window, cx| {
+                if action.persist {
+                    update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, _| {
+                        settings.buffer_font_size = None;
+                    });
+                } else {
+                    theme::reset_buffer_font_size(cx);
+                }
             }
         })
         .register_action(install_cli)
@@ -1696,7 +1725,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                "/root",
+                path!("/root"),
                 json!({
                     "a": {
                     },
@@ -1706,7 +1735,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/a/new")],
+                &[PathBuf::from(path!("/root/a/new"))],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2061,7 +2090,7 @@ mod tests {
             .unwrap();
         executor.run_until_parked();
 
-        cx.simulate_prompt_answer(1);
+        cx.simulate_prompt_answer("Don't Save");
         close.await.unwrap();
         assert!(!window_is_edited(window, cx));
 
@@ -2122,7 +2151,7 @@ mod tests {
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
         // The window is successfully closed after the user dismisses the prompt.
-        cx.simulate_prompt_answer(1);
+        cx.simulate_prompt_answer("Don't Save");
         executor.run_until_parked();
         assert_eq!(cx.update(|cx| cx.windows().len()), 0);
     }
@@ -2857,7 +2886,7 @@ mod tests {
             })
             .unwrap();
         cx.background_executor.run_until_parked();
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Overwrite");
         save_task.await.unwrap();
         window
             .update(cx, |_, _, cx| {
@@ -3156,7 +3185,7 @@ mod tests {
             },
         );
         cx.background_executor.run_until_parked();
-        cx.simulate_prompt_answer(1);
+        cx.simulate_prompt_answer("Don't Save");
         cx.background_executor.run_until_parked();
 
         window
@@ -4169,8 +4198,8 @@ mod tests {
             editor::init(cx);
             collab_ui::init(&app_state, cx);
             git_ui::init(cx);
-            project_panel::init((), cx);
-            outline_panel::init((), cx);
+            project_panel::init(cx);
+            outline_panel::init(cx);
             terminal_view::init(cx);
             copilot::copilot_chat::init(
                 app_state.fs.clone(),

@@ -22,7 +22,7 @@ For more information, see:
 
 ## Edit Predictions {#edit-predictions}
 
-Zed has built-in support for predicting multiple edits at a time via its Zeta model. Clicking "Introducing: Edit Prediction" on the top right will open a brief prompt setting up this feature.
+Zed has built-in support for predicting multiple edits at a time via its [Zeta model](https://huggingface.co/zed-industries/zeta). Clicking "Introducing: Edit Prediction" on the top right will open a brief prompt setting up this feature.
 
 Edit predictions appear as you type, and you can accept them by pressing `tab`. The `tab` key is already used for accepting language server completions and for indenting. In these cases, `alt-tab` is used instead to accept the prediction. When the completions menu is open, holding `alt` will cause it to temporarily disappear in order to view the prediction within the buffer.
 

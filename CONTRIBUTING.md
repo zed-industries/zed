@@ -37,6 +37,16 @@ We plan to set aside time each week to pair program with contributors on promisi
 - Pair with us and watch us code to learn the codebase
 - Low effort PRs, such as those that just re-arrange syntax, won't be merged without a compelling justification
 
+## File icons
+
+Zed's default icon theme consists of icons that are hand-designed to fit together in a cohesive manner.
+
+We do not accept PRs for file icons that are just an off-the-shelf SVG taken from somewhere else.
+
+### Adding new icons to the Zed icon theme
+
+If you would like to add a new icon to the Zed icon theme, [open a Discussion](https://github.com/zed-industries/zed/discussions/new?category=ux-and-design) and we can work with you on getting an icon designed and added to Zed.
+
 ## Bird's-eye view of Zed
 
 Zed is made up of several smaller crates - let's go over those you're most likely to interact with:

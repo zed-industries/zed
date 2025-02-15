@@ -992,6 +992,7 @@ impl Render for ChatPanel {
                                         .key_binding(KeyBinding::for_action(
                                             &collab_panel::ToggleFocus,
                                             window,
+                                            cx,
                                         ))
                                         .on_click(|_, window, cx| {
                                             window.dispatch_action(
