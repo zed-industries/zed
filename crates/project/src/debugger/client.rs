@@ -5,17 +5,15 @@ use super::dap_command::{
     TerminateThreadsCommand, VariablesCommand,
 };
 use anyhow::{anyhow, Result};
-use collections::{BTreeMap, HashMap, IndexMap};
+use collections::{HashMap, IndexMap};
 use dap::client::{DebugAdapterClient, DebugAdapterClientId};
-use dap::requests::Request;
 use dap::{
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, SteppingGranularity,
 };
 use futures::{future::Shared, FutureExt};
-use gpui::{App, AppContext, Context, Entity, Task};
+use gpui::{App, Context, Task};
 use rpc::AnyProtoClient;
 use serde_json::Value;
-use std::borrow::Borrow;
 use std::u64;
 use std::{
     any::Any,
