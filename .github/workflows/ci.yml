@@ -287,6 +287,28 @@ jobs:
         if: always()
         run: Remove-Item -Path "${{ env.CARGO_HOME }}/config.toml"  -Force
 
+  nix:
+    timeout-minutes: 120
+    strategy:
+      matrix:
+        system:
+          - os: macOS
+            runner: self-hosted
+            sandbox: false
+          - os: Linux
+            runner: buildjet-16vcpu-ubuntu-2204
+            sandbox: true
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ${{ matrix.system.runner }}
+    name: (${{ matrix.system.os }}) Build Nix package
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Setup nix
+        uses: samueldr/lix-gha-installer-action@54a4026004084aa2cf8d18335cc01b06a2e53b74 # v2025-01-21.prerelease
+      - name: Build Zed
+        run: nix build .#zed-editor.debug --option sandbox ${{ matrix.system.sandbox }}
+
   bundle-mac:
     timeout-minutes: 120
     name: Create a macOS bundle
