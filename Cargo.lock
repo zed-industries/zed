@@ -4704,11 +4704,8 @@ dependencies = [
 name = "file_icons"
 version = "0.1.0"
 dependencies = [
- "collections",
  "gpui",
  "serde",
- "serde_derive",
- "serde_json",
  "settings",
  "theme",
  "util",
@@ -16680,7 +16677,6 @@ dependencies = [
  "feature_flags",
  "feedback",
  "file_finder",
- "file_icons",
  "fs",
  "futures 0.3.31",
  "git",
