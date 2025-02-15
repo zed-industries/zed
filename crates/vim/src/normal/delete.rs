@@ -91,9 +91,7 @@ impl Vim {
     ) {
         self.stop_recording(cx);
         let target_mode = object.target_visual_mode(self.mode, around);
-        if target_mode != self.mode {
-            self.switch_mode(target_mode, true, window, cx);
-        }
+        self.switch_mode(target_mode, true, window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
