@@ -69,12 +69,19 @@ pub struct CandidateRange {
     pub end: DisplayPoint,
 }
 
+#[derive(Debug, Clone)]
+pub struct CandidateWithRanges {
+    candidate: CandidateRange,
+    open_range: Range<usize>,
+    close_range: Range<usize>,
+}
+
 fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
     candidates: Option<I>,
     caret: DisplayPoint,
     map: &DisplaySnapshot,
     range_filter: Option<&dyn Fn(Range<usize>, Range<usize>) -> bool>,
-) -> Option<CandidateRange> {
+) -> Option<CandidateWithRanges> {
     let caret_offset = caret.to_offset(map, Bias::Left);
     let mut covering = vec![];
     let mut next_ones = vec![];
@@ -82,21 +89,22 @@ fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
 
     if let Some(ranges) = candidates {
         for (open_range, close_range) in ranges {
-            let mut start_off = open_range.start;
+            let start_off = open_range.start;
             let end_off = close_range.end;
-            // To support f-strings in python
-            if snapshot.chars_at(start_off).next() == Some('f') {
-                start_off += 1;
-            }
             if let Some(range_filter) = range_filter {
                 if !range_filter(open_range.clone(), close_range.clone()) {
                     continue;
                 }
             }
-            let c = CandidateRange {
-                start: start_off.to_display_point(map),
-                end: end_off.to_display_point(map),
+            let candidate = CandidateWithRanges {
+                candidate: CandidateRange {
+                    start: start_off.to_display_point(map),
+                    end: end_off.to_display_point(map),
+                },
+                open_range: open_range.clone(),
+                close_range: close_range.clone(),
             };
+
             if open_range
                 .start
                 .to_offset(snapshot)
@@ -105,9 +113,9 @@ fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
                 == caret_offset.to_display_point(map).row()
             {
                 if start_off <= caret_offset && caret_offset < end_off {
-                    covering.push(c);
+                    covering.push(candidate);
                 } else if start_off >= caret_offset {
-                    next_ones.push(c);
+                    next_ones.push(candidate);
                 }
             }
         }
@@ -116,14 +124,15 @@ fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
     // 1) covering -> smallest width
     if !covering.is_empty() {
         return covering.into_iter().min_by_key(|r| {
-            r.end.to_offset(map, Bias::Right) - r.start.to_offset(map, Bias::Left)
+            r.candidate.end.to_offset(map, Bias::Right)
+                - r.candidate.start.to_offset(map, Bias::Left)
         });
     }
 
     // 2) next -> closest by start
     if !next_ones.is_empty() {
         return next_ones.into_iter().min_by_key(|r| {
-            let start = r.start.to_offset(map, Bias::Left);
+            let start = r.candidate.start.to_offset(map, Bias::Left);
             (start as isize - caret_offset as isize).abs()
         });
     }
@@ -135,7 +144,7 @@ fn find_any_delimiters(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
     around: bool,
-    is_valid_delimiter: impl Fn(&BufferSnapshot, usize) -> bool,
+    is_valid_delimiter: impl Fn(&BufferSnapshot, usize, usize) -> bool,
 ) -> Option<Range<DisplayPoint>> {
     let display_point = map.clip_at_line_end(display_point);
     let point = display_point.to_point(map);
@@ -158,20 +167,26 @@ fn find_any_delimiters(
     let excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
 
-    let bracket_filter =
-        |open: Range<usize>, _close: Range<usize>| is_valid_delimiter(buffer, open.start);
+    let bracket_filter = |open: Range<usize>, close: Range<usize>| {
+        is_valid_delimiter(buffer, open.start, close.start)
+    };
 
     if let Some(best_line) = cover_or_next(ranges, display_point, map, Some(&bracket_filter)) {
-        return select_inside_or_around_delimiter_range(best_line.clone(), around);
+        return select_inside_or_around_delimiter_range(best_line.clone(), map, around);
     }
 
     let (open_bracket, close_bracket) =
         buffer.innermost_enclosing_bracket_ranges(offset..offset, Some(&bracket_filter))?;
 
-    let new_start = open_bracket.end.to_display_point(map);
-    let new_end = close_bracket.start.to_display_point(map);
-
-    Some(new_start..new_end)
+    if around {
+        return Some(
+            open_bracket.start.to_display_point(map)..close_bracket.end.to_display_point(map),
+        );
+    } else {
+        return Some(
+            open_bracket.end.to_display_point(map)..close_bracket.start.to_display_point(map),
+        );
+    }
 }
 
 fn find_any_quotes(
@@ -179,8 +194,8 @@ fn find_any_quotes(
     display_point: DisplayPoint,
     around: bool,
 ) -> Option<Range<DisplayPoint>> {
-    find_any_delimiters(map, display_point, around, |buffer, start| {
-        matches!(buffer.chars_at(start).next(), Some('\'' | '"' | '`' | 'f'))
+    find_any_delimiters(map, display_point, around, |buffer, _start, end| {
+        matches!(buffer.chars_at(end).next(), Some('\'' | '"' | '`'))
     })
 }
 
@@ -189,7 +204,7 @@ fn find_any_brackets(
     display_point: DisplayPoint,
     around: bool,
 ) -> Option<Range<DisplayPoint>> {
-    find_any_delimiters(map, display_point, around, |buffer, start| {
+    find_any_delimiters(map, display_point, around, |buffer, start, _end| {
         matches!(
             buffer.chars_at(start).next(),
             Some('(' | '[' | '{' | '<' | '|')
@@ -198,17 +213,19 @@ fn find_any_brackets(
 }
 
 fn select_inside_or_around_delimiter_range(
-    pair: CandidateRange,
+    ranges: CandidateWithRanges,
+    map: &DisplaySnapshot,
     around: bool,
 ) -> Option<std::ops::Range<DisplayPoint>> {
     if around {
-        return Some(pair.start..pair.end);
-    } else {
-        let new_start = pair.start.column() + 1;
-        let new_end = pair.end.column() - 1;
         return Some(
-            DisplayPoint::new(pair.start.row(), new_start)
-                ..DisplayPoint::new(pair.end.row(), new_end),
+            ranges.open_range.start.to_display_point(map)
+                ..ranges.close_range.end.to_display_point(map),
+        );
+    } else {
+        return Some(
+            ranges.open_range.end.to_display_point(map)
+                ..ranges.close_range.start.to_display_point(map),
         );
     }
 }
