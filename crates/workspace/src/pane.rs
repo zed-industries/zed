@@ -1489,43 +1489,31 @@ impl Pane {
 
     pub(super) fn file_names_for_prompt(
         items: &mut dyn Iterator<Item = &Box<dyn ItemHandle>>,
-        all_dirty_items: usize,
         cx: &App,
-    ) -> (String, String) {
-        /// Quantity of item paths displayed in prompt prior to cutoff..
-        const FILE_NAMES_CUTOFF_POINT: usize = 10;
-        let mut file_names = Vec::new();
-        let mut should_display_followup_text = false;
-        for (ix, item) in items.enumerate() {
+    ) -> String {
+        let mut file_names = BTreeSet::default();
+        for item in items {
             item.for_each_project_item(cx, &mut |_, project_item| {
+                if !project_item.is_dirty() {
+                    return;
+                }
                 let filename = project_item.project_path(cx).and_then(|path| {
                     path.path
                         .file_name()
                         .and_then(|name| name.to_str().map(ToOwned::to_owned))
                 });
-                file_names.push(filename.unwrap_or("untitled".to_string()));
+                file_names.insert(filename.unwrap_or("untitled".to_string()));
             });
-
-            if ix == FILE_NAMES_CUTOFF_POINT {
-                should_display_followup_text = true;
-                break;
-            }
         }
-        if should_display_followup_text {
-            let not_shown_files = all_dirty_items - file_names.len();
-            if not_shown_files == 1 {
-                file_names.push(".. 1 file not shown".into());
-            } else {
-                file_names.push(format!(".. {} files not shown", not_shown_files));
-            }
-        }
-        (
+        if file_names.len() > 6 {
             format!(
-                "Do you want to save changes to the following {} files?",
-                all_dirty_items
-            ),
-            file_names.join("\n"),
-        )
+                "{}\n.. and {} more",
+                file_names.iter().take(5).join("\n"),
+                file_names.len() - 5
+            )
+        } else {
+            file_names.into_iter().join("\n")
+        }
     }
 
     pub fn close_items(
@@ -1573,11 +1561,10 @@ impl Pane {
 
             if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
                 let answer = pane.update_in(&mut cx, |_, window, cx| {
-                    let (prompt, detail) =
-                        Self::file_names_for_prompt(&mut dirty_items.iter(), dirty_items.len(), cx);
+                    let detail = Self::file_names_for_prompt(&mut dirty_items.iter(), cx);
                     window.prompt(
                         PromptLevel::Warning,
-                        &prompt,
+                        "Do you want to save changes to the following files?",
                         Some(&detail),
                         &["Save all", "Discard all", "Cancel"],
                         cx,

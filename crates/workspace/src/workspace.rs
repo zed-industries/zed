@@ -2015,14 +2015,13 @@ impl Workspace {
 
                 if remaining_dirty_items.len() > 1 {
                     let answer = workspace.update_in(&mut cx, |_, window, cx| {
-                        let (prompt, detail) = Pane::file_names_for_prompt(
+                        let detail = Pane::file_names_for_prompt(
                             &mut remaining_dirty_items.iter().map(|(_, handle)| handle),
-                            remaining_dirty_items.len(),
                             cx,
                         );
                         window.prompt(
                             PromptLevel::Warning,
-                            &prompt,
+                            &"Do you want to save all changes in the following files?",
                             Some(&detail),
                             &["Save all", "Discard all", "Cancel"],
                             cx,
