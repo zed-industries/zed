@@ -1358,7 +1358,7 @@ impl Project {
                     client_id,
                     abs_path,
                     source_breakpoints,
-                    store.ignore_breakpoints(session_id, cx),
+                    store.ignore_breakpoints(&client_id, cx),
                     false,
                     cx,
                 )
