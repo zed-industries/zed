@@ -1,6 +1,5 @@
 use std::ops::{Deref, DerefMut};
 
-use assets::Assets;
 use editor::test::editor_lsp_test_context::EditorLspTestContext;
 use gpui::{Context, Entity, SemanticVersion, UpdateGlobal};
 use search::{project_search::ProjectSearchBar, BufferSearchBar};
@@ -21,7 +20,7 @@ impl VimTestContext {
             cx.set_global(settings);
             release_channel::init(SemanticVersion::default(), cx);
             command_palette::init(cx);
-            project_panel::init(Assets, cx);
+            project_panel::init(cx);
             git_ui::init(cx);
             crate::init(cx);
             search::init(cx);
