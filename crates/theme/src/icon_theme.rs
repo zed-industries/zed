@@ -182,7 +182,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ),
     ("prisma", &["prisma"]),
     ("python", &["py"]),
-    ("r", &["r", "rdata", "R", "RData"]),
+    ("r", &["r", "R"]),
     ("react", &["cjsx", "ctsx", "jsx", "mjsx", "mtsx", "tsx"]),
     ("roc", &["roc"]),
     ("ruby", &["rb"]),
@@ -195,7 +195,8 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
         "storage",
         &[
             "accdb", "csv", "dat", "db", "dbf", "dll", "fmp", "fp7", "frm", "gdb", "ib", "jsonc",
-            "ldf", "mdb", "mdf", "myd", "myi", "pdb", "sav", "sdf", "sql", "sqlite", "tsv",
+            "ldf", "mdb", "mdf", "myd", "myi", "pdb", "RData", "rdata", "sav", "sdf", "sql",
+            "sqlite", "tsv",
         ],
     ),
     (
