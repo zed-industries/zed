@@ -182,7 +182,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ),
     ("prisma", &["prisma"]),
     ("python", &["py"]),
-    ("r", &["r", "R"]),
+    ("r", &["r", "rdata", "R", "RData"]),
     ("react", &["cjsx", "ctsx", "jsx", "mjsx", "mtsx", "tsx"]),
     ("roc", &["roc"]),
     ("ruby", &["rb"]),
