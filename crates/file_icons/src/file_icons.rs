@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::{path::Path, str};
 
-use gpui::{App, AssetSource, SharedString};
+use gpui::{App, SharedString};
 use settings::Settings;
 use theme::{IconTheme, ThemeRegistry, ThemeSettings};
 use util::paths::PathExt;
@@ -10,8 +10,6 @@ use util::paths::PathExt;
 pub struct FileIcons {
     icon_theme: Arc<IconTheme>,
 }
-
-pub fn init(_assets: impl AssetSource, _cx: &mut App) {}
 
 impl FileIcons {
     pub fn get(cx: &App) -> Self {

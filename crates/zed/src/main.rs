@@ -488,9 +488,9 @@ fn main() {
         tab_switcher::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
-        project_panel::init(Assets, cx);
+        project_panel::init(cx);
         git_ui::git_panel::init(cx);
-        outline_panel::init(Assets, cx);
+        outline_panel::init(cx);
         component_preview::init(cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
