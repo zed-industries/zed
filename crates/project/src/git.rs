@@ -40,6 +40,7 @@ pub struct Repository {
     pub worktree_id: WorktreeId,
     pub repository_entry: RepositoryEntry,
     pub git_repo: GitRepo,
+    pub merge_message: Option<String>,
     update_sender: mpsc::UnboundedSender<(Message, oneshot::Sender<Result<()>>)>,
 }
 
@@ -138,22 +139,29 @@ impl GitStore {
                 worktree.update(cx, |worktree, cx| {
                     let snapshot = worktree.snapshot();
                     for repo in snapshot.repositories().iter() {
-                        let git_repo = worktree
+                        let git_data = worktree
                             .as_local()
                             .and_then(|local_worktree| local_worktree.get_local_repo(repo))
-                            .map(|local_repo| local_repo.repo().clone())
-                            .map(GitRepo::Local)
+                            .map(|local_repo| {
+                                (
+                                    GitRepo::Local(local_repo.repo().clone()),
+                                    local_repo.merge_message.clone(),
+                                )
+                            })
                             .or_else(|| {
                                 let client = client.clone()?;
                                 let project_id = project_id?;
-                                Some(GitRepo::Remote {
-                                    project_id,
-                                    client,
-                                    worktree_id: worktree.id(),
-                                    work_directory_id: repo.work_directory_id(),
-                                })
+                                Some((
+                                    GitRepo::Remote {
+                                        project_id,
+                                        client,
+                                        worktree_id: worktree.id(),
+                                        work_directory_id: repo.work_directory_id(),
+                                    },
+                                    None,
+                                ))
                             });
-                        let Some(git_repo) = git_repo else {
+                        let Some((git_repo, merge_message)) = git_data else {
                             continue;
                         };
                         let worktree_id = worktree.id();
@@ -169,10 +177,24 @@ impl GitStore {
                             if self.active_index == Some(index) {
                                 new_active_index = Some(new_repositories.len());
                             }
-                            // Update the statuses but keep everything else.
+                            // Update the statuses and merge message but keep everything else.
                             let existing_handle = handle.clone();
-                            existing_handle.update(cx, |existing_handle, _| {
+                            existing_handle.update(cx, |existing_handle, cx| {
                                 existing_handle.repository_entry = repo.clone();
+                                if matches!(git_repo, GitRepo::Local { .. })
+                                    && existing_handle.merge_message != merge_message
+                                {
+                                    if let (Some(merge_message), Some(buffer)) =
+                                        (&merge_message, &existing_handle.commit_message_buffer)
+                                    {
+                                        buffer.update(cx, |buffer, cx| {
+                                            if buffer.is_empty() {
+                                                buffer.set_text(merge_message.as_str(), cx);
+                                            }
+                                        })
+                                    }
+                                    existing_handle.merge_message = merge_message;
+                                }
                             });
                             existing_handle
                         } else {
@@ -182,6 +204,7 @@ impl GitStore {
                                 repository_entry: repo.clone(),
                                 git_repo,
                                 update_sender: self.update_sender.clone(),
+                                merge_message,
                                 commit_message_buffer: None,
                             })
                         };
@@ -751,6 +774,7 @@ impl Repository {
         buffer_store: Entity<BufferStore>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
+        let merge_message = self.merge_message.clone();
         cx.spawn(|repository, mut cx| async move {
             let buffer = buffer_store
                 .update(&mut cx, |buffer_store, cx| buffer_store.create_buffer(cx))?
@@ -760,6 +784,12 @@ impl Repository {
                 let git_commit_language = language_registry.language_for_name("Git Commit").await?;
                 buffer.update(&mut cx, |buffer, cx| {
                     buffer.set_language(Some(git_commit_language), cx);
+                })?;
+            }
+
+            if let Some(merge_message) = merge_message {
+                buffer.update(&mut cx, |buffer, cx| {
+                    buffer.set_text(merge_message.as_str(), cx)
                 })?;
             }
 
