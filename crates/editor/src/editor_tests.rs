@@ -13195,28 +13195,6 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
     executor.run_until_parked();
     cx.assert_state_with_diff(
         r#"
-          use some::mod2;
-
-          const A: u32 = 42;
-          const C: u32 = 42;
-
-          fn main(ˇ) {
-              //println!("hello");
-
-              println!("world");
-              //
-              //
-          }
-        "#
-        .unindent(),
-    );
-
-    cx.update_editor(|editor, window, cx| {
-        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, window, cx);
-    });
-    executor.run_until_parked();
-    cx.assert_state_with_diff(
-        r#"
         - new diff base!
         + use some::mod2;
         +

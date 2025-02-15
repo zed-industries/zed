@@ -4829,7 +4829,15 @@ impl EditorElement {
     ) {
         for (_, hunk_hitbox) in &layout.display_hunks {
             if let Some(hunk_hitbox) = hunk_hitbox {
-                window.set_cursor_style(CursorStyle::PointingHand, hunk_hitbox);
+                if !self
+                    .editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .all_diff_hunks_expanded()
+                {
+                    window.set_cursor_style(CursorStyle::PointingHand, hunk_hitbox);
+                }
             }
         }
 
@@ -5717,7 +5725,7 @@ impl EditorElement {
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
-            let multi_buffer_range =
+            let diff_hunk_range =
                 layout
                     .display_hunks
                     .iter()
@@ -5753,7 +5761,7 @@ impl EditorElement {
                             Self::mouse_left_down(
                                 editor,
                                 event,
-                                multi_buffer_range.clone(),
+                                diff_hunk_range.clone(),
                                 &position_map,
                                 line_numbers.as_ref(),
                                 window,
