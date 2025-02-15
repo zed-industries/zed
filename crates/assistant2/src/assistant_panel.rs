@@ -849,6 +849,7 @@ impl AssistantPanel {
                                     &OpenHistory,
                                     &self.focus_handle(cx),
                                     window,
+                                    cx
                                 ))
                                 .on_click(move |_event, window, cx| {
                                     window.dispatch_action(OpenHistory.boxed_clone(), cx);
