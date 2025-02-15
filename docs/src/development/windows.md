@@ -97,7 +97,7 @@ cargo test --workspace
 
 ## Installing from msys2
 
-[MSYS2](https://msys2.org/) distribution provides Zed as a package [mingw-w64-zed](https://packages.msys2.org/base/mingw-w64-zed). The package is available for UCRT64 and MINGW64 repositories. To download it, run
+[MSYS2](https://msys2.org/) distribution provides Zed as a package [mingw-w64-zed](https://packages.msys2.org/base/mingw-w64-zed). The package is available for UCRT64, MINGW64 and CLANG64 repositories. To download it, run
 
 ```sh
 pacman -Syu
@@ -111,8 +111,6 @@ You can see the [build script](https://github.com/msys2/MINGW-packages/blob/mast
 > Please, report any issue in [msys2/MINGW-packages/issues](https://github.com/msys2/MINGW-packages/issues?q=is%3Aissue+is%3Aopen+zed) first.
 
 Note that `collab` is not supported for msys2.
-
-After [v0.173.x](https://github.com/msys2/MINGW-packages/pull/23391) update Zed is not available for CLANG64 due to `aws-lc-sys` build issue.
 
 ## Troubleshooting
 
