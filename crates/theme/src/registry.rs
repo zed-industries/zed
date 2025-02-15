@@ -11,8 +11,8 @@ use parking_lot::RwLock;
 use util::ResultExt;
 
 use crate::{
-    read_icon_theme, read_user_theme, refine_theme_family, Appearance, AppearanceContent,
-    ChevronIcons, DirectoryIcons, IconDefinition, IconTheme, Theme, ThemeFamily,
+    default_icon_theme, read_icon_theme, read_user_theme, refine_theme_family, Appearance,
+    AppearanceContent, ChevronIcons, DirectoryIcons, IconDefinition, IconTheme, Theme, ThemeFamily,
     ThemeFamilyContent, DEFAULT_ICON_THEME_NAME,
 };
 
@@ -80,10 +80,11 @@ impl ThemeRegistry {
         registry.insert_theme_families([crate::fallback_themes::zed_default_themes()]);
 
         let default_icon_theme = crate::default_icon_theme();
-        registry.state.write().icon_themes.insert(
-            default_icon_theme.name.clone(),
-            Arc::new(default_icon_theme),
-        );
+        registry
+            .state
+            .write()
+            .icon_themes
+            .insert(default_icon_theme.name.clone(), default_icon_theme);
 
         registry
     }
@@ -263,8 +264,16 @@ impl ThemeRegistry {
                 .into()
         };
 
+        let default_icon_theme = default_icon_theme();
+
         let mut state = self.state.write();
         for icon_theme in icon_theme_family.themes {
+            let mut file_stems = default_icon_theme.file_stems.clone();
+            file_stems.extend(icon_theme.file_stems);
+
+            let mut file_suffixes = default_icon_theme.file_suffixes.clone();
+            file_suffixes.extend(icon_theme.file_suffixes);
+
             let icon_theme = IconTheme {
                 id: uuid::Uuid::new_v4().to_string(),
                 name: icon_theme.name.into(),
@@ -280,6 +289,8 @@ impl ThemeRegistry {
                     collapsed: icon_theme.chevron_icons.collapsed.map(resolve_icon_path),
                     expanded: icon_theme.chevron_icons.expanded.map(resolve_icon_path),
                 },
+                file_stems,
+                file_suffixes,
                 file_icons: icon_theme
                     .file_icons
                     .into_iter()

@@ -43,10 +43,6 @@ Zed's default icon theme consists of icons that are hand-designed to fit togethe
 
 We do not accept PRs for file icons that are just an off-the-shelf SVG taken from somewhere else.
 
-### File icon associations
-
-We will happily accept PRs that add new file icon associations to [`file_types.json`](assets/icons/file_icons/file_types.json) to allow them to be targeted by [icon themes](https://zed.dev/docs/extensions/icon-themes).
-
 ### Adding new icons to the Zed icon theme
 
 If you would like to add a new icon to the Zed icon theme, [open a Discussion](https://github.com/zed-industries/zed/discussions/new?category=ux-and-design) and we can work with you on getting an icon designed and added to Zed.

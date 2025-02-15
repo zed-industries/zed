@@ -8,7 +8,7 @@ extend-exclude = [
     ".mailmap",
 
     # File suffixes aren't typos.
-    "assets/icons/file_icons/file_types.json",
+    "crates/theme/src/icon_theme.rs",
     "crates/extensions_ui/src/extension_suggest.rs",
 
     # Some countries codes are flagged as typos.
