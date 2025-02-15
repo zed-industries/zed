@@ -98,7 +98,9 @@ impl Vim {
     ) {
         let mut objects_found = false;
         let target_mode = object.target_visual_mode(self.mode, around);
-        self.switch_mode(target_mode, true, window, cx);
+        if target_mode == Mode::VisualLine {
+            self.switch_mode(target_mode, true, window, cx);
+        }
         self.update_editor(window, cx, |vim, editor, window, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
             editor.set_clip_at_line_ends(false, cx);
