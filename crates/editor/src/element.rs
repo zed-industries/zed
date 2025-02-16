@@ -4667,32 +4667,32 @@ impl EditorElement {
         for LineNumberLayout {
             shaped_line,
             hitbox,
-            display_row,
+            ..
         } in layout.line_numbers.values()
         {
             let Some(hitbox) = hitbox else {
                 continue;
             };
 
-            let is_active = layout.active_rows.contains_key(&display_row);
+            let Some(()) = (if !is_singleton && hitbox.is_hovered(window) {
+                let color = cx.theme().colors().editor_hover_line_number;
 
-            let color = if is_active {
-                cx.theme().colors().editor_active_line_number
-            } else if !is_singleton && hitbox.is_hovered(window) {
-                cx.theme().colors().editor_hover_line_number
+                let Some(line) = self
+                    .shape_line_number(shaped_line.text.clone(), color, window)
+                    .log_err()
+                else {
+                    continue;
+                };
+
+                line.paint(hitbox.origin, line_height, window, cx).log_err()
             } else {
-                cx.theme().colors().editor_line_number
+                shaped_line
+                    .paint(hitbox.origin, line_height, window, cx)
+                    .log_err()
+            }) else {
+                continue;
             };
 
-            let Some(line) = self
-                .shape_line_number(shaped_line.text.clone(), color, window)
-                .log_err()
-            else {
-                continue;
-            };
-            let Some(()) = line.paint(hitbox.origin, line_height, window, cx).log_err() else {
-                continue;
-            };
             // In singleton buffers, we select corresponding lines on the line number click, so use | -like cursor.
             // In multi buffers, we open file at the line number clicked, so use a pointing hand cursor.
             if is_singleton {
