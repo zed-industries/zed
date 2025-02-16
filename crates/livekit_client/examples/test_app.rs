@@ -33,7 +33,7 @@ use livekit_client::{
     AudioStream, RemoteVideoTrackView, Room, RoomEvent,
 };
 
-use livekit_server::token::{self, VideoGrant};
+use livekit_api::token::{self, VideoGrant};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 
