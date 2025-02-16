@@ -225,7 +225,7 @@ impl VimGlobals {
                     interceptor.set(Box::new(command_interceptor));
                 });
             } else {
-                KeyBinding::set_vim_mode(cx, true);
+                KeyBinding::set_vim_mode(cx, false);
                 *Vim::globals(cx) = VimGlobals::default();
                 CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
                     interceptor.clear();
