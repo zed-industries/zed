@@ -154,6 +154,9 @@ impl Vim {
                     if action.regex {
                         options |= SearchOptions::REGEX;
                     }
+                    if action.backwards {
+                        options |= SearchOptions::BACKWARDS;
+                    }
                     search_bar.set_search_options(options, cx);
                     let prior_mode = if self.temp_mode {
                         Mode::Insert
@@ -198,7 +201,7 @@ impl Vim {
                     .last()
                     .map_or(true, |range| range.start != new_head);
 
-                if is_different_head && self.search.direction == Direction::Next {
+                if is_different_head {
                     count = count.saturating_sub(1)
                 }
                 self.search.count = 1;
