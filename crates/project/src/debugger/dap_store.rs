@@ -1002,9 +1002,9 @@ impl DapStore {
     ) -> Task<Result<()>> {
         let Some(_) = self.as_local_mut() else {
             if let Some((upstream_client, project_id)) = self.upstream_client() {
-                let future = upstream_client.request(proto::DapShutdownClient {
+                let future = upstream_client.request(proto::ShutdownDebugClient {
                     project_id,
-                    session_id: Some(client_id.to_proto()),
+                    client_id: Some(client_id.to_proto()),
                 });
 
                 return cx
@@ -1014,7 +1014,6 @@ impl DapStore {
 
             return Task::ready(Err(anyhow!("Cannot shutdown session on remote side")));
         };
-
         let Some(client) = self.clients.remove(client_id) else {
             return Task::ready(Err(anyhow!("Could not find session: {:?}", client_id)));
         };

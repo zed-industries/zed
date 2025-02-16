@@ -639,7 +639,8 @@ request_messages!(
     (DapEvaluateRequest, DapEvaluateResponse),
     (DapCompletionRequest, DapCompletionResponse),
     (DapThreadsRequest, DapThreadsResponse),
-    (DapTerminateRequest, Ack)
+    (DapTerminateRequest, Ack),
+    (ShutdownDebugClient, Ack),
 );
 
 entity_messages!(
