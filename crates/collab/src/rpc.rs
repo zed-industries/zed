@@ -1545,7 +1545,7 @@ async fn set_room_participant_role(
             .update_participant(
                 livekit_room.clone(),
                 request.user_id.to_string(),
-                livekit_server::proto::ParticipantPermission {
+                livekit_api::proto::ParticipantPermission {
                     can_subscribe: true,
                     can_publish,
                     can_publish_data: can_publish,

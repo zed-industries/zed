@@ -2792,9 +2792,9 @@ dependencies = [
  "jsonwebtoken",
  "language",
  "language_model",
+ "livekit_api",
  "livekit_client",
  "livekit_client_macos",
- "livekit_server",
  "log",
  "lsp",
  "menu",
@@ -7405,6 +7405,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "livekit_api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "jsonwebtoken",
+ "log",
+ "prost 0.9.0",
+ "prost-build 0.9.0",
+ "prost-types 0.9.0",
+ "reqwest 0.12.8",
+ "serde",
+]
+
+[[package]]
 name = "livekit_client"
 version = "0.1.0"
 dependencies = [
@@ -7420,7 +7435,7 @@ dependencies = [
  "http_client",
  "image",
  "livekit",
- "livekit_server",
+ "livekit_api",
  "log",
  "media",
  "nanoid",
@@ -7445,7 +7460,7 @@ dependencies = [
  "core-foundation 0.9.4",
  "futures 0.3.31",
  "gpui",
- "livekit_server",
+ "livekit_api",
  "log",
  "media",
  "nanoid",
@@ -7455,21 +7470,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "simplelog",
-]
-
-[[package]]
-name = "livekit_server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "jsonwebtoken",
- "log",
- "prost 0.9.0",
- "prost-build 0.9.0",
- "prost-types 0.9.0",
- "reqwest 0.12.8",
- "serde",
 ]
 
 [[package]]
