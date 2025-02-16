@@ -27,6 +27,8 @@ use semantic_version::SemanticVersion;
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
+    thread,
+    time::Duration,
 };
 use wasmtime::{
     component::{Component, ResourceTable},
@@ -319,7 +321,32 @@ fn wasm_engine() -> wasmtime::Engine {
             let mut config = wasmtime::Config::new();
             config.wasm_component_model(true);
             config.async_support(true);
-            wasmtime::Engine::new(&config).unwrap()
+            // Async support introduces the issue that extension execution happens during `Future::poll`,
+            // which could block an async thread.
+            // https://docs.rs/wasmtime/latest/wasmtime/struct.Config.html#execution-in-poll
+            //
+            // Epoch interruption is a lightweight mechanism to allow the extensions to yield control
+            // back to the executor at regular intervals.
+            config.epoch_interruption(true);
+
+            let engine = wasmtime::Engine::new(&config).unwrap();
+
+            // Need to do this on some non-async thread to make sure it makes progress regardless
+            // of if extensions are blocking.
+            let engine_ref = engine.weak();
+            thread::spawn(move || loop {
+                // Somewhat arbitrary interval, as it isn't a guaranteed interval.
+                // But this is a rough upper bound for how long the extension execution can block on
+                // `Future::poll`.
+                const EPOCH_INTERVAL: u64 = 100;
+                thread::sleep(Duration::from_millis(EPOCH_INTERVAL));
+                // Exit the loop and thread once the engine is dropped.
+                let Some(engine) = engine_ref.upgrade() else {
+                    break;
+                };
+                engine.increment_epoch();
+            });
+            engine
         })
         .clone()
 }
@@ -375,6 +402,10 @@ impl WasmHost {
                     host: this.clone(),
                 },
             );
+
+            // Store will yield after 1 tick, and get a new deadline of 1 tick after each yield.
+            store.set_epoch_deadline(1);
+            store.epoch_deadline_async_yield_and_update(1);
 
             let mut extension = Extension::instantiate_async(
                 &mut store,
