@@ -2321,7 +2321,6 @@ impl EditorElement {
                 let line_number = LineNumberLayout {
                     shaped_line,
                     hitbox,
-                    display_row,
                 };
                 Some((multi_buffer_row, line_number))
             })
@@ -4667,7 +4666,6 @@ impl EditorElement {
         for LineNumberLayout {
             shaped_line,
             hitbox,
-            ..
         } in layout.line_numbers.values()
         {
             let Some(hitbox) = hitbox else {
@@ -8004,7 +8002,6 @@ impl EditorLayout {
 struct LineNumberLayout {
     shaped_line: ShapedLine,
     hitbox: Option<Hitbox>,
-    display_row: DisplayRow,
 }
 
 struct ColoredRange<T> {
