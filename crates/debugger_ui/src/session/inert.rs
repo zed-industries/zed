@@ -1,5 +1,5 @@
 use gpui::{App, FocusHandle, Focusable};
-use ui::{div, Context, Element, ParentElement, Render, Styled};
+use ui::{div, Context, Element, InteractiveElement, ParentElement, Render, Styled};
 
 pub(super) struct InertState {
     focus_handle: FocusHandle,
@@ -24,6 +24,9 @@ impl Render for InertState {
         _window: &mut ui::Window,
         _cx: &mut ui::Context<'_, Self>,
     ) -> impl ui::IntoElement {
-        div().size_full().child("No debug sessions")
+        div()
+            .track_focus(&self.focus_handle)
+            .size_full()
+            .child("No debug sessions")
     }
 }

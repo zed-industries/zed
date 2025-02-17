@@ -57,7 +57,7 @@ actions!(debug_panel, [ToggleFocus]);
 pub struct DebugPanel {
     size: Pixels,
     pane: Entity<Pane>,
-    focus_handle: FocusHandle,
+
     workspace: WeakEntity<Workspace>,
     _subscriptions: Vec<Subscription>,
 }
@@ -106,7 +106,6 @@ impl DebugPanel {
                 pane,
                 size: px(300.),
                 _subscriptions,
-                focus_handle: cx.focus_handle(),
                 workspace: workspace.weak_handle(),
             };
 
@@ -241,8 +240,8 @@ impl EventEmitter<DebugPanelEvent> for DebugPanel {}
 impl EventEmitter<project::Event> for DebugPanel {}
 
 impl Focusable for DebugPanel {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.pane.focus_handle(cx)
     }
 }
 
@@ -305,10 +304,10 @@ impl Panel for DebugPanel {
 }
 
 impl Render for DebugPanel {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("DebugPanel")
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .size_full()
             .child(self.pane.clone())
             .into_any()
