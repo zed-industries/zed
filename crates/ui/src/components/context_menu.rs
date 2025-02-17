@@ -716,11 +716,12 @@ impl Render for ContextMenu {
                                                                         KeyBinding::for_action_in(
                                                                             &**action, focus,
                                                                             window,
+                                                                            cx
                                                                         )
                                                                     })
                                                                     .unwrap_or_else(|| {
                                                                         KeyBinding::for_action(
-                                                                            &**action, window,
+                                                                            &**action, window, cx
                                                                         )
                                                                     })
                                                                     .map(|binding| {

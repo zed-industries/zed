@@ -48,10 +48,7 @@ use dap::{
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
 use debugger::{
-    breakpoint_store::{
-        Breakpoint, BreakpointEditAction, BreakpointStore, BreakpointStoreEvent,
-        SerializedBreakpoint,
-    },
+    breakpoint_store::{BreakpointStore, BreakpointStoreEvent, SerializedBreakpoint},
     dap_store::{DapStore, DapStoreEvent},
 };
 pub use environment::ProjectEnvironment;
@@ -690,7 +687,12 @@ impl Project {
                 )
             });
 
-            let breakpoint_store = cx.new(|_| BreakpointStore::local());
+            let buffer_store = cx.new(|cx| BufferStore::local(worktree_store.clone(), cx));
+            cx.subscribe(&buffer_store, Self::on_buffer_store_event)
+                .detach();
+
+            let breakpoint_store = cx
+                .new(|cx| BreakpointStore::local(buffer_store.clone(), worktree_store.clone(), cx));
 
             let dap_store = cx.new(|cx| {
                 DapStore::new_local(
@@ -706,11 +708,6 @@ impl Project {
             });
             cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
             cx.subscribe(&breakpoint_store, Self::on_breakpoint_store_event)
-                .detach();
-
-            let buffer_store = cx
-                .new(|cx| BufferStore::local(worktree_store.clone(), breakpoint_store.clone(), cx));
-            cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
             let image_store = cx.new(|cx| ImageStore::local(worktree_store.clone(), cx));
@@ -887,8 +884,15 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let breakpoint_store =
-                cx.new(|_| BreakpointStore::remote(SSH_PROJECT_ID, client.clone().into()));
+            let breakpoint_store = cx.new(|cx| {
+                BreakpointStore::remote(
+                    SSH_PROJECT_ID,
+                    client.clone().into(),
+                    buffer_store.clone(),
+                    worktree_store.clone(),
+                    cx,
+                )
+            });
 
             let dap_store = cx.new(|_| {
                 DapStore::new_remote(
@@ -1080,7 +1084,16 @@ impl Project {
         let environment = cx.update(|cx| ProjectEnvironment::new(&worktree_store, None, cx))?;
 
         let breakpoint_store = cx.new(|cx| {
-            let mut bp_store = BreakpointStore::remote(remote_id, client.clone().into());
+            let mut bp_store = {
+                BreakpointStore::remote(
+                    remote_id,
+                    client.clone().into(),
+                    buffer_store.clone(),
+                    worktree_store.clone(),
+                    cx,
+                )
+            };
+
             bp_store.set_breakpoints_from_proto(response.payload.breakpoints, cx);
             bp_store
         })?;
@@ -1294,48 +1307,6 @@ impl Project {
         }
     }
 
-    pub fn all_breakpoints(
-        &self,
-        as_abs_path: bool,
-        cx: &mut Context<Self>,
-    ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
-        let mut all_breakpoints: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
-
-        for (project_path, breakpoints) in &self.breakpoint_store.read(cx).breakpoints {
-            let buffer = maybe!({
-                let buffer_store = self.buffer_store.read(cx);
-                let buffer_id = buffer_store.buffer_id_for_project_path(project_path)?;
-                let buffer = self.buffer_for_id(*buffer_id, cx)?;
-                Some(buffer.read(cx))
-            });
-
-            let Some(path) = maybe!({
-                if as_abs_path {
-                    let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
-                    Some(Arc::from(
-                        worktree
-                            .read(cx)
-                            .absolutize(&project_path.path)
-                            .ok()?
-                            .as_path(),
-                    ))
-                } else {
-                    Some(project_path.clone().path)
-                }
-            }) else {
-                continue;
-            };
-
-            all_breakpoints.entry(path).or_default().extend(
-                breakpoints
-                    .into_iter()
-                    .map(|bp| bp.to_serialized(buffer, project_path.clone().path)),
-            );
-        }
-
-        all_breakpoints
-    }
-
     pub fn initial_send_breakpoints(
         &self,
         client_id: DebugAdapterClientId,
@@ -1344,7 +1315,8 @@ impl Project {
         let mut tasks = Vec::new();
 
         for (abs_path, serialized_breakpoints) in self
-            .all_breakpoints(true, cx)
+            .breakpoint_store()
+            .read_with(cx, |store, cx| store.all_breakpoints(true, cx))
             .into_iter()
             .filter(|(_, bps)| !bps.is_empty())
         {
@@ -1392,65 +1364,11 @@ impl Project {
         })
     }
 
-    /// Get all serialized breakpoints that belong to a buffer
-    pub fn serialize_breakpoints_for_project_path(
-        &self,
-        project_path: &ProjectPath,
-        cx: &Context<Self>,
-    ) -> Option<(Arc<Path>, Vec<SerializedBreakpoint>)> {
-        let buffer = maybe!({
-            let buffer_id = self
-                .buffer_store
-                .read(cx)
-                .buffer_id_for_project_path(project_path)?;
-            Some(self.buffer_for_id(*buffer_id, cx)?.read(cx))
-        });
-
-        let worktree_path = self
-            .worktree_for_id(project_path.worktree_id, cx)?
-            .read(cx)
-            .abs_path();
-
-        Some((
-            worktree_path,
-            self.breakpoint_store
-                .read(cx)
-                .breakpoints
-                .get(&project_path)?
-                .iter()
-                .map(|bp| bp.to_serialized(buffer, project_path.path.clone()))
-                .collect(),
-        ))
-    }
-
-    /// Serialize all breakpoints to save within workspace's database
-    ///
-    /// # Return
-    /// HashMap:
-    ///     Key: A valid worktree path
-    ///     Value: All serialized breakpoints that belong to a worktree
     pub fn serialize_breakpoints(
         &self,
         cx: &Context<Self>,
     ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
-        let mut result: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
-
-        if !DebuggerSettings::get_global(cx).save_breakpoints {
-            return result;
-        }
-
-        for project_path in self.breakpoint_store.read(cx).breakpoints.keys() {
-            if let Some((worktree_path, mut serialized_breakpoint)) =
-                self.serialize_breakpoints_for_project_path(project_path, cx)
-            {
-                result
-                    .entry(worktree_path.clone())
-                    .or_default()
-                    .append(&mut serialized_breakpoint)
-            }
-        }
-
-        result
+        self.breakpoint_store.read(cx).serialize_breakpoints(cx)
     }
 
     async fn handle_toggle_ignore_breakpoints(
@@ -1545,37 +1463,13 @@ impl Project {
         })
     }
 
-    /// Sends updated breakpoint information of one file to all active debug adapters
+    /// Toggles a breakpoint
+    ///
+    /// Also sends updated breakpoint information of one file to all active debug adapters
     ///
     /// This function is called whenever a breakpoint is toggled, and it doesn't need
     /// to send breakpoints from closed files because those breakpoints can't change
     /// without opening a buffer.
-    pub fn toggle_breakpoint(
-        &self,
-        buffer_id: BufferId,
-        breakpoint: Breakpoint,
-        edit_action: BreakpointEditAction,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(buffer) = self.buffer_for_id(buffer_id, cx) else {
-            return;
-        };
-
-        if let Some(project_path) = buffer.read(cx).project_path(cx) {
-            self.dap_store.update(cx, |dap_store, cx| {
-                dap_store
-                    .breakpoint_store()
-                    .update(cx, |breakpoint_store, cx| {
-                        breakpoint_store.toggle_breakpoint_for_buffer(
-                            &project_path,
-                            breakpoint,
-                            edit_action,
-                            cx,
-                        )
-                    })
-            });
-        }
-    }
 
     #[cfg(any(test, feature = "test-support"))]
     pub async fn example(
@@ -2699,6 +2593,7 @@ impl Project {
                         .log_err();
                 }
             }
+            BufferStoreEvent::BufferOpened { .. } => {}
         }
     }
 

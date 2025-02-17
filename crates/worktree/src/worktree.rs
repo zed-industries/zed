@@ -576,6 +576,7 @@ pub struct LocalRepositoryEntry {
     /// Absolute path to the .git file, if we're in a git worktree.
     pub(crate) dot_git_worktree_abs_path: Option<Arc<Path>>,
     pub current_merge_head_shas: Vec<String>,
+    pub merge_message: Option<String>,
 }
 
 impl sum_tree::Item for LocalRepositoryEntry {
@@ -3524,6 +3525,7 @@ impl BackgroundScannerState {
             dot_git_dir_abs_path: actual_dot_git_dir_abs_path.into(),
             dot_git_worktree_abs_path,
             current_merge_head_shas: Default::default(),
+            merge_message: None,
         };
 
         self.snapshot
@@ -5491,6 +5493,10 @@ impl BackgroundScanner {
                     &local_repository.work_directory_id,
                     |entry| {
                         entry.current_merge_head_shas = merge_head_shas;
+                        entry.merge_message = std::fs::read_to_string(
+                            local_repository.dot_git_dir_abs_path.join("MERGE_MSG"),
+                        )
+                        .ok();
                         entry.status_scan_id += 1;
                     },
                 );

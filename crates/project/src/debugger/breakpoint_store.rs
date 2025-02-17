@@ -1,13 +1,17 @@
-use crate::{ProjectItem as _, ProjectPath};
+use crate::{
+    buffer_store::{BufferStore, BufferStoreEvent},
+    BufferId, ProjectItem as _, ProjectPath, WorktreeStore,
+};
 use anyhow::{Context as _, Result};
-use collections::{BTreeMap, HashSet};
-use dap::SourceBreakpoint;
-use gpui::{AsyncApp, Context, Entity, EventEmitter};
+use collections::{BTreeMap, HashMap, HashSet};
+use dap::{debugger_settings::DebuggerSettings, SourceBreakpoint};
+use gpui::{App, AsyncApp, Context, Entity, EventEmitter};
 use language::{
     proto::{deserialize_anchor, serialize_anchor as serialize_text_anchor},
     Buffer, BufferSnapshot,
 };
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
+use settings::Settings;
 use settings::WorktreeId;
 use std::{
     hash::{Hash, Hasher},
@@ -15,7 +19,7 @@ use std::{
     sync::Arc,
 };
 use text::Point;
-use util::ResultExt as _;
+use util::{maybe, ResultExt as _};
 
 struct RemoteBreakpointStore {
     upstream_client: Option<AnyProtoClient>,
@@ -29,6 +33,8 @@ enum BreakpointMode {
 
 pub struct BreakpointStore {
     pub breakpoints: BTreeMap<ProjectPath, HashSet<Breakpoint>>,
+    buffer_store: Entity<BufferStore>,
+    worktree_store: Entity<WorktreeStore>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     mode: BreakpointMode,
 }
@@ -47,17 +53,37 @@ impl BreakpointStore {
         client.add_entity_message_handler(Self::handle_synchronize_breakpoints);
     }
 
-    pub fn local() -> Self {
+    pub fn local(
+        buffer_store: Entity<BufferStore>,
+        worktree_store: Entity<WorktreeStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        cx.subscribe(&buffer_store, Self::handle_buffer_event)
+            .detach();
+
         BreakpointStore {
             breakpoints: BTreeMap::new(),
+            buffer_store,
+            worktree_store,
             mode: BreakpointMode::Local,
             downstream_client: None,
         }
     }
 
-    pub(crate) fn remote(upstream_project_id: u64, upstream_client: AnyProtoClient) -> Self {
+    pub(crate) fn remote(
+        upstream_project_id: u64,
+        upstream_client: AnyProtoClient,
+        buffer_store: Entity<BufferStore>,
+        worktree_store: Entity<WorktreeStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        cx.subscribe(&buffer_store, Self::handle_buffer_event)
+            .detach();
+
         BreakpointStore {
             breakpoints: BTreeMap::new(),
+            buffer_store,
+            worktree_store,
             mode: BreakpointMode::Remote(RemoteBreakpointStore {
                 upstream_client: Some(upstream_client),
                 upstream_project_id,
@@ -128,6 +154,82 @@ impl BreakpointStore {
 
         std::mem::swap(&mut self.breakpoints, &mut new_breakpoints);
         cx.notify();
+    }
+
+    pub fn toggle_breakpoint(
+        &mut self,
+        buffer_id: BufferId,
+        mut breakpoint: Breakpoint,
+        edit_action: BreakpointEditAction,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project_path) = self
+            .buffer_store
+            .read(cx)
+            .get(buffer_id)
+            .and_then(|buffer| buffer.read(cx).project_path(cx))
+        else {
+            return;
+        };
+
+        let upstream_client = self.upstream_client();
+        let breakpoint_set = self.breakpoints.entry(project_path.clone()).or_default();
+
+        match edit_action {
+            BreakpointEditAction::Toggle => {
+                if !breakpoint_set.remove(&breakpoint) {
+                    breakpoint_set.insert(breakpoint);
+                }
+            }
+            BreakpointEditAction::EditLogMessage(log_message) => {
+                if !log_message.is_empty() {
+                    breakpoint.kind = BreakpointKind::Log(log_message.clone());
+                    breakpoint_set.remove(&breakpoint);
+                    breakpoint_set.insert(breakpoint);
+                } else if matches!(&breakpoint.kind, BreakpointKind::Log(_)) {
+                    breakpoint_set.remove(&breakpoint);
+                }
+            }
+        }
+
+        if let Some((client, project_id)) = upstream_client.or(self.downstream_client.clone()) {
+            client
+                .send(client::proto::SynchronizeBreakpoints {
+                    project_id,
+                    project_path: Some(project_path.to_proto()),
+                    breakpoints: breakpoint_set
+                        .iter()
+                        .filter_map(|breakpoint| breakpoint.to_proto())
+                        .collect(),
+                })
+                .log_err();
+        }
+
+        if breakpoint_set.is_empty() {
+            self.breakpoints.remove(&project_path);
+        }
+
+        cx.emit(BreakpointStoreEvent::BreakpointsChanged {
+            project_path: project_path.clone(),
+            source_changed: false,
+        });
+
+        cx.notify();
+    }
+
+    fn handle_buffer_event(
+        &mut self,
+        _buffer_store: Entity<BufferStore>,
+        event: &BufferStoreEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            BufferStoreEvent::BufferOpened {
+                buffer,
+                project_path,
+            } => self.on_open_buffer(&project_path, &buffer, cx),
+            _ => {}
+        }
     }
 
     pub fn on_open_buffer(
@@ -320,6 +422,107 @@ impl BreakpointStore {
             });
             cx.notify();
         })
+    }
+
+    fn serialize_breakpoints_for_project_path(
+        &self,
+        project_path: &ProjectPath,
+        cx: &App,
+    ) -> Option<(Arc<Path>, Vec<SerializedBreakpoint>)> {
+        let buffer = maybe!({
+            let buffer_id = self
+                .buffer_store
+                .read(cx)
+                .buffer_id_for_project_path(project_path)?;
+            Some(self.buffer_store.read(cx).get(*buffer_id)?.read(cx))
+        });
+
+        let worktree_path = self
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(project_path.worktree_id, cx)?
+            .read(cx)
+            .abs_path();
+
+        Some((
+            worktree_path,
+            self.breakpoints
+                .get(&project_path)?
+                .iter()
+                .map(|bp| bp.to_serialized(buffer, project_path.path.clone()))
+                .collect(),
+        ))
+    }
+
+    pub fn serialize_breakpoints(&self, cx: &App) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
+        let mut result: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
+
+        if !DebuggerSettings::get_global(cx).save_breakpoints {
+            return result;
+        }
+
+        for project_path in self.breakpoints.keys() {
+            if let Some((worktree_path, mut serialized_breakpoint)) =
+                self.serialize_breakpoints_for_project_path(project_path, cx)
+            {
+                result
+                    .entry(worktree_path.clone())
+                    .or_default()
+                    .append(&mut serialized_breakpoint)
+            }
+        }
+
+        result
+    }
+
+    pub fn all_breakpoints(
+        &self,
+        as_abs_path: bool,
+        cx: &App,
+    ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
+        let mut all_breakpoints: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
+
+        for (project_path, breakpoints) in &self.breakpoints {
+            let buffer = maybe!({
+                let buffer_store = self.buffer_store.read(cx);
+                let buffer_id = buffer_store.buffer_id_for_project_path(project_path)?;
+                let buffer = buffer_store.get(*buffer_id)?;
+                Some(buffer.read(cx))
+            });
+
+            let Some(path) = maybe!({
+                if as_abs_path {
+                    let worktree = self
+                        .worktree_store
+                        .read(cx)
+                        .worktree_for_id(project_path.worktree_id, cx)?;
+                    Some(Arc::from(
+                        worktree
+                            .read(cx)
+                            .absolutize(&project_path.path)
+                            .ok()?
+                            .as_path(),
+                    ))
+                } else {
+                    Some(project_path.clone().path)
+                }
+            }) else {
+                continue;
+            };
+
+            all_breakpoints.entry(path).or_default().extend(
+                breakpoints
+                    .into_iter()
+                    .map(|bp| bp.to_serialized(buffer, project_path.clone().path)),
+            );
+        }
+
+        all_breakpoints
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn breakpoints(&self) -> &BTreeMap<ProjectPath, HashSet<Breakpoint>> {
+        &self.breakpoints
     }
 }
 

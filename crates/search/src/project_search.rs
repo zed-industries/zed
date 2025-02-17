@@ -364,7 +364,7 @@ impl Render for ProjectSearchView {
                     None
                 }
             } else {
-                Some(self.landing_text_minor(window).into_any_element())
+                Some(self.landing_text_minor(window, cx).into_any_element())
             };
 
             let page_content = page_content.map(|text| div().child(text));
@@ -1231,7 +1231,7 @@ impl ProjectSearchView {
         self.active_match_index.is_some()
     }
 
-    fn landing_text_minor(&self, window: &mut Window) -> impl IntoElement {
+    fn landing_text_minor(&self, window: &mut Window, cx: &App) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         v_flex()
             .gap_1()
@@ -1249,6 +1249,7 @@ impl ProjectSearchView {
                         &ToggleFilters,
                         &focus_handle,
                         window,
+                        cx,
                     ))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleFilters.boxed_clone(), cx)
@@ -1263,6 +1264,7 @@ impl ProjectSearchView {
                         &ToggleReplace,
                         &focus_handle,
                         window,
+                        cx,
                     ))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleReplace.boxed_clone(), cx)
@@ -1277,6 +1279,7 @@ impl ProjectSearchView {
                         &ToggleRegex,
                         &focus_handle,
                         window,
+                        cx,
                     ))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleRegex.boxed_clone(), cx)
@@ -1291,6 +1294,7 @@ impl ProjectSearchView {
                         &ToggleCaseSensitive,
                         &focus_handle,
                         window,
+                        cx,
                     ))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleCaseSensitive.boxed_clone(), cx)
@@ -1305,6 +1309,7 @@ impl ProjectSearchView {
                         &ToggleWholeWord,
                         &focus_handle,
                         window,
+                        cx,
                     ))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleWholeWord.boxed_clone(), cx)
@@ -3799,7 +3804,8 @@ pub mod tests {
         cx.run_until_parked();
 
         let buffer_search_bar = cx.new_window_entity(|window, cx| {
-            let mut search_bar = BufferSearchBar::new(window, cx);
+            let mut search_bar =
+                BufferSearchBar::new(Some(project.read(cx).languages().clone()), window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
             search_bar

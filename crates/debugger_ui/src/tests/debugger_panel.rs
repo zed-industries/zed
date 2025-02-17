@@ -15,7 +15,7 @@ use editor::{
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{
-    debugger::dap_store::{Breakpoint, BreakpointEditAction, BreakpointKind},
+    debugger::breakpoint_store::{Breakpoint, BreakpointEditAction, BreakpointKind},
     FakeFs, Project,
 };
 use serde_json::json;
@@ -1306,21 +1306,23 @@ async fn test_it_send_breakpoint_request_if_breakpoint_buffer_is_unopened(
 
     // add breakpoint for file/buffer that has not been opened yet
     project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.toggle_breakpoint_for_buffer(
-                &project::ProjectPath {
-                    worktree_id,
-                    path: Arc::from(Path::new(&"main.rs")),
-                },
-                Breakpoint {
-                    active_position: None,
-                    cached_position: 1,
-                    kind: BreakpointKind::Standard,
-                },
-                BreakpointEditAction::Toggle,
-                cx,
-            );
-        });
+        project
+            .breakpoint_store()
+            .update(cx, |breakpoint_store, cx| {
+                breakpoint_store.toggle_breakpoint_for_buffer(
+                    &project::ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new(&"main.rs")),
+                    },
+                    Breakpoint {
+                        active_position: None,
+                        cached_position: 1,
+                        kind: BreakpointKind::Standard,
+                    },
+                    BreakpointEditAction::Toggle,
+                    cx,
+                );
+            });
     });
 
     cx.run_until_parked();

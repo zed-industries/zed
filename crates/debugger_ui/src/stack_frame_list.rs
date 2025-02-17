@@ -29,7 +29,7 @@ pub struct StackFrameList {
     workspace: WeakEntity<Workspace>,
     client_id: DebugAdapterClientId,
     current_stack_frame_id: StackFrameId,
-    fetch_stack_frames_task: Option<Task<Result<()>>>,
+    _fetch_stack_frames_task: Option<Task<Result<()>>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -83,7 +83,7 @@ impl StackFrameList {
             focus_handle,
             _subscription,
             entries: Default::default(),
-            fetch_stack_frames_task: None,
+            _fetch_stack_frames_task: None,
             current_stack_frame_id: Default::default(),
         }
     }
@@ -215,14 +215,14 @@ impl StackFrameList {
             return Task::ready(Ok(()));
         };
 
-        let row = (stack_frame.line.saturating_sub(1)) as u32;
+        let _row = (stack_frame.line.saturating_sub(1)) as u32;
 
         let Some(project_path) = self.project_path_from_stack_frame(&stack_frame, cx) else {
             return Task::ready(Err(anyhow!("Project path not found")));
         };
 
         cx.spawn_in(window, {
-            let client_id = self.client_id;
+            // let client_id = self.client_id;
             move |this, mut cx| async move {
                 this.update_in(&mut cx, |this, window, cx| {
                     this.workspace.update(cx, |workspace, cx| {

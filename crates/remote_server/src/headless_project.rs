@@ -9,7 +9,7 @@ use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
-    debugger::breakpoint_store::BreakpointStore,
+    debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git::GitStore,
     project_settings::SettingsObserver,
     search::SearchQuery,
@@ -93,7 +93,14 @@ impl HeadlessProject {
             )
         });
 
-        let breakpoint_store = cx.new(|_| BreakpointStore::local());
+        let buffer_store = cx.new(|cx| {
+            let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
+            buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            buffer_store
+        });
+
+        let breakpoint_store =
+            cx.new(|cx| BreakpointStore::local(buffer_store.clone(), worktree_store.clone(), cx));
 
         let dap_store = cx.new(|cx| {
             DapStore::new_local(
@@ -106,13 +113,6 @@ impl HeadlessProject {
                 breakpoint_store.clone(),
                 cx,
             )
-        });
-
-        let buffer_store = cx.new(|cx| {
-            let mut buffer_store =
-                BufferStore::local(worktree_store.clone(), breakpoint_store.clone(), cx);
-            buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
-            buffer_store
         });
 
         let git_store =
@@ -234,6 +234,7 @@ impl HeadlessProject {
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
         DapStore::init(&client);
+        BreakpointStore::init(&client);
         GitStore::init(&client);
 
         HeadlessProject {

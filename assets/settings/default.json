@@ -1193,6 +1193,9 @@
     },
     "deepseek": {
       "api_url": "https://api.deepseek.com"
+    },
+    "mistral": {
+      "api_url": "https://api.mistral.ai/v1"
     }
   },
   // Zed's Prettier integration settings.

@@ -149,11 +149,14 @@ impl MultiBufferDiffHunk {
 }
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
-pub struct PathKey(String);
+pub struct PathKey {
+    namespace: &'static str,
+    path: Arc<Path>,
+}
 
 impl PathKey {
-    pub fn namespaced(namespace: &str, path: &Path) -> Self {
-        Self(format!("{}/{}", namespace, path.to_string_lossy()))
+    pub fn namespaced(namespace: &'static str, path: Arc<Path>) -> Self {
+        Self { namespace, path }
     }
 }
 
@@ -278,11 +281,26 @@ enum DiffTransform {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug)]
 struct DiffTransformHunkInfo {
     excerpt_id: ExcerptId,
     hunk_start_anchor: text::Anchor,
     hunk_secondary_status: DiffHunkSecondaryStatus,
+}
+
+impl Eq for DiffTransformHunkInfo {}
+
+impl PartialEq for DiffTransformHunkInfo {
+    fn eq(&self, other: &DiffTransformHunkInfo) -> bool {
+        self.excerpt_id == other.excerpt_id && self.hunk_start_anchor == other.hunk_start_anchor
+    }
+}
+
+impl std::hash::Hash for DiffTransformHunkInfo {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.excerpt_id.hash(state);
+        self.hunk_start_anchor.hash(state);
+    }
 }
 
 #[derive(Clone)]
@@ -2358,7 +2376,7 @@ impl MultiBuffer {
         self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], true, cx);
     }
 
-    pub fn all_diff_hunks_expanded(&mut self) -> bool {
+    pub fn all_diff_hunks_expanded(&self) -> bool {
         self.all_diff_hunks_expanded
     }
 
@@ -2398,6 +2416,9 @@ impl MultiBuffer {
         expand: bool,
         cx: &mut Context<Self>,
     ) {
+        if self.all_diff_hunks_expanded && !expand {
+            return;
+        }
         self.sync(cx);
         let mut snapshot = self.snapshot.borrow_mut();
         let mut excerpt_edits = Vec::new();
@@ -2983,7 +3004,7 @@ impl MultiBuffer {
                     let was_previously_expanded = old_expanded_hunks.contains(&hunk_info);
                     let should_expand_hunk = match &change_kind {
                         DiffChangeKind::DiffUpdated { base_changed: true } => {
-                            self.all_diff_hunks_expanded
+                            self.all_diff_hunks_expanded || was_previously_expanded
                         }
                         DiffChangeKind::ExpandOrCollapseHunks { expand } => {
                             let intersects = hunk_buffer_range.is_empty()
