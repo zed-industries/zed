@@ -1,8 +1,8 @@
 use gpui::{
-    Context, DismissEvent, EventEmitter, IntoElement, Render, SemanticVersion, WeakEntity, Window,
+    AppContext, Context, DismissEvent, EventEmitter, IntoElement, Render, SemanticVersion,
+    WeakEntity, Window,
 };
 use release_channel::ReleaseChannel;
-use ui::prelude::*;
 use workspace::{notifications::simple_message_notification::MessageNotification, Workspace};
 
 pub struct UpdateNotification {
@@ -21,7 +21,6 @@ impl Render for UpdateNotification {
         cx.new(|_cx| {
             MessageNotification::new(format!("Updated to {app_name} {}", version))
                 .primary_message("View Release Notes")
-                .primary_icon(IconName::ArrowUpRight)
                 .primary_on_click(move |window, cx| {
                     if let Some(workspace) = workspace.upgrade() {
                         workspace.update(cx, |workspace, cx| {
