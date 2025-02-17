@@ -1,17 +1,20 @@
+use super::breakpoint_store::BreakpointStore;
 use super::dap_command::{
     self, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand, NextCommand,
     PauseCommand, RestartCommand, RestartStackFrameCommand, ScopesCommand, SetVariableValueCommand,
     StepBackCommand, StepCommand, StepInCommand, StepOutCommand, TerminateCommand,
     TerminateThreadsCommand, VariablesCommand,
 };
+use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
 use collections::{HashMap, IndexMap};
 use dap::client::{DebugAdapterClient, DebugAdapterClientId};
 use dap::{
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, SteppingGranularity,
 };
+use dap_adapters::build_adapter;
 use futures::{future::Shared, FutureExt};
-use gpui::{App, Context, Entity, Task};
+use gpui::{App, AppContext, Context, Entity, Task};
 use rpc::AnyProtoClient;
 use serde_json::Value;
 use std::u64;
@@ -142,10 +145,37 @@ impl RemoteConnection {
 }
 
 pub enum Mode {
-    Local(Arc<DebugAdapterClient>),
+    Local(LocalMode),
     Remote(RemoteConnection),
 }
 
+struct LocalMode {
+    client: Arc<DebugAdapterClient>,
+}
+
+impl LocalMode {
+    fn new(
+        breakpoint_store: Entity<BreakpointStore>,
+        disposition: DebugAdapterConfig,
+        delegate: DapAdapterDelegate,
+        cx: &mut App,
+    ) -> Task<Result<Self>> {
+        cx.spawn(move |cx| async move {
+            let adapter = build_adapter(&config.kind).await?;
+
+            let binary = cx.update(|cx| {
+                let name = DebugAdapterName::from(adapter.name().as_ref());
+
+                ProjectSettings::get_global(cx)
+                    .dap
+                    .get(&name)
+                    .and_then(|s| s.binary.as_ref().map(PathBuf::from))
+            })?;
+
+            todo!()
+        })
+    }
+}
 impl From<RemoteConnection> for Mode {
     fn from(value: RemoteConnection) -> Self {
         Self::Remote(value)
@@ -293,20 +323,30 @@ impl CompletionsQuery {
 }
 
 impl Session {
-    pub(crate) fn local(adapter: Arc<DebugAdapterClient>, config: DebugAdapterConfig) -> Self {
-        let client_id = adapter.id();
-
-        Self {
-            mode: Mode::Local(adapter),
-            client_id,
-            config,
-            capabilities: unimplemented!(),
-            ignore_breakpoints: false,
-            requests: HashMap::default(),
-            modules: Vec::default(),
-            loaded_sources: Vec::default(),
-            threads: IndexMap::default(),
-        }
+    pub(crate) fn local(
+        breakpoints: Entity<BreakpointStore>,
+        client_id: DebugAdapterClientId,
+        delegate: DapAdapterDelegate,
+        config: DebugAdapterConfig,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
+        cx.spawn(move |cx| async move {
+            let adapter = build_adapter(&config.kind).await?;
+            let mode = LocalMode::new(breakpoints, config, adapter, cx).await?;
+            cx.update(|cx| {
+                cx.new(|cx| Self {
+                    mode: Mode::Local(mode),
+                    client_id,
+                    config,
+                    capabilities: unimplemented!(),
+                    ignore_breakpoints: false,
+                    requests: HashMap::default(),
+                    modules: Vec::default(),
+                    loaded_sources: Vec::default(),
+                    threads: IndexMap::default(),
+                })
+            })
+        })
     }
 
     pub(crate) fn remote(

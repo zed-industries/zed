@@ -620,7 +620,7 @@ impl DapStore {
                 }
             };
 
-            let mut client = DebugAdapterClient::new(client_id, adapter, binary, &cx);
+            let mut client = DebugAdapterClient::new(client_id, binary, &cx);
 
             client
                 .start(

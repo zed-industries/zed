@@ -1,6 +1,6 @@
 use std::{ffi::OsString, path::PathBuf, sync::Arc};
 
-use dap::transport::{StdioTransport, TcpTransport, Transport};
+use dap::transport::{StdioTransport, TcpTransport};
 use gpui::AsyncApp;
 use serde_json::Value;
 use task::DebugAdapterConfig;
@@ -34,10 +34,6 @@ impl CustomDebugAdapter {
 impl DebugAdapter for CustomDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
-    }
-
-    fn transport(&self) -> Arc<dyn Transport> {
-        self.transport.clone()
     }
 
     async fn get_binary(

@@ -1,4 +1,4 @@
-use dap::transport::{TcpTransport, Transport};
+use dap::transport::TcpTransport;
 use gpui::AsyncApp;
 use std::{ffi::OsStr, net::Ipv4Addr, path::PathBuf, sync::Arc};
 
@@ -26,10 +26,6 @@ impl GoDebugAdapter {
 impl DebugAdapter for GoDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
-    }
-
-    fn transport(&self) -> Arc<dyn Transport> {
-        Arc::new(TcpTransport::new(self.host, self.port, self.timeout))
     }
 
     async fn get_binary(
