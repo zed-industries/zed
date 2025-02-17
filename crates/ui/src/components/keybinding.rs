@@ -2,8 +2,10 @@
 use crate::PlatformStyle;
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
 use gpui::{
-    relative, Action, AnyElement, App, FocusHandle, IntoElement, Keystroke, Modifiers, Window,
+    relative, Action, AnyElement, App, FocusHandle, Global, IntoElement, Keystroke, Modifiers,
+    Window,
 };
+use itertools::Itertools;
 
 #[derive(Debug, IntoElement, Clone)]
 pub struct KeyBinding {
@@ -15,19 +17,25 @@ pub struct KeyBinding {
 
     /// The [`PlatformStyle`] to use when displaying this keybinding.
     platform_style: PlatformStyle,
-    size: Option<Pixels>,
+    size: Option<AbsoluteLength>,
+
+    /// Determines whether the keybinding is meant for vim mode.
+    vim_mode: bool,
 }
+
+struct VimStyle(bool);
+impl Global for VimStyle {}
 
 impl KeyBinding {
     /// Returns the highest precedence keybinding for an action. This is the last binding added to
     /// the keymap. User bindings are added after built-in bindings so that they take precedence.
-    pub fn for_action(action: &dyn Action, window: &mut Window) -> Option<Self> {
+    pub fn for_action(action: &dyn Action, window: &mut Window, cx: &App) -> Option<Self> {
         let key_binding = window
             .bindings_for_action(action)
             .into_iter()
             .rev()
             .next()?;
-        Some(Self::new(key_binding))
+        Some(Self::new(key_binding, cx))
     }
 
     /// Like `for_action`, but lets you specify the context from which keybindings are matched.
@@ -35,20 +43,30 @@ impl KeyBinding {
         action: &dyn Action,
         focus: &FocusHandle,
         window: &mut Window,
+        cx: &App,
     ) -> Option<Self> {
         let key_binding = window
             .bindings_for_action_in(action, focus)
             .into_iter()
             .rev()
             .next()?;
-        Some(Self::new(key_binding))
+        Some(Self::new(key_binding, cx))
     }
 
-    pub fn new(key_binding: gpui::KeyBinding) -> Self {
+    pub fn set_vim_mode(cx: &mut App, enabled: bool) {
+        cx.set_global(VimStyle(enabled));
+    }
+
+    fn is_vim_mode(cx: &App) -> bool {
+        cx.try_global::<VimStyle>().is_some_and(|g| g.0)
+    }
+
+    pub fn new(key_binding: gpui::KeyBinding, cx: &App) -> Self {
         Self {
             key_binding,
             platform_style: PlatformStyle::platform(),
             size: None,
+            vim_mode: KeyBinding::is_vim_mode(cx),
         }
     }
 
@@ -59,9 +77,33 @@ impl KeyBinding {
     }
 
     /// Sets the size for this [`KeyBinding`].
-    pub fn size(mut self, size: Pixels) -> Self {
-        self.size = Some(size);
+    pub fn size(mut self, size: impl Into<AbsoluteLength>) -> Self {
+        self.size = Some(size.into());
         self
+    }
+
+    pub fn vim_mode(mut self, enabled: bool) -> Self {
+        self.vim_mode = enabled;
+        self
+    }
+
+    fn render_key(&self, keystroke: &Keystroke, color: Option<Color>) -> AnyElement {
+        let key_icon = icon_for_key(keystroke, self.platform_style);
+        match key_icon {
+            Some(icon) => KeyIcon::new(icon, color).size(self.size).into_any_element(),
+            None => {
+                let key = if self.vim_mode {
+                    if keystroke.modifiers.shift && keystroke.key.len() == 1 {
+                        keystroke.key.to_ascii_uppercase().to_string()
+                    } else {
+                        keystroke.key.to_string()
+                    }
+                } else {
+                    util::capitalize(&keystroke.key)
+                };
+                Key::new(&key, color).size(self.size).into_any_element()
+            }
+        }
     }
 }
 
@@ -92,27 +134,10 @@ impl RenderOnce for KeyBinding {
                         self.platform_style,
                         None,
                         self.size,
-                        false,
+                        true,
                     ))
-                    .map(|el| {
-                        el.child(render_key(&keystroke, self.platform_style, None, self.size))
-                    })
+                    .map(|el| el.child(self.render_key(&keystroke, None)))
             }))
-    }
-}
-
-pub fn render_key(
-    keystroke: &Keystroke,
-    platform_style: PlatformStyle,
-    color: Option<Color>,
-    size: Option<Pixels>,
-) -> AnyElement {
-    let key_icon = icon_for_key(keystroke, platform_style);
-    match key_icon {
-        Some(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
-        None => Key::new(capitalize(&keystroke.key), color)
-            .size(size)
-            .into_any_element(),
     }
 }
 
@@ -144,11 +169,13 @@ pub fn render_modifiers(
     modifiers: &Modifiers,
     platform_style: PlatformStyle,
     color: Option<Color>,
-    size: Option<Pixels>,
-    standalone: bool,
+    size: Option<AbsoluteLength>,
+    trailing_separator: bool,
 ) -> impl Iterator<Item = AnyElement> {
+    #[derive(Clone)]
     enum KeyOrIcon {
         Key(&'static str),
+        Plus,
         Icon(IconName),
     }
 
@@ -200,23 +227,34 @@ pub fn render_modifiers(
         .into_iter()
         .filter(|modifier| modifier.enabled)
         .collect::<Vec<_>>();
-    let last_ix = filtered.len().saturating_sub(1);
 
-    filtered
+    let platform_keys = filtered
         .into_iter()
-        .enumerate()
-        .flat_map(move |(ix, modifier)| match platform_style {
-            PlatformStyle::Mac => vec![modifier.mac],
-            PlatformStyle::Linux if standalone && ix == last_ix => vec![modifier.linux],
-            PlatformStyle::Linux => vec![modifier.linux, KeyOrIcon::Key("+")],
-            PlatformStyle::Windows if standalone && ix == last_ix => {
-                vec![modifier.windows]
-            }
-            PlatformStyle::Windows => vec![modifier.windows, KeyOrIcon::Key("+")],
+        .map(move |modifier| match platform_style {
+            PlatformStyle::Mac => Some(modifier.mac),
+            PlatformStyle::Linux => Some(modifier.linux),
+            PlatformStyle::Windows => Some(modifier.windows),
+        });
+
+    let separator = match platform_style {
+        PlatformStyle::Mac => None,
+        PlatformStyle::Linux => Some(KeyOrIcon::Plus),
+        PlatformStyle::Windows => Some(KeyOrIcon::Plus),
+    };
+
+    let platform_keys = itertools::intersperse(platform_keys, separator.clone());
+
+    platform_keys
+        .chain(if modifiers.modified() && trailing_separator {
+            Some(separator)
+        } else {
+            None
         })
+        .flatten()
         .map(move |key_or_icon| match key_or_icon {
             KeyOrIcon::Key(key) => Key::new(key, color).size(size).into_any_element(),
             KeyOrIcon::Icon(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
+            KeyOrIcon::Plus => "+".into_any_element(),
         })
 }
 
@@ -224,14 +262,15 @@ pub fn render_modifiers(
 pub struct Key {
     key: SharedString,
     color: Option<Color>,
-    size: Option<Pixels>,
+    size: Option<AbsoluteLength>,
 }
 
 impl RenderOnce for Key {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let single_char = self.key.len() == 1;
-        let size = self.size.unwrap_or(px(14.));
-        let size_f32: f32 = size.into();
+        let size = self
+            .size
+            .unwrap_or_else(|| TextSize::default().rems(cx).into());
 
         div()
             .py_0()
@@ -242,7 +281,7 @@ impl RenderOnce for Key {
                     this.px_0p5()
                 }
             })
-            .h(rems_from_px(size_f32))
+            .h(size)
             .text_size(size)
             .line_height(relative(1.))
             .text_color(self.color.unwrap_or(Color::Muted).color(cx))
@@ -259,7 +298,7 @@ impl Key {
         }
     }
 
-    pub fn size(mut self, size: impl Into<Option<Pixels>>) -> Self {
+    pub fn size(mut self, size: impl Into<Option<AbsoluteLength>>) -> Self {
         self.size = size.into();
         self
     }
@@ -269,17 +308,15 @@ impl Key {
 pub struct KeyIcon {
     icon: IconName,
     color: Option<Color>,
-    size: Option<Pixels>,
+    size: Option<AbsoluteLength>,
 }
 
 impl RenderOnce for KeyIcon {
     fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let size = self
-            .size
-            .unwrap_or(IconSize::Small.rems().to_pixels(window.rem_size()));
+        let size = self.size.unwrap_or(IconSize::Small.rems().into());
 
         Icon::new(self.icon)
-            .size(IconSize::Custom(size))
+            .size(IconSize::Custom(size.to_rems(window.rem_size())))
             .color(self.color.unwrap_or(Color::Muted))
     }
 }
@@ -293,46 +330,40 @@ impl KeyIcon {
         }
     }
 
-    pub fn size(mut self, size: impl Into<Option<Pixels>>) -> Self {
+    pub fn size(mut self, size: impl Into<Option<AbsoluteLength>>) -> Self {
         self.size = size.into();
         self
     }
 }
 
 /// Returns a textual representation of the key binding for the given [`Action`].
-pub fn text_for_action(action: &dyn Action, window: &Window) -> Option<String> {
+pub fn text_for_action(action: &dyn Action, window: &Window, cx: &App) -> Option<String> {
     let bindings = window.bindings_for_action(action);
     let key_binding = bindings.last()?;
-    Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
+    Some(text_for_keystrokes(key_binding.keystrokes(), cx))
 }
 
-/// Returns a textual representation of the key binding for the given [`Action`]
-/// as if the provided [`FocusHandle`] was focused.
-pub fn text_for_action_in(
-    action: &dyn Action,
-    focus: &FocusHandle,
-    window: &mut Window,
-) -> Option<String> {
-    let bindings = window.bindings_for_action_in(action, focus);
-    let key_binding = bindings.last()?;
-    Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
-}
-
-/// Returns a textual representation of the given key binding for the specified platform.
-pub fn text_for_key_binding(
-    key_binding: &gpui::KeyBinding,
-    platform_style: PlatformStyle,
-) -> String {
-    key_binding
-        .keystrokes()
+pub fn text_for_keystrokes(keystrokes: &[Keystroke], cx: &App) -> String {
+    let platform_style = PlatformStyle::platform();
+    let vim_enabled = cx.try_global::<VimStyle>().is_some();
+    keystrokes
         .iter()
-        .map(|keystroke| text_for_keystroke(keystroke, platform_style))
-        .collect::<Vec<_>>()
+        .map(|keystroke| keystroke_text(keystroke, platform_style, vim_enabled))
         .join(" ")
 }
 
+pub fn text_for_keystroke(keystroke: &Keystroke, cx: &App) -> String {
+    let platform_style = PlatformStyle::platform();
+    let vim_enabled = cx.try_global::<VimStyle>().is_some();
+    keystroke_text(keystroke, platform_style, vim_enabled)
+}
+
 /// Returns a textual representation of the given [`Keystroke`].
-pub fn text_for_keystroke(keystroke: &Keystroke, platform_style: PlatformStyle) -> String {
+fn keystroke_text(
+    keystroke: &Keystroke,
+    platform_style: PlatformStyle,
+    vim_enabled: bool,
+) -> String {
     let mut text = String::new();
 
     let delimiter = match platform_style {
@@ -342,7 +373,7 @@ pub fn text_for_keystroke(keystroke: &Keystroke, platform_style: PlatformStyle) 
 
     if keystroke.modifiers.function {
         match platform_style {
-            PlatformStyle::Mac => text.push_str("fn"),
+            PlatformStyle::Mac => text.push_str("Fn"),
             PlatformStyle::Linux | PlatformStyle::Windows => text.push_str("Fn"),
         }
 
@@ -378,32 +409,32 @@ pub fn text_for_keystroke(keystroke: &Keystroke, platform_style: PlatformStyle) 
     }
 
     if keystroke.modifiers.shift {
-        match platform_style {
-            PlatformStyle::Mac | PlatformStyle::Linux | PlatformStyle::Windows => {
-                text.push_str("Shift")
+        if !(vim_enabled && keystroke.key.len() == 1) {
+            match platform_style {
+                PlatformStyle::Mac | PlatformStyle::Linux | PlatformStyle::Windows => {
+                    text.push_str("Shift")
+                }
             }
+            text.push(delimiter);
         }
-
-        text.push(delimiter);
     }
 
     let key = match keystroke.key.as_str() {
         "pageup" => "PageUp",
         "pagedown" => "PageDown",
-        key => &capitalize(key),
+        key if vim_enabled => {
+            if !keystroke.modifiers.shift && key.len() == 1 {
+                key
+            } else {
+                &util::capitalize(key)
+            }
+        }
+        key => &util::capitalize(key),
     };
 
     text.push_str(key);
 
     text
-}
-
-fn capitalize(str: &str) -> String {
-    let mut chars = str.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
-    }
 }
 
 #[cfg(test)]
@@ -413,58 +444,76 @@ mod tests {
     #[test]
     fn test_text_for_keystroke() {
         assert_eq!(
-            text_for_keystroke(&Keystroke::parse("cmd-c").unwrap(), PlatformStyle::Mac),
+            keystroke_text(
+                &Keystroke::parse("cmd-c").unwrap(),
+                PlatformStyle::Mac,
+                false
+            ),
             "Command-C".to_string()
         );
         assert_eq!(
-            text_for_keystroke(&Keystroke::parse("cmd-c").unwrap(), PlatformStyle::Linux),
+            keystroke_text(
+                &Keystroke::parse("cmd-c").unwrap(),
+                PlatformStyle::Linux,
+                false
+            ),
             "Super+C".to_string()
         );
         assert_eq!(
-            text_for_keystroke(&Keystroke::parse("cmd-c").unwrap(), PlatformStyle::Windows),
+            keystroke_text(
+                &Keystroke::parse("cmd-c").unwrap(),
+                PlatformStyle::Windows,
+                false
+            ),
             "Win+C".to_string()
         );
 
         assert_eq!(
-            text_for_keystroke(
+            keystroke_text(
                 &Keystroke::parse("ctrl-alt-delete").unwrap(),
-                PlatformStyle::Mac
+                PlatformStyle::Mac,
+                false
             ),
             "Control-Option-Delete".to_string()
         );
         assert_eq!(
-            text_for_keystroke(
+            keystroke_text(
                 &Keystroke::parse("ctrl-alt-delete").unwrap(),
-                PlatformStyle::Linux
+                PlatformStyle::Linux,
+                false
             ),
             "Ctrl+Alt+Delete".to_string()
         );
         assert_eq!(
-            text_for_keystroke(
+            keystroke_text(
                 &Keystroke::parse("ctrl-alt-delete").unwrap(),
-                PlatformStyle::Windows
+                PlatformStyle::Windows,
+                false
             ),
             "Ctrl+Alt+Delete".to_string()
         );
 
         assert_eq!(
-            text_for_keystroke(
+            keystroke_text(
                 &Keystroke::parse("shift-pageup").unwrap(),
-                PlatformStyle::Mac
+                PlatformStyle::Mac,
+                false
             ),
             "Shift-PageUp".to_string()
         );
         assert_eq!(
-            text_for_keystroke(
+            keystroke_text(
                 &Keystroke::parse("shift-pageup").unwrap(),
-                PlatformStyle::Linux
+                PlatformStyle::Linux,
+                false,
             ),
             "Shift+PageUp".to_string()
         );
         assert_eq!(
-            text_for_keystroke(
+            keystroke_text(
                 &Keystroke::parse("shift-pageup").unwrap(),
-                PlatformStyle::Windows
+                PlatformStyle::Windows,
+                false
             ),
             "Shift+PageUp".to_string()
         );

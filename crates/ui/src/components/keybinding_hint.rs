@@ -199,17 +199,18 @@ impl RenderOnce for KeybindingHint {
                         blur_radius: px(0.),
                         spread_radius: px(0.),
                     }])
-                    .child(self.keybinding.size(kb_size)),
+                    .child(self.keybinding.size(rems_from_px(kb_size.0))),
             )
             .children(self.suffix)
     }
 }
 
+// View this component preview using `workspace: open component-preview`
 impl ComponentPreview for KeybindingHint {
-    fn preview(window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(window: &mut Window, cx: &App) -> AnyElement {
         let enter_fallback = gpui::KeyBinding::new("enter", menu::Confirm, None);
-        let enter = KeyBinding::for_action(&menu::Confirm, window)
-            .unwrap_or(KeyBinding::new(enter_fallback));
+        let enter = KeyBinding::for_action(&menu::Confirm, window, cx)
+            .unwrap_or(KeyBinding::new(enter_fallback, cx));
 
         v_flex()
             .gap_6()

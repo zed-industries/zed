@@ -133,8 +133,6 @@ actions!(
         ClearAllNotifications,
         CloseAllDocks,
         CloseWindow,
-        CopyPath,
-        CopyRelativePath,
         Feedback,
         FollowNextCollaborator,
         MoveFocusedPanelToNextPosition,
@@ -1082,6 +1080,7 @@ impl Workspace {
                 *SystemAppearance::global_mut(cx) = SystemAppearance(window_appearance.into());
 
                 ThemeSettings::reload_current_theme(cx);
+                ThemeSettings::reload_current_icon_theme(cx);
             }),
             cx.on_release(move |this, cx| {
                 this.app_state.workspace_store.update(cx, move |store, _| {
@@ -1771,6 +1770,7 @@ impl Workspace {
         self.project.read(cx).visible_worktrees(cx)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn worktree_scans_complete(&self, cx: &App) -> impl Future<Output = ()> + 'static {
         let futures = self
             .worktrees(cx)
@@ -2015,14 +2015,13 @@ impl Workspace {
 
                 if remaining_dirty_items.len() > 1 {
                     let answer = workspace.update_in(&mut cx, |_, window, cx| {
-                        let (prompt, detail) = Pane::file_names_for_prompt(
+                        let detail = Pane::file_names_for_prompt(
                             &mut remaining_dirty_items.iter().map(|(_, handle)| handle),
-                            remaining_dirty_items.len(),
                             cx,
                         );
                         window.prompt(
                             PromptLevel::Warning,
-                            &prompt,
+                            &"Do you want to save all changes in the following files?",
                             Some(&detail),
                             &["Save all", "Discard all", "Cancel"],
                             cx,
@@ -2031,6 +2030,7 @@ impl Workspace {
                     match answer.await.log_err() {
                         Some(0) => save_intent = SaveIntent::SaveAll,
                         Some(1) => save_intent = SaveIntent::Skip,
+                        Some(2) => return Ok(false),
                         _ => {}
                     }
                 }
@@ -2044,21 +2044,10 @@ impl Workspace {
                 let (singleton, project_entry_ids) =
                     cx.update(|_, cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
                 if singleton || !project_entry_ids.is_empty() {
-                    if let Some(ix) =
-                        pane.update(&mut cx, |pane, _| pane.index_for_item(item.as_ref()))?
-                    {
-                        if !Pane::save_item(
-                            project.clone(),
-                            &pane,
-                            ix,
-                            &*item,
-                            save_intent,
-                            &mut cx,
-                        )
+                    if !Pane::save_item(project.clone(), &pane, &*item, save_intent, &mut cx)
                         .await?
-                        {
-                            return Ok(false);
-                        }
+                    {
+                        return Ok(false);
                     }
                 }
             }
@@ -2327,13 +2316,12 @@ impl Workspace {
     ) -> Task<Result<()>> {
         let project = self.project.clone();
         let pane = self.active_pane();
-        let item_ix = pane.read(cx).active_item_index();
         let item = pane.read(cx).active_item();
         let pane = pane.downgrade();
 
         window.spawn(cx, |mut cx| async move {
             if let Some(item) = item {
-                Pane::save_item(project, &pane, item_ix, item.as_ref(), save_intent, &mut cx)
+                Pane::save_item(project, &pane, item.as_ref(), save_intent, &mut cx)
                     .await
                     .map(|_| ())
             } else {
@@ -5957,7 +5945,6 @@ pub struct OpenOptions {
     pub replace_window: Option<WindowHandle<Workspace>>,
     pub env: Option<HashMap<String, String>>,
 }
-
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
@@ -5975,58 +5962,65 @@ pub fn open_paths(
     let mut best_match = None;
     let mut open_visible = OpenVisible::All;
 
-    if open_options.open_new_workspace != Some(true) {
-        for window in local_workspace_windows(cx) {
-            if let Ok(workspace) = window.read(cx) {
-                let m = workspace
-                    .project
-                    .read(cx)
-                    .visibility_for_paths(&abs_paths, cx);
-                if m > best_match {
-                    existing = Some(window);
-                    best_match = m;
-                } else if best_match.is_none() && open_options.open_new_workspace == Some(false) {
-                    existing = Some(window)
-                }
-            }
-        }
-    }
-
     cx.spawn(move |mut cx| async move {
-        if open_options.open_new_workspace.is_none() && existing.is_none() {
-            let all_files = abs_paths.iter().map(|path| app_state.fs.metadata(path));
-            if futures::future::join_all(all_files)
+        if open_options.open_new_workspace != Some(true) {
+            let all_paths = abs_paths.iter().map(|path| app_state.fs.metadata(path));
+            let all_metadatas = futures::future::join_all(all_paths)
                 .await
                 .into_iter()
                 .filter_map(|result| result.ok().flatten())
-                .all(|file| !file.is_dir)
-            {
-                cx.update(|cx| {
-                    if let Some(window) = cx
-                        .active_window()
-                        .and_then(|window| window.downcast::<Workspace>())
-                    {
-                        if let Ok(workspace) = window.read(cx) {
-                            let project = workspace.project().read(cx);
-                            if project.is_local() && !project.is_via_collab() {
+                .collect::<Vec<_>>();
+
+            cx.update(|cx| {
+                for window in local_workspace_windows(&cx) {
+                    if let Ok(workspace) = window.read(&cx) {
+                        let m = workspace.project.read(&cx).visibility_for_paths(
+                            &abs_paths,
+                            &all_metadatas,
+                            open_options.open_new_workspace == None,
+                            cx,
+                        );
+                        if m > best_match {
+                            existing = Some(window);
+                            best_match = m;
+                        } else if best_match.is_none()
+                            && open_options.open_new_workspace == Some(false)
+                        {
+                            existing = Some(window)
+                        }
+                    }
+                }
+            })?;
+
+            if open_options.open_new_workspace.is_none() && existing.is_none() {
+                if all_metadatas.iter().all(|file| !file.is_dir) {
+                    cx.update(|cx| {
+                        if let Some(window) = cx
+                            .active_window()
+                            .and_then(|window| window.downcast::<Workspace>())
+                        {
+                            if let Ok(workspace) = window.read(cx) {
+                                let project = workspace.project().read(cx);
+                                if project.is_local() && !project.is_via_collab() {
+                                    existing = Some(window);
+                                    open_visible = OpenVisible::None;
+                                    return;
+                                }
+                            }
+                        }
+                        for window in local_workspace_windows(cx) {
+                            if let Ok(workspace) = window.read(cx) {
+                                let project = workspace.project().read(cx);
+                                if project.is_via_collab() {
+                                    continue;
+                                }
                                 existing = Some(window);
                                 open_visible = OpenVisible::None;
-                                return;
+                                break;
                             }
                         }
-                    }
-                    for window in local_workspace_windows(cx) {
-                        if let Ok(workspace) = window.read(cx) {
-                            let project = workspace.project().read(cx);
-                            if project.is_via_collab() {
-                                continue;
-                            }
-                            existing = Some(window);
-                            open_visible = OpenVisible::None;
-                            break;
-                        }
-                    }
-                })?;
+                    })?;
+                }
             }
         }
 
@@ -6951,9 +6945,7 @@ mod tests {
             w.prepare_to_close(CloseIntent::CloseWindow, window, cx)
         });
         cx.executor().run_until_parked();
-        cx.simulate_prompt_answer(2); // cancel save all
-        cx.executor().run_until_parked();
-        cx.simulate_prompt_answer(2); // cancel save all
+        cx.simulate_prompt_answer("Cancel"); // cancel save all
         cx.executor().run_until_parked();
         assert!(!cx.has_pending_prompt());
         assert!(!task.await.unwrap());
@@ -7052,16 +7044,8 @@ mod tests {
         cx.executor().run_until_parked();
 
         assert!(cx.has_pending_prompt());
-        // Ignore "Save all" prompt
-        cx.simulate_prompt_answer(2);
-        cx.executor().run_until_parked();
-        // There's a prompt to save item 1.
-        pane.update(cx, |pane, _| {
-            assert_eq!(pane.items_len(), 4);
-            assert_eq!(pane.active_item().unwrap().item_id(), item1.item_id());
-        });
-        // Confirm saving item 1.
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Save all");
+
         cx.executor().run_until_parked();
 
         // Item 1 is saved. There's a prompt to save item 3.
@@ -7075,7 +7059,7 @@ mod tests {
         assert!(cx.has_pending_prompt());
 
         // Cancel saving item 3.
-        cx.simulate_prompt_answer(1);
+        cx.simulate_prompt_answer("Discard");
         cx.executor().run_until_parked();
 
         // Item 3 is reloaded. There's a prompt to save item 4.
@@ -7086,11 +7070,6 @@ mod tests {
             assert_eq!(pane.items_len(), 2);
             assert_eq!(pane.active_item().unwrap().item_id(), item4.item_id());
         });
-        assert!(cx.has_pending_prompt());
-
-        // Confirm saving item 4.
-        cx.simulate_prompt_answer(0);
-        cx.executor().run_until_parked();
 
         // There's a prompt for a path for item 4.
         cx.simulate_new_path_selection(|_| Some(Default::default()));
@@ -7152,68 +7131,110 @@ mod tests {
         // Create two panes that contain the following project entries:
         //   left pane:
         //     multi-entry items:   (2, 3)
-        //     single-entry items:  0, 1, 2, 3, 4
+        //     single-entry items:  0, 2, 3, 4
         //   right pane:
-        //     single-entry items:  1
+        //     single-entry items:  4, 1
         //     multi-entry items:   (3, 4)
-        let left_pane = workspace.update_in(cx, |workspace, window, cx| {
+        let (left_pane, right_pane) = workspace.update_in(cx, |workspace, window, cx| {
             let left_pane = workspace.active_pane().clone();
             workspace.add_item_to_active_pane(Box::new(item_2_3.clone()), None, true, window, cx);
-            for item in single_entry_items {
-                workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
-            }
-            left_pane.update(cx, |pane, cx| {
-                pane.activate_item(2, true, true, window, cx);
-            });
+            workspace.add_item_to_active_pane(
+                single_entry_items[0].boxed_clone(),
+                None,
+                true,
+                window,
+                cx,
+            );
+            workspace.add_item_to_active_pane(
+                single_entry_items[2].boxed_clone(),
+                None,
+                true,
+                window,
+                cx,
+            );
+            workspace.add_item_to_active_pane(
+                single_entry_items[3].boxed_clone(),
+                None,
+                true,
+                window,
+                cx,
+            );
+            workspace.add_item_to_active_pane(
+                single_entry_items[4].boxed_clone(),
+                None,
+                true,
+                window,
+                cx,
+            );
 
             let right_pane = workspace
                 .split_and_clone(left_pane.clone(), SplitDirection::Right, window, cx)
                 .unwrap();
 
             right_pane.update(cx, |pane, cx| {
+                pane.add_item(
+                    single_entry_items[1].boxed_clone(),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
                 pane.add_item(Box::new(item_3_4.clone()), true, true, None, window, cx);
             });
 
-            left_pane
+            (left_pane, right_pane)
         });
 
-        cx.focus(&left_pane);
+        cx.focus(&right_pane);
 
-        // When closing all of the items in the left pane, we should be prompted twice:
-        // once for project entry 0, and once for project entry 2. Project entries 1,
-        // 3, and 4 are all still open in the other paten. After those two
-        // prompts, the task should complete.
-
-        let close = left_pane.update_in(cx, |pane, window, cx| {
+        let mut close = right_pane.update_in(cx, |pane, window, cx| {
             pane.close_all_items(&CloseAllItems::default(), window, cx)
                 .unwrap()
         });
         cx.executor().run_until_parked();
 
-        // Discard "Save all" prompt
-        cx.simulate_prompt_answer(2);
+        let msg = cx.pending_prompt().unwrap().0;
+        assert!(msg.contains("1.txt"));
+        assert!(!msg.contains("2.txt"));
+        assert!(!msg.contains("3.txt"));
+        assert!(!msg.contains("4.txt"));
 
-        cx.executor().run_until_parked();
-        left_pane.update(cx, |pane, cx| {
-            assert_eq!(
-                pane.active_item().unwrap().project_entry_ids(cx).as_slice(),
-                &[ProjectEntryId::from_proto(0)]
-            );
-        });
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Cancel");
+        close.await.unwrap();
 
-        cx.executor().run_until_parked();
-        left_pane.update(cx, |pane, cx| {
-            assert_eq!(
-                pane.active_item().unwrap().project_entry_ids(cx).as_slice(),
-                &[ProjectEntryId::from_proto(2)]
-            );
+        left_pane
+            .update_in(cx, |left_pane, window, cx| {
+                left_pane.close_item_by_id(
+                    single_entry_items[3].entity_id(),
+                    SaveIntent::Skip,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        close = right_pane.update_in(cx, |pane, window, cx| {
+            pane.close_all_items(&CloseAllItems::default(), window, cx)
+                .unwrap()
         });
-        cx.simulate_prompt_answer(0);
+        cx.executor().run_until_parked();
+
+        let details = cx.pending_prompt().unwrap().1;
+        assert!(details.contains("1.txt"));
+        assert!(!details.contains("2.txt"));
+        assert!(details.contains("3.txt"));
+        // ideally this assertion could be made, but today we can only
+        // save whole items not project items, so the orphaned item 3 causes
+        // 4 to be saved too.
+        // assert!(!details.contains("4.txt"));
+
+        cx.simulate_prompt_answer("Save all");
 
         cx.executor().run_until_parked();
         close.await.unwrap();
-        left_pane.update(cx, |pane, _| {
+        right_pane.update(cx, |pane, _| {
             assert_eq!(pane.items_len(), 0);
         });
     }
@@ -8151,17 +8172,14 @@ mod tests {
             })
             .expect("should have inactive files to close");
         cx.background_executor.run_until_parked();
-        assert!(
-            !cx.has_pending_prompt(),
-            "Multi buffer still has the unsaved buffer inside, so no save prompt should be shown"
-        );
+        assert!(!cx.has_pending_prompt());
         close_all_but_multi_buffer_task
             .await
             .expect("Closing all buffers but the multi buffer failed");
         pane.update(cx, |pane, cx| {
-            assert_eq!(dirty_regular_buffer.read(cx).save_count, 0);
+            assert_eq!(dirty_regular_buffer.read(cx).save_count, 1);
             assert_eq!(dirty_multi_buffer_with_both.read(cx).save_count, 0);
-            assert_eq!(dirty_regular_buffer_2.read(cx).save_count, 0);
+            assert_eq!(dirty_regular_buffer_2.read(cx).save_count, 1);
             assert_eq!(pane.items_len(), 1);
             assert_eq!(
                 pane.active_item().unwrap().item_id(),
@@ -8172,6 +8190,10 @@ mod tests {
                 dirty_multi_buffer_with_both.read(cx).is_dirty,
                 "The multi buffer containing the unsaved buffer should still be dirty"
             );
+        });
+
+        dirty_regular_buffer.update(cx, |buffer, cx| {
+            buffer.project_items[0].update(cx, |pi, _| pi.is_dirty = true)
         });
 
         let close_multi_buffer_task = pane
@@ -8191,7 +8213,7 @@ mod tests {
             cx.has_pending_prompt(),
             "Dirty multi buffer should prompt a save dialog"
         );
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Save");
         cx.background_executor.run_until_parked();
         close_multi_buffer_task
             .await
@@ -8209,118 +8231,6 @@ mod tests {
                 "No more items should be left in the pane"
             );
             assert!(pane.active_item().is_none());
-        });
-    }
-
-    #[gpui::test]
-    async fn test_no_save_prompt_when_dirty_singleton_buffer_closed_with_a_multi_buffer_containing_it_present_in_the_pane(
-        cx: &mut TestAppContext,
-    ) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
-        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
-
-        let dirty_regular_buffer = cx.new(|cx| {
-            TestItem::new(cx)
-                .with_dirty(true)
-                .with_label("1.txt")
-                .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
-        });
-        let dirty_regular_buffer_2 = cx.new(|cx| {
-            TestItem::new(cx)
-                .with_dirty(true)
-                .with_label("2.txt")
-                .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
-        });
-        let clear_regular_buffer = cx.new(|cx| {
-            TestItem::new(cx)
-                .with_label("3.txt")
-                .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
-        });
-
-        let dirty_multi_buffer_with_both = cx.new(|cx| {
-            TestItem::new(cx)
-                .with_dirty(true)
-                .with_singleton(false)
-                .with_label("Fake Project Search")
-                .with_project_items(&[
-                    dirty_regular_buffer.read(cx).project_items[0].clone(),
-                    dirty_regular_buffer_2.read(cx).project_items[0].clone(),
-                    clear_regular_buffer.read(cx).project_items[0].clone(),
-                ])
-        });
-        workspace.update_in(cx, |workspace, window, cx| {
-            workspace.add_item(
-                pane.clone(),
-                Box::new(dirty_regular_buffer.clone()),
-                None,
-                false,
-                false,
-                window,
-                cx,
-            );
-            workspace.add_item(
-                pane.clone(),
-                Box::new(dirty_multi_buffer_with_both.clone()),
-                None,
-                false,
-                false,
-                window,
-                cx,
-            );
-        });
-
-        pane.update_in(cx, |pane, window, cx| {
-            pane.activate_item(0, true, true, window, cx);
-            assert_eq!(
-                pane.active_item().unwrap().item_id(),
-                dirty_regular_buffer.item_id(),
-                "Should select the dirty singleton buffer in the pane"
-            );
-        });
-        let close_singleton_buffer_task = pane
-            .update_in(cx, |pane, window, cx| {
-                pane.close_active_item(
-                    &CloseActiveItem {
-                        save_intent: None,
-                        close_pinned: false,
-                    },
-                    window,
-                    cx,
-                )
-            })
-            .expect("should have active singleton buffer to close");
-        cx.background_executor.run_until_parked();
-        assert!(
-            !cx.has_pending_prompt(),
-            "Multi buffer is still in the pane and has the unsaved buffer inside, so no save prompt should be shown"
-        );
-
-        close_singleton_buffer_task
-            .await
-            .expect("Should not fail closing the singleton buffer");
-        pane.update(cx, |pane, cx| {
-            assert_eq!(dirty_regular_buffer.read(cx).save_count, 0);
-            assert_eq!(
-                dirty_multi_buffer_with_both.read(cx).save_count,
-                0,
-                "Multi buffer itself should not be saved"
-            );
-            assert_eq!(dirty_regular_buffer_2.read(cx).save_count, 0);
-            assert_eq!(
-                pane.items_len(),
-                1,
-                "A dirty multi buffer should be present in the pane"
-            );
-            assert_eq!(
-                pane.active_item().unwrap().item_id(),
-                dirty_multi_buffer_with_both.item_id(),
-                "Should activate the only remaining item in the pane"
-            );
         });
     }
 

@@ -9,7 +9,6 @@ use workspace::{ModalView, Workspace};
 actions!(
     zeta,
     [
-        RateCompletions,
         ThumbsUpActiveCompletion,
         ThumbsDownActiveCompletion,
         NextEdit,
@@ -279,7 +278,7 @@ impl RateCompletionModal {
                 editor.set_show_runnables(false, cx);
                 editor.set_show_wrap_guides(false, cx);
                 editor.set_show_indent_guides(false, cx);
-                editor.set_show_inline_completions(Some(false), window, cx);
+                editor.set_show_edit_predictions(Some(false), window, cx);
                 editor.set_placeholder_text("Add your feedback…", cx);
                 if focus {
                     cx.focus_self(window);
@@ -490,6 +489,7 @@ impl RateCompletionModal {
                                             &ThumbsDownActiveCompletion,
                                             focus_handle,
                                             window,
+                                            cx
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.thumbs_down_active(
@@ -508,6 +508,7 @@ impl RateCompletionModal {
                                             &ThumbsUpActiveCompletion,
                                             focus_handle,
                                             window,
+                                            cx
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.thumbs_up_active(&ThumbsUpActiveCompletion, window, cx);

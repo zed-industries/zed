@@ -18,8 +18,8 @@ use file_icons::FileIcons;
 use git::status::GitSummary;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
-    AnyElement, App, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent,
-    Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
+    AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
+    DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton,
     MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
     Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window,
@@ -186,8 +186,6 @@ actions!(
         NewDirectory,
         NewFile,
         Copy,
-        CopyPath,
-        CopyRelativePath,
         Duplicate,
         RevealInFileManager,
         RemoveFromProject,
@@ -227,9 +225,8 @@ pub fn init_settings(cx: &mut App) {
     ProjectPanelSettings::register(cx);
 }
 
-pub fn init(assets: impl AssetSource, cx: &mut App) {
+pub fn init(cx: &mut App) {
     init_settings(cx);
-    file_icons::init(assets, cx);
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
@@ -730,8 +727,11 @@ impl ProjectPanel {
                                 }
                             })
                             .separator()
-                            .action("Copy Path", Box::new(CopyPath))
-                            .action("Copy Relative Path", Box::new(CopyRelativePath))
+                            .action("Copy Path", Box::new(zed_actions::workspace::CopyPath))
+                            .action(
+                                "Copy Relative Path",
+                                Box::new(zed_actions::workspace::CopyRelativePath),
+                            )
                             .separator()
                             .when(!is_root || !cfg!(target_os = "windows"), |menu| {
                                 menu.action("Rename", Box::new(Rename))
@@ -2161,7 +2161,12 @@ impl ProjectPanel {
         self.paste(&Paste {}, window, cx);
     }
 
-    fn copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut Context<Self>) {
+    fn copy_path(
+        &mut self,
+        _: &zed_actions::workspace::CopyPath,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let abs_file_paths = {
             let project = self.project.read(cx);
             self.effective_entries()
@@ -2185,7 +2190,12 @@ impl ProjectPanel {
         }
     }
 
-    fn copy_relative_path(&mut self, _: &CopyRelativePath, _: &mut Window, cx: &mut Context<Self>) {
+    fn copy_relative_path(
+        &mut self,
+        _: &zed_actions::workspace::CopyRelativePath,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let file_paths = {
             let project = self.project.read(cx);
             self.effective_entries()
@@ -3994,7 +4004,7 @@ impl ProjectPanel {
                                                     .when(
                                                         index == active_index
                                                             && (is_active || is_marked),
-                                                        |this| this.underline(true),
+                                                        |this| this.underline(),
                                                     ),
                                             );
 
@@ -4633,7 +4643,7 @@ impl Render for ProjectPanel {
                 .child(
                     Button::new("open_project", "Open a project")
                         .full_width()
-                        .key_binding(KeyBinding::for_action(&workspace::Open, window))
+                        .key_binding(KeyBinding::for_action(&workspace::Open, window, cx))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.workspace
                                 .update(cx, |_, cx| {
@@ -7223,8 +7233,8 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor().clone());
-        fs.as_fake().insert_tree("/root", json!({})).await;
-        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+        fs.as_fake().insert_tree(path!("/root"), json!({})).await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -7247,7 +7257,7 @@ mod tests {
             .unwrap();
 
         cx.executor().run_until_parked();
-        cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/new")));
+        cx.simulate_new_path_selection(|_| Some(PathBuf::from(path!("/root/new"))));
         save_task.await.unwrap();
 
         // Rename the file
@@ -9473,7 +9483,7 @@ mod tests {
             theme::init(theme::LoadThemes::JustBase, cx);
             language::init(cx);
             editor::init_settings(cx);
-            crate::init((), cx);
+            crate::init(cx);
             workspace::init_settings(cx);
             client::init_settings(cx);
             Project::init_settings(cx);
@@ -9496,7 +9506,7 @@ mod tests {
             init_settings(cx);
             language::init(cx);
             editor::init(cx);
-            crate::init((), cx);
+            crate::init(cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
 
@@ -9551,7 +9561,7 @@ mod tests {
             cx.has_pending_prompt(),
             "Should have a prompt after the deletion"
         );
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Delete");
         assert!(
             !cx.has_pending_prompt(),
             "Should have no prompts after prompt was replied to"

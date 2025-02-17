@@ -36,7 +36,7 @@ use std::{
 };
 use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
-use ui::{h_flex, prelude::*, IconDecorationKind, Label};
+use ui::{prelude::*, IconDecorationKind};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
@@ -679,8 +679,8 @@ impl Item for Editor {
             .child(
                 Label::new(self.title(cx).to_string())
                     .color(label_color)
-                    .italic(params.preview)
-                    .strikethrough(was_deleted),
+                    .when(params.preview, |this| this.italic())
+                    .when(was_deleted, |this| this.strikethrough()),
             )
             .when_some(description, |this, description| {
                 this.child(
@@ -1401,11 +1401,9 @@ impl SearchableItem for Editor {
         cx: &mut Context<Self>,
     ) {
         self.unfold_ranges(matches, false, false, cx);
-        let mut ranges = Vec::new();
-        for m in matches {
-            ranges.push(self.range_for_match(m))
-        }
-        self.change_selections(None, window, cx, |s| s.select_ranges(ranges));
+        self.change_selections(None, window, cx, |s| {
+            s.select_ranges(matches.iter().cloned())
+        });
     }
     fn replace(
         &mut self,

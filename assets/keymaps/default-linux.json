@@ -24,14 +24,14 @@
       "shift-escape": "workspace::ToggleZoom",
       "open": "workspace::Open",
       "ctrl-o": "workspace::Open",
-      "ctrl-=": "zed::IncreaseBufferFontSize",
-      "ctrl-+": "zed::IncreaseBufferFontSize",
-      "ctrl--": "zed::DecreaseBufferFontSize",
-      "ctrl-0": "zed::ResetBufferFontSize",
+      "ctrl-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
+      "ctrl-+": ["zed::IncreaseBufferFontSize", { "persist": false }],
+      "ctrl--": ["zed::DecreaseBufferFontSize", { "persist": false }],
+      "ctrl-0": ["zed::ResetBufferFontSize", { "persist": false }],
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
       "f11": "zed::ToggleFullScreen",
-      "ctrl-alt-z": "zeta::RateCompletions",
+      "ctrl-alt-z": "edit_prediction::RateCompletions",
       "ctrl-shift-i": "edit_prediction::ToggleMenu"
     }
   },
@@ -502,17 +502,23 @@
       "tab": "editor::ComposeCompletion"
     }
   },
+  // Bindings for accepting edit predictions
+  //
+  // alt-l is provided as an alternative to tab/alt-tab. and will be displayed in the UI. This is
+  // because alt-tab may not be available, as it is often used for window switching.
   {
     "context": "Editor && edit_prediction",
     "bindings": {
-      // Changing the modifier currently breaks accepting while you also an LSP completions menu open
-      "alt-enter": "editor::AcceptEditPrediction"
+      "alt-tab": "editor::AcceptEditPrediction",
+      "alt-l": "editor::AcceptEditPrediction",
+      "tab": "editor::AcceptEditPrediction"
     }
   },
   {
-    "context": "Editor && edit_prediction && !edit_prediction_requires_modifier",
+    "context": "Editor && edit_prediction_conflict",
     "bindings": {
-      "tab": "editor::AcceptEditPrediction"
+      "alt-tab": "editor::AcceptEditPrediction",
+      "alt-l": "editor::AcceptEditPrediction"
     }
   },
   {
@@ -644,8 +650,8 @@
       "right": "outline_panel::ExpandSelectedEntry",
       "alt-copy": "outline_panel::CopyPath",
       "ctrl-alt-c": "outline_panel::CopyPath",
-      "alt-shift-copy": "outline_panel::CopyRelativePath",
-      "alt-ctrl-shift-c": "outline_panel::CopyRelativePath",
+      "alt-shift-copy": "workspace::CopyRelativePath",
+      "alt-ctrl-shift-c": "workspace::CopyRelativePath",
       "alt-ctrl-r": "outline_panel::RevealInFileManager",
       "space": "outline_panel::Open",
       "shift-down": "menu::SelectNext",
@@ -673,8 +679,8 @@
       "ctrl-v": "project_panel::Paste",
       "alt-copy": "project_panel::CopyPath",
       "ctrl-alt-c": "project_panel::CopyPath",
-      "alt-shift-copy": "project_panel::CopyRelativePath",
-      "alt-ctrl-shift-c": "project_panel::CopyRelativePath",
+      "alt-shift-copy": "workspace::CopyRelativePath",
+      "alt-ctrl-shift-c": "workspace::CopyRelativePath",
       "enter": "project_panel::Rename",
       "f2": "project_panel::Rename",
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],

@@ -95,7 +95,7 @@ pub struct Button {
     selected_icon: Option<IconName>,
     selected_icon_color: Option<Color>,
     key_binding: Option<KeyBinding>,
-    keybinding_position: KeybindingPosition,
+    key_binding_position: KeybindingPosition,
     alpha: Option<f32>,
 }
 
@@ -121,7 +121,7 @@ impl Button {
             selected_icon: None,
             selected_icon_color: None,
             key_binding: None,
-            keybinding_position: KeybindingPosition::default(),
+            key_binding_position: KeybindingPosition::default(),
             alpha: None,
         }
     }
@@ -197,7 +197,7 @@ impl Button {
     /// This method allows you to specify where the keybinding should be displayed
     /// in relation to the button's label.
     pub fn key_binding_position(mut self, position: KeybindingPosition) -> Self {
-        self.keybinding_position = position;
+        self.key_binding_position = position;
         self
     }
 
@@ -427,7 +427,7 @@ impl RenderOnce for Button {
                 .child(
                     h_flex()
                         .when(
-                            self.keybinding_position == KeybindingPosition::Start,
+                            self.key_binding_position == KeybindingPosition::Start,
                             |this| this.flex_row_reverse(),
                         )
                         .gap(DynamicSpacing::Base06.rems(cx))
@@ -456,6 +456,7 @@ impl RenderOnce for Button {
     }
 }
 
+// View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Button {
     fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
         v_flex()
