@@ -96,8 +96,8 @@ impl Model {
             Self::Gpt3_5Turbo => 12288,
             Self::O3Mini => 20000,
             Self::O1 => 20000,
-            Self::Claude3_5Sonnet => 200_000,
-            Model::Gemini20Flash => 1_000_000,
+            Self::Claude3_5Sonnet => 128_000,
+            Model::Gemini20Flash => 128_000,
         }
     }
 }
