@@ -229,27 +229,31 @@ impl Vim {
                     .collect::<String>()
             };
 
-            let mut final_cursor_position = new_range.start.to_display_point(snapshot);
+            let mut final_cursor_position = None;
 
             if previous_range_end < new_range_start || new_range_end < previous_range_start {
                 let previous_text = text_for(previous_range.clone());
                 let new_text = text_for(new_range.clone());
+                final_cursor_position = Some(new_range.start.to_display_point(snapshot));
 
                 editor.edit([(previous_range, new_text), (new_range, previous_text)], cx);
             } else if new_range_start <= previous_range_start && new_range_end >= previous_range_end
             {
+                final_cursor_position = Some(new_range.start.to_display_point(snapshot));
                 editor.edit([(new_range, text_for(previous_range))], cx);
             } else if previous_range_start <= new_range_start && previous_range_end >= new_range_end
             {
-                final_cursor_position = previous_range.start.to_display_point(snapshot);
+                final_cursor_position = Some(previous_range.start.to_display_point(snapshot));
                 editor.edit([(previous_range, text_for(new_range))], cx);
             }
 
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                s.move_with(|_map, selection| {
-                    selection.collapse_to(final_cursor_position, SelectionGoal::None);
-                });
-            })
+            if let Some(position) = final_cursor_position {
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    s.move_with(|_map, selection| {
+                        selection.collapse_to(position, SelectionGoal::None);
+                    });
+                })
+            }
         } else {
             let ranges = [new_range];
             editor.highlight_background::<VimExchange>(
