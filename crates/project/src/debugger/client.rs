@@ -452,10 +452,10 @@ impl Client {
         &self.modules
     }
 
-    pub(crate) fn set_ignore_breakpoints(&mut self, ignore: bool) {
+    pub fn set_ignore_breakpoints(&mut self, ignore: bool) {
         self.ignore_breakpoints = ignore;
     }
-    pub(crate) fn breakpoints_enabled(&self) -> bool {
+    pub fn breakpoints_enabled(&self) -> bool {
         self.ignore_breakpoints
     }
     pub fn handle_module_event(&mut self, event: &dap::ModuleEvent, cx: &mut Context<Self>) {

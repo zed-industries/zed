@@ -13,8 +13,9 @@ use dap::{
 use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
-use project::debugger::dap_session::{DebugSession, ThreadId};
-use rpc::proto::{self, DebuggerThreadStatus, PeerId, SetDebuggerPanelItem};
+use project::debugger::client::Client;
+use project::debugger::client::ThreadId;
+use rpc::proto::{self, DebuggerThreadStatus, PeerId};
 use settings::Settings;
 use ui::{prelude::*, ContextMenu, DropdownMenu, Indicator, PopoverMenu, Tooltip};
 use workspace::{
@@ -61,7 +62,7 @@ pub struct DebugPanelItem {
     console: Entity<Console>,
     focus_handle: FocusHandle,
     remote_id: Option<ViewId>,
-    session: Entity<DebugSession>,
+    session: Entity<Client>,
     show_console_indicator: bool,
     module_list: Entity<ModuleList>,
     active_thread_item: ThreadItem,
@@ -77,7 +78,7 @@ pub struct DebugPanelItem {
 impl DebugPanelItem {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        session: Entity<DebugSession>,
+        session: Entity<Client>,
         client_id: DebugAdapterClientId,
         thread_id: ThreadId,
         thread_state: Entity<ThreadState>,
@@ -191,29 +192,6 @@ impl DebugPanelItem {
         }
     }
 
-    pub(crate) fn from_proto(&mut self, state: &SetDebuggerPanelItem, cx: &mut Context<Self>) {
-        self.thread_state.update(cx, |thread_state, _| {
-            let (status, stopped) = state
-                .thread_state
-                .as_ref()
-                .map_or((DebuggerThreadStatus::Stopped, true), |thread_state| {
-                    (thread_state.thread_status(), true)
-                });
-
-            thread_state.status = ThreadStatus::from_proto(status);
-            thread_state.stopped = stopped;
-        });
-
-        self.active_thread_item = ThreadItem::from_proto(state.active_thread_item());
-
-        if let Some(variable_list_state) = state.variable_list.as_ref() {
-            self.variable_list
-                .update(cx, |this, cx| this.set_from_proto(variable_list_state, cx));
-        }
-
-        cx.notify();
-    }
-
     pub fn update_thread_state_status(&mut self, status: ThreadStatus, cx: &mut Context<Self>) {
         self.thread_state.update(cx, |thread_state, cx| {
             thread_state.status = status;
@@ -260,11 +238,9 @@ impl DebugPanelItem {
             return;
         }
 
-        if let Some(client_state) = self.session.read(cx).client_state(*client_id) {
-            client_state.update(cx, |state, cx| {
-                state.invalidate(cx);
-            });
-        }
+        self.session.update(cx, |state, cx| {
+            state.invalidate(cx);
+        });
 
         cx.emit(DebugPanelItemEvent::Stopped { go_to_stack_frame });
     }
@@ -336,9 +312,8 @@ impl DebugPanelItem {
             return;
         }
 
-        if let Some(state) = self.session.read(cx).client_state(self.client_id) {
-            state.update(cx, |state, cx| state.handle_loaded_source_event(event, cx));
-        }
+        self.session
+            .update(cx, |state, cx| state.handle_loaded_source_event(event, cx));
     }
 
     fn handle_client_shutdown_event(
@@ -420,7 +395,7 @@ impl DebugPanelItem {
     //     }
     // }
 
-    pub fn session(&self) -> &Entity<DebugSession> {
+    pub fn session(&self) -> &Entity<Client> {
         &self.session
     }
 
@@ -468,11 +443,8 @@ impl DebugPanelItem {
         self.session.read(cx).ignore_breakpoints()
     }
 
-    pub fn capabilities(&self, cx: &mut Context<Self>) -> Option<Capabilities> {
-        self.session()
-            .read(cx)
-            .client_state(self.client_id)
-            .map(|state| state.read(cx).capabilities().clone())
+    pub fn capabilities(&self, cx: &mut Context<Self>) -> Capabilities {
+        self.session().read(cx).capabilities().clone()
     }
 
     fn clear_highlights(&self, _cx: &mut Context<Self>) {
@@ -547,115 +519,70 @@ impl DebugPanelItem {
     }
 
     pub fn continue_thread(&mut self, cx: &mut Context<Self>) {
-        self.session()
-            .read(cx)
-            .client_state(self.client_id)
-            .map(|entity| {
-                entity.update(cx, |state, cx| {
-                    state.continue_thread(self.thread_id, cx);
-                });
-            });
+        self.session().update(cx, |state, cx| {
+            state.continue_thread(self.thread_id, cx);
+        });
     }
 
     pub fn step_over(&mut self, cx: &mut Context<Self>) {
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
-        self.session()
-            .read(cx)
-            .client_state(self.client_id)
-            .map(|entity| {
-                entity.update(cx, |state, cx| {
-                    state.step_over(self.thread_id, granularity, cx);
-                });
-            });
+        self.session().update(cx, |state, cx| {
+            state.step_over(self.thread_id, granularity, cx);
+        });
     }
 
     pub fn step_in(&mut self, cx: &mut Context<Self>) {
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
-        self.session()
-            .read(cx)
-            .client_state(self.client_id)
-            .map(|entity| {
-                entity.update(cx, |state, cx| {
-                    state.step_in(self.thread_id, granularity, cx);
-                });
-            });
+        self.session().update(cx, |state, cx| {
+            state.step_in(self.thread_id, granularity, cx);
+        });
     }
 
     pub fn step_out(&mut self, cx: &mut Context<Self>) {
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
-        self.session()
-            .read(cx)
-            .client_state(self.client_id)
-            .map(|entity| {
-                entity.update(cx, |state, cx| {
-                    state.step_out(self.thread_id, granularity, cx);
-                });
-            });
+        self.session().update(cx, |state, cx| {
+            state.step_out(self.thread_id, granularity, cx);
+        });
     }
 
     pub fn step_back(&mut self, cx: &mut Context<Self>) {
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
-        self.session()
-            .read(cx)
-            .client_state(self.client_id)
-            .map(|entity| {
-                entity.update(cx, |state, cx| {
-                    state.step_back(self.thread_id, granularity, cx);
-                });
-            });
+        self.session().update(cx, |state, cx| {
+            state.step_back(self.thread_id, granularity, cx);
+        });
     }
 
     pub fn restart_client(&self, cx: &mut Context<Self>) {
-        self.session()
-            .read(cx)
-            .client_state(self.client_id)
-            .map(|entity| {
-                entity.update(cx, |state, cx| {
-                    state.restart(None, cx);
-                });
-            });
+        self.session().update(cx, |state, cx| {
+            state.restart(None, cx);
+        });
     }
 
     pub fn pause_thread(&self, cx: &mut Context<Self>) {
-        self.session()
-            .read(cx)
-            .client_state(self.client_id)
-            .map(|entity| {
-                entity.update(cx, |state, cx| {
-                    state.pause_thread(self.thread_id, cx);
-                });
-            });
+        self.session().update(cx, |state, cx| {
+            state.pause_thread(self.thread_id, cx);
+        });
     }
 
     pub fn stop_thread(&self, cx: &mut Context<Self>) {
-        self.session()
-            .read(cx)
-            .client_state(self.client_id)
-            .map(|entity| {
-                entity.update(cx, |state, cx| {
-                    state.terminate_threads(Some(vec![self.thread_id; 1]), cx);
-                });
-            });
+        self.session().update(cx, |state, cx| {
+            state.terminate_threads(Some(vec![self.thread_id; 1]), cx);
+        });
     }
 
     pub fn disconnect_client(&self, cx: &mut Context<Self>) {
-        self.session()
-            .read(cx)
-            .client_state(self.client_id)
-            .map(|entity| {
-                entity.update(cx, |state, cx| {
-                    state.disconnect_client(cx);
-                });
-            });
+        self.session().update(cx, |state, cx| {
+            state.disconnect_client(cx);
+        });
     }
 
     pub fn toggle_ignore_breakpoints(&mut self, cx: &mut Context<Self>) {
         self.session.update(cx, |session, cx| {
-            session.set_ignore_breakpoints(!session.ignore_breakpoints(), cx);
+            session.set_ignore_breakpoints(!session.breakpoints_enabled());
         });
     }
 }
@@ -677,23 +604,19 @@ impl Item for DebugPanelItem {
         _window: &Window,
         cx: &App,
     ) -> AnyElement {
-        Label::new(format!(
-            "{} - Thread {}",
-            self.session.read(cx).name(),
-            self.thread_id.0
-        ))
-        .color(if params.selected {
-            Color::Default
-        } else {
-            Color::Muted
-        })
-        .into_any_element()
+        Label::new(format!("{} - Thread {}", todo!(), self.thread_id.0))
+            .color(if params.selected {
+                Color::Default
+            } else {
+                Color::Muted
+            })
+            .into_any_element()
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         Some(SharedString::from(format!(
             "{} Thread {} - {:?}",
-            self.session.read(cx).name(),
+            todo!(),
             self.thread_id.0,
             self.thread_state.read(cx).status,
         )))
@@ -838,11 +761,7 @@ impl Render for DebugPanelItem {
                                         }
                                     })
                                     .when(
-                                        capabilities
-                                            .as_ref()
-                                            .map(|caps| caps.supports_step_back)
-                                            .flatten()
-                                            .unwrap_or(false),
+                                        capabilities.supports_step_back.unwrap_or(false),
                                         |this| {
                                             this.child(
                                                 IconButton::new(
@@ -901,9 +820,7 @@ impl Render for DebugPanelItem {
                                             }))
                                             .disabled(
                                                 !capabilities
-                                                    .as_ref()
-                                                    .map(|caps| caps.supports_restart_request)
-                                                    .flatten()
+                                                    .supports_restart_request
                                                     .unwrap_or_default(),
                                             )
                                             .tooltip(move |window, cx| {
@@ -946,10 +863,10 @@ impl Render for DebugPanelItem {
                                     .child(
                                         IconButton::new(
                                             "debug-ignore-breakpoints",
-                                            if self.session.read(cx).ignore_breakpoints() {
-                                                IconName::DebugIgnoreBreakpoints
-                                            } else {
+                                            if self.session.read(cx).breakpoints_enabled() {
                                                 IconName::DebugBreakpoint
+                                            } else {
+                                                IconName::DebugIgnoreBreakpoints
                                             },
                                         )
                                         .icon_size(IconSize::Small)
@@ -1008,11 +925,7 @@ impl Render for DebugPanelItem {
                                 cx,
                             ))
                             .when(
-                                capabilities
-                                    .as_ref()
-                                    .map(|caps| caps.supports_modules_request)
-                                    .flatten()
-                                    .unwrap_or_default(),
+                                capabilities.supports_modules_request.unwrap_or_default(),
                                 |this| {
                                     this.child(self.render_entry_button(
                                         &SharedString::from("Modules"),
@@ -1023,9 +936,7 @@ impl Render for DebugPanelItem {
                             )
                             .when(
                                 capabilities
-                                    .as_ref()
-                                    .map(|caps| caps.supports_loaded_sources_request)
-                                    .flatten()
+                                    .supports_loaded_sources_request
                                     .unwrap_or_default(),
                                 |this| {
                                     this.child(self.render_entry_button(

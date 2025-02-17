@@ -39,7 +39,7 @@ use language::{BinaryStatus, BufferSnapshot, LanguageRegistry, LanguageToolchain
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use rpc::{
-    proto::{self, SetDebuggerPanelItem, UpdateDebugAdapter, UpdateThreadStatus},
+    proto::{self, UpdateDebugAdapter, UpdateThreadStatus},
     AnyProtoClient, TypedEnvelope,
 };
 use serde_json::Value;
@@ -68,7 +68,6 @@ pub enum DapStoreEvent {
     Notification(String),
     ActiveDebugLineChanged,
     RemoteHasInitialized,
-    SetDebugPanelItem(SetDebuggerPanelItem),
     UpdateDebugAdapter(UpdateDebugAdapter),
     UpdateThreadStatus(UpdateThreadStatus),
 }
@@ -240,7 +239,6 @@ impl DapStore {
         client.add_entity_message_handler(Self::handle_shutdown_debug_client);
         client.add_entity_message_handler(Self::handle_set_active_debug_line);
         client.add_entity_message_handler(Self::handle_set_debug_client_capabilities);
-        client.add_entity_message_handler(Self::handle_set_debug_panel_item);
         client.add_entity_message_handler(Self::handle_update_debug_adapter);
         client.add_entity_message_handler(Self::handle_update_thread_status);
         client.add_entity_message_handler(Self::handle_ignore_breakpoint_state);
@@ -383,6 +381,9 @@ impl DapStore {
         let client = self.clients.get(client_id).cloned();
 
         client
+    }
+    pub fn clients(&self) -> impl Iterator<Item = &Entity<Client>> {
+        self.clients.values()
     }
 
     pub fn capabilities_by_id(
@@ -1053,16 +1054,6 @@ impl DapStore {
 
     //     Ok(T::response_to_proto(&client_id, response))
     // }
-
-    async fn handle_set_debug_panel_item(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::SetDebuggerPanelItem>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |_, cx| {
-            cx.emit(DapStoreEvent::SetDebugPanelItem(envelope.payload));
-        })
-    }
 
     async fn handle_update_debug_adapter(
         this: Entity<Self>,

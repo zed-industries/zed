@@ -373,11 +373,9 @@ impl Render for DapLogToolbarItemView {
         });
 
         let current_client = current_client_id.and_then(|current_client_id| {
-            menu_rows.iter().find_map(|row| {
-                row.clients
-                    .iter()
-                    .find(|sub_item| sub_item.client_id == current_client_id)
-            })
+            menu_rows
+                .iter()
+                .find(|row| row.client_id == current_client_id)
         });
 
         let dap_menu: PopoverMenu<_> = PopoverMenu::new("DapLogView")
@@ -403,56 +401,48 @@ impl Render for DapLogToolbarItemView {
                 let menu_rows = menu_rows.clone();
                 ContextMenu::build(&mut window, cx, move |mut menu, window, _cx| {
                     for row in menu_rows.into_iter() {
-                        menu = menu.header(format!("{}. {}", row.session_id.0, row.session_name));
-
-                        for sub_item in row.clients.into_iter() {
-                            menu = menu.custom_row(move |_window, _cx| {
-                                div()
-                                    .w_full()
-                                    .pl_2()
-                                    .child(
-                                        Label::new(format!(
-                                            "{}. {}",
-                                            sub_item.client_id.0, sub_item.client_name,
-                                        ))
-                                        .color(workspace::ui::Color::Muted),
+                        menu = menu.custom_row(move |_window, _cx| {
+                            div()
+                                .w_full()
+                                .pl_2()
+                                .child(
+                                    Label::new(
+                                        format!("{}. {}", row.client_id.0, row.client_name,),
                                     )
-                                    .into_any_element()
-                            });
+                                    .color(workspace::ui::Color::Muted),
+                                )
+                                .into_any_element()
+                        });
 
-                            if sub_item.has_adapter_logs {
-                                menu = menu.custom_entry(
-                                    move |_window, _cx| {
-                                        div()
-                                            .w_full()
-                                            .pl_4()
-                                            .child(Label::new(ADAPTER_LOGS))
-                                            .into_any_element()
-                                    },
-                                    window.handler_for(&log_view, move |view, window, cx| {
-                                        view.show_log_messages_for_adapter(
-                                            sub_item.client_id,
-                                            window,
-                                            cx,
-                                        );
-                                    }),
-                                );
-                            }
-
+                        if row.has_adapter_logs {
                             menu = menu.custom_entry(
                                 move |_window, _cx| {
                                     div()
                                         .w_full()
                                         .pl_4()
-                                        .child(Label::new(RPC_MESSAGES))
+                                        .child(Label::new(ADAPTER_LOGS))
                                         .into_any_element()
                                 },
                                 window.handler_for(&log_view, move |view, window, cx| {
-                                    view.show_rpc_trace_for_server(sub_item.client_id, window, cx);
+                                    view.show_log_messages_for_adapter(row.client_id, window, cx);
                                 }),
                             );
                         }
+
+                        menu = menu.custom_entry(
+                            move |_window, _cx| {
+                                div()
+                                    .w_full()
+                                    .pl_4()
+                                    .child(Label::new(RPC_MESSAGES))
+                                    .into_any_element()
+                            },
+                            window.handler_for(&log_view, move |view, window, cx| {
+                                view.show_rpc_trace_for_server(row.client_id, window, cx);
+                            }),
+                        );
                     }
+
                     menu
                 })
                 .into()
@@ -578,31 +568,18 @@ impl DapLogView {
             .read(cx)
             .dap_store()
             .read(cx)
-            .sessions()
-            .filter_map(|session| {
+            .clients()
+            .filter_map(|client| {
+                let client = client.read(cx).adapter_client()?;
                 Some(DapMenuItem {
-                    session_id: session.read(cx).id(),
-                    session_name: session.read(cx).name(),
-                    clients: {
-                        let mut clients = session
-                            .read_with(cx, |session, cx| session.clients(cx))
-                            .iter()
-                            .map(|client| DapMenuSubItem {
-                                client_id: client.id(),
-                                client_name: client.adapter_id(),
-                                has_adapter_logs: client.has_adapter_logs(),
-                                selected_entry: self
-                                    .current_view
-                                    .map_or(LogKind::Adapter, |(_, kind)| kind),
-                            })
-                            .collect::<Vec<_>>();
-                        clients.sort_by_key(|item| item.client_id.0);
-                        clients
-                    },
+                    client_id: client.id(),
+                    client_name: client.adapter_id(),
+                    has_adapter_logs: client.has_adapter_logs(),
+                    selected_entry: self.current_view.map_or(LogKind::Adapter, |(_, kind)| kind),
                 })
             })
             .collect::<Vec<_>>();
-        menu_items.sort_by_key(|item| item.session_id.0);
+        menu_items.sort_by_key(|item| item.client_id.0);
         Some(menu_items)
     }
 
@@ -691,13 +668,6 @@ fn log_contents(lines: &VecDeque<String>) -> String {
 
 #[derive(Clone, PartialEq)]
 pub(crate) struct DapMenuItem {
-    pub session_id: DebugSessionId,
-    pub session_name: String,
-    pub clients: Vec<DapMenuSubItem>,
-}
-
-#[derive(Clone, PartialEq)]
-pub(crate) struct DapMenuSubItem {
     pub client_id: DebugAdapterClientId,
     pub client_name: String,
     pub has_adapter_logs: bool,

@@ -13,7 +13,7 @@ use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
 use language::{Buffer, CodeLabel, LanguageServerId};
 use menu::Confirm;
 use project::{
-    debugger::dap_session::{CompletionsQuery, DebugSession},
+    debugger::client::{Client, CompletionsQuery},
     Completion,
 };
 use settings::Settings;
@@ -33,7 +33,7 @@ pub struct Console {
     groups: Vec<OutputGroup>,
     console: Entity<Editor>,
     query_bar: Entity<Editor>,
-    session: Entity<DebugSession>,
+    session: Entity<Client>,
     client_id: DebugAdapterClientId,
     _subscriptions: Vec<Subscription>,
     variable_list: Entity<VariableList>,
@@ -42,7 +42,7 @@ pub struct Console {
 
 impl Console {
     pub fn new(
-        session: Entity<DebugSession>,
+        session: Entity<Client>,
         client_id: DebugAdapterClientId,
         stack_frame_list: Entity<StackFrameList>,
         variable_list: Entity<VariableList>,
@@ -234,11 +234,7 @@ impl Console {
             expression
         });
 
-        let Some(client_state) = self.session.read(cx).client_state(self.client_id) else {
-            return;
-        };
-
-        client_state.update(cx, |state, cx| {
+        self.session.update(cx, |state, cx| {
             state.evaluate(
                 expression,
                 Some(dap::EvaluateArgumentsContext::Variables),
@@ -369,10 +365,8 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
             .read(cx)
             .session
             .read(cx)
-            .client_state(console.read(cx).client_id)
-            .map(|state| state.read(cx).capabilities())
-            .map(|caps| caps.supports_completions_request)
-            .flatten()
+            .capabilities()
+            .supports_completions_request
             .unwrap_or_default();
 
         if support_completions {
@@ -498,21 +492,15 @@ impl ConsoleQueryBarCompletionProvider {
         buffer_position: language::Anchor,
         cx: &mut Context<Editor>,
     ) -> gpui::Task<gpui::Result<Vec<project::Completion>>> {
-        let client_id = console.read(cx).client_id;
-
         let completion_task = console.update(cx, |console, cx| {
-            if let Some(client_state) = console.session.read(cx).client_state(client_id) {
-                client_state.update(cx, |state, cx| {
-                    let frame_id = Some(console.stack_frame_list.read(cx).current_stack_frame_id());
+            console.session.update(cx, |state, cx| {
+                let frame_id = Some(console.stack_frame_list.read(cx).current_stack_frame_id());
 
-                    state.completions(
-                        CompletionsQuery::new(buffer.read(cx), buffer_position, frame_id),
-                        cx,
-                    )
-                })
-            } else {
-                Task::ready(Err(anyhow!("failed to fetch completions")))
-            }
+                state.completions(
+                    CompletionsQuery::new(buffer.read(cx), buffer_position, frame_id),
+                    cx,
+                )
+            })
         });
 
         cx.background_executor().spawn(async move {

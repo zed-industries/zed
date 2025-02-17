@@ -87,9 +87,7 @@ pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 use remote::{SshConnectionOptions, SshRemoteClient};
 use rpc::{
-    proto::{
-        FromProto, LanguageServerPromptResponse, SetDebuggerPanelItem, ToProto, SSH_PROJECT_ID,
-    },
+    proto::{FromProto, LanguageServerPromptResponse, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, ErrorCode,
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
@@ -274,7 +272,6 @@ pub enum Event {
     LanguageServerPrompt(LanguageServerPromptRequest),
     DebugClientStarted(DebugAdapterClientId),
     DebugClientShutdown(DebugAdapterClientId),
-    SetDebugClient(SetDebuggerPanelItem),
     ActiveDebugLineChanged,
     DebugClientEvent {
         client_id: DebugAdapterClientId,

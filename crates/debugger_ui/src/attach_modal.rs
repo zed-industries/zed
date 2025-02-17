@@ -20,7 +20,7 @@ struct Candidate {
 pub(crate) struct AttachModalDelegate {
     selected_index: usize,
     matches: Vec<StringMatch>,
-    session_id: DebugSessionId,
+    session_id: DebugAdapterClientId,
     placeholder_text: Arc<str>,
     dap_store: Entity<DapStore>,
     client_id: DebugAdapterClientId,
@@ -29,7 +29,7 @@ pub(crate) struct AttachModalDelegate {
 
 impl AttachModalDelegate {
     pub fn new(
-        session_id: DebugSessionId,
+        session_id: DebugAdapterClientId,
         client_id: DebugAdapterClientId,
         dap_store: Entity<DapStore>,
     ) -> Self {
@@ -52,7 +52,7 @@ pub(crate) struct AttachModal {
 
 impl AttachModal {
     pub fn new(
-        session_id: &DebugSessionId,
+        session_id: &DebugAdapterClientId,
         client_id: DebugAdapterClientId,
         dap_store: Entity<DapStore>,
         window: &mut Window,
@@ -132,8 +132,8 @@ impl PickerDelegate for AttachModalDelegate {
                     } else {
                         let Some(client) = this.delegate.dap_store.update(cx, |store, cx| {
                             store
-                                .client_by_id(&this.delegate.client_id, cx)
-                                .and_then(|(_, client)| client.read(cx).adapter_client())
+                                .client_by_id(&this.delegate.client_id)
+                                .and_then(|client| client.read(cx).adapter_client())
                         }) else {
                             return Vec::new();
                         };
@@ -224,7 +224,7 @@ impl PickerDelegate for AttachModalDelegate {
 
         self.dap_store.update(cx, |store, cx| {
             store
-                .attach(&self.session_id, self.client_id, candidate.pid, cx)
+                .attach(self.client_id, candidate.pid, cx)
                 .detach_and_log_err(cx);
         });
 

@@ -10,7 +10,7 @@ use gpui::{
     FocusHandle, Focusable, Hsla, ListOffset, ListState, MouseDownEvent, Point, Subscription, Task,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::debugger::dap_session::DebugSession;
+use project::debugger::client::Client;
 use rpc::proto::{
     self, DebuggerScopeVariableIndex, DebuggerVariableContainer, VariableListScopes,
     VariableListVariables,
@@ -330,7 +330,7 @@ pub struct VariableList {
     list: ListState,
     focus_handle: FocusHandle,
     open_entries: Vec<OpenEntry>,
-    session: Entity<DebugSession>,
+    session: Entity<Client>,
     client_id: DebugAdapterClientId,
     _subscriptions: Vec<Subscription>,
     set_variable_editor: Entity<Editor>,
@@ -346,7 +346,7 @@ pub struct VariableList {
 
 impl VariableList {
     pub fn new(
-        session: Entity<DebugSession>,
+        session: Entity<Client>,
         client_id: DebugAdapterClientId,
         stack_frame_list: Entity<StackFrameList>,
         window: &mut Window,
@@ -842,20 +842,11 @@ impl VariableList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((support_set_variable, support_clipboard_context)) = self
-            .session
-            .read(cx)
-            .client_state(self.client_id)
-            .map(|state| state.read(cx).capabilities())
-            .map(|caps| {
-                (
-                    caps.supports_set_variable.unwrap_or_default(),
-                    caps.supports_clipboard_context.unwrap_or_default(),
-                )
-            })
-        else {
-            return;
-        };
+        let caps = self.session.read(cx).capabilities();
+        let (support_set_variable, support_clipboard_context) = (
+            caps.supports_set_variable.unwrap_or_default(),
+            caps.supports_clipboard_context.unwrap_or_default(),
+        );
 
         let this = cx.entity();
 
@@ -874,12 +865,7 @@ impl VariableList {
 
                 window.handler_for(&this.clone(), move |this, _window, cx| {
                     if support_clipboard_context {
-                        let Some(client_state) = this.session.read(cx).client_state(this.client_id)
-                        else {
-                            return;
-                        };
-
-                        client_state.update(cx, |state, cx| {
+                        this.session.update(cx, |state, cx| {
                             state.evaluate(
                                 evaluate_name.clone().unwrap_or(variable_name.clone()),
                                 Some(dap::EvaluateArgumentsContext::Clipboard),
@@ -984,11 +970,7 @@ impl VariableList {
             return cx.notify();
         }
 
-        let Some(client_state) = self.session.read(cx).client_state(self.client_id) else {
-            return;
-        };
-
-        client_state.update(cx, |state, cx| {
+        self.session.update(cx, |state, cx| {
             state.set_variable_value(
                 set_variable_state.parent_variables_reference,
                 set_variable_state.name,

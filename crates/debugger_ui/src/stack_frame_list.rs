@@ -6,7 +6,8 @@ use gpui::{
     list, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, Subscription, Task,
     WeakEntity,
 };
-use project::debugger::dap_session::{DebugSession, StackFrame, ThreadId};
+
+use project::debugger::client::{Client, StackFrame, ThreadId};
 use project::ProjectPath;
 use ui::{prelude::*, Tooltip};
 use workspace::Workspace;
@@ -24,7 +25,7 @@ pub struct StackFrameList {
     thread_id: ThreadId,
     focus_handle: FocusHandle,
     _subscription: Subscription,
-    session: Entity<DebugSession>,
+    session: Entity<Client>,
     entries: Vec<StackFrameEntry>,
     workspace: WeakEntity<Workspace>,
     client_id: DebugAdapterClientId,
@@ -41,7 +42,7 @@ pub enum StackFrameEntry {
 impl StackFrameList {
     pub fn new(
         workspace: WeakEntity<Workspace>,
-        session: Entity<DebugSession>,
+        session: Entity<Client>,
         client_id: DebugAdapterClientId,
         thread_id: ThreadId,
         _window: &Window,
@@ -64,9 +65,7 @@ impl StackFrameList {
             },
         );
 
-        let client_state = session.read(cx).client_state(client_id).unwrap();
-
-        let _subscription = cx.observe(&client_state, |stack_frame_list, state, cx| {
+        let _subscription = cx.observe(&session, |stack_frame_list, state, cx| {
             let _frame_len = state.update(cx, |state, cx| {
                 state.stack_frames(stack_frame_list.thread_id, cx).len()
             });
@@ -99,10 +98,7 @@ impl StackFrameList {
 
     pub fn stack_frames(&self, cx: &mut App) -> Vec<StackFrame> {
         self.session
-            .read(cx)
-            .client_state(self.client_id)
-            .map(|state| state.update(cx, |client, cx| client.stack_frames(self.thread_id, cx)))
-            .unwrap_or_default()
+            .update(cx, |this, cx| this.stack_frames(self.thread_id, cx))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -267,11 +263,9 @@ impl StackFrameList {
     }
 
     pub fn restart_stack_frame(&mut self, stack_frame_id: u64, cx: &mut Context<Self>) {
-        if let Some(client_state) = self.session.read(cx).client_state(self.client_id) {
-            client_state.update(cx, |state, cx| {
-                state.restart_stack_frame(stack_frame_id, cx)
-            });
-        }
+        self.session.update(cx, |state, cx| {
+            state.restart_stack_frame(stack_frame_id, cx)
+        });
     }
 
     fn render_normal_entry(
@@ -291,8 +285,8 @@ impl StackFrameList {
         let supports_frame_restart = self
             .session
             .read(cx)
-            .client_state(self.client_id)
-            .and_then(|client| client.read(cx).capabilities().supports_restart_frame)
+            .capabilities()
+            .supports_restart_frame
             .unwrap_or_default();
 
         let origin = stack_frame

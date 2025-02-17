@@ -1,6 +1,6 @@
 use dap::client::DebugAdapterClientId;
 use gpui::{list, AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, Subscription};
-use project::debugger::dap_session::DebugSession;
+use project::debugger::client::Client;
 use ui::prelude::*;
 use util::maybe;
 
@@ -8,13 +8,13 @@ pub struct LoadedSourceList {
     list: ListState,
     focus_handle: FocusHandle,
     _subscription: Subscription,
-    session: Entity<DebugSession>,
+    session: Entity<Client>,
     client_id: DebugAdapterClientId,
 }
 
 impl LoadedSourceList {
     pub fn new(
-        session: Entity<DebugSession>,
+        session: Entity<Client>,
         client_id: DebugAdapterClientId,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -35,8 +35,7 @@ impl LoadedSourceList {
             },
         );
 
-        let client_state = session.read(cx).client_state(client_id).unwrap();
-        let _subscription = cx.observe(&client_state, |loaded_source_list, state, cx| {
+        let _subscription = cx.observe(&session, |loaded_source_list, state, cx| {
             let len = state.update(cx, |state, cx| state.loaded_sources(cx).len());
 
             loaded_source_list.list.reset(len);
@@ -55,8 +54,6 @@ impl LoadedSourceList {
     fn render_entry(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let Some(source) = maybe!({
             self.session
-                .read(cx)
-                .client_state(self.client_id)?
                 .update(cx, |state, cx| state.loaded_sources(cx).get(ix).cloned())
         }) else {
             return Empty.into_any();
@@ -92,11 +89,9 @@ impl Focusable for LoadedSourceList {
 
 impl Render for LoadedSourceList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(state) = self.session.read(cx).client_state(self.client_id) {
-            state.update(cx, |state, cx| {
-                state.loaded_sources(cx);
-            });
-        }
+        self.session.update(cx, |state, cx| {
+            state.loaded_sources(cx);
+        });
 
         div()
             .track_focus(&self.focus_handle)
