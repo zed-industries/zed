@@ -15,8 +15,8 @@ use editor::{
 use futures::channel::oneshot;
 use gpui::{
     actions, div, impl_actions, Action, App, ClickEvent, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, Hsla, InteractiveElement as _, IntoElement, KeyContext,
-    ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task, TextStyle, Window,
+    FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
+    Render, ScrollHandle, Styled, Subscription, Task, TextStyle, Window,
 };
 use language::{Language, LanguageRegistry};
 use project::{
@@ -117,35 +117,41 @@ impl BufferSearchBar {
     fn render_text_input(
         &self,
         editor: &Entity<Editor>,
-        color: Hsla,
+        color_override: Option<Color>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let (color, use_syntax) = if editor.read(cx).read_only(cx) {
+            (cx.theme().colors().text_disabled, false)
+        } else {
+            match color_override {
+                Some(color_override) => (color_override.color(cx), false),
+                None => (cx.theme().colors().text, true),
+            }
+        };
+
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
-            color: if editor.read(cx).read_only(cx) {
-                cx.theme().colors().text_disabled
-            } else {
-                color
-            },
+            color,
             font_family: settings.buffer_font.family.clone(),
             font_features: settings.buffer_font.features.clone(),
             font_fallbacks: settings.buffer_font.fallbacks.clone(),
             font_size: rems(0.875).into(),
             font_weight: settings.buffer_font.weight,
             line_height: relative(1.3),
-            ..Default::default()
+            ..TextStyle::default()
         };
 
-        EditorElement::new(
-            editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                // TODO kb need to get the regex syntax highlights here?
-                ..Default::default()
-            },
-        )
+        let mut editor_style = EditorStyle {
+            background: cx.theme().colors().editor_background,
+            local_player: cx.theme().players().local(),
+            text: text_style,
+            ..EditorStyle::default()
+        };
+        if use_syntax {
+            editor_style.syntax = cx.theme().syntax().clone();
+        }
+
+        EditorElement::new(editor, editor_style)
     }
 
     pub fn query_editor_focused(&self) -> bool {
@@ -182,7 +188,7 @@ impl Render for BufferSearchBar {
             editor.set_placeholder_text("Replace with…", cx);
         });
 
-        let mut text_color = Color::Default;
+        let mut color_override = None;
         let match_text = self
             .active_searchable_item
             .as_ref()
@@ -198,7 +204,7 @@ impl Render for BufferSearchBar {
                 if let Some(match_ix) = self.active_match_index {
                     Some(format!("{}/{}", match_ix + 1, matches_count))
                 } else {
-                    text_color = Color::Error; // No matches found
+                    color_override = Some(Color::Error); // No matches found
                     None
                 }
             })
@@ -242,7 +248,7 @@ impl Render for BufferSearchBar {
                 input_base_styles()
                     .id("editor-scroll")
                     .track_scroll(&self.editor_scroll_handle)
-                    .child(self.render_text_input(&self.query_editor, text_color.color(cx), cx))
+                    .child(self.render_text_input(&self.query_editor, color_override, cx))
                     .when(!hide_inline_icons, |div| {
                         div.child(
                             h_flex()
@@ -415,7 +421,7 @@ impl Render for BufferSearchBar {
                 .gap_2()
                 .child(input_base_styles().child(self.render_text_input(
                     &self.replacement_editor,
-                    cx.theme().colors().text,
+                    None,
                     cx,
                 )))
                 .child(
@@ -1474,8 +1480,8 @@ impl BufferSearchBar {
             .read(cx)
             .as_singleton()
             .expect("query editor should be backed by a singleton buffer");
-        if dbg!(enable) {
-            if let Some(regex_language) = dbg!(self.regex_language.clone()) {
+        if enable {
+            if let Some(regex_language) = self.regex_language.clone() {
                 query_buffer.update(cx, |query_buffer, cx| {
                     query_buffer.set_language(Some(regex_language), cx);
                 })
