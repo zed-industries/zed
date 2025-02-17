@@ -4,7 +4,7 @@ use settings::SettingsStore;
 use terminal_view::terminal_panel::TerminalPanel;
 use workspace::Workspace;
 
-use crate::{debugger_panel::DebugPanel, debugger_panel_item::DebugPanelItem};
+use crate::{debugger_panel::DebugPanel, debugger_panel_item::DebugSession};
 
 mod attach_modal;
 mod console;
@@ -62,7 +62,7 @@ pub async fn init_test_workspace(
 pub fn active_debug_panel_item(
     workspace: WindowHandle<Workspace>,
     cx: &mut TestAppContext,
-) -> Entity<DebugPanelItem> {
+) -> Entity<DebugSession> {
     workspace
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();

@@ -1,5 +1,5 @@
 use crate::console::Console;
-use crate::debugger_panel::{DebugPanel, DebugPanelEvent, ThreadState, ThreadStatus};
+use crate::debugger_panel::{DebugPanel, DebugPanelEvent};
 use crate::loaded_source_list::LoadedSourceList;
 use crate::module_list::ModuleList;
 use crate::stack_frame_list::{StackFrameList, StackFrameListEvent};
@@ -14,7 +14,8 @@ use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
 use project::debugger::session::Session;
-use project::debugger::session::ThreadId;
+use project::debugger::session::{ThreadId, ThreadStatus};
+
 use rpc::proto::{self, DebuggerThreadStatus, PeerId};
 use settings::Settings;
 use ui::{prelude::*, ContextMenu, DropdownMenu, Indicator, PopoverMenu, Tooltip};
@@ -57,31 +58,29 @@ impl ThreadItem {
     }
 }
 
-pub struct DebugPanelItem {
+pub struct DebugSession {
+    session: Entity<Session>,
     thread_id: ThreadId,
     console: Entity<Console>,
     focus_handle: FocusHandle,
     remote_id: Option<ViewId>,
-    session: Entity<Session>,
     show_console_indicator: bool,
     module_list: Entity<ModuleList>,
     active_thread_item: ThreadItem,
     _workspace: WeakEntity<Workspace>,
     client_id: DebugAdapterClientId,
-    thread_state: Entity<ThreadState>,
     variable_list: Entity<VariableList>,
     _subscriptions: Vec<Subscription>,
     stack_frame_list: Entity<StackFrameList>,
     loaded_source_list: Entity<LoadedSourceList>,
 }
 
-impl DebugPanelItem {
+impl DebugSession {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         session: Entity<Session>,
         client_id: DebugAdapterClientId,
         thread_id: ThreadId,
-        thread_state: Entity<ThreadState>,
         debug_panel: &Entity<DebugPanel>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -172,7 +171,7 @@ impl DebugPanelItem {
             thread_id,
             _workspace: workspace,
             module_list,
-            thread_state,
+
             focus_handle,
             variable_list,
             _subscriptions,
@@ -182,21 +181,6 @@ impl DebugPanelItem {
             client_id,
             show_console_indicator: false,
             active_thread_item: ThreadItem::Variables,
-        }
-    }
-
-    pub fn update_thread_state_status(&mut self, status: ThreadStatus, cx: &mut Context<Self>) {
-        self.thread_state.update(cx, |thread_state, cx| {
-            thread_state.status = status;
-
-            cx.notify();
-        });
-
-        if status == ThreadStatus::Exited
-            || status == ThreadStatus::Ended
-            || status == ThreadStatus::Stopped
-        {
-            self.clear_highlights(cx);
         }
     }
 
@@ -213,8 +197,6 @@ impl DebugPanelItem {
         if self.should_skip_event(client_id, ThreadId(event.thread_id)) {
             return;
         }
-
-        self.update_thread_state_status(ThreadStatus::Running, cx);
     }
 
     fn handle_stopped_event(
@@ -247,8 +229,6 @@ impl DebugPanelItem {
         if self.should_skip_event(client_id, ThreadId(event.thread_id)) {
             return;
         }
-
-        self.update_thread_state_status(ThreadStatus::Running, cx);
     }
 
     fn handle_output_event(
@@ -318,8 +298,6 @@ impl DebugPanelItem {
             return;
         }
 
-        self.update_thread_state_status(ThreadStatus::Stopped, cx);
-
         // TODO(debugger): make this work again
         // self.dap_store.update(cx, |store, cx| {
         //     store.remove_active_debug_line_for_client(client_id, cx);
@@ -336,8 +314,6 @@ impl DebugPanelItem {
         if Self::should_skip_event(self, client_id, self.thread_id) {
             return;
         }
-
-        self.update_thread_state_status(ThreadStatus::Exited, cx);
 
         cx.emit(DebugPanelItemEvent::Close);
     }
@@ -424,11 +400,6 @@ impl DebugPanelItem {
     #[cfg(any(test, feature = "test-support"))]
     pub fn variable_list(&self) -> &Entity<VariableList> {
         &self.variable_list
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn thread_state(&self) -> &Entity<ThreadState> {
-        &self.thread_state
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -580,15 +551,15 @@ impl DebugPanelItem {
     }
 }
 
-impl EventEmitter<DebugPanelItemEvent> for DebugPanelItem {}
+impl EventEmitter<DebugPanelItemEvent> for DebugSession {}
 
-impl Focusable for DebugPanelItem {
+impl Focusable for DebugSession {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Item for DebugPanelItem {
+impl Item for DebugSession {
     type Event = DebugPanelItemEvent;
 
     fn tab_content(
@@ -611,7 +582,7 @@ impl Item for DebugPanelItem {
             "{} Thread {} - {:?}",
             todo!(),
             self.thread_id.0,
-            self.thread_state.read(cx).status,
+            todo!("thread state"),
         )))
     }
 
@@ -623,7 +594,7 @@ impl Item for DebugPanelItem {
     }
 }
 
-impl FollowableItem for DebugPanelItem {
+impl FollowableItem for DebugSession {
     fn remote_id(&self) -> Option<workspace::ViewId> {
         self.remote_id
     }
@@ -694,9 +665,9 @@ impl FollowableItem for DebugPanelItem {
     }
 }
 
-impl Render for DebugPanelItem {
+impl Render for DebugSession {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let thread_status = self.thread_state.read(cx).status;
+        let thread_status = ThreadStatus::Running;
         let active_thread_item = &self.active_thread_item;
 
         let capabilities = self.capabilities(cx);

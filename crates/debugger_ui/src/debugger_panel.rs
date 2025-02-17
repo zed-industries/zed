@@ -1,4 +1,4 @@
-use crate::{attach_modal::AttachModal, debugger_panel_item::DebugPanelItem};
+use crate::{attach_modal::AttachModal, debugger_panel_item::DebugSession};
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use command_palette_hooks::CommandPaletteFilter;
@@ -54,72 +54,12 @@ pub enum DebugPanelEvent {
 }
 
 actions!(debug_panel, [ToggleFocus]);
-
-#[derive(Debug, Default, Clone)]
-pub struct ThreadState {
-    pub status: ThreadStatus,
-    // we update this value only once we stopped,
-    // we will use this to indicated if we should show a warning when debugger thread was exited
-    pub stopped: bool,
-}
-
-impl ThreadState {
-    pub fn from_proto(thread_state: proto::DebuggerThreadState) -> Self {
-        let status = ThreadStatus::from_proto(thread_state.thread_status());
-
-        Self {
-            status,
-            stopped: thread_state.stopped,
-        }
-    }
-
-    pub fn to_proto(&self) -> proto::DebuggerThreadState {
-        let status = self.status.to_proto();
-
-        proto::DebuggerThreadState {
-            thread_status: status,
-            stopped: self.stopped,
-        }
-    }
-}
-
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ThreadStatus {
-    #[default]
-    Running,
-    Stopped,
-    Exited,
-    Ended,
-}
-
-impl ThreadStatus {
-    pub fn from_proto(status: proto::DebuggerThreadStatus) -> Self {
-        match status {
-            proto::DebuggerThreadStatus::Running => Self::Running,
-            proto::DebuggerThreadStatus::Stopped => Self::Stopped,
-            proto::DebuggerThreadStatus::Exited => Self::Exited,
-            proto::DebuggerThreadStatus::Ended => Self::Ended,
-        }
-    }
-
-    pub fn to_proto(&self) -> i32 {
-        match self {
-            Self::Running => proto::DebuggerThreadStatus::Running.into(),
-            Self::Stopped => proto::DebuggerThreadStatus::Stopped.into(),
-            Self::Exited => proto::DebuggerThreadStatus::Exited.into(),
-            Self::Ended => proto::DebuggerThreadStatus::Ended.into(),
-        }
-    }
-}
-
 pub struct DebugPanel {
     size: Pixels,
     pane: Entity<Pane>,
     focus_handle: FocusHandle,
-    dap_store: Entity<DapStore>,
     workspace: WeakEntity<Workspace>,
     _subscriptions: Vec<Subscription>,
-    message_queue: HashMap<DebugAdapterClientId, VecDeque<OutputEvent>>,
 }
 
 impl DebugPanel {
@@ -149,23 +89,18 @@ impl DebugPanel {
             });
 
             let project = workspace.project().clone();
-            let dap_store = project.read(cx).dap_store();
 
             let _subscriptions = vec![
                 cx.observe(&pane, |_, _, cx| cx.notify()),
                 cx.subscribe_in(&pane, window, Self::handle_pane_event),
             ];
 
-            let dap_store = project.read(cx).dap_store();
-
-            let mut debug_panel = Self {
+            let debug_panel = Self {
                 pane,
                 size: px(300.),
                 _subscriptions,
                 focus_handle: cx.focus_handle(),
-                message_queue: Default::default(),
                 workspace: workspace.weak_handle(),
-                dap_store: dap_store.clone(),
             };
 
             debug_panel
@@ -241,22 +176,22 @@ impl DebugPanel {
         self.dap_store.clone()
     }
 
-    pub fn active_debug_panel_item(&self, cx: &Context<Self>) -> Option<Entity<DebugPanelItem>> {
+    pub fn active_debug_panel_item(&self, cx: &Context<Self>) -> Option<Entity<DebugSession>> {
         self.pane
             .read(cx)
             .active_item()
-            .and_then(|panel| panel.downcast::<DebugPanelItem>())
+            .and_then(|panel| panel.downcast::<DebugSession>())
     }
 
     pub fn debug_panel_items_by_client(
         &self,
         client_id: &DebugAdapterClientId,
         cx: &Context<Self>,
-    ) -> Vec<Entity<DebugPanelItem>> {
+    ) -> Vec<Entity<DebugSession>> {
         self.pane
             .read(cx)
             .items()
-            .filter_map(|item| item.downcast::<DebugPanelItem>())
+            .filter_map(|item| item.downcast::<DebugSession>())
             .filter(|item| &item.read(cx).client_id() == client_id)
             .map(|item| item.clone())
             .collect()
@@ -267,11 +202,11 @@ impl DebugPanel {
         client_id: DebugAdapterClientId,
         thread_id: ThreadId,
         cx: &mut Context<Self>,
-    ) -> Option<Entity<DebugPanelItem>> {
+    ) -> Option<Entity<DebugSession>> {
         self.pane
             .read(cx)
             .items()
-            .filter_map(|item| item.downcast::<DebugPanelItem>())
+            .filter_map(|item| item.downcast::<DebugSession>())
             .find(|item| {
                 let item = item.read(cx);
 
@@ -288,7 +223,7 @@ impl DebugPanel {
     ) {
         match event {
             pane::Event::RemovedItem { item } => {
-                let thread_panel = item.downcast::<DebugPanelItem>().unwrap();
+                let thread_panel = item.downcast::<DebugSession>().unwrap();
 
                 let thread_id = thread_panel.read(cx).thread_id();
 
@@ -316,7 +251,7 @@ impl DebugPanel {
                 }
 
                 if let Some(active_item) = self.pane.read(cx).active_item() {
-                    if let Some(debug_item) = active_item.downcast::<DebugPanelItem>() {
+                    if let Some(debug_item) = active_item.downcast::<DebugSession>() {
                         debug_item.update(cx, |panel, cx| {
                             panel.go_to_current_stack_frame(window, cx);
                         });

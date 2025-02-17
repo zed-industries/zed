@@ -1,6 +1,6 @@
 use dap::debugger_settings::DebuggerSettings;
 use debugger_panel::{DebugPanel, ToggleFocus};
-use debugger_panel_item::DebugPanelItem;
+use debugger_panel_item::DebugSession;
 use gpui::App;
 use settings::Settings;
 use workspace::{
@@ -22,7 +22,7 @@ mod tests;
 
 pub fn init(cx: &mut App) {
     DebuggerSettings::register(cx);
-    workspace::FollowableViewRegistry::register::<DebugPanelItem>(cx);
+    workspace::FollowableViewRegistry::register::<DebugSession>(cx);
 
     cx.observe_new(|workspace: &mut Workspace, window, _cx| {
         let Some(_) = window else {
