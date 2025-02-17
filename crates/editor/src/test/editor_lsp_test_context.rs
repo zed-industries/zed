@@ -215,6 +215,8 @@ impl EditorLspTestContext {
                 ("[" @open "]" @close)
                 ("{" @open "}" @close)
                 ("<" @open ">" @close)
+                ("'" @open "'" @close)
+                ("`" @open "`" @close)
                 ("\"" @open "\"" @close)"#})),
             indents: Some(Cow::from(indoc! {r#"
                 [
