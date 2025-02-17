@@ -222,34 +222,27 @@ impl Vim {
             let previous_range_end = previous_range.end.to_offset(&snapshot.buffer_snapshot);
             let previous_range_start = previous_range.start.to_offset(&snapshot.buffer_snapshot);
 
-            let mut overwrite = |smaller_range: Range<Anchor>, larger_range: Range<Anchor>| {
-                let new_text: String = snapshot
+            let text_for = |range: Range<Anchor>| {
+                snapshot
                     .buffer_snapshot
-                    .text_for_range(smaller_range)
-                    .collect();
-                editor.edit([(larger_range, new_text)], cx);
+                    .text_for_range(range)
+                    .collect::<String>()
             };
 
             let mut final_cursor_position = new_range.start.to_display_point(snapshot);
 
             if previous_range_end < new_range_start || new_range_end < previous_range_start {
-                let previous_text: String = snapshot
-                    .buffer_snapshot
-                    .text_for_range(previous_range.clone())
-                    .collect();
-                let new_text: String = snapshot
-                    .buffer_snapshot
-                    .text_for_range(new_range.clone())
-                    .collect();
+                let previous_text = text_for(previous_range.clone());
+                let new_text = text_for(new_range.clone());
 
                 editor.edit([(previous_range, new_text), (new_range, previous_text)], cx);
             } else if new_range_start <= previous_range_start && new_range_end >= previous_range_end
             {
-                overwrite(previous_range, new_range);
+                editor.edit([(new_range, text_for(previous_range))], cx);
             } else if previous_range_start <= new_range_start && previous_range_end >= new_range_end
             {
                 final_cursor_position = previous_range.start.to_display_point(snapshot);
-                overwrite(new_range, previous_range);
+                editor.edit([(previous_range, text_for(new_range))], cx);
             }
 
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
