@@ -3250,7 +3250,7 @@ impl EditorElement {
                             max_width,
                             cursor_point,
                             style,
-                            accept_binding.keystroke()?,
+                            accept_binding.keystroke(),
                             window,
                             cx,
                         )?;
