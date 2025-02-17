@@ -788,7 +788,7 @@ jobs:
           cargo build --release
           cp ".\target\release\zed.exe" ".\crates\zed\resources\windows\zed.exe"
 
-      - name: Sign the binary
+      - name: Sign Zed binary
         uses: azure/trusted-signing-action@v0.5.1
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -810,8 +810,8 @@ jobs:
           CERT_PROFILE_NAME: ${{ secrets.CERT_PROFILE_NAME }}
         run: ./script/bundle-windows.ps1
 
-      - uses: softprops/action-gh-release@v2
-        name: Upload app bundle to release
+      - name: Upload app bundle to release
+        uses: softprops/action-gh-release@v2
         if: ${{ env.RELEASE_CHANNEL == 'preview' }} # Only publish preview for now
         with:
           draft: true
