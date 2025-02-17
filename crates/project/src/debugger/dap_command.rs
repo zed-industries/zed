@@ -1318,7 +1318,7 @@ impl DapCommand for ScopesCommand {
     }
 }
 
-impl DapCommand for super::client::CompletionsQuery {
+impl DapCommand for super::session::CompletionsQuery {
     type Response = dap::CompletionsResponse;
     type DapRequest = dap::requests::Completions;
     type ProtoRequest = proto::DapCompletionRequest;

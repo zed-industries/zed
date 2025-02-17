@@ -1,6 +1,5 @@
 use super::{
     breakpoint_store::BreakpointStore,
-    client::{self, Client},
     // Will need to uncomment this once we implement rpc message handler again
     // dap_command::{
     //     ContinueCommand, DapCommand, DisconnectCommand, NextCommand, PauseCommand, RestartCommand,
@@ -8,6 +7,7 @@ use super::{
     //     TerminateCommand, TerminateThreadsCommand, VariablesCommand,
     // },
     dap_command::DapCommand,
+    session::{self, Client},
 };
 use crate::{
     debugger, project_settings::ProjectSettings, DebugAdapterClientState, ProjectEnvironment,
@@ -360,7 +360,7 @@ impl DapStore {
             self.clients.insert(
                 client_id,
                 cx.new(|_| {
-                    debugger::client::Client::remote(
+                    debugger::session::Client::remote(
                         client_id,
                         remote.upstream_client.clone(),
                         remote.upstream_project_id,
@@ -376,7 +376,7 @@ impl DapStore {
     pub fn client_by_id(
         &self,
         client_id: impl Borrow<DebugAdapterClientId>,
-    ) -> Option<Entity<client::Client>> {
+    ) -> Option<Entity<session::Client>> {
         let client_id = client_id.borrow();
         let client = self.clients.get(client_id).cloned();
 

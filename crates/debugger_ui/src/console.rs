@@ -13,7 +13,7 @@ use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
 use language::{Buffer, CodeLabel, LanguageServerId};
 use menu::Confirm;
 use project::{
-    debugger::client::{Client, CompletionsQuery},
+    debugger::session::{Client, CompletionsQuery},
     Completion,
 };
 use settings::Settings;

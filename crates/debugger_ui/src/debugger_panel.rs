@@ -17,8 +17,8 @@ use gpui::{
 };
 use project::{
     debugger::{
-        client::ThreadId,
         dap_store::{DapStore, DapStoreEvent},
+        session::ThreadId,
     },
     terminals::TerminalKind,
 };

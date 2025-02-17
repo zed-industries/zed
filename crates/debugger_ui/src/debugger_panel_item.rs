@@ -13,8 +13,8 @@ use dap::{
 use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
-use project::debugger::client::Client;
-use project::debugger::client::ThreadId;
+use project::debugger::session::Client;
+use project::debugger::session::ThreadId;
 use rpc::proto::{self, DebuggerThreadStatus, PeerId};
 use settings::Settings;
 use ui::{prelude::*, ContextMenu, DropdownMenu, Indicator, PopoverMenu, Tooltip};
@@ -90,14 +90,7 @@ impl DebugPanelItem {
         let focus_handle = cx.focus_handle();
 
         let stack_frame_list = cx.new(|cx| {
-            StackFrameList::new(
-                workspace.clone(),
-                session.clone(),
-                client_id,
-                thread_id,
-                window,
-                cx,
-            )
+            StackFrameList::new(workspace.clone(), session.clone(), thread_id, window, cx)
         });
 
         let variable_list = cx.new(|cx| {

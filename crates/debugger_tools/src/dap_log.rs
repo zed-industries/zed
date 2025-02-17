@@ -12,7 +12,7 @@ use gpui::{
     actions, div, App, AppContext, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable,
     IntoElement, ParentElement, Render, SharedString, Styled, Subscription, WeakEntity, Window,
 };
-use project::{debugger::client::Client, search::SearchQuery, Project};
+use project::{debugger::session::Client, search::SearchQuery, Project};
 use settings::Settings as _;
 use std::{
     borrow::Cow,

@@ -12,6 +12,6 @@
 //! - Since DAP store knows about all of the available debug sessions, it is responsible for routing RPC requests to sessions. It also knows how to find adapters for particular kind of session.
 
 pub mod breakpoint_store;
-pub mod client;
 pub mod dap_command;
 pub mod dap_store;
+pub mod session;

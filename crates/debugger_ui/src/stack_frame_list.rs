@@ -7,7 +7,7 @@ use gpui::{
     WeakEntity,
 };
 
-use project::debugger::client::{Client, StackFrame, ThreadId};
+use project::debugger::session::{Client, StackFrame, ThreadId};
 use project::ProjectPath;
 use ui::{prelude::*, Tooltip};
 use workspace::Workspace;
@@ -42,7 +42,6 @@ impl StackFrameList {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         session: Entity<Client>,
-        client_id: DebugAdapterClientId,
         thread_id: ThreadId,
         _window: &Window,
         cx: &mut Context<Self>,
@@ -77,7 +76,7 @@ impl StackFrameList {
             session,
             workspace,
             thread_id,
-            client_id,
+
             focus_handle,
             _subscription,
             entries: Default::default(),
