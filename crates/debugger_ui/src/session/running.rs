@@ -361,51 +361,13 @@ impl RunningState {
 
         cx.observe(&module_list, |_, _, cx| cx.notify()).detach();
 
-        let _subscriptions = vec![
-            cx.subscribe_in(debug_panel, window, {
-                move |this: &mut Self, _, event: &DebugPanelEvent, window, cx| {
-                    match event {
-                        DebugPanelEvent::Stopped {
-                            client_id,
-                            event,
-                            go_to_stack_frame,
-                        } => this.handle_stopped_event(client_id, event, *go_to_stack_frame, cx),
-                        DebugPanelEvent::Thread((client_id, event)) => {
-                            this.handle_thread_event(client_id, event, cx)
-                        }
-                        DebugPanelEvent::Output((client_id, event)) => {
-                            this.handle_output_event(client_id, event, window, cx)
-                        }
-                        DebugPanelEvent::Module((client_id, event)) => {
-                            this.handle_module_event(client_id, event, cx)
-                        }
-                        DebugPanelEvent::LoadedSource((client_id, event)) => {
-                            this.handle_loaded_source_event(client_id, event, cx)
-                        }
-                        DebugPanelEvent::ClientShutdown(client_id) => {
-                            this.handle_client_shutdown_event(client_id, cx)
-                        }
-                        DebugPanelEvent::Continued((client_id, event)) => {
-                            this.handle_thread_continued_event(client_id, event, cx);
-                        }
-                        DebugPanelEvent::Exited(client_id)
-                        | DebugPanelEvent::Terminated(client_id) => {
-                            this.handle_client_exited_and_terminated_event(client_id, cx);
-                        }
-                        DebugPanelEvent::CapabilitiesChanged(client_id) => {
-                            this.handle_capabilities_changed_event(client_id, cx);
-                        }
-                    };
-                }
-            }),
-            cx.subscribe(
-                &stack_frame_list,
-                move |this: &mut Self, _, event: &StackFrameListEvent, cx| match event {
-                    StackFrameListEvent::SelectedStackFrameChanged(_)
-                    | StackFrameListEvent::StackFramesUpdated => this.clear_highlights(cx),
-                },
-            ),
-        ];
+        let _subscriptions = vec![cx.subscribe(
+            &stack_frame_list,
+            move |this: &mut Self, _, event: &StackFrameListEvent, cx| match event {
+                StackFrameListEvent::SelectedStackFrameChanged(_)
+                | StackFrameListEvent::StackFramesUpdated => this.clear_highlights(cx),
+            },
+        )];
 
         Self {
             session,

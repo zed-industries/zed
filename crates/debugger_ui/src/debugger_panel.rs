@@ -84,7 +84,14 @@ impl DebugPanel {
                 pane.display_nav_history_buttons(None);
                 pane.set_should_display_tab_bar(|_window, _cx| true);
                 pane.set_close_pane_if_empty(false, cx);
-
+                pane.add_item(
+                    Box::new(DebugSession::inert(cx)),
+                    false,
+                    false,
+                    None,
+                    window,
+                    cx,
+                );
                 pane
             });
 
@@ -119,14 +126,7 @@ impl DebugPanel {
                     let (has_active_session, support_step_back) =
                         debug_panel.update(cx, |this, cx| {
                             this.active_debug_panel_item(cx)
-                                .map(|item| {
-                                    (
-                                        true,
-                                        item.update(cx, |this, cx| this.capabilities(cx))
-                                            .supports_step_back
-                                            .unwrap_or(false),
-                                    )
-                                })
+                                .map(|item| (true, false))
                                 .unwrap_or((false, false))
                         });
 
@@ -192,7 +192,7 @@ impl DebugPanel {
             .read(cx)
             .items()
             .filter_map(|item| item.downcast::<DebugSession>())
-            .filter(|item| &item.read(cx).client_id() == client_id)
+            .filter(|item| item.read(cx).session_id(cx) == Some(*client_id))
             .map(|item| item.clone())
             .collect()
     }
@@ -200,7 +200,6 @@ impl DebugPanel {
     pub fn debug_panel_item_by_client(
         &self,
         client_id: DebugAdapterClientId,
-        thread_id: ThreadId,
         cx: &mut Context<Self>,
     ) -> Option<Entity<DebugSession>> {
         self.pane
@@ -210,7 +209,7 @@ impl DebugPanel {
             .find(|item| {
                 let item = item.read(cx);
 
-                item.client_id() == client_id && item.thread_id() == thread_id
+                item.session_id(cx) == Some(client_id)
             })
     }
 
@@ -222,19 +221,6 @@ impl DebugPanel {
         cx: &mut Context<Self>,
     ) {
         match event {
-            pane::Event::RemovedItem { item } => {
-                let thread_panel = item.downcast::<DebugSession>().unwrap();
-
-                let thread_id = thread_panel.read(cx).thread_id();
-
-                cx.notify();
-
-                thread_panel.update(cx, |this, cx| {
-                    this.session().update(cx, |state, cx| {
-                        state.terminate_threads(Some(vec![thread_id; 1]), cx);
-                    })
-                });
-            }
             pane::Event::Remove { .. } => cx.emit(PanelEvent::Close),
             pane::Event::ZoomIn => cx.emit(PanelEvent::ZoomIn),
             pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
@@ -244,19 +230,6 @@ impl DebugPanel {
                         item.added_to_pane(workspace, self.pane.clone(), window, cx)
                     })
                     .ok();
-            }
-            pane::Event::ActivateItem { local, .. } => {
-                if !local {
-                    return;
-                }
-
-                if let Some(active_item) = self.pane.read(cx).active_item() {
-                    if let Some(debug_item) = active_item.downcast::<DebugSession>() {
-                        debug_item.update(cx, |panel, cx| {
-                            panel.go_to_current_stack_frame(window, cx);
-                        });
-                    }
-                }
             }
             _ => {}
         }
@@ -332,43 +305,12 @@ impl Panel for DebugPanel {
 }
 
 impl Render for DebugPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("DebugPanel")
             .track_focus(&self.focus_handle)
             .size_full()
-            .map(|this| {
-                if self.pane.read(cx).items_len() == 0 {
-                    this.child(
-                        h_flex().size_full().items_center().justify_center().child(
-                            v_flex()
-                                .gap_2()
-                                .rounded_md()
-                                .max_w_64()
-                                .items_start()
-                                .child(
-                                    Label::new("You can create a debug task by creating a new task and setting the `type` key to `debug`")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .child(
-                                    h_flex().w_full().justify_end().child(
-                                        Button::new(
-                                            "start-debugger",
-                                            "Choose a debugger",
-                                        )
-                                        .label_size(LabelSize::Small)
-                                        .on_click(move |_, window, cx| {
-                                            window.dispatch_action(Box::new(Start), cx);
-                                        })
-                                    ),
-                                ),
-                        ),
-                    )
-                } else {
-                    this.child(self.pane.clone())
-                }
-            })
+            .child(self.pane.clone())
             .into_any()
     }
 }

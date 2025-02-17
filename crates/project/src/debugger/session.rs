@@ -11,7 +11,7 @@ use dap::{
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, SteppingGranularity,
 };
 use futures::{future::Shared, FutureExt};
-use gpui::{App, Context, Task};
+use gpui::{App, Context, Entity, Task};
 use rpc::AnyProtoClient;
 use serde_json::Value;
 use std::u64;

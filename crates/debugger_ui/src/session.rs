@@ -25,12 +25,16 @@ use workspace::{
     FollowableItem, ViewId, Workspace,
 };
 
-pub enum DebugSession {
+enum DebugSessionState {
     Inert(Entity<InertState>),
     Starting(Entity<StartingState>),
     Running(Entity<running::RunningState>),
 }
 
+pub struct DebugSession {
+    remote_id: Option<workspace::ViewId>,
+    mode: DebugSessionState,
+}
 #[derive(Debug)]
 pub enum DebugPanelItemEvent {
     Close,
@@ -65,14 +69,29 @@ impl ThreadItem {
     }
 }
 
+impl DebugSession {
+    pub(super) fn inert(cx: &mut App) -> Entity<Self> {
+        cx.new(|cx| Self {
+            remote_id: None,
+            mode: DebugSessionState::Inert(cx.new(|cx| InertState::new(cx))),
+        })
+    }
+    pub(crate) fn session_id(&self, cx: &App) -> Option<DebugAdapterClientId> {
+        match &self.mode {
+            DebugSessionState::Inert(_) => None,
+            DebugSessionState::Starting(_entity) => unimplemented!(),
+            DebugSessionState::Running(entity) => Some(entity.read(cx).client_id()),
+        }
+    }
+}
 impl EventEmitter<DebugPanelItemEvent> for DebugSession {}
 
 impl Focusable for DebugSession {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match self {
-            DebugSession::Inert(inert_state) => inert_state.focus_handle(cx),
-            DebugSession::Starting(starting_state) => starting_state.focus_handle(cx),
-            DebugSession::Running(running_state) => running_state.focus_handle(cx),
+        match &self.mode {
+            DebugSessionState::Inert(inert_state) => inert_state.focus_handle(cx),
+            DebugSessionState::Starting(starting_state) => starting_state.focus_handle(cx),
+            DebugSessionState::Running(running_state) => running_state.focus_handle(cx),
         }
     }
 }
@@ -134,13 +153,8 @@ impl FollowableItem for DebugSession {
         None
     }
 
-    fn dedup(
-        &self,
-        existing: &Self,
-        _window: &Window,
-        _cx: &App,
-    ) -> Option<workspace::item::Dedup> {
-        if existing.client_id == self.client_id && existing.thread_id == self.thread_id {
+    fn dedup(&self, existing: &Self, _window: &Window, cx: &App) -> Option<workspace::item::Dedup> {
+        if existing.session_id(cx) == self.session_id(cx) {
             Some(item::Dedup::KeepExisting)
         } else {
             None
@@ -154,14 +168,14 @@ impl FollowableItem for DebugSession {
 
 impl Render for DebugSession {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        match self {
-            DebugSession::Inert(inert_state) => {
+        match &self.mode {
+            DebugSessionState::Inert(inert_state) => {
                 inert_state.update(cx, |this, cx| this.render(window, cx).into_any_element())
             }
-            DebugSession::Starting(starting_state) => {
+            DebugSessionState::Starting(starting_state) => {
                 starting_state.update(cx, |this, cx| this.render(window, cx).into_any_element())
             }
-            DebugSession::Running(running_state) => {
+            DebugSessionState::Running(running_state) => {
                 running_state.update(cx, |this, cx| this.render(window, cx).into_any_element())
             }
         }

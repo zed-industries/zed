@@ -1,10 +1,17 @@
 use gpui::{App, FocusHandle, Focusable};
-use ui::{div, Element, ParentElement, Render, Styled};
+use ui::{div, Context, Element, ParentElement, Render, Styled};
 
 pub(super) struct InertState {
     focus_handle: FocusHandle,
 }
 
+impl InertState {
+    pub(super) fn new(cx: &mut Context<Self>) -> Self {
+        Self {
+            focus_handle: cx.focus_handle(),
+        }
+    }
+}
 impl Focusable for InertState {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.focus_handle.clone()
