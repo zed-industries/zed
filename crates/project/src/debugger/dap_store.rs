@@ -111,9 +111,27 @@ pub struct DapStore {
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
 
+fn dap_client_capabilities(adapter_id: String) -> InitializeRequestArguments {
+    InitializeRequestArguments {
+        client_id: Some("zed".to_owned()),
+        client_name: Some("Zed".to_owned()),
+        adapter_id,
+        locale: Some("en-US".to_owned()),
+        path_format: Some(InitializeRequestArgumentsPathFormat::Path),
+        supports_variable_type: Some(true),
+        supports_variable_paging: Some(false),
+        supports_run_in_terminal_request: Some(true),
+        supports_memory_references: Some(true),
+        supports_progress_reporting: Some(false),
+        supports_invalidated_event: Some(false),
+        lines_start_at1: Some(true),
+        columns_start_at1: Some(true),
+        supports_memory_event: Some(false),
+        supports_args_can_be_interpreted_by_shell: Some(false),
+        supports_start_debugging_request: Some(true),
+    }
+}
 impl DapStore {
-    const INDEX_STARTS_AT_ONE: bool = true;
-
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_message_handler(Self::handle_remove_active_debug_line);
         client.add_entity_message_handler(Self::handle_shutdown_debug_client);
@@ -585,24 +603,7 @@ impl DapStore {
 
         cx.spawn(|this, mut cx| async move {
             let capabilities = client
-                .request::<Initialize>(InitializeRequestArguments {
-                    client_id: Some("zed".to_owned()),
-                    client_name: Some("Zed".to_owned()),
-                    adapter_id: client.adapter_id(),
-                    locale: Some("en-US".to_owned()),
-                    path_format: Some(InitializeRequestArgumentsPathFormat::Path),
-                    supports_variable_type: Some(true),
-                    supports_variable_paging: Some(false),
-                    supports_run_in_terminal_request: Some(true),
-                    supports_memory_references: Some(true),
-                    supports_progress_reporting: Some(false),
-                    supports_invalidated_event: Some(false),
-                    lines_start_at1: Some(Self::INDEX_STARTS_AT_ONE),
-                    columns_start_at1: Some(Self::INDEX_STARTS_AT_ONE),
-                    supports_memory_event: Some(false),
-                    supports_args_can_be_interpreted_by_shell: Some(false),
-                    supports_start_debugging_request: Some(true),
-                })
+                .request::<Initialize>(dap_client_capabilities(client.adapter_id()))
                 .await?;
 
             this.update(&mut cx, |store, cx| {
@@ -1185,9 +1186,8 @@ impl DapStore {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
-        if Self::INDEX_STARTS_AT_ONE {
-            breakpoints.iter_mut().for_each(|bp| bp.line += 1u64)
-        }
+        // Adjust breakpoints as our client declares that indices start at one.
+        breakpoints.iter_mut().for_each(|bp| bp.line += 1u64);
 
         cx.background_executor().spawn(async move {
             client
