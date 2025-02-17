@@ -193,6 +193,8 @@ pub struct ContextEditor {
     // the file is opened. In order to keep the worktree alive for the duration of the
     // context editor, we keep a reference here.
     dragged_file_worktrees: Vec<Entity<Worktree>>,
+    language_model_selector: Entity<LanguageModelSelector>,
+    language_model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
 }
 
 pub const DEFAULT_TAB_TITLE: &str = "New Chat";
@@ -238,6 +240,22 @@ impl ContextEditor {
             cx.subscribe_in(&editor, window, Self::handle_editor_search_event),
         ];
 
+        let fs_clone = fs.clone();
+        let language_model_selector = cx.new(|cx| {
+            LanguageModelSelector::new(
+                move |model, cx| {
+                    update_settings_file::<AssistantSettings>(
+                        fs_clone.clone(),
+                        cx,
+                        move |settings, _| settings.set_model(model.clone()),
+                    );
+                },
+                window,
+                cx,
+            )
+        });
+
+        let language_model_selector_menu_handle = PopoverMenuHandle::default();
         let sections = context.read(cx).slash_command_output_sections().to_vec();
         let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
         let slash_commands = context.read(cx).slash_commands().clone();
@@ -262,6 +280,8 @@ impl ContextEditor {
             show_accept_terms: false,
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
+            language_model_selector,
+            language_model_selector_menu_handle,
         };
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
@@ -2355,13 +2375,62 @@ impl ContextEditor {
         slash_command_picker::SlashCommandSelector::new(
             self.slash_commands.clone(),
             cx.entity().downgrade(),
-            Button::new("trigger", "Add Context")
-                .icon(IconName::Plus)
+            IconButton::new("trigger", IconName::Plus)
                 .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .icon_position(IconPosition::Start),
-            Tooltip::text("Type / to insert via keyboard"),
+                .icon_color(Color::Muted),
+            move |window, cx| {
+                Tooltip::with_meta(
+                    "Add Context",
+                    None,
+                    "Type / to insert via keyboard",
+                    window,
+                    cx,
+                )
+            },
         )
+    }
+
+    fn render_language_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+        let focus_handle = self.editor().focus_handle(cx).clone();
+        let model_name = match active_model {
+            Some(model) => model.name().0,
+            None => SharedString::from("No model selected"),
+        };
+
+        LanguageModelSelectorPopoverMenu::new(
+            self.language_model_selector.clone(),
+            ButtonLike::new("active-model")
+                .style(ButtonStyle::Subtle)
+                .child(
+                    h_flex()
+                        .gap_0p5()
+                        .child(
+                            div().max_w_32().child(
+                                Label::new(model_name)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .text_ellipsis()
+                                    .into_any_element(),
+                            ),
+                        )
+                        .child(
+                            Icon::new(IconName::ChevronDown)
+                                .color(Color::Muted)
+                                .size(IconSize::XSmall),
+                        ),
+                ),
+            move |window, cx| {
+                Tooltip::for_action_in(
+                    "Change Model",
+                    &ToggleModelSelector,
+                    &focus_handle,
+                    window,
+                    cx,
+                )
+            },
+        )
+        .with_handle(self.language_model_selector_menu_handle.clone())
     }
 
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -2800,6 +2869,7 @@ impl EventEmitter<SearchEvent> for ContextEditor {}
 impl Render for ContextEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
+
         let accept_terms = if self.show_accept_terms {
             provider.as_ref().and_then(|provider| {
                 provider.render_accept_terms(LanguageModelProviderTosView::PromptEditorPopup, cx)
@@ -2852,7 +2922,17 @@ impl Render for ContextEditor {
                         .border_t_1()
                         .border_color(cx.theme().colors().border_variant)
                         .bg(cx.theme().colors().editor_background)
-                        .child(h_flex().gap_1().child(self.render_inject_context_menu(cx)))
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(self.render_inject_context_menu(cx))
+                                .child(ui::Divider::vertical())
+                                .child(
+                                    div()
+                                        .pl_0p5()
+                                        .child(self.render_language_model_selector(cx)),
+                                ),
+                        )
                         .child(
                             h_flex()
                                 .w_full()
@@ -3163,36 +3243,13 @@ impl FollowableItem for ContextEditor {
 pub struct ContextEditorToolbarItem {
     active_context_editor: Option<WeakEntity<ContextEditor>>,
     model_summary_editor: Entity<Editor>,
-    language_model_selector: Entity<LanguageModelSelector>,
-    language_model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
 }
 
 impl ContextEditorToolbarItem {
-    pub fn new(
-        workspace: &Workspace,
-        model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
-        model_summary_editor: Entity<Editor>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(model_summary_editor: Entity<Editor>) -> Self {
         Self {
             active_context_editor: None,
             model_summary_editor,
-            language_model_selector: cx.new(|cx| {
-                let fs = workspace.app_state().fs.clone();
-                LanguageModelSelector::new(
-                    move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _| settings.set_model(model.clone()),
-                        );
-                    },
-                    window,
-                    cx,
-                )
-            }),
-            language_model_selector_menu_handle: model_selector_menu_handle,
         }
     }
 
@@ -3263,8 +3320,7 @@ impl Render for ContextEditorToolbarItem {
                         })),
                 ),
             );
-        let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
-        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+
         let right_side = h_flex()
             .gap_2()
             // TODO display this in a nicer way, once we have a design for it.
@@ -3280,56 +3336,6 @@ impl Render for ContextEditorToolbarItem {
             //     scan_items_remaining
             //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
             // })
-            .child(
-                LanguageModelSelectorPopoverMenu::new(
-                    self.language_model_selector.clone(),
-                    ButtonLike::new("active-model")
-                        .style(ButtonStyle::Subtle)
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .gap_0p5()
-                                .child(
-                                    div()
-                                        .overflow_x_hidden()
-                                        .flex_grow()
-                                        .whitespace_nowrap()
-                                        .child(match (active_provider, active_model) {
-                                            (Some(provider), Some(model)) => h_flex()
-                                                .gap_1()
-                                                .child(
-                                                    Icon::new(
-                                                        model
-                                                            .icon()
-                                                            .unwrap_or_else(|| provider.icon()),
-                                                    )
-                                                    .color(Color::Muted)
-                                                    .size(IconSize::XSmall),
-                                                )
-                                                .child(
-                                                    Label::new(model.name().0)
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Muted),
-                                                )
-                                                .into_any_element(),
-                                            _ => Label::new("No model selected")
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted)
-                                                .into_any_element(),
-                                        }),
-                                )
-                                .child(
-                                    Icon::new(IconName::ChevronDown)
-                                        .color(Color::Muted)
-                                        .size(IconSize::XSmall),
-                                ),
-                        ),
-                    move |window, cx| {
-                        Tooltip::for_action("Change Model", &ToggleModelSelector, window, cx)
-                    },
-                )
-                .with_handle(self.language_model_selector_menu_handle.clone()),
-            )
             .children(self.render_remaining_tokens(cx));
 
         h_flex()
