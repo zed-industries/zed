@@ -50,9 +50,9 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
 ]
 ```
 
-There are two actions that drive the workflow of using tasks: `task: spawn` and `task: rerun`
+There are two actions that drive the workflow of using tasks: `task: spawn` and `task: rerun`.
 `task: spawn` opens a modal with all available tasks in the current file.
-`task: rerun` reruns the most-recently spawned task. You can also rerun tasks from task modal.
+`task: rerun` reruns the most-recently spawned task. You can also rerun tasks from the task modal.
 
 By default, rerunning tasks reuses the same terminal (due to the `"use_new_terminal": false` default) but waits for the previous task to finish before start (due to the `"allow_concurrent_runs": false` default).
 
@@ -64,7 +64,7 @@ Tasks can be defined:
 
 - in global `tasks.json` file; such tasks are available in all Zed projects you work on. This file is usually located in `~/.config/zed/tasks.json`. You can edit them by using `zed: open tasks` action.
 - in worktree-specific (local) `.zed/tasks.json` file; such tasks are available only when working on a project with that worktree included. You can edit worktree-specific tasks by using `zed: open local tasks`.
-- on the fly with [oneshot tasks](#oneshot-tasks). These tasks are project-specific and do not persist across sections.
+- on the fly with [oneshot tasks](#oneshot-tasks). These tasks are project-specific and do not persist across sessions.
 - by language extension.
 
 ## Variables
@@ -133,13 +133,13 @@ Or explicitly include escaped quotes like so:
 
 The same task modal opened via `task: spawn` supports arbitrary bash-like command execution: type a command inside the modal text field, and use `opt-enter` to spawn it.
 
-Task modal will persist list of those command for current Zed session, `task: rerun` will also rerun such tasks if they were the last ones spawned.
+The task modal will persist list of those commands for current Zed session, `task: rerun` will also rerun such tasks if they were the last ones spawned.
 
 You can also adjust currently selected task in a modal (`tab` is a default key binding). Doing so will put its command into a prompt that can then be edited & spawned as an oneshot task.
 
 ### Ephemeral tasks
 
-You can use cmd modifier when spawning a task via a modal; tasks spawned this way will not have their usage count increased (thus, they will not be respawned with `task: rerun` and they won't be have a high rank in task modal).
+You can use cmd modifier when spawning a task via a modal; tasks spawned this way will not have their usage count increased (thus, they will not be respawned with `task: rerun` and they won't have a high rank in the task modal).
 The intended use of ephemeral tasks is to stay in the flow with continuous `task: rerun` usage.
 
 ## Custom keybindings for tasks
