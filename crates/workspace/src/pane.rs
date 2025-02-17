@@ -1805,7 +1805,7 @@ impl Pane {
                 )
             })?;
 
-        let can_save_as = is_singleton;
+        let can_save_as = is_singleton && can_save;
 
         // when saving a single buffer, we ignore whether or not it's dirty.
         if save_intent == SaveIntent::Save || save_intent == SaveIntent::SaveWithoutFormat {
