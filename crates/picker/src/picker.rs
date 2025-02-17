@@ -3,8 +3,8 @@ use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, App, ClickEvent,
     Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Length,
-    ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render, ScrollStrategy, Stateful,
-    Task, UniformListScrollHandle, Window,
+    ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render, ScrollHandle, ScrollStrategy,
+    Stateful, Task, UniformListScrollHandle, Window,
 };
 use head::Head;
 use schemars::JsonSchema;
@@ -266,12 +266,16 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) -> Self {
         let element_container = Self::create_element_container(container, cx);
-        let scroll_handle = match &element_container {
-            ElementContainer::UniformList(scroll_handle) => scroll_handle.clone(),
-            ElementContainer::List(_) => unimplemented!(), // todo: smit
+        let scrollbar_state = match &element_container {
+            ElementContainer::UniformList(scroll_handle) => {
+                ScrollbarState::new(scroll_handle.clone())
+            }
+            ElementContainer::List(_) => {
+                // todo smit: implement for list
+                ScrollbarState::new(ScrollHandle::new())
+            }
         };
         let focus_handle = cx.focus_handle();
-
         let mut this = Self {
             delegate,
             head,
@@ -283,8 +287,7 @@ impl<D: PickerDelegate> Picker<D> {
             focus_handle,
             show_scrollbar: false,
             scrollbar_visibility: true,
-            scrollbar_state: ScrollbarState::new(scroll_handle),
-
+            scrollbar_state,
             is_modal: true,
             hide_scrollbar_task: None,
         };
