@@ -3804,7 +3804,8 @@ pub mod tests {
         cx.run_until_parked();
 
         let buffer_search_bar = cx.new_window_entity(|window, cx| {
-            let mut search_bar = BufferSearchBar::new(window, cx);
+            let mut search_bar =
+                BufferSearchBar::new(Some(project.read(cx).languages().clone()), window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
             search_bar
