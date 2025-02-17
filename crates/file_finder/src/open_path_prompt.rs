@@ -232,15 +232,25 @@ impl PickerDelegate for OpenPathDelegate {
         &mut self,
         query: String,
         _window: &mut Window,
-        _: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<String> {
         Some(
             maybe!({
                 let m = self.matches.get(self.selected_index)?;
                 let directory_state = self.directory_state.as_ref()?;
                 let candidate = directory_state.match_candidates.get(*m)?;
-                // Add trailing slash to the completed path
-                Some(format!("{}/{}/", directory_state.path, candidate.string))
+                let full_path = Path::new(
+                    self.lister
+                        .resolve_tilde(&directory_state.path, cx)
+                        .as_ref(),
+                )
+                .join(&candidate.string);
+                // Add trailing slash to directories
+                if full_path.is_dir() {
+                    Some(format!("{}/{}/", directory_state.path, candidate.string))
+                } else {
+                    Some(format!("{}/{}", directory_state.path, candidate.string))
+                }
             })
             .unwrap_or(query),
         )
