@@ -1102,7 +1102,7 @@ impl Project {
             let mut dap_store =
                 DapStore::new_remote(remote_id, client.clone().into(), breakpoint_store.clone());
 
-            dap_store.request_active_debug_sessions(cx);
+            unimplemented!("dap_store.request_active_debug_sessions(cx)");
             dap_store
         })?;
 

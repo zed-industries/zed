@@ -207,7 +207,7 @@ impl Mode {
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
 pub struct Client {
     mode: Mode,
-
+    config: DebugAdapterConfig,
     pub(super) capabilities: Capabilities,
     client_id: DebugAdapterClientId,
     ignore_breakpoints: bool,
@@ -293,13 +293,14 @@ impl CompletionsQuery {
 }
 
 impl Client {
-    pub(crate) fn local(adapter: Arc<DebugAdapterClient>, capabilities: Capabilities) -> Self {
+    pub(crate) fn local(adapter: Arc<DebugAdapterClient>, config: DebugAdapterConfig) -> Self {
         let client_id = adapter.id();
 
         Self {
             mode: Mode::Local(adapter),
             client_id,
-            capabilities,
+            config,
+            capabilities: unimplemented!(),
             ignore_breakpoints: false,
             requests: HashMap::default(),
             modules: Vec::default(),
@@ -326,6 +327,7 @@ impl Client {
             modules: Vec::default(),
             loaded_sources: Vec::default(),
             threads: IndexMap::default(),
+            config: todo!(),
         }
     }
 
@@ -333,7 +335,7 @@ impl Client {
         &self.capabilities
     }
     pub fn configuration(&self) -> DebugAdapterConfig {
-        DebugAdapterConfig::default()
+        self.config.clone()
     }
 
     pub(crate) fn _wait_for_request<R: DapCommand + PartialEq + Eq + Hash>(

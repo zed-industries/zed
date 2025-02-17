@@ -93,6 +93,109 @@ impl LocalDapStore {
     fn next_client_id(&self) -> DebugAdapterClientId {
         DebugAdapterClientId(self.next_client_id.fetch_add(1, SeqCst))
     }
+    pub fn respond_to_start_debugging(
+        &mut self,
+        client: &Entity<Client>,
+        seq: u64,
+        args: Option<StartDebuggingRequestArguments>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let config = client.read(cx).configuration();
+
+        let request_args = args.unwrap_or_else(|| StartDebuggingRequestArguments {
+            configuration: config.initialize_args.clone().unwrap_or_default(),
+            request: match config.request {
+                DebugRequestType::Launch => StartDebuggingRequestArgumentsRequest::Launch,
+                DebugRequestType::Attach(_) => StartDebuggingRequestArgumentsRequest::Attach,
+            },
+        });
+
+        // Merge the new configuration over the existing configuration
+        let mut initialize_args = config.initialize_args.clone().unwrap_or_default();
+        merge_json_value_into(request_args.configuration, &mut initialize_args);
+
+        let new_config = DebugAdapterConfig {
+            label: config.label.clone(),
+            kind: config.kind.clone(),
+            request: match &request_args.request {
+                StartDebuggingRequestArgumentsRequest::Launch => DebugRequestType::Launch,
+                StartDebuggingRequestArgumentsRequest::Attach => DebugRequestType::Attach(
+                    if let DebugRequestType::Attach(attach_config) = &config.request {
+                        attach_config.clone()
+                    } else {
+                        AttachConfig::default()
+                    },
+                ),
+            },
+            program: config.program.clone(),
+            cwd: config.cwd.clone(),
+            initialize_args: Some(initialize_args),
+            supports_attach: true,
+        };
+
+        cx.spawn(|this, mut cx| async move {
+            let (success, body) = {
+                let reconnect_task = this.update(&mut cx, |store, cx| {
+                    if !unimplemented!("client.adapter().supports_attach()")
+                        && matches!(new_config.request, DebugRequestType::Attach(_))
+                    {
+                        Task::<Result<()>>::ready(Err(anyhow!(
+                            "Debug adapter does not support `attach` request"
+                        )))
+                    } else {
+                        unimplemented!(
+                            "store.reconnect_client(client.binary().clone(), new_config, cx)"
+                        );
+                    }
+                });
+
+                match reconnect_task {
+                    Ok(task) => match task.await {
+                        Ok(_) => (true, None),
+                        Err(error) => (
+                            false,
+                            Some(serde_json::to_value(ErrorResponse {
+                                error: Some(dap::Message {
+                                    id: seq,
+                                    format: error.to_string(),
+                                    variables: None,
+                                    send_telemetry: None,
+                                    show_user: None,
+                                    url: None,
+                                    url_label: None,
+                                }),
+                            })?),
+                        ),
+                    },
+                    Err(error) => (
+                        false,
+                        Some(serde_json::to_value(ErrorResponse {
+                            error: Some(dap::Message {
+                                id: seq,
+                                format: error.to_string(),
+                                variables: None,
+                                send_telemetry: None,
+                                show_user: None,
+                                url: None,
+                                url_label: None,
+                            }),
+                        })?),
+                    ),
+                }
+            };
+            unimplemented!();
+            Ok(())
+            /*client
+            .send_message(Message::Response(Response {
+                seq,
+                body,
+                success,
+                request_seq: seq,
+                command: StartDebugging::COMMAND.to_string(),
+            }))
+            .await*/
+        })
+    }
 }
 
 pub struct RemoteDapStore {
@@ -407,58 +510,58 @@ impl DapStore {
         }
     }
 
-    fn reconnect_client(
-        &mut self,
-        adapter: Arc<dyn DebugAdapter>,
-        binary: DebugAdapterBinary,
-        config: DebugAdapterConfig,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        if !adapter.supports_attach() && matches!(config.request, DebugRequestType::Attach(_)) {
-            return Task::ready(Err(anyhow!(
-                "Debug adapter does not support `attach` request"
-            )));
-        }
+    // fn reconnect_client(
+    //     &mut self,
+    //     adapter: Arc<dyn DebugAdapter>,
+    //     binary: DebugAdapterBinary,
+    //     config: DebugAdapterConfig,
+    //     cx: &mut Context<Self>,
+    // ) -> Task<Result<()>> {
+    //     if !config.supports_attach && matches!(config.request, DebugRequestType::Attach(_)) {
+    //         return Task::ready(Err(anyhow!(
+    //             "Debug adapter does not support `attach` request"
+    //         )));
+    //     }
 
-        let client_id = self.as_local().unwrap().next_client_id();
+    //     let client_id = self.as_local().unwrap().next_client_id();
 
-        cx.spawn(|dap_store, mut cx| async move {
-            let mut client = DebugAdapterClient::new(client_id, adapter, binary, &cx);
+    //     cx.spawn(|dap_store, mut cx| async move {
+    //         let mut client = DebugAdapterClient::new(client_id, adapter, binary, &cx);
 
-            client
-                .reconnect(
-                    {
-                        let dap_store = dap_store.clone();
-                        move |message, cx| {
-                            dap_store
-                                .update(cx, |_, cx| {
-                                    cx.emit(DapStoreEvent::DebugClientEvent { client_id, message })
-                                })
-                                .log_err();
-                        }
-                    },
-                    &mut cx,
-                )
-                .await?;
+    //         client
+    //             .reconnect(
+    //                 {
+    //                     let dap_store = dap_store.clone();
+    //                     move |message, cx| {
+    //                         dap_store
+    //                             .update(cx, |_, cx| {
+    //                                 cx.emit(DapStoreEvent::DebugClientEvent { client_id, message })
+    //                             })
+    //                             .log_err();
+    //                     }
+    //                 },
+    //                 &mut cx,
+    //             )
+    //             .await?;
 
-            dap_store.update(&mut cx, |store, cx| {
-                cx.new(|cx| {
-                    let client_state =
-                        debugger::client::Client::local(Arc::new(client), capabilities);
-                });
+    //         dap_store.update(&mut cx, |store, cx| {
+    //             cx.new(|cx| {
+    //                 let client_state =
+    //                     debugger::client::Client::local(Arc::new(client), capabilities);
+    //             });
 
-                store.clients.insert(Arc::new(client), client_id);
+    //             store.clients.insert(Arc::new(client), client_id);
 
-                // don't emit this event ourself in tests, so we can add request,
-                // response and event handlers for this client
-                if !cfg!(any(test, feature = "test-support")) {
-                    cx.emit(DapStoreEvent::DebugClientStarted(client_id));
-                }
+    //             // don't emit this event ourself in tests, so we can add request,
+    //             // response and event handlers for this client
+    //             if !cfg!(any(test, feature = "test-support")) {
+    //                 cx.emit(DapStoreEvent::DebugClientStarted(client_id));
+    //             }
 
-                cx.notify();
-            })
-        })
-    }
+    //             cx.notify();
+    //         })
+    //     })
+    // }
 
     fn start_client_internal(
         &mut self,
@@ -475,7 +578,9 @@ impl DapStore {
         cx.spawn(|this, mut cx| async move {
             let adapter = build_adapter(&config.kind).await?;
 
-            if !adapter.supports_attach() && matches!(config.request, DebugRequestType::Attach(_)) {
+            if !unimplemented!("adapter.supports_attach()")
+                && matches!(config.request, DebugRequestType::Attach(_))
+            {
                 bail!("Debug adapter does not support `attach` request");
             }
 
@@ -577,7 +682,7 @@ impl DapStore {
             this.update(&mut cx, |store, cx| {
                 let client_id = client.id();
 
-                store.clients.insert(client_id, client);
+                unimplemented!("store.clients.insert(client_id, client);");
 
                 cx.emit(DapStoreEvent::DebugClientStarted(client_id));
                 cx.notify();
@@ -640,44 +745,38 @@ impl DapStore {
         }
     }
 
-    pub fn launch(
+    pub fn new_session(
         &mut self,
-        client_id: DebugAdapterClientId,
+        config: DebugAdapterConfig,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let Some(client) = self
-            .client_by_id(client_id)
-            .and_then(|client| Some(client.read(cx).adapter_client()?))
-        else {
-            return Task::ready(Err(anyhow!("Could not find debug client: {:?}", client_id)));
-        };
+        // let config = session.read(cx).as_local().unwrap().configuration();
+        // let mut adapter_args = client.adapter().request_args(&config);
+        // if let Some(args) = config.initialize_args.clone() {
+        //     merge_json_value_into(args, &mut adapter_args);
+        // }
 
-        let config = session.read(cx).as_local().unwrap().configuration();
-        let mut adapter_args = client.adapter().request_args(&config);
-        if let Some(args) = config.initialize_args.clone() {
-            merge_json_value_into(args, &mut adapter_args);
-        }
+        // // TODO(debugger): GDB starts the debuggee program on launch instead of configurationDone
+        // // causing our sent breakpoints to not be valid. This delay should eventually be taken out
+        // let delay = if &client.adapter_id() == "gdb" {
+        //     Some(
+        //         cx.background_executor()
+        //             .timer(std::time::Duration::from_millis(20u64)),
+        //     )
+        // } else {
+        //     None
+        // };
 
-        // TODO(debugger): GDB starts the debuggee program on launch instead of configurationDone
-        // causing our sent breakpoints to not be valid. This delay should eventually be taken out
-        let delay = if &client.adapter_id() == "gdb" {
-            Some(
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(20u64)),
-            )
-        } else {
-            None
-        };
+        // cx.background_executor().spawn(async move {
+        //     if let Some(delay) = delay {
+        //         delay.await;
+        //     }
 
-        cx.background_executor().spawn(async move {
-            if let Some(delay) = delay {
-                delay.await;
-            }
-
-            client
-                .request::<Launch>(LaunchRequestArguments { raw: adapter_args })
-                .await
-        })
+        //     client
+        //         .request::<Launch>(LaunchRequestArguments { raw: adapter_args })
+        //         .await
+        // })
+        Task::ready(Ok(()))
     }
 
     pub fn attach(
@@ -686,157 +785,42 @@ impl DapStore {
         process_id: u32,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let Some(client) = self
-            .client_by_id(client_id)
-            .and_then(|client| Some(client.read(cx).adapter_client()?))
-        else {
-            return Task::ready(Err(
-                anyhow!("Could not find debug client: {:?}", client_id,),
-            ));
-        };
+        unimplemented!();
+        // let Some(client) = self
+        //     .client_by_id(client_id)
+        //     .and_then(|client| Some(client.read(cx).adapter_client()?))
+        // else {
+        //     return Task::ready(Err(
+        //         anyhow!("Could not find debug client: {:?}", client_id,),
+        //     ));
+        // };
 
-        // update the process id on the config, so when the `startDebugging` reverse request
-        // comes in we send another `attach` request with the already selected PID
-        // If we don't do this the user has to select the process twice if the adapter sends a `startDebugging` request
-        session.update(cx, |session, cx| {
-            session.as_local_mut().unwrap().update_configuration(
-                |config| {
-                    config.request = DebugRequestType::Attach(task::AttachConfig {
-                        process_id: Some(process_id),
-                    });
-                },
-                cx,
-            );
-        });
+        // // update the process id on the config, so when the `startDebugging` reverse request
+        // // comes in we send another `attach` request with the already selected PID
+        // // If we don't do this the user has to select the process twice if the adapter sends a `startDebugging` request
+        // session.update(cx, |session, cx| {
+        //     session.as_local_mut().unwrap().update_configuration(
+        //         |config| {
+        //             config.request = DebugRequestType::Attach(task::AttachConfig {
+        //                 process_id: Some(process_id),
+        //             });
+        //         },
+        //         cx,
+        //     );
+        // });
 
-        let config = session.read(cx).as_local().unwrap().configuration();
-        let mut adapter_args = client.adapter().request_args(&config);
+        // let config = session.read(cx).as_local().unwrap().configuration();
+        // let mut adapter_args = client.adapter().request_args(&config);
 
-        if let Some(args) = config.initialize_args.clone() {
-            merge_json_value_into(args, &mut adapter_args);
-        }
+        // if let Some(args) = config.initialize_args.clone() {
+        //     merge_json_value_into(args, &mut adapter_args);
+        // }
 
-        cx.background_executor().spawn(async move {
-            client
-                .request::<Attach>(AttachRequestArguments { raw: adapter_args })
-                .await
-        })
-    }
-
-    pub fn respond_to_start_debugging(
-        &mut self,
-        client_id: DebugAdapterClientId,
-        seq: u64,
-        args: Option<StartDebuggingRequestArguments>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let Some((client, adapter)) = self
-            .client_by_id(client_id)
-            .and_then(|client| Some((client, client.read(cx).adapter_client()?)))
-        else {
-            return Task::ready(Err(
-                anyhow!("Could not find debug client: {:?}", client_id,),
-            ));
-        };
-
-        let config = client.read(cx).configuration();
-
-        let request_args = args.unwrap_or_else(|| StartDebuggingRequestArguments {
-            configuration: config.initialize_args.clone().unwrap_or_default(),
-            request: match config.request {
-                DebugRequestType::Launch => StartDebuggingRequestArgumentsRequest::Launch,
-                DebugRequestType::Attach(_) => StartDebuggingRequestArgumentsRequest::Attach,
-            },
-        });
-
-        // Merge the new configuration over the existing configuration
-        let mut initialize_args = config.initialize_args.clone().unwrap_or_default();
-        merge_json_value_into(request_args.configuration, &mut initialize_args);
-
-        let new_config = DebugAdapterConfig {
-            label: config.label.clone(),
-            kind: config.kind.clone(),
-            request: match &request_args.request {
-                StartDebuggingRequestArgumentsRequest::Launch => DebugRequestType::Launch,
-                StartDebuggingRequestArgumentsRequest::Attach => DebugRequestType::Attach(
-                    if let DebugRequestType::Attach(attach_config) = &config.request {
-                        attach_config.clone()
-                    } else {
-                        AttachConfig::default()
-                    },
-                ),
-            },
-            program: config.program.clone(),
-            cwd: config.cwd.clone(),
-            initialize_args: Some(initialize_args),
-        };
-
-        cx.spawn(|this, mut cx| async move {
-            let (success, body) = {
-                let reconnect_task = this.update(&mut cx, |store, cx| {
-                    if !client.adapter().supports_attach()
-                        && matches!(new_config.request, DebugRequestType::Attach(_))
-                    {
-                        Task::ready(Err(anyhow!(
-                            "Debug adapter does not support `attach` request"
-                        )))
-                    } else {
-                        store.reconnect_client(client.binary().clone(), new_config, cx)
-                    }
-                });
-
-                match reconnect_task {
-                    Ok(task) => match task.await {
-                        Ok(_) => (true, None),
-                        Err(error) => {
-                            this.update(&mut cx, |_, cx| {
-                                cx.emit(DapStoreEvent::Notification(error.to_string()));
-                            })
-                            .log_err();
-
-                            (
-                                false,
-                                Some(serde_json::to_value(ErrorResponse {
-                                    error: Some(dap::Message {
-                                        id: seq,
-                                        format: error.to_string(),
-                                        variables: None,
-                                        send_telemetry: None,
-                                        show_user: None,
-                                        url: None,
-                                        url_label: None,
-                                    }),
-                                })?),
-                            )
-                        }
-                    },
-                    Err(error) => (
-                        false,
-                        Some(serde_json::to_value(ErrorResponse {
-                            error: Some(dap::Message {
-                                id: seq,
-                                format: error.to_string(),
-                                variables: None,
-                                send_telemetry: None,
-                                show_user: None,
-                                url: None,
-                                url_label: None,
-                            }),
-                        })?),
-                    ),
-                }
-            };
-
-            client
-                .send_message(Message::Response(Response {
-                    seq,
-                    body,
-                    success,
-                    request_seq: seq,
-                    command: StartDebugging::COMMAND.to_string(),
-                }))
-                .await
-        })
+        // cx.background_executor().spawn(async move {
+        //     client
+        //         .request::<Attach>(AttachRequestArguments { raw: adapter_args })
+        //         .await
+        // })
     }
 
     pub fn respond_to_run_in_terminal(

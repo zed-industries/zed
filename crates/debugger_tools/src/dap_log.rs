@@ -12,7 +12,7 @@ use gpui::{
     actions, div, App, AppContext, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable,
     IntoElement, ParentElement, Render, SharedString, Styled, Subscription, WeakEntity, Window,
 };
-use project::{search::SearchQuery, Project};
+use project::{debugger::client::Client, search::SearchQuery, Project};
 use settings::Settings as _;
 use std::{
     borrow::Cow,
@@ -166,19 +166,17 @@ impl LogStore {
                         this.projects.remove(&weak_project);
                     }),
                     cx.subscribe(project, |this, project, event, cx| match event {
-                        project::Event::DebugClientStarted((_, client_id)) => {
-                            this.add_debug_client(
-                                *client_id,
-                                project.update(cx, |project, cx| {
-                                    project.dap_store().update(cx, |store, cx| {
-                                        store.client_by_id(client_id, cx).and_then(
-                                            |(session, client)| {
-                                                Some((session, client.read(cx).adapter_client()?))
-                                            },
-                                        )
-                                    })
-                                }),
-                            );
+                        project::Event::DebugClientStarted(client_id) => {
+                            let client = project.update(cx, |project, cx| {
+                                project.dap_store().update(cx, |store, cx| {
+                                    store
+                                        .client_by_id(client_id)
+                                        .and_then(|client| Some(client))
+                                })
+                            });
+                            if let Some(client) = client {
+                                this.add_debug_client(*client_id, client, cx);
+                            }
                         }
                         project::Event::DebugClientShutdown(client_id) => {
                             this.remove_debug_client(*client_id, cx);
@@ -292,35 +290,35 @@ impl LogStore {
     fn add_debug_client(
         &mut self,
         client_id: DebugAdapterClientId,
-        session_and_client: Option<(Entity<DebugSession>, Arc<DebugAdapterClient>)>,
+        client: Entity<Client>,
+        cx: &App,
     ) -> Option<&mut DebugAdapterState> {
         let client_state = self
             .debug_clients
             .entry(client_id)
             .or_insert_with(DebugAdapterState::new);
 
-        if let Some((_, client)) = session_and_client {
-            let io_tx = self.rpc_tx.clone();
+        let io_tx = self.rpc_tx.clone();
 
-            client.add_log_handler(
-                move |io_kind, message| {
-                    io_tx
-                        .unbounded_send((client_id, io_kind, message.to_string()))
-                        .ok();
-                },
-                LogKind::Rpc,
-            );
+        let client = client.read(cx).adapter_client()?;
+        client.add_log_handler(
+            move |io_kind, message| {
+                io_tx
+                    .unbounded_send((client_id, io_kind, message.to_string()))
+                    .ok();
+            },
+            LogKind::Rpc,
+        );
 
-            let log_io_tx = self.adapter_log_tx.clone();
-            client.add_log_handler(
-                move |io_kind, message| {
-                    log_io_tx
-                        .unbounded_send((client_id, io_kind, message.to_string()))
-                        .ok();
-                },
-                LogKind::Adapter,
-            );
-        }
+        let log_io_tx = self.adapter_log_tx.clone();
+        client.add_log_handler(
+            move |io_kind, message| {
+                log_io_tx
+                    .unbounded_send((client_id, io_kind, message.to_string()))
+                    .ok();
+            },
+            LogKind::Adapter,
+        );
 
         Some(client_state)
     }
