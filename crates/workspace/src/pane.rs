@@ -40,11 +40,11 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, right_click_menu, ButtonSize, Color, DecoratedIcon, IconButton, IconButtonShape,
-    IconDecoration, IconDecorationKind, IconName, IconSize, Indicator, Label, PopoverMenu,
-    PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip,
+    prelude::*, right_click_menu, ButtonSize, Color, ContextMenu, ContextMenuEntry,
+    ContextMenuItem, DecoratedIcon, IconButton, IconButtonShape, IconDecoration,
+    IconDecorationKind, IconName, IconSize, Indicator, Label, PopoverMenu, PopoverMenuHandle, Tab,
+    TabBar, TabPosition, Tooltip,
 };
-use ui::{v_flex, ContextMenu};
 use util::{debug_panic, maybe, truncate_and_remove_front, ResultExt};
 
 /// A selected entry in e.g. project panel.
@@ -2395,6 +2395,7 @@ impl Pane {
             }
         };
 
+        let total_items = self.items.len();
         let is_pinned = self.is_tab_pinned(ix);
         let pane = cx.entity().downgrade();
         let menu_context = item.item_focus_handle(cx);
@@ -2415,17 +2416,20 @@ impl Pane {
                                     .detach_and_log_err(cx);
                             }),
                         )
-                        .entry(
-                            "Close Others",
-                            Some(Box::new(CloseInactiveItems {
-                                save_intent: None,
-                                close_pinned: false,
-                            })),
-                            window.handler_for(&pane, move |pane, window, cx| {
-                                pane.close_items(window, cx, SaveIntent::Close, |id| id != item_id)
+                        .item(ContextMenuItem::Entry(
+                            ContextMenuEntry::new("Close Others")
+                                .action(Some(Box::new(CloseInactiveItems {
+                                    save_intent: None,
+                                    close_pinned: false,
+                                })))
+                                .disabled(total_items == 1)
+                                .handler(window.handler_for(&pane, move |pane, window, cx| {
+                                    pane.close_items(window, cx, SaveIntent::Close, |id| {
+                                        id != item_id
+                                    })
                                     .detach_and_log_err(cx);
-                            }),
-                        )
+                                })),
+                        ))
                         .separator()
                         .entry(
                             "Close Left",
