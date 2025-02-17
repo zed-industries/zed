@@ -324,6 +324,21 @@ impl Panel for DebugPanel {
     fn activation_priority(&self) -> u32 {
         9
     }
+    fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if active && self.pane.read(cx).items_len() == 0 {
+            // todo: We need to revisit it when we start adding stopped items to pane (as that'll cause us to add two items).
+            self.pane.update(cx, |this, cx| {
+                this.add_item(
+                    Box::new(DebugSession::inert(cx)),
+                    false,
+                    false,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+        }
+    }
 }
 
 impl Render for DebugPanel {
