@@ -782,7 +782,6 @@ impl LanguageServer {
                         message_action_item: None,
                     }),
                     show_document: Some(ShowDocumentClientCapabilities { support: true }),
-                    ..Default::default()
                 }),
             },
             trace: None,

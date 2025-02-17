@@ -821,17 +821,13 @@ impl LocalLspStore {
         language_server
             .on_request::<lsp::request::ShowDocument, _, _>({
                 let this = this.clone();
-                let name = name.to_string();
                 move |params, mut cx| {
                     let this = this.clone();
                     let (tx, rx) = smol::channel::bounded(1);
                     async move {
                         let request = LanguageServerShowDocumentRequest {
                             uri: params.uri,
-                            external: match params.external {
-                                Some(opt) => opt,
-                                None => false,
-                            },
+                            external: params.external.unwrap_or(false),
                             response_channel: tx,
                         };
                         let did_update = this
