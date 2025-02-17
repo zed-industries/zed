@@ -38,13 +38,4 @@ impl UpdateNotification {
     pub fn new(version: SemanticVersion, workspace: WeakEntity<Workspace>) -> Self {
         Self { version, workspace }
     }
-
-    pub fn show(version: SemanticVersion, workspace: &mut Workspace, cx: &mut Context<Workspace>) {
-        let notification = Self::new(version, workspace.weak_handle());
-        workspace.show_notification(
-            workspace::notifications::NotificationId::unique::<Self>(),
-            cx,
-            |cx| cx.new(|_| notification),
-        );
-    }
 }
