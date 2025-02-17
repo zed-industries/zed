@@ -41,7 +41,9 @@ impl LanguageModelSelector {
         };
 
         let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
+            Picker::uniform_list(delegate, window, cx)
+                .show_scrollbar(true)
+                .max_height(Some(rems(20.).into()))
         });
 
         LanguageModelSelector {
@@ -305,7 +307,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                     .color(Color::Muted)
                     .mt_1()
                     .mb_0p5()
-                    .ml_3()
+                    .ml_2()
                     .into_any_element(),
             )
         } else {
@@ -337,25 +339,34 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         let is_selected = Some(model_info.model.provider_id()) == active_provider_id
             && Some(model_info.model.id()) == active_model_id;
 
+        let model_icon_color = if is_selected {
+            Color::Accent
+        } else {
+            Color::Muted
+        };
+
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .start_slot(
-                    div().pr_0p5().child(
-                        Icon::new(model_info.icon)
-                            .color(Color::Muted)
-                            .size(IconSize::Medium),
-                    ),
+                    Icon::new(model_info.icon)
+                        .color(model_icon_color)
+                        .size(IconSize::Small),
                 )
                 .child(
                     h_flex()
                         .w_full()
                         .items_center()
                         .gap_1p5()
-                        .min_w(px(200.))
-                        .child(Label::new(model_info.model.name().0.clone()))
+                        .pl_0p5()
+                        .min_w(px(240.))
+                        .child(
+                            div().max_w_40().child(
+                                Label::new(model_info.model.name().0.clone()).text_ellipsis(),
+                            ),
+                        )
                         .child(
                             h_flex()
                                 .gap_0p5()
