@@ -13,7 +13,7 @@ use dap::{
 use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
-use project::debugger::session::Client;
+use project::debugger::session::Session;
 use project::debugger::session::ThreadId;
 use rpc::proto::{self, DebuggerThreadStatus, PeerId};
 use settings::Settings;
@@ -62,7 +62,7 @@ pub struct DebugPanelItem {
     console: Entity<Console>,
     focus_handle: FocusHandle,
     remote_id: Option<ViewId>,
-    session: Entity<Client>,
+    session: Entity<Session>,
     show_console_indicator: bool,
     module_list: Entity<ModuleList>,
     active_thread_item: ThreadItem,
@@ -78,7 +78,7 @@ pub struct DebugPanelItem {
 impl DebugPanelItem {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        session: Entity<Client>,
+        session: Entity<Session>,
         client_id: DebugAdapterClientId,
         thread_id: ThreadId,
         thread_state: Entity<ThreadState>,
@@ -388,7 +388,7 @@ impl DebugPanelItem {
     //     }
     // }
 
-    pub fn session(&self) -> &Entity<Client> {
+    pub fn session(&self) -> &Entity<Session> {
         &self.session
     }
 

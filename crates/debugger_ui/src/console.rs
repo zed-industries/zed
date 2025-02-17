@@ -13,7 +13,7 @@ use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
 use language::{Buffer, CodeLabel, LanguageServerId};
 use menu::Confirm;
 use project::{
-    debugger::session::{Client, CompletionsQuery},
+    debugger::session::{CompletionsQuery, Session},
     Completion,
 };
 use settings::Settings;
@@ -33,7 +33,7 @@ pub struct Console {
     groups: Vec<OutputGroup>,
     console: Entity<Editor>,
     query_bar: Entity<Editor>,
-    session: Entity<Client>,
+    session: Entity<Session>,
     client_id: DebugAdapterClientId,
     _subscriptions: Vec<Subscription>,
     variable_list: Entity<VariableList>,
@@ -42,7 +42,7 @@ pub struct Console {
 
 impl Console {
     pub fn new(
-        session: Entity<Client>,
+        session: Entity<Session>,
         client_id: DebugAdapterClientId,
         stack_frame_list: Entity<StackFrameList>,
         variable_list: Entity<VariableList>,

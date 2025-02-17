@@ -7,7 +7,7 @@ use super::{
     //     TerminateCommand, TerminateThreadsCommand, VariablesCommand,
     // },
     dap_command::DapCommand,
-    session::{self, Client},
+    session::{self, Session},
 };
 use crate::{
     debugger, project_settings::ProjectSettings, DebugAdapterClientState, ProjectEnvironment,
@@ -94,7 +94,7 @@ impl LocalDapStore {
     }
     pub fn respond_to_start_debugging(
         &mut self,
-        client: &Entity<Client>,
+        client: &Entity<Session>,
         seq: u64,
         args: Option<StartDebuggingRequestArguments>,
         cx: &mut Context<Self>,
@@ -208,7 +208,7 @@ pub struct DapStore {
     downstream_client: Option<(AnyProtoClient, u64)>,
     breakpoint_store: Entity<BreakpointStore>,
     active_debug_line: Option<(DebugAdapterClientId, ProjectPath, u32)>,
-    clients: BTreeMap<DebugAdapterClientId, Entity<Client>>,
+    clients: BTreeMap<DebugAdapterClientId, Entity<Session>>,
 }
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
@@ -360,7 +360,7 @@ impl DapStore {
             self.clients.insert(
                 client_id,
                 cx.new(|_| {
-                    debugger::session::Client::remote(
+                    debugger::session::Session::remote(
                         client_id,
                         remote.upstream_client.clone(),
                         remote.upstream_project_id,
@@ -376,13 +376,13 @@ impl DapStore {
     pub fn client_by_id(
         &self,
         client_id: impl Borrow<DebugAdapterClientId>,
-    ) -> Option<Entity<session::Client>> {
+    ) -> Option<Entity<session::Session>> {
         let client_id = client_id.borrow();
         let client = self.clients.get(client_id).cloned();
 
         client
     }
-    pub fn clients(&self) -> impl Iterator<Item = &Entity<Client>> {
+    pub fn clients(&self) -> impl Iterator<Item = &Entity<Session>> {
         self.clients.values()
     }
 

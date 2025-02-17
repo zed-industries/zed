@@ -1,6 +1,6 @@
 use dap::client::DebugAdapterClientId;
 use gpui::{list, AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, Subscription};
-use project::debugger::session::Client;
+use project::debugger::session::Session;
 use ui::prelude::*;
 use util::maybe;
 
@@ -8,13 +8,13 @@ pub struct LoadedSourceList {
     list: ListState,
     focus_handle: FocusHandle,
     _subscription: Subscription,
-    session: Entity<Client>,
+    session: Entity<Session>,
     client_id: DebugAdapterClientId,
 }
 
 impl LoadedSourceList {
     pub fn new(
-        session: Entity<Client>,
+        session: Entity<Session>,
         client_id: DebugAdapterClientId,
         cx: &mut Context<Self>,
     ) -> Self {

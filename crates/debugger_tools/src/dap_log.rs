@@ -12,7 +12,7 @@ use gpui::{
     actions, div, App, AppContext, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable,
     IntoElement, ParentElement, Render, SharedString, Styled, Subscription, WeakEntity, Window,
 };
-use project::{debugger::session::Client, search::SearchQuery, Project};
+use project::{debugger::session::Session, search::SearchQuery, Project};
 use settings::Settings as _;
 use std::{
     borrow::Cow,
@@ -290,7 +290,7 @@ impl LogStore {
     fn add_debug_client(
         &mut self,
         client_id: DebugAdapterClientId,
-        client: Entity<Client>,
+        client: Entity<Session>,
         cx: &App,
     ) -> Option<&mut DebugAdapterState> {
         let client_state = self

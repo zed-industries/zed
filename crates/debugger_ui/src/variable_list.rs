@@ -10,7 +10,7 @@ use gpui::{
     FocusHandle, Focusable, Hsla, ListOffset, ListState, MouseDownEvent, Point, Subscription, Task,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::debugger::session::Client;
+use project::debugger::session::Session;
 use rpc::proto::{
     self, DebuggerScopeVariableIndex, DebuggerVariableContainer, VariableListScopes,
     VariableListVariables,
@@ -330,7 +330,7 @@ pub struct VariableList {
     list: ListState,
     focus_handle: FocusHandle,
     open_entries: Vec<OpenEntry>,
-    session: Entity<Client>,
+    session: Entity<Session>,
     client_id: DebugAdapterClientId,
     _subscriptions: Vec<Subscription>,
     set_variable_editor: Entity<Editor>,
@@ -346,7 +346,7 @@ pub struct VariableList {
 
 impl VariableList {
     pub fn new(
-        session: Entity<Client>,
+        session: Entity<Session>,
         client_id: DebugAdapterClientId,
         stack_frame_list: Entity<StackFrameList>,
         window: &mut Window,

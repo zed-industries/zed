@@ -162,7 +162,7 @@ impl Mode {
     fn request_local<R: DapCommand>(
         connection: &Arc<DebugAdapterClient>,
         request: R,
-        cx: &mut Context<Client>,
+        cx: &mut Context<Session>,
     ) -> Task<Result<R::Response>>
     where
         <R::DapRequest as dap::requests::Request>::Response: 'static,
@@ -187,7 +187,7 @@ impl Mode {
         &self,
         client_id: DebugAdapterClientId,
         request: R,
-        cx: &mut Context<Client>,
+        cx: &mut Context<Session>,
     ) -> Task<Result<R::Response>>
     where
         <R::DapRequest as dap::requests::Request>::Response: 'static,
@@ -205,7 +205,7 @@ impl Mode {
 }
 
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
-pub struct Client {
+pub struct Session {
     mode: Mode,
     config: DebugAdapterConfig,
     pub(super) capabilities: Capabilities,
@@ -292,7 +292,7 @@ impl CompletionsQuery {
     }
 }
 
-impl Client {
+impl Session {
     pub(crate) fn local(adapter: Arc<DebugAdapterClient>, config: DebugAdapterConfig) -> Self {
         let client_id = adapter.id();
 

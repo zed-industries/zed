@@ -7,7 +7,7 @@ use gpui::{
     WeakEntity,
 };
 
-use project::debugger::session::{Client, StackFrame, ThreadId};
+use project::debugger::session::{Session, StackFrame, ThreadId};
 use project::ProjectPath;
 use ui::{prelude::*, Tooltip};
 use workspace::Workspace;
@@ -25,7 +25,7 @@ pub struct StackFrameList {
     thread_id: ThreadId,
     focus_handle: FocusHandle,
     _subscription: Subscription,
-    session: Entity<Client>,
+    session: Entity<Session>,
     entries: Vec<StackFrameEntry>,
     workspace: WeakEntity<Workspace>,
     current_stack_frame_id: StackFrameId,
@@ -41,7 +41,7 @@ pub enum StackFrameEntry {
 impl StackFrameList {
     pub fn new(
         workspace: WeakEntity<Workspace>,
-        session: Entity<Client>,
+        session: Entity<Session>,
         thread_id: ThreadId,
         _window: &Window,
         cx: &mut Context<Self>,
