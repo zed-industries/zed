@@ -50,7 +50,7 @@ pub struct Picker<D: PickerDelegate> {
     width: Option<Length>,
     max_height: Option<Length>,
     focus_handle: FocusHandle,
-    /// An external control to display scrollbar in the `Picker`.
+    /// An external control to display a scrollbar in the `Picker`.
     show_scrollbar: bool,
     /// An internal state that controls whether to show the scrollbar based on the user's focus.
     scrollbar_visibility: bool,
