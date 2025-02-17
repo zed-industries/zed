@@ -140,28 +140,34 @@ fn cover_or_next<I: Iterator<Item = (Range<usize>, Range<usize>)>>(
     None
 }
 
+type DelimiterPredicate = dyn Fn(&BufferSnapshot, usize, usize) -> bool;
+
+struct DelimiterRange {
+    open: Range<usize>,
+    close: Range<usize>,
+}
+
+impl DelimiterRange {
+    fn to_display_range(&self, map: &DisplaySnapshot, around: bool) -> Range<DisplayPoint> {
+        if around {
+            self.open.start.to_display_point(map)..self.close.end.to_display_point(map)
+        } else {
+            self.open.end.to_display_point(map)..self.close.start.to_display_point(map)
+        }
+    }
+}
+
 fn find_any_delimiters(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
     around: bool,
-    is_valid_delimiter: impl Fn(&BufferSnapshot, usize, usize) -> bool,
+    is_valid_delimiter: &DelimiterPredicate,
 ) -> Option<Range<DisplayPoint>> {
-    let display_point = map.clip_at_line_end(display_point);
-    let point = display_point.to_point(map);
+    let point = map.clip_at_line_end(display_point).to_point(map);
     let offset = point.to_offset(&map.buffer_snapshot);
 
-    // Ensure the range is contained by the current line.
-    let mut line_end = map.next_line_boundary(point).0;
-    if line_end == point {
-        line_end = map.max_point().to_point(map);
-    }
-
-    let line_range = map.prev_line_boundary(point).0..line_end;
-    let visible_line_range =
-        line_range.start..Point::new(line_range.end.row, line_range.end.column.saturating_sub(1));
-    let ranges = map
-        .buffer_snapshot
-        .bracket_ranges(visible_line_range.clone());
+    let line_range = get_line_range(map, point);
+    let visible_line_range = get_visible_line_range(&line_range);
 
     let snapshot = &map.buffer_snapshot;
     let excerpt = snapshot.excerpt_containing(offset..offset)?;
@@ -171,22 +177,60 @@ fn find_any_delimiters(
         is_valid_delimiter(buffer, open.start, close.start)
     };
 
-    if let Some(best_line) = cover_or_next(ranges, display_point, map, Some(&bracket_filter)) {
-        return select_inside_or_around_delimiter_range(best_line.clone(), map, around);
+    // Try to find delimiters in visible range first
+    let ranges = map
+        .buffer_snapshot
+        .bracket_ranges(visible_line_range.clone());
+    if let Some(candidate) = cover_or_next(ranges, display_point, map, Some(&bracket_filter)) {
+        return Some(
+            DelimiterRange {
+                open: candidate.open_range,
+                close: candidate.close_range,
+            }
+            .to_display_range(map, around),
+        );
     }
 
+    // Fall back to innermost enclosing brackets
     let (open_bracket, close_bracket) =
         buffer.innermost_enclosing_bracket_ranges(offset..offset, Some(&bracket_filter))?;
 
-    if around {
-        return Some(
-            open_bracket.start.to_display_point(map)..close_bracket.end.to_display_point(map),
-        );
-    } else {
-        return Some(
-            open_bracket.end.to_display_point(map)..close_bracket.start.to_display_point(map),
-        );
+    Some(
+        DelimiterRange {
+            open: open_bracket,
+            close: close_bracket,
+        }
+        .to_display_range(map, around),
+    )
+}
+
+fn get_line_range(map: &DisplaySnapshot, point: Point) -> Range<Point> {
+    let (start, mut end) = (
+        map.prev_line_boundary(point).0,
+        map.next_line_boundary(point).0,
+    );
+
+    if end == point {
+        end = map.max_point().to_point(map);
     }
+
+    start..end
+}
+
+fn get_visible_line_range(line_range: &Range<Point>) -> Range<Point> {
+    let end_column = line_range.end.column.saturating_sub(1);
+    line_range.start..Point::new(line_range.end.row, end_column)
+}
+
+fn is_quote_delimiter(buffer: &BufferSnapshot, _start: usize, end: usize) -> bool {
+    matches!(buffer.chars_at(end).next(), Some('\'' | '"' | '`'))
+}
+
+fn is_bracket_delimiter(buffer: &BufferSnapshot, start: usize, _end: usize) -> bool {
+    matches!(
+        buffer.chars_at(start).next(),
+        Some('(' | '[' | '{' | '<' | '|')
+    )
 }
 
 fn find_any_quotes(
@@ -194,9 +238,7 @@ fn find_any_quotes(
     display_point: DisplayPoint,
     around: bool,
 ) -> Option<Range<DisplayPoint>> {
-    find_any_delimiters(map, display_point, around, |buffer, _start, end| {
-        matches!(buffer.chars_at(end).next(), Some('\'' | '"' | '`'))
-    })
+    find_any_delimiters(map, display_point, around, &is_quote_delimiter)
 }
 
 fn find_any_brackets(
@@ -204,30 +246,7 @@ fn find_any_brackets(
     display_point: DisplayPoint,
     around: bool,
 ) -> Option<Range<DisplayPoint>> {
-    find_any_delimiters(map, display_point, around, |buffer, start, _end| {
-        matches!(
-            buffer.chars_at(start).next(),
-            Some('(' | '[' | '{' | '<' | '|')
-        )
-    })
-}
-
-fn select_inside_or_around_delimiter_range(
-    ranges: CandidateWithRanges,
-    map: &DisplaySnapshot,
-    around: bool,
-) -> Option<std::ops::Range<DisplayPoint>> {
-    if around {
-        return Some(
-            ranges.open_range.start.to_display_point(map)
-                ..ranges.close_range.end.to_display_point(map),
-        );
-    } else {
-        return Some(
-            ranges.open_range.end.to_display_point(map)
-                ..ranges.close_range.start.to_display_point(map),
-        );
-    }
+    find_any_delimiters(map, display_point, around, &is_bracket_delimiter)
 }
 
 impl_actions!(vim, [Word, Subword, IndentObj]);
