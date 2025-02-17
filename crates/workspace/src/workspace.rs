@@ -3236,6 +3236,27 @@ impl Workspace {
         }
     }
 
+    pub fn find_or_create_pane_in_direction(
+        &mut self,
+        window: &mut Window,
+        pane: &Entity<Pane>,
+        direction: SplitDirection,
+        cx: &mut Context<Self>,
+    ) -> Entity<Pane> {
+        if let Some(target_pane) = self
+            .center
+            .find_pane_in_direction(&pane, direction, cx)
+            .cloned()
+        {
+            target_pane
+        } else {
+            let new_pane = self.add_pane(window, cx);
+            self.center.split(pane, &new_pane, direction).unwrap();
+            cx.notify();
+            new_pane
+        }
+    }
+
     pub fn resize_pane(
         &mut self,
         axis: gpui::Axis,
@@ -3334,8 +3355,15 @@ impl Workspace {
                     item: item.boxed_clone(),
                 });
             }
-            pane::Event::Split(direction) => {
-                self.split_and_clone(pane.clone(), *direction, window, cx);
+            pane::Event::Split {
+                direction,
+                use_existing,
+            } => {
+                if *use_existing {
+                    self.clone_into_split_or_existing_pane(pane.clone(), *direction, window, cx);
+                } else {
+                    self.split_and_clone(pane.clone(), *direction, window, cx);
+                }
             }
             pane::Event::JoinIntoNext => {
                 self.join_pane_into_next(pane.clone(), window, cx);
@@ -3468,6 +3496,31 @@ impl Workspace {
             } else {
                 None
             };
+        cx.notify();
+        maybe_pane_handle
+    }
+
+    /// Clone the active item in `pane` and move the clone into an existing pane
+    /// in the designated direction or a split of the current pane in that direction.
+    pub fn clone_into_split_or_existing_pane(
+        &mut self,
+        pane: Entity<Pane>,
+        direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Pane>> {
+        let item = pane.read(cx).active_item()?;
+        let maybe_pane_handle = if let Some(clone) =
+            item.clone_on_split(self.database_id(), window, cx)
+        {
+            let target_pane = self.find_or_create_pane_in_direction(window, &pane, direction, cx);
+            target_pane.update(cx, |pane, cx| {
+                pane.add_item(clone, true, true, None, window, cx)
+            });
+            Some(target_pane)
+        } else {
+            None
+        };
         cx.notify();
         maybe_pane_handle
     }

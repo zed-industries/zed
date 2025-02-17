@@ -1385,10 +1385,22 @@ impl PickerDelegate for FileFinderDelegate {
                                     let context = context.clone();
                                     move |menu, _, _| {
                                         menu.context(context)
-                                            .action("Split Left", pane::SplitLeft.boxed_clone())
-                                            .action("Split Right", pane::SplitRight.boxed_clone())
-                                            .action("Split Up", pane::SplitUp.boxed_clone())
-                                            .action("Split Down", pane::SplitDown.boxed_clone())
+                                            .action(
+                                                "Split Left",
+                                                pane::SplitLeft::default().boxed_clone(),
+                                            )
+                                            .action(
+                                                "Split Right",
+                                                pane::SplitRight::default().boxed_clone(),
+                                            )
+                                            .action(
+                                                "Split Up",
+                                                pane::SplitUp::default().boxed_clone(),
+                                            )
+                                            .action(
+                                                "Split Down",
+                                                pane::SplitDown::default().boxed_clone(),
+                                            )
                                     }
                                 }))
                             }

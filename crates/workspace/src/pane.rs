@@ -154,6 +154,48 @@ pub struct DeploySearch {
     pub replace_enabled: bool,
 }
 
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SplitRight {
+    #[serde(default)]
+    pub use_existing: bool,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SplitLeft {
+    #[serde(default)]
+    pub use_existing: bool,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SplitUp {
+    #[serde(default)]
+    pub use_existing: bool,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SplitDown {
+    #[serde(default)]
+    pub use_existing: bool,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SplitHorizontal {
+    #[serde(default)]
+    pub use_existing: bool,
+}
+
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SplitVertical {
+    #[serde(default)]
+    pub use_existing: bool,
+}
+
 impl_actions!(
     pane,
     [
@@ -166,6 +208,12 @@ impl_actions!(
         ActivateItem,
         RevealInProjectPanel,
         DeploySearch,
+        SplitRight,
+        SplitLeft,
+        SplitUp,
+        SplitDown,
+        SplitHorizontal,
+        SplitVertical,
     ]
 );
 
@@ -181,12 +229,6 @@ actions!(
         JoinIntoNext,
         JoinAll,
         ReopenClosedItem,
-        SplitLeft,
-        SplitUp,
-        SplitRight,
-        SplitDown,
-        SplitHorizontal,
-        SplitVertical,
         SwapItemLeft,
         SwapItemRight,
         TogglePreviewTab,
@@ -221,7 +263,10 @@ pub enum Event {
     RemovedItem {
         item_id: EntityId,
     },
-    Split(SplitDirection),
+    Split {
+        direction: SplitDirection,
+        use_existing: bool,
+    },
     JoinAll,
     JoinIntoNext,
     ChangeItemTitle,
@@ -251,9 +296,13 @@ impl fmt::Debug for Event {
                 .debug_struct("RemovedItem")
                 .field("item_id", item_id)
                 .finish(),
-            Event::Split(direction) => f
+            Event::Split {
+                direction,
+                use_existing,
+            } => f
                 .debug_struct("Split")
                 .field("direction", direction)
+                .field("use_existing", use_existing)
                 .finish(),
             Event::JoinAll => f.write_str("JoinAll"),
             Event::JoinIntoNext => f.write_str("JoinIntoNext"),
@@ -482,10 +531,10 @@ impl Pane {
                             .with_handle(pane.split_item_context_menu_handle.clone())
                             .menu(move |window, cx| {
                                 ContextMenu::build(window, cx, |menu, _, _| {
-                                    menu.action("Split Right", SplitRight.boxed_clone())
-                                        .action("Split Left", SplitLeft.boxed_clone())
-                                        .action("Split Up", SplitUp.boxed_clone())
-                                        .action("Split Down", SplitDown.boxed_clone())
+                                    menu.action("Split Right", SplitRight::default().boxed_clone())
+                                        .action("Split Left", SplitLeft::default().boxed_clone())
+                                        .action("Split Up", SplitUp::default().boxed_clone())
+                                        .action("Split Down", SplitDown::default().boxed_clone())
                                 })
                                 .into()
                             }),
@@ -2004,8 +2053,11 @@ impl Pane {
         }
     }
 
-    pub fn split(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
-        cx.emit(Event::Split(direction));
+    pub fn split(&mut self, direction: SplitDirection, use_existing: bool, cx: &mut Context<Self>) {
+        cx.emit(Event::Split {
+            direction,
+            use_existing,
+        });
     }
 
     pub fn toolbar(&self) -> &Entity<Toolbar> {
@@ -3108,22 +3160,24 @@ impl Render for Pane {
             .on_action(cx.listener(|pane, _: &AlternateFile, window, cx| {
                 pane.alternate_file(window, cx);
             }))
-            .on_action(
-                cx.listener(|pane, _: &SplitLeft, _, cx| pane.split(SplitDirection::Left, cx)),
-            )
-            .on_action(cx.listener(|pane, _: &SplitUp, _, cx| pane.split(SplitDirection::Up, cx)))
-            .on_action(cx.listener(|pane, _: &SplitHorizontal, _, cx| {
-                pane.split(SplitDirection::horizontal(cx), cx)
+            .on_action(cx.listener(|pane, action: &SplitLeft, _, cx| {
+                pane.split(SplitDirection::Left, action.use_existing, cx)
             }))
-            .on_action(cx.listener(|pane, _: &SplitVertical, _, cx| {
-                pane.split(SplitDirection::vertical(cx), cx)
+            .on_action(cx.listener(|pane, action: &SplitUp, _, cx| {
+                pane.split(SplitDirection::Up, action.use_existing, cx)
             }))
-            .on_action(
-                cx.listener(|pane, _: &SplitRight, _, cx| pane.split(SplitDirection::Right, cx)),
-            )
-            .on_action(
-                cx.listener(|pane, _: &SplitDown, _, cx| pane.split(SplitDirection::Down, cx)),
-            )
+            .on_action(cx.listener(|pane, action: &SplitHorizontal, _, cx| {
+                pane.split(SplitDirection::horizontal(cx), action.use_existing, cx)
+            }))
+            .on_action(cx.listener(|pane, action: &SplitVertical, _, cx| {
+                pane.split(SplitDirection::vertical(cx), action.use_existing, cx)
+            }))
+            .on_action(cx.listener(|pane, action: &SplitRight, _, cx| {
+                pane.split(SplitDirection::Right, action.use_existing, cx)
+            }))
+            .on_action(cx.listener(|pane, action: &SplitDown, _, cx| {
+                pane.split(SplitDirection::Down, action.use_existing, cx)
+            }))
             .on_action(
                 cx.listener(|pane, _: &GoBack, window, cx| pane.navigate_backward(window, cx)),
             )
