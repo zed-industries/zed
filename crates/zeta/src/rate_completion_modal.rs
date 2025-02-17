@@ -489,6 +489,7 @@ impl RateCompletionModal {
                                             &ThumbsDownActiveCompletion,
                                             focus_handle,
                                             window,
+                                            cx
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.thumbs_down_active(
@@ -507,6 +508,7 @@ impl RateCompletionModal {
                                             &ThumbsUpActiveCompletion,
                                             focus_handle,
                                             window,
+                                            cx
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.thumbs_up_active(&ThumbsUpActiveCompletion, window, cx);

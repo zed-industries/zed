@@ -94,6 +94,7 @@ enum DisplayDiffHunk {
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
         expanded: bool,
+        is_primary: bool,
     },
 }
 
@@ -1622,6 +1623,7 @@ impl EditorElement {
                                 hunk.buffer_range.clone(),
                             ),
                             expanded,
+                            is_primary: true,
                         },
                         None,
                     ));
@@ -1637,6 +1639,7 @@ impl EditorElement {
                                 hunk.buffer_range,
                             ),
                             expanded,
+                            is_primary: false,
                         },
                         None,
                     ));
@@ -1661,6 +1664,7 @@ impl EditorElement {
                                 hunk.buffer_range,
                             ),
                             expanded,
+                            is_primary: true,
                         },
                         None,
                     ));
@@ -2820,6 +2824,7 @@ impl EditorElement {
                                                 &OpenExcerpts,
                                                 &focus_handle,
                                                 window,
+                                                cx,
                                             )
                                             .map(|binding| binding.into_any_element()),
                                         ),
@@ -4298,14 +4303,29 @@ impl EditorElement {
             newest_cursor_position,
         ];
 
-        for (hunk, _) in display_hunks {
+        let mut display_hunks = display_hunks.iter().peekable();
+        while let Some((hunk, _)) = display_hunks.next() {
             if let DisplayDiffHunk::Unfolded {
                 display_row_range,
                 multi_buffer_range,
                 status,
+                is_primary: true,
                 ..
             } = &hunk
             {
+                let mut display_row_range = display_row_range.clone();
+                if let Some((
+                    DisplayDiffHunk::Unfolded {
+                        display_row_range: secondary_display_row_range,
+                        is_primary: false,
+                        ..
+                    },
+                    _,
+                )) = display_hunks.peek()
+                {
+                    display_row_range.end = secondary_display_row_range.end;
+                }
+
                 if display_row_range.start < row_range.start
                     || display_row_range.start >= row_range.end
                 {
@@ -4904,7 +4924,15 @@ impl EditorElement {
     ) {
         for (_, hunk_hitbox) in &layout.display_hunks {
             if let Some(hunk_hitbox) = hunk_hitbox {
-                window.set_cursor_style(CursorStyle::PointingHand, hunk_hitbox);
+                if !self
+                    .editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .all_diff_hunks_expanded()
+                {
+                    window.set_cursor_style(CursorStyle::PointingHand, hunk_hitbox);
+                }
             }
         }
 
@@ -5792,7 +5820,7 @@ impl EditorElement {
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
-            let multi_buffer_range =
+            let diff_hunk_range =
                 layout
                     .display_hunks
                     .iter()
@@ -5828,7 +5856,7 @@ impl EditorElement {
                             Self::mouse_left_down(
                                 editor,
                                 event,
-                                multi_buffer_range.clone(),
+                                diff_hunk_range.clone(),
                                 &position_map,
                                 line_numbers.as_ref(),
                                 window,

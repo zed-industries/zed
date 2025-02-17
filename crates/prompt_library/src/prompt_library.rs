@@ -1268,7 +1268,7 @@ impl Render for PromptLibrary {
                                                 Button::new("create-prompt", "New Prompt")
                                                     .full_width()
                                                     .key_binding(KeyBinding::for_action(
-                                                        &NewPrompt, window,
+                                                        &NewPrompt, window, cx,
                                                     ))
                                                     .on_click(|_, window, cx| {
                                                         window.dispatch_action(

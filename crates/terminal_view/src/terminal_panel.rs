@@ -980,7 +980,9 @@ pub fn new_terminal_pane(
             false
         })));
 
-        let buffer_search_bar = cx.new(|cx| search::BufferSearchBar::new(window, cx));
+        let buffer_search_bar = cx.new(|cx| {
+            search::BufferSearchBar::new(Some(project.read(cx).languages().clone()), window, cx)
+        });
         let breadcrumbs = cx.new(|_| Breadcrumbs::new());
         pane.toolbar().update(cx, |toolbar, cx| {
             toolbar.add_item(buffer_search_bar, window, cx);

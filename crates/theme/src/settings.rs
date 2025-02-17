@@ -557,9 +557,10 @@ impl BufferLineHeight {
 impl ThemeSettings {
     /// Returns the buffer font size.
     pub fn buffer_font_size(&self, cx: &App) -> Pixels {
-        cx.try_global::<AdjustedBufferFontSize>()
-            .map_or(self.buffer_font_size, |size| size.0)
-            .max(MIN_FONT_SIZE)
+        let font_size = cx
+            .try_global::<AdjustedBufferFontSize>()
+            .map_or(self.buffer_font_size, |size| size.0);
+        clamp_font_size(font_size)
     }
 
     // TODO: Rename: `line_height` -> `buffer_line_height`
@@ -644,14 +645,16 @@ pub fn observe_buffer_font_size_adjustment<V: 'static>(
 
 /// Sets the adjusted buffer font size.
 pub fn adjusted_font_size(size: Pixels, cx: &App) -> Pixels {
-    if let Some(AdjustedBufferFontSize(adjusted_size)) = cx.try_global::<AdjustedBufferFontSize>() {
+    let adjusted_font_size = if let Some(AdjustedBufferFontSize(adjusted_size)) =
+        cx.try_global::<AdjustedBufferFontSize>()
+    {
         let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
         let delta = *adjusted_size - buffer_font_size;
         size + delta
     } else {
         size
-    }
-    .max(MIN_FONT_SIZE)
+    };
+    clamp_font_size(adjusted_font_size)
 }
 
 /// Returns the adjusted buffer font size.
@@ -669,8 +672,7 @@ pub fn adjust_buffer_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
         .map_or(buffer_font_size, |adjusted_size| adjusted_size.0);
 
     f(&mut adjusted_size);
-    adjusted_size = adjusted_size.max(MIN_FONT_SIZE);
-    cx.set_global(AdjustedBufferFontSize(adjusted_size));
+    cx.set_global(AdjustedBufferFontSize(clamp_font_size(adjusted_size)));
     cx.refresh_windows();
 }
 
@@ -715,8 +717,7 @@ pub fn adjust_ui_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
         .map_or(ui_font_size, |adjusted_size| adjusted_size.0);
 
     f(&mut adjusted_size);
-    adjusted_size = adjusted_size.max(MIN_FONT_SIZE);
-    cx.set_global(AdjustedUiFontSize(adjusted_size));
+    cx.set_global(AdjustedUiFontSize(clamp_font_size(adjusted_size)));
     cx.refresh_windows();
 }
 
@@ -731,6 +732,11 @@ pub fn reset_ui_font_size(cx: &mut App) {
         cx.remove_global::<AdjustedUiFontSize>();
         cx.refresh_windows();
     }
+}
+
+/// Ensures font size is within the valid range.
+pub fn clamp_font_size(size: Pixels) -> Pixels {
+    size.max(MIN_FONT_SIZE)
 }
 
 fn clamp_font_weight(weight: f32) -> FontWeight {

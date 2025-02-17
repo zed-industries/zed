@@ -28,12 +28,12 @@ use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, anchored, deferred, div, point, px, size, uniform_list, Action, AnyElement, App,
-    AppContext as _, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent,
-    Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    InteractiveElement, IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy,
-    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task,
-    UniformListScrollHandle, WeakEntity, Window,
+    AppContext as _, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
+    ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle, InteractiveElement,
+    IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Stateful,
+    StatefulInteractiveElement as _, Styled, Subscription, Task, UniformListScrollHandle,
+    WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -664,9 +664,8 @@ pub fn init_settings(cx: &mut App) {
     OutlinePanelSettings::register(cx);
 }
 
-pub fn init(assets: impl AssetSource, cx: &mut App) {
+pub fn init(cx: &mut App) {
     init_settings(cx);
-    file_icons::init(assets, cx);
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
@@ -6641,7 +6640,7 @@ outline: struct OutlineEntryExcerpt
             workspace::init_settings(cx);
             Project::init_settings(cx);
             project_search::init(cx);
-            super::init((), cx);
+            super::init(cx);
         });
     }
 
