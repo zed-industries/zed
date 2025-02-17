@@ -472,6 +472,19 @@ List of `string` values
 "current_line_highlight": "all"
 ```
 
+## Selection Highlight
+
+- Description: Whether to highlight all occurrences of the selected text in an editor.
+- Setting: `selection_highlight`
+- Default: `true`
+
+## Selection Highlight Debounce
+
+- Description: The debounce delay before querying highlights based on the selected text.
+
+- Setting: `selection_highlight_debounce`
+- Default: `75`
+
 ## LSP Highlight Debounce
 
 - Description: The debounce delay before querying highlights from the language server based on the current cursor location.
@@ -532,6 +545,7 @@ List of `string` values
   "cursors": true,
   "git_diff": true,
   "search_results": true,
+  "selected_text": true,
   "selected_symbol": true,
   "diagnostics": "all",
   "axes": {
@@ -605,6 +619,16 @@ List of `string` values
 
 - Description: Whether to show buffer search results in the scrollbar.
 - Setting: `search_results`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Selected Text Indicators
+
+- Description: Whether to show selected text occurrences in the scrollbar.
+- Setting: `selected_text`
 - Default: `true`
 
 **Options**

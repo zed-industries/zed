@@ -154,6 +154,10 @@
   // 4. Highlight the full line (default):
   //    "all"
   "current_line_highlight": "all",
+  // Whether to highlight all occurrences of the selected text in an editor.
+  "selection_highlight": true,
+  // The debounce delay before querying highlights based on the selected text.
+  "selection_highlight_debounce": 50,
   // The debounce delay before querying highlights from the language
   // server based on the current cursor location.
   "lsp_highlight_debounce": 75,
@@ -259,6 +263,8 @@
     "git_diff": true,
     // Whether to show buffer search results in the scrollbar.
     "search_results": true,
+    // Whether to show selected text occurrences in the scrollbar.
+    "selected_text": true,
     // Whether to show selected symbol occurrences in the scrollbar.
     "selected_symbol": true,
     // Which diagnostic indicators to show in the scrollbar:
