@@ -1,4 +1,4 @@
-use crate::{attach_modal::AttachModal, debugger_panel_item::DebugSession};
+use crate::{attach_modal::AttachModal, debug_session::DebugSession};
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use command_palette_hooks::CommandPaletteFilter;
