@@ -641,6 +641,7 @@ pub struct Window {
     pub(crate) needs_present: Rc<Cell<bool>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
+    pub(crate) refreshing_origin: Option<Point<Pixels>>,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
@@ -925,6 +926,7 @@ impl Window {
             needs_present,
             last_input_timestamp,
             refreshing: false,
+            refreshing_origin: None,
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
@@ -1039,8 +1041,16 @@ impl Window {
     pub fn refresh(&mut self) {
         if self.invalidator.not_drawing() {
             self.refreshing = true;
+            self.refreshing_origin = None;
             self.invalidator.set_dirty(true);
         }
+    }
+
+    /// Mark the window as dirty by a special position, scheduling it to be redrawn on the next frame.
+    pub fn refresh_at(&mut self, origin: Point<Pixels>) {
+        self.refreshing = true;
+        self.refreshing_origin = Some(origin);
+        self.invalidator.set_dirty(true);
     }
 
     /// Close this window.

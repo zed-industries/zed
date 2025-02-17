@@ -1709,11 +1709,11 @@ impl Interactivity {
                         let was_hovered = hitbox.is_hovered(window);
                         window.on_mouse_event({
                             let hitbox = hitbox.clone();
-                            move |_: &MouseMoveEvent, phase, window, _| {
+                            move |e: &MouseMoveEvent, phase, window, _| {
                                 if phase == DispatchPhase::Capture {
                                     let hovered = hitbox.is_hovered(window);
                                     if hovered != was_hovered {
-                                        window.refresh();
+                                        window.refresh_at(e.position)
                                     }
                                 }
                             }
@@ -1827,10 +1827,10 @@ impl Interactivity {
         {
             let hitbox = hitbox.clone();
             let was_hovered = hitbox.is_hovered(window);
-            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, _cx| {
+            window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, _cx| {
                 let hovered = hitbox.is_hovered(window);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
-                    window.refresh();
+                    window.refresh_at(e.position);
                 }
             });
         }
@@ -1843,7 +1843,7 @@ impl Interactivity {
         if !drop_listeners.is_empty() {
             let hitbox = hitbox.clone();
             window.on_mouse_event({
-                move |_: &MouseUpEvent, phase, window, cx| {
+                move |e: &MouseUpEvent, phase, window, cx| {
                     if let Some(drag) = &cx.active_drag {
                         if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                             let drag_state_type = drag.value.as_ref().type_id();
@@ -1861,7 +1861,7 @@ impl Interactivity {
 
                                     if can_drop {
                                         listener(drag.value.as_ref(), window, cx);
-                                        window.refresh();
+                                        window.refresh_at(e.position);
                                         cx.stop_propagation();
                                     }
                                 }
@@ -1893,7 +1893,7 @@ impl Interactivity {
                             && hitbox.is_hovered(window)
                         {
                             *pending_mouse_down.borrow_mut() = Some(event.clone());
-                            window.refresh();
+                            window.refresh_at(event.position);
                         }
                     }
                 });
@@ -2038,10 +2038,10 @@ impl Interactivity {
                 .get_or_insert_with(Default::default)
                 .clone();
             if active_state.borrow().is_clicked() {
-                window.on_mouse_event(move |_: &MouseUpEvent, phase, window, _cx| {
+                window.on_mouse_event(move |e: &MouseUpEvent, phase, window, _cx| {
                     if phase == DispatchPhase::Capture {
                         *active_state.borrow_mut() = ElementClickedState::default();
-                        window.refresh();
+                        window.refresh_at(e.position);
                     }
                 });
             } else {
@@ -2050,7 +2050,7 @@ impl Interactivity {
                     .as_ref()
                     .and_then(|group_active| GroupHitboxes::get(&group_active.group, cx));
                 let hitbox = hitbox.clone();
-                window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _cx| {
+                window.on_mouse_event(move |e: &MouseDownEvent, phase, window, _cx| {
                     if phase == DispatchPhase::Bubble && !window.default_prevented() {
                         let group_hovered = active_group_hitbox
                             .map_or(false, |group_hitbox_id| group_hitbox_id.is_hovered(window));
@@ -2060,7 +2060,7 @@ impl Interactivity {
                                 group: group_hovered,
                                 element: element_hovered,
                             };
-                            window.refresh();
+                            window.refresh_at(e.position);
                         }
                     }
                 });
@@ -2108,10 +2108,10 @@ impl Interactivity {
 
         if let Some(group_hitbox) = group_hitbox {
             let was_hovered = group_hitbox.is_hovered(window);
-            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, _cx| {
+            window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, _cx| {
                 let hovered = group_hitbox.is_hovered(window);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
-                    window.refresh();
+                    window.refresh_at(e.position);
                 }
             });
         }
@@ -2162,7 +2162,7 @@ impl Interactivity {
                     scroll_offset.x += delta_x;
                     cx.stop_propagation();
                     if *scroll_offset != old_scroll_offset {
-                        window.refresh();
+                        window.refresh_at(event.position);
                     }
                 }
             });

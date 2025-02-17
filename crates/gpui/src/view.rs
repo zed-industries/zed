@@ -184,11 +184,18 @@ impl Element for AnyView {
                         let text_style = window.text_style();
 
                         if let Some(mut element_state) = element_state {
+                            let is_refreshing_in_bounds =
+                                if let Some(refresh_origin) = &window.refreshing_origin {
+                                    bounds.contains(refresh_origin)
+                                } else {
+                                    window.refreshing
+                                };
+
                             if element_state.cache_key.bounds == bounds
                                 && element_state.cache_key.content_mask == content_mask
                                 && element_state.cache_key.text_style == text_style
                                 && !window.dirty_views.contains(&self.entity_id())
-                                && !window.refreshing
+                                && !is_refreshing_in_bounds
                             {
                                 let prepaint_start = window.prepaint_index();
                                 window.reuse_prepaint(element_state.prepaint_range.clone());
