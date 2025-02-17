@@ -4032,6 +4032,25 @@ impl BufferSnapshot {
             })
     }
 
+    /// Returns all selections of the current user.
+    #[allow(clippy::type_complexity)]
+    pub fn local_selections(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            bool,
+            CursorShape,
+            impl Iterator<Item = &Selection<Anchor>> + '_,
+        ),
+    > + '_ {
+        self.remote_selections
+            .iter()
+            .filter(move |(replica_id, set)| {
+                (**replica_id == self.text.replica_id()) && !set.selections.is_empty()
+            })
+            .map(move |(_, set)| (set.line_mode, set.cursor_shape, set.selections.iter()))
+    }
+
     /// Returns if the buffer contains any diagnostics.
     pub fn has_diagnostics(&self) -> bool {
         !self.diagnostics.is_empty()
