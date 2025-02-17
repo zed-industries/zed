@@ -239,7 +239,8 @@ impl PickerDelegate for OpenPathDelegate {
                 let m = self.matches.get(self.selected_index)?;
                 let directory_state = self.directory_state.as_ref()?;
                 let candidate = directory_state.match_candidates.get(*m)?;
-                Some(format!("{}/{}", directory_state.path, candidate.string))
+                // Add trailing slash to the completed path
+                Some(format!("{}/{}/", directory_state.path, candidate.string))
             })
             .unwrap_or(query),
         )
