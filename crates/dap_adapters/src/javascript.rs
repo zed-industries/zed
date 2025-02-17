@@ -136,10 +136,6 @@ impl DebugAdapter for JsDebugAdapter {
         })
     }
 
-    fn supports_attach(&self) -> bool {
-        true
-    }
-
     fn attach_processes<'a>(
         &self,
         processes: &'a HashMap<Pid, Process>,

@@ -780,12 +780,7 @@ impl DapStore {
                             "Debug adapter does not support `attach` request"
                         )))
                     } else {
-                        store.reconnect_client(
-                            client.adapter().clone(),
-                            client.binary().clone(),
-                            new_config,
-                            cx,
-                        )
+                        store.reconnect_client(client.binary().clone(), new_config, cx)
                     }
                 });
 
@@ -1004,7 +999,7 @@ impl DapStore {
             if let Some((upstream_client, project_id)) = self.upstream_client() {
                 let future = upstream_client.request(proto::ShutdownDebugClient {
                     project_id,
-                    client_id: Some(client_id.to_proto()),
+                    client_id: client_id.to_proto(),
                 });
 
                 return cx
