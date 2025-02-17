@@ -10850,12 +10850,8 @@ impl Editor {
                     let range = editor.range_for_match(&range);
                     let range = collapse_multiline_range(range);
 
-                    if editor
-                        .buffer
-                        .read(cx)
-                        .as_singleton()
-                        .as_ref()
-                        .is_some_and(|_| !split)
+                    if !split
+                        && Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref()
                     {
                         editor.go_to_singleton_buffer_range(range.clone(), window, cx);
                     } else {
