@@ -15,7 +15,7 @@ impl EventEmitter<DismissEvent> for UpdateNotification {}
 impl Render for UpdateNotification {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let app_name = ReleaseChannel::global(cx).display_name();
-        let version = self.version.clone();
+        let version = self.version;
         let workspace = self.workspace.clone();
 
         cx.new(|_cx| {
