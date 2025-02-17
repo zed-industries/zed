@@ -23,7 +23,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use task::TCPHost;
+use task::{DebugAdapterKind, TCPHost};
 use util::ResultExt as _;
 
 use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};
@@ -76,12 +76,25 @@ enum Transport {
 }
 
 impl Transport {
-    async fn start(&self, binary: &DebugAdapterBinary, cx: &mut AsyncApp) -> Result<TransportPipe> {
-        match self {
-            Transport::Stdio(stdio_transport) => stdio_transport.start(binary, cx).await,
-            Transport::Tcp(tcp_transport) => tcp_transport.start(binary, cx).await,
-            #[cfg(any(test, feature = "test-support"))]
-            Transport::Fake(fake_transport) => fake_transport.start(binary, cx).await,
+    async fn start(
+        binary: &DebugAdapterBinary,
+        cx: &mut AsyncApp,
+    ) -> Result<(TransportPipe, Self)> {
+        #[cfg(any(test, feature = "test-support"))]
+        if binary.kind == DebugAdapterKind::Fake {
+            return FakeTransport::start(cx)
+                .await
+                .map(|(transports, fake)| (transports, Self::Fake(fake)));
+        }
+
+        if let Some(connection) = &binary.connection {
+            TcpTransport::start(binary, cx)
+                .await
+                .map(|(transports, tcp)| (transports, Self::Tcp(tcp)))
+        } else {
+            StdioTransport::start(binary, cx)
+                .await
+                .map(|(transports, stdio)| (transports, Self::Stdio(stdio)))
         }
     }
 
@@ -100,15 +113,6 @@ impl Transport {
             Transport::Tcp(tcp_transport) => tcp_transport.kill().await,
             #[cfg(any(test, feature = "test-support"))]
             Transport::Fake(fake_transport) => fake_transport.kill().await,
-        }
-    }
-
-    async fn reconnect(&self, cx: &mut AsyncApp) -> Result<TransportPipe> {
-        match self {
-            Transport::Stdio(stdio_transport) => stdio_transport.reconnect(cx).await,
-            Transport::Tcp(tcp_transport) => tcp_transport.reconnect(cx).await,
-            #[cfg(any(test, feature = "test-support"))]
-            Transport::Fake(fake_transport) => fake_transport.reconnect(cx).await,
         }
     }
 
@@ -137,15 +141,6 @@ impl Transport {
 }
 
 impl TransportDelegate {
-    pub async fn new(args: DebugAdapterBinary) -> Self {
-        Self {
-            transport: Transport::new(args).await,
-            server_tx: Default::default(),
-            log_handlers: Default::default(),
-            current_requests: Default::default(),
-            pending_requests: Default::default(),
-        }
-    }
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake(args: DebugAdapterBinary) -> Self {
         Self {
@@ -157,21 +152,20 @@ impl TransportDelegate {
         }
     }
 
-    pub(crate) async fn reconnect(
-        &mut self,
-        cx: &mut AsyncApp,
-    ) -> Result<(Receiver<Message>, Sender<Message>)> {
-        self.start_handlers(self.transport.reconnect(cx).await?, cx)
-            .await
-    }
-
     pub(crate) async fn start(
-        &mut self,
         binary: &DebugAdapterBinary,
         cx: &mut AsyncApp,
-    ) -> Result<(Receiver<Message>, Sender<Message>)> {
-        self.start_handlers(self.transport.start(binary, cx).await?, cx)
-            .await
+    ) -> Result<((Receiver<Message>, Sender<Message>), Self)> {
+        let (transport_pipes, transport) = Transport::start(binary, cx).await?;
+        let mut this = Self {
+            transport,
+            server_tx: Default::default(),
+            log_handlers: Default::default(),
+            current_requests: Default::default(),
+            pending_requests: Default::default(),
+        };
+        let messages = this.start_handlers(transport_pipes, cx).await?;
+        Ok((messages, this))
     }
 
     async fn start_handlers(
@@ -548,8 +542,8 @@ impl TransportDelegate {
 pub struct TcpTransport {
     port: u16,
     host: Ipv4Addr,
-    timeout: Option<u64>,
-    process: Arc<Mutex<Child>>,
+    timeout: u64,
+    process: Mutex<Child>,
 }
 
 impl TcpTransport {
@@ -571,45 +565,10 @@ impl TcpTransport {
             .port())
     }
 
-    async fn reconnect(&self, cx: &mut AsyncApp) -> Result<TransportPipe> {
-        let address = SocketAddrV4::new(self.host, self.port);
-
-        let timeout = self.timeout.unwrap_or_else(|| {
-            cx.update(|cx| DebuggerSettings::get_global(cx).timeout)
-                .unwrap_or(2000u64)
-        });
-
-        let (rx, tx) = select! {
-            _ = cx.background_executor().timer(Duration::from_millis(timeout)).fuse() => {
-                return Err(anyhow!(format!("Reconnect to TCP DAP timeout {}:{}", self.host, self.port)))
-            },
-            result = cx.spawn(|cx| async move {
-                loop {
-                    match TcpStream::connect(address).await {
-                        Ok(stream) => return stream.split(),
-                        Err(_) => {
-                            cx.background_executor().timer(Duration::from_millis(100)).await;
-                        }
-                    }
-                }
-            }).fuse() => result
-        };
-
-        log::info!(
-            "Debug adapter has reconnected to TCP server {}:{}",
-            self.host,
-            self.port
-        );
-
-        Ok(TransportPipe::new(
-            Box::new(tx),
-            Box::new(BufReader::new(rx)),
-            None,
-            None,
-        ))
-    }
-
-    async fn start(binary: &DebugAdapterBinary, cx: &mut AsyncApp) -> Result<TransportPipe> {
+    async fn start(
+        binary: &DebugAdapterBinary,
+        cx: &mut AsyncApp,
+    ) -> Result<(TransportPipe, Self)> {
         let Some(connection_args) = binary.connection.as_ref() else {
             return Err(anyhow!("No connection arguments provided"));
         };
@@ -680,20 +639,24 @@ impl TcpTransport {
             host,
             port
         );
-
         let stdout = process.stdout.take();
         let stderr = process.stderr.take();
 
-        {
-            *self.process.lock().await = Some(process);
-        }
+        let this = Self {
+            port,
+            host,
+            process: Mutex::new(process),
+            timeout,
+        };
 
-        Ok(TransportPipe::new(
+        let pipe = TransportPipe::new(
             Box::new(tx),
             Box::new(BufReader::new(rx)),
             stdout.map(|s| Box::new(s) as Box<dyn AsyncRead + Unpin + Send>),
             stderr.map(|s| Box::new(s) as Box<dyn AsyncRead + Unpin + Send>),
-        ))
+        );
+
+        Ok((pipe, this))
     }
 
     fn has_adapter_logs(&self) -> bool {
@@ -701,26 +664,18 @@ impl TcpTransport {
     }
 
     async fn kill(&self) -> Result<()> {
-        if let Some(mut process) = self.process.lock().await.take() {
-            process.kill()?;
-        }
+        self.process.lock().await.kill()?;
 
         Ok(())
     }
 }
 
 pub struct StdioTransport {
-    process: Arc<Mutex<Option<Child>>>,
+    process: Mutex<Child>,
 }
 
 impl StdioTransport {
-    pub fn new() -> Self {
-        Self {
-            process: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    async fn start(&self, binary: &DebugAdapterBinary, _: &mut AsyncApp) -> Result<TransportPipe> {
+    async fn start(binary: &DebugAdapterBinary, _: &mut AsyncApp) -> Result<(TransportPipe, Self)> {
         let mut command = util::command::new_smol_command(&binary.command);
 
         if let Some(cwd) = &binary.cwd {
@@ -767,15 +722,16 @@ impl StdioTransport {
 
         log::info!("Debug adapter has connected to stdio adapter");
 
-        {
-            *self.process.lock().await = Some(process);
-        }
+        let process = Mutex::new(process);
 
-        Ok(TransportPipe::new(
-            Box::new(stdin),
-            Box::new(BufReader::new(stdout)),
-            None,
-            stderr,
+        Ok((
+            TransportPipe::new(
+                Box::new(stdin),
+                Box::new(BufReader::new(stdout)),
+                None,
+                stderr,
+            ),
+            Self { process },
         ))
     }
 
@@ -788,10 +744,7 @@ impl StdioTransport {
     }
 
     async fn kill(&self) -> Result<()> {
-        if let Some(mut process) = self.process.lock().await.take() {
-            process.kill()?;
-        }
-
+        self.process.lock().await.kill()?;
         Ok(())
     }
 }
@@ -819,13 +772,6 @@ pub struct FakeTransport {
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeTransport {
-    pub fn new() -> Self {
-        Self {
-            request_handlers: Arc::new(Mutex::new(HashMap::default())),
-            response_handlers: Arc::new(Mutex::new(HashMap::default())),
-        }
-    }
-
     pub async fn on_request<R: dap_types::requests::Request, F>(&self, mut handler: F)
     where
         F: 'static + Send + FnMut(u64, R::Arguments) -> Result<R::Response, ErrorResponse>,
@@ -884,19 +830,19 @@ impl FakeTransport {
         .await
     }
 
-    async fn start(
-        &self,
-        _binary: &DebugAdapterBinary,
-        cx: &mut AsyncApp,
-    ) -> Result<TransportPipe> {
+    async fn start(cx: &mut AsyncApp) -> Result<TransportPipe> {
+        let this = Self {
+            request_handlers: Arc::new(Mutex::new(HashMap::default())),
+            response_handlers: Arc::new(Mutex::new(HashMap::default())),
+        };
         use dap_types::requests::{Request, RunInTerminal, StartDebugging};
         use serde_json::json;
 
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
 
-        let request_handlers = self.request_handlers.clone();
-        let response_handlers = self.response_handlers.clone();
+        let request_handlers = this.request_handlers.clone();
+        let response_handlers = this.response_handlers.clone();
         let stdout_writer = Arc::new(Mutex::new(stdout_writer));
 
         cx.background_executor()

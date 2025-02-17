@@ -94,6 +94,11 @@ impl DebugAdapter for JsDebugAdapter {
             ]),
             cwd: config.cwd.clone(),
             envs: None,
+            connection: Some(adapters::TcpArguments {
+                host: self.host,
+                port: Some(self.port),
+                timeout: self.timeout,
+            }),
         })
     }
 

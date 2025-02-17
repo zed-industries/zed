@@ -121,6 +121,11 @@ impl DebugAdapter for PythonDebugAdapter {
                 format!("--port={}", self.port).into(),
                 format!("--host={}", self.host).into(),
             ]),
+            connection: Some(adapters::TcpArguments {
+                host: self.host,
+                port: Some(self.port),
+                timeout: self.timeout,
+            }),
             cwd: config.cwd.clone(),
             envs: None,
         })

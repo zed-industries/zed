@@ -55,6 +55,7 @@ impl DebugAdapter for LldbDebugAdapter {
             arguments: None,
             envs: None,
             cwd: config.cwd.clone(),
+            connection: None,
         })
     }
 
