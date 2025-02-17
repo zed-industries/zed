@@ -144,6 +144,7 @@ define_connection!(
                 end INTEGER NOT NULL,
                 PRIMARY KEY(item_id),
                 FOREIGN KEY(editor_id, workspace_id) REFERENCES editors(item_id, workspace_id)
+                ON DELETE CASCADE
             ) STRICT;
         ),
     ];
@@ -211,8 +212,8 @@ impl EditorDb {
             workspace_id: WorkspaceId
         ) -> Result<Vec<(usize, usize)>> {
             SELECT start, end
-            FROM selections
-            WHERE item_id = ?1 AND workspace_id = ?2
+            FROM editor_selections
+            WHERE editor_id = ?1 AND workspace_id = ?2
         }
     }
 
@@ -224,7 +225,7 @@ impl EditorDb {
     ) -> Result<()> {
         let mut first_selection;
         let mut last_selection = 0_usize;
-        for (count, placeholders) in std::iter::once("(?, ?, ?, ?)")
+        for (count, placeholders) in std::iter::once("(?1, ?2, ?, ?)")
             .cycle()
             .take(selections.len())
             .chunks(MAX_QUERY_PLACEHOLDERS / 4)
@@ -244,16 +245,11 @@ impl EditorDb {
             last_selection = last_selection + count;
             let query = format!(
                 r#"
-                BEGIN TRANSACTION;
+DELETE FROM editor_selections WHERE editor_id = ?1 AND workspace_id = ?2;
 
-                DELETE FROM editor_selections WHERE item_id = ?1 AND workspace_id = ?2;
-
-                INSERT INTO selections (item_id, workspace_id, start, end)
-                VALUES ({placeholders});
-
-                COMMIT;
-
-                DELETE FROM editors WHERE workspace_id = ? AND item_id NOT IN ({placeholders})"#
+INSERT INTO editor_selections (editor_id, workspace_id, start, end)
+VALUES {placeholders};
+"#
             );
 
             let selections = selections[first_selection..last_selection].to_vec();
@@ -262,8 +258,6 @@ impl EditorDb {
                 statement.bind(&editor_id, 1)?;
                 let mut next_index = statement.bind(&workspace_id, 2)?;
                 for (start, end) in selections {
-                    next_index = statement.bind(&editor_id, next_index)?;
-                    next_index = statement.bind(&workspace_id, next_index)?;
                     next_index = statement.bind(&start, next_index)?;
                     next_index = statement.bind(&end, next_index)?;
                 }

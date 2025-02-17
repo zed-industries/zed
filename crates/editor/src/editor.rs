@@ -2197,7 +2197,7 @@ impl Editor {
                 let editor_id = cx.entity().entity_id().as_u64() as ItemId;
                 let snapshot = self.buffer().read(cx).snapshot(cx);
                 self.serialize_selections = cx.background_spawn(async move {
-                    background_executor.timer(UPDATE_DEBOUNCE).await;
+                    background_executor.timer(Duration::from_millis(100)).await;
                     let selections = selections
                         .iter()
                         .map(|selection| {
@@ -15014,7 +15014,8 @@ impl Editor {
         self.load_diff_task.clone()
     }
 
-    // TODO kb allow to turn it off in the settings
+    // TODO kb allow to turn it off in the settings.
+    // TODO kb does not work when keeping the editor open, and close && go back the same editor.
     fn read_selections_from_db(
         &mut self,
         item_id: u64,
@@ -15025,6 +15026,9 @@ impl Editor {
         let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() else {
             return;
         };
+        if selections.is_empty() {
+            return;
+        }
 
         self.change_selections(None, window, cx, |s| {
             s.select_ranges(selections.into_iter().map(|(start, end)| start..end));
