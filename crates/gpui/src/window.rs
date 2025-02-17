@@ -1038,6 +1038,8 @@ impl Window {
     }
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
+    ///
+    /// It also force redraws all cached views, see: [`AnyView::cached`].
     pub fn refresh(&mut self) {
         if self.invalidator.not_drawing() {
             self.refreshing = true;
@@ -1047,6 +1049,8 @@ impl Window {
     }
 
     /// Mark the window as dirty by a special position, scheduling it to be redrawn on the next frame.
+    ///
+    /// Unlike `refresh`, this method will only force redraws Cached Views that intersect with the given origin.
     pub fn refresh_at(&mut self, origin: Point<Pixels>) {
         self.refreshing = true;
         self.refreshing_origin = Some(origin);
