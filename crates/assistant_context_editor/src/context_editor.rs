@@ -2614,6 +2614,49 @@ impl ContextEditor {
             )
             .into_any()
     }
+
+    fn get_token_counts(&self, cx: &Context<Self>) -> (usize, usize) {
+        let context = self.context().read(cx);
+        let token_count = context.token_count().unwrap_or(0);
+        let max_token_count = LanguageModelRegistry::read_global(cx)
+            .active_model()
+            .map_or(0, |model| model.max_token_count());
+        (token_count, max_token_count)
+    }
+
+    fn render_token_count(&self, token_count: usize, max_token_count: usize) -> impl IntoElement {
+        let (color, is_over_threshold) = if token_count >= max_token_count {
+            (Color::Error, true)
+        } else if (token_count as f32 / max_token_count as f32) >= 0.8 {
+            (Color::Warning, true)
+        } else {
+            (Color::Muted, false)
+        };
+
+        h_flex()
+            .id("token-count")
+            .gap_0p5()
+            .child(
+                Label::new(humanize_token_count(token_count))
+                    .size(LabelSize::Small)
+                    .color(color),
+            )
+            .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+            .child(
+                Label::new(humanize_token_count(max_token_count))
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .when(is_over_threshold, |element| {
+                element.tooltip({
+                    Tooltip::text(if token_count >= max_token_count {
+                        "Token Limit Reached"
+                    } else {
+                        "Token Limit is Close to Exhaustion"
+                    })
+                })
+            })
+    }
 }
 
 /// Returns the contents of the *outermost* fenced code block that contains the given offset.
@@ -2869,7 +2912,6 @@ impl EventEmitter<SearchEvent> for ContextEditor {}
 impl Render for ContextEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
-
         let accept_terms = if self.show_accept_terms {
             provider.as_ref().and_then(|provider| {
                 provider.render_accept_terms(LanguageModelProviderTosView::PromptEditorPopup, cx)
@@ -2877,6 +2919,7 @@ impl Render for ContextEditor {
         } else {
             None
         };
+        let (token_count, max_token_count) = self.get_token_counts(cx);
 
         v_flex()
             .key_context("ContextEditor")
@@ -2954,6 +2997,22 @@ impl Render for ContextEditor {
                                 .child(self.render_send_button(window, cx)),
                         ),
                 ),
+            )
+            .child(
+                h_flex()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .w(px(85.))
+                    .justify_end()
+                    .bg(cx.theme().colors().editor_background)
+                    .py_1()
+                    .px_2p5()
+                    .border_l_1()
+                    .border_b_1()
+                    .rounded_bl_lg()
+                    .border_color(cx.theme().colors().border)
+                    .child(self.render_token_count(token_count, max_token_count)),
             )
     }
 }
