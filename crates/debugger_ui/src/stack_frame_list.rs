@@ -28,7 +28,6 @@ pub struct StackFrameList {
     session: Entity<Client>,
     entries: Vec<StackFrameEntry>,
     workspace: WeakEntity<Workspace>,
-    client_id: DebugAdapterClientId,
     current_stack_frame_id: StackFrameId,
     _fetch_stack_frames_task: Option<Task<Result<()>>>,
 }
