@@ -4745,7 +4745,11 @@ impl Editor {
             return;
         }
         let buffer = self.buffer().read(cx).snapshot(cx);
+        let debounce = EditorSettings::get_global(cx).selection_highlight_debounce;
         self.selection_highlight_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
+            cx.background_executor()
+                .timer(Duration::from_millis(debounce))
+                .await;
             let matches = cx
                 .background_executor()
                 .spawn(async move {
