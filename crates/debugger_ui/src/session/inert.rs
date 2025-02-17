@@ -1,5 +1,8 @@
 use gpui::{App, FocusHandle, Focusable};
-use ui::{div, Context, Element, InteractiveElement, ParentElement, Render, Styled};
+use ui::{
+    div, h_flex, v_flex, Context, ContextMenu, DropdownMenu, Element, InteractiveElement,
+    ParentElement, Render, Styled,
+};
 
 pub(super) struct InertState {
     focus_handle: FocusHandle,
@@ -21,12 +24,21 @@ impl Focusable for InertState {
 impl Render for InertState {
     fn render(
         &mut self,
-        _window: &mut ui::Window,
-        _cx: &mut ui::Context<'_, Self>,
+        window: &mut ui::Window,
+        cx: &mut ui::Context<'_, Self>,
     ) -> impl ui::IntoElement {
-        div()
+        v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
-            .child("No debug sessions")
+            .p_1()
+            .child(h_flex().child(DropdownMenu::new(
+                "dap-adapter-picker",
+                "Select Debug Adapter",
+                ContextMenu::build(window, cx, |this, _, _| {
+                    this.entry("GDB", None, |_, _| {})
+                        .entry("Delve", None, |_, _| {})
+                        .entry("LLDB", None, |_, _| {})
+                }),
+            )))
     }
 }

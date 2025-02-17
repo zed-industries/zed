@@ -83,7 +83,20 @@ impl DebugPanel {
                 pane.set_can_navigate(true, cx);
                 pane.display_nav_history_buttons(None);
                 pane.set_should_display_tab_bar(|_window, _cx| true);
-                pane.set_close_pane_if_empty(false, cx);
+                pane.set_close_pane_if_empty(true, cx);
+                pane.set_render_tab_bar_buttons(cx, |_, _, _| {
+                    (
+                        None,
+                        Some(
+                            h_flex()
+                                .child(
+                                    IconButton::new("new-debug-session", IconName::Plus)
+                                        .icon_size(IconSize::Small),
+                                )
+                                .into_any_element(),
+                        ),
+                    )
+                });
                 pane.add_item(
                     Box::new(DebugSession::inert(cx)),
                     false,
