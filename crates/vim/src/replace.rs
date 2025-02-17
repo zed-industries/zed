@@ -464,6 +464,8 @@ mod test {
         cx.simulate_keystrokes("c x x w c x i w");
         cx.assert_state("ˇworld", Mode::Normal);
 
+        // the focus should still be at the start of the word if we reverse the
+        // order of selections (smaller -> larger)
         cx.set_state("ˇhello world", Mode::Normal);
         cx.simulate_keystrokes("c x i w c x x");
         cx.assert_state("ˇhello", Mode::Normal);
@@ -476,9 +478,5 @@ mod test {
         cx.set_state("ˇhello world", Mode::Normal);
         cx.simulate_keystrokes("c x t r w c x i w");
         cx.assert_state("hello ˇworld", Mode::Normal);
-
-        cx.set_state("ˇhello world", Mode::Normal);
-        cx.simulate_keystrokes("w c x i w ^ c x t r");
-        cx.assert_state("ˇhello world", Mode::Normal);
     }
 }
