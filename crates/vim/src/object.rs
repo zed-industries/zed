@@ -555,6 +555,10 @@ impl Object {
         around: bool,
     ) -> bool {
         if let Some(range) = self.range(map, selection.clone(), around) {
+            // Validate range is non-empty
+            if range.end <= range.start {
+                return false;
+            }
             selection.start = range.start;
             selection.end = range.end;
             if !around && self.is_multiline() {
