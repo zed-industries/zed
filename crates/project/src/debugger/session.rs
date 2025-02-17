@@ -366,21 +366,25 @@ impl Session {
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(move |mut cx| async move {
-            let adapter = build_adapter(&config.kind).await?;
-            let mode =
-                LocalMode::new(client_id, breakpoints, config, adapter, |_, _| {}, cx).await?;
-            cx.update(|cx| {
-                cx.new(|cx| Self {
-                    mode: Mode::Local(mode),
-                    client_id,
-                    config,
-                    capabilities: unimplemented!(),
-                    ignore_breakpoints: false,
-                    requests: HashMap::default(),
-                    modules: Vec::default(),
-                    loaded_sources: Vec::default(),
-                    threads: IndexMap::default(),
-                })
+            let mode = LocalMode::new(
+                client_id,
+                breakpoints,
+                config.clone(),
+                delegate,
+                |_, _| {},
+                cx.clone(),
+            )
+            .await?;
+            cx.new(|_| Self {
+                mode: Mode::Local(mode),
+                client_id,
+                config,
+                capabilities: unimplemented!(),
+                ignore_breakpoints: false,
+                requests: HashMap::default(),
+                modules: Vec::default(),
+                loaded_sources: Vec::default(),
+                threads: IndexMap::default(),
             })
         })
     }

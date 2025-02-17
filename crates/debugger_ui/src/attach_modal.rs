@@ -139,11 +139,8 @@ impl PickerDelegate for AttachModalDelegate {
                         };
 
                         let system = System::new_all();
-                        let Some(processes) =
-                            client.adapter().attach_processes(&system.processes())
-                        else {
-                            return Vec::new();
-                        };
+                        todo!("client.adapter().attach_processes(&system.processes())");
+                        let processes: Vec<(&sysinfo::Pid, &sysinfo::Process)> = vec![];
 
                         let processes = processes
                             .into_iter()
@@ -156,7 +153,7 @@ impl PickerDelegate for AttachModalDelegate {
                                     .map(|s| s.to_string_lossy().to_string())
                                     .collect::<Vec<_>>(),
                             })
-                            .collect::<Vec<_>>();
+                            .collect::<Vec<Candidate>>();
 
                         let _ = this.delegate.candidates.insert(processes.clone());
 
