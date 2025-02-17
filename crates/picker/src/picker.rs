@@ -3,14 +3,16 @@ use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, App, ClickEvent,
     Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Length,
-    ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render, ScrollStrategy, Task,
-    UniformListScrollHandle, Window,
+    ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render, ScrollStrategy, Stateful,
+    Task, UniformListScrollHandle, Window,
 };
 use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
-use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing};
+use ui::{
+    prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing, Scrollbar, ScrollbarState,
+};
 use workspace::ModalView;
 
 mod head;
@@ -46,7 +48,6 @@ pub struct Picker<D: PickerDelegate> {
     confirm_on_update: Option<bool>,
     width: Option<Length>,
     max_height: Option<Length>,
-
     /// Whether the `Picker` is rendered as a self-contained modal.
     ///
     /// Set this to `false` when rendering the `Picker` as part of a larger modal.
@@ -643,21 +644,25 @@ impl<D: PickerDelegate> Picker<D> {
             ListSizingBehavior::Auto
         };
         match &self.element_container {
-            ElementContainer::UniformList(scroll_handle) => uniform_list(
-                cx.entity().clone(),
-                "candidates",
-                self.delegate.match_count(),
-                move |picker, visible_range, window, cx| {
-                    visible_range
-                        .map(|ix| picker.render_element(window, cx, ix))
-                        .collect()
-                },
-            )
-            .with_sizing_behavior(sizing_behavior)
-            .flex_grow()
-            .py_1()
-            .track_scroll(scroll_handle.clone())
-            .into_any_element(),
+            ElementContainer::UniformList(scroll_handle) => {
+                println!("uniform");
+
+                uniform_list(
+                    cx.entity().clone(),
+                    "candidates",
+                    self.delegate.match_count(),
+                    move |picker, visible_range, window, cx| {
+                        visible_range
+                            .map(|ix| picker.render_element(window, cx, ix))
+                            .collect()
+                    },
+                )
+                .with_sizing_behavior(sizing_behavior)
+                .flex_grow()
+                .py_1()
+                .track_scroll(scroll_handle.clone())
+                .into_any_element()
+            }
             ElementContainer::List(state) => list(state.clone())
                 .with_sizing_behavior(sizing_behavior)
                 .flex_grow()
@@ -675,6 +680,62 @@ impl<D: PickerDelegate> Picker<D> {
             }
         }
     }
+
+    fn render_scrollbar(
+        &self,
+        scroll_handle: &UniformListScrollHandle,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
+        // if !Self::should_show_scrollbar(cx)
+        //     || !(self.show_scrollbar || self.scrollbar_state.is_dragging())
+        // {
+        //     return None;
+        // }
+        //
+        println!("scroll");
+
+        Some(
+            div()
+                .occlude()
+                .id("picker-scroll")
+                .visible_on_hover("element-container")
+                .on_mouse_move(cx.listener(|_, _, _window, cx| {
+                    cx.notify();
+                    cx.stop_propagation()
+                }))
+                .on_hover(|_, _window, cx| {
+                    cx.stop_propagation();
+                })
+                .on_any_mouse_down(|_, _window, cx| {
+                    cx.stop_propagation();
+                })
+                // .on_mouse_up(
+                //     MouseButton::Left,
+                //     cx.listener(|terminal_view, _, window, cx| {
+                //         if !terminal_view.scrollbar_state.is_dragging()
+                //             && !terminal_view.focus_handle.contains_focused(window, cx)
+                //         {
+                //             terminal_view.hide_scrollbar(cx);
+                //             cx.notify();
+                //         }
+                //         cx.stop_propagation();
+                //     }),
+                // )
+                .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
+                    cx.notify();
+                }))
+                .h_full()
+                .absolute()
+                .right_1()
+                .top_1()
+                .bottom_0()
+                .w(px(12.))
+                .cursor_default()
+                .children(Scrollbar::vertical(ScrollbarState::new(
+                    scroll_handle.clone(),
+                ))),
+        )
+    }
 }
 
 impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
@@ -683,7 +744,12 @@ impl<D: PickerDelegate> ModalView for Picker<D> {}
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editor_position = self.delegate.editor_position();
-
+        let scroll_handle = match &self.element_container {
+            ElementContainer::UniformList(scroll_handle) => scroll_handle,
+            ElementContainer::List(_) => {
+                unimplemented!();
+            }
+        };
         v_flex()
             .key_context("Picker")
             .size_full()
@@ -716,11 +782,17 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .when(self.delegate.match_count() > 0, |el| {
                 el.child(
                     v_flex()
+                        .relative()
+                        .group("element-container")
                         .flex_grow()
                         .when_some(self.max_height, |div, max_h| div.max_h(max_h))
                         .overflow_hidden()
                         .children(self.delegate.render_header(window, cx))
-                        .child(self.render_element_container(cx)),
+                        .child(self.render_element_container(cx))
+                        .when_some(
+                            self.render_scrollbar(scroll_handle, cx),
+                            |div, scrollbar| div.child(scrollbar),
+                        ),
                 )
             })
             .when(self.delegate.match_count() == 0, |el| {
