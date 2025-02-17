@@ -276,8 +276,8 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn can_save(&self, _cx: &App) -> bool {
         false
     }
-    fn can_save_as(&self, cx: &App) -> bool {
-        self.is_singleton(cx)
+    fn can_save_as(&self, _: &App) -> bool {
+        false
     }
     fn save(
         &mut self,
@@ -1474,6 +1474,10 @@ pub mod test {
                     .project_items
                     .iter()
                     .all(|item| item.read(cx).entry_id.is_some())
+        }
+
+        fn can_save_as(&self, _cx: &App) -> bool {
+            self.is_singleton
         }
 
         fn save(

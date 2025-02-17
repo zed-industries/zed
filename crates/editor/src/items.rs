@@ -706,6 +706,10 @@ impl Item for Editor {
         self.buffer.read(cx).is_singleton()
     }
 
+    fn can_save_as(&self, cx: &App) -> bool {
+        self.buffer.read(cx).is_singleton()
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
