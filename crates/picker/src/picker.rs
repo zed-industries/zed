@@ -814,7 +814,6 @@ impl<D: PickerDelegate> Render for Picker<D> {
                         .overflow_hidden()
                         .children(self.delegate.render_header(window, cx))
                         .child(self.render_element_container(cx))
-                        .track_focus(&self.focus_handle(cx))
                         .on_hover(cx.listener(|this, hovered, window, cx| {
                             if *hovered {
                                 this.scrollbar_visibility = true;
