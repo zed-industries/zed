@@ -2396,6 +2396,8 @@ impl Pane {
         };
 
         let total_items = self.items.len();
+        let has_items_to_left = ix > 0;
+        let has_items_to_right = ix < total_items - 1;
         let is_pinned = self.is_tab_pinned(ix);
         let pane = cx.entity().downgrade();
         let menu_context = item.item_focus_handle(cx);
@@ -2431,42 +2433,44 @@ impl Pane {
                                 })),
                         ))
                         .separator()
-                        .entry(
-                            "Close Left",
-                            Some(Box::new(CloseItemsToTheLeft {
-                                close_pinned: false,
-                            })),
-                            window.handler_for(&pane, move |pane, window, cx| {
-                                pane.close_items_to_the_left_by_id(
-                                    item_id,
-                                    &CloseItemsToTheLeft {
-                                        close_pinned: false,
-                                    },
-                                    pane.get_non_closeable_item_ids(false),
-                                    window,
-                                    cx,
-                                )
-                                .detach_and_log_err(cx);
-                            }),
-                        )
-                        .entry(
-                            "Close Right",
-                            Some(Box::new(CloseItemsToTheRight {
-                                close_pinned: false,
-                            })),
-                            window.handler_for(&pane, move |pane, window, cx| {
-                                pane.close_items_to_the_right_by_id(
-                                    item_id,
-                                    &CloseItemsToTheRight {
-                                        close_pinned: false,
-                                    },
-                                    pane.get_non_closeable_item_ids(false),
-                                    window,
-                                    cx,
-                                )
-                                .detach_and_log_err(cx);
-                            }),
-                        )
+                        .item(ContextMenuItem::Entry(
+                            ContextMenuEntry::new("Close Left")
+                                .action(Some(Box::new(CloseItemsToTheLeft {
+                                    close_pinned: false,
+                                })))
+                                .disabled(!has_items_to_left)
+                                .handler(window.handler_for(&pane, move |pane, window, cx| {
+                                    pane.close_items_to_the_left_by_id(
+                                        item_id,
+                                        &CloseItemsToTheLeft {
+                                            close_pinned: false,
+                                        },
+                                        pane.get_non_closeable_item_ids(false),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach_and_log_err(cx);
+                                })),
+                        ))
+                        .item(ContextMenuItem::Entry(
+                            ContextMenuEntry::new("Close Right")
+                                .action(Some(Box::new(CloseItemsToTheRight {
+                                    close_pinned: false,
+                                })))
+                                .disabled(!has_items_to_right)
+                                .handler(window.handler_for(&pane, move |pane, window, cx| {
+                                    pane.close_items_to_the_right_by_id(
+                                        item_id,
+                                        &CloseItemsToTheRight {
+                                            close_pinned: false,
+                                        },
+                                        pane.get_non_closeable_item_ids(false),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach_and_log_err(cx);
+                                })),
+                        ))
                         .separator()
                         .entry(
                             "Close Clean",
