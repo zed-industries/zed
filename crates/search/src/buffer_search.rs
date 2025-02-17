@@ -6,6 +6,7 @@ use crate::{
     ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
 };
 use any_vec::AnyVec;
+use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
     actions::{Tab, TabPrev},
@@ -17,6 +18,7 @@ use gpui::{
     FocusHandle, Focusable, Hsla, InteractiveElement as _, IntoElement, KeyContext,
     ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task, TextStyle, Window,
 };
+use language::{Language, LanguageRegistry};
 use project::{
     search::SearchQuery,
     search_history::{SearchHistory, SearchHistoryCursor},
@@ -108,6 +110,7 @@ pub struct BufferSearchBar {
     scroll_handle: ScrollHandle,
     editor_scroll_handle: ScrollHandle,
     editor_needed_width: Pixels,
+    regex_language: Option<Arc<Language>>,
 }
 
 impl BufferSearchBar {
@@ -115,7 +118,6 @@ impl BufferSearchBar {
         &self,
         editor: &Entity<Editor>,
         color: Hsla,
-
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
@@ -140,6 +142,7 @@ impl BufferSearchBar {
                 background: cx.theme().colors().editor_background,
                 local_player: cx.theme().players().local(),
                 text: text_style,
+                // TODO kb need to get the regex syntax highlights here?
                 ..Default::default()
             },
         )
@@ -652,7 +655,11 @@ impl BufferSearchBar {
         }))
     }
 
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        languages: Option<Arc<LanguageRegistry>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let query_editor = cx.new(|cx| Editor::single_line(window, cx));
         cx.subscribe_in(&query_editor, window, Self::on_query_editor_event)
             .detach();
@@ -661,6 +668,32 @@ impl BufferSearchBar {
             .detach();
 
         let search_options = SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+        if let Some(languages) = languages {
+            let query_buffer = query_editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("query editor should be backed by a singleton buffer");
+            query_buffer.update(cx, |query_buffer, _| {
+                query_buffer.set_language_registry(languages.clone());
+            });
+
+            cx.spawn(|buffer_search_bar, mut cx| async move {
+                let regex_language = languages
+                    .language_for_name("regex")
+                    .await
+                    .context("loading regex language")?;
+                buffer_search_bar
+                    .update(&mut cx, |buffer_search_bar, cx| {
+                        buffer_search_bar.regex_language = Some(regex_language);
+                        buffer_search_bar.adjust_query_regex_language(cx);
+                    })
+                    .ok();
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
 
         Self {
             query_editor,
@@ -688,6 +721,7 @@ impl BufferSearchBar {
             scroll_handle: ScrollHandle::new(),
             editor_scroll_handle: ScrollHandle::new(),
             editor_needed_width: px(0.),
+            regex_language: None,
         }
     }
 
@@ -910,6 +944,7 @@ impl BufferSearchBar {
         self.search_options.toggle(search_option);
         self.default_options = self.search_options;
         drop(self.update_matches(false, window, cx));
+        self.adjust_query_regex_language(cx);
         cx.notify();
     }
 
@@ -1429,6 +1464,28 @@ impl BufferSearchBar {
             }
         }
     }
+
+    fn adjust_query_regex_language(&self, cx: &mut App) {
+        let enable = self.search_options.contains(SearchOptions::REGEX);
+        let query_buffer = self
+            .query_editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .expect("query editor should be backed by a singleton buffer");
+        if dbg!(enable) {
+            if let Some(regex_language) = dbg!(self.regex_language.clone()) {
+                query_buffer.update(cx, |query_buffer, cx| {
+                    query_buffer.set_language(Some(regex_language), cx);
+                })
+            }
+        } else {
+            query_buffer.update(cx, |query_buffer, cx| {
+                query_buffer.set_language(None, cx);
+            })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1482,7 +1539,7 @@ mod tests {
             cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
 
         let search_bar = cx.new_window_entity(|window, cx| {
-            let mut search_bar = BufferSearchBar::new(window, cx);
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
             search_bar
@@ -1851,7 +1908,7 @@ mod tests {
         });
 
         let search_bar = window.build_entity(cx, |window, cx| {
-            let mut search_bar = BufferSearchBar::new(window, cx);
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
             search_bar
@@ -2059,7 +2116,7 @@ mod tests {
             cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
 
         let search_bar = cx.new_window_entity(|window, cx| {
-            let mut search_bar = BufferSearchBar::new(window, cx);
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
             search_bar
@@ -2133,7 +2190,7 @@ mod tests {
             cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
 
         let search_bar = cx.new_window_entity(|window, cx| {
-            let mut search_bar = BufferSearchBar::new(window, cx);
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
             search_bar
@@ -2513,7 +2570,7 @@ mod tests {
             cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
 
         let search_bar = cx.new_window_entity(|window, cx| {
-            let mut search_bar = BufferSearchBar::new(window, cx);
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
             search_bar
@@ -2596,7 +2653,7 @@ mod tests {
         });
 
         let search_bar = cx.new_window_entity(|window, cx| {
-            let mut search_bar = BufferSearchBar::new(window, cx);
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
             search_bar

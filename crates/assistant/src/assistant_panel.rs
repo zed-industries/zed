@@ -279,7 +279,17 @@ impl AssistantPanel {
             });
             pane.toolbar().update(cx, |toolbar, cx| {
                 toolbar.add_item(context_editor_toolbar.clone(), window, cx);
-                toolbar.add_item(cx.new(|cx| BufferSearchBar::new(window, cx)), window, cx)
+                toolbar.add_item(
+                    cx.new(|cx| {
+                        BufferSearchBar::new(
+                            Some(workspace.project().read(cx).languages().clone()),
+                            window,
+                            cx,
+                        )
+                    }),
+                    window,
+                    cx,
+                )
             });
             pane
         });

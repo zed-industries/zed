@@ -885,7 +885,13 @@ fn initialize_pane(
             toolbar.add_item(multibuffer_hint, window, cx);
             let breadcrumbs = cx.new(|_| Breadcrumbs::new());
             toolbar.add_item(breadcrumbs, window, cx);
-            let buffer_search_bar = cx.new(|cx| search::BufferSearchBar::new(window, cx));
+            let buffer_search_bar = cx.new(|cx| {
+                search::BufferSearchBar::new(
+                    Some(workspace.project().read(cx).languages().clone()),
+                    window,
+                    cx,
+                )
+            });
             toolbar.add_item(buffer_search_bar.clone(), window, cx);
             let proposed_change_bar = cx.new(|_| ProposedChangesEditorToolbar::new());
             toolbar.add_item(proposed_change_bar, window, cx);
