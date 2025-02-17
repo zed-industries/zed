@@ -76,10 +76,7 @@ enum Transport {
 }
 
 impl Transport {
-    async fn start(
-        binary: &DebugAdapterBinary,
-        cx: &mut AsyncApp,
-    ) -> Result<(TransportPipe, Self)> {
+    async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
         #[cfg(any(test, feature = "test-support"))]
         if binary.kind == DebugAdapterKind::Fake {
             return FakeTransport::start(cx)
@@ -87,7 +84,7 @@ impl Transport {
                 .map(|(transports, fake)| (transports, Self::Fake(fake)));
         }
 
-        if let Some(connection) = &binary.connection {
+        if binary.connection.is_some() {
             TcpTransport::start(binary, cx)
                 .await
                 .map(|(transports, tcp)| (transports, Self::Tcp(tcp)))
@@ -154,9 +151,9 @@ impl TransportDelegate {
 
     pub(crate) async fn start(
         binary: &DebugAdapterBinary,
-        cx: &mut AsyncApp,
+        cx: AsyncApp,
     ) -> Result<((Receiver<Message>, Sender<Message>), Self)> {
-        let (transport_pipes, transport) = Transport::start(binary, cx).await?;
+        let (transport_pipes, transport) = Transport::start(binary, cx.clone()).await?;
         let mut this = Self {
             transport,
             server_tx: Default::default(),
@@ -171,7 +168,7 @@ impl TransportDelegate {
     async fn start_handlers(
         &mut self,
         mut params: TransportPipe,
-        cx: &mut AsyncApp,
+        cx: AsyncApp,
     ) -> Result<(Receiver<Message>, Sender<Message>)> {
         let (client_tx, server_rx) = unbounded::<Message>();
         let (server_tx, client_rx) = unbounded::<Message>();
@@ -565,10 +562,7 @@ impl TcpTransport {
             .port())
     }
 
-    async fn start(
-        binary: &DebugAdapterBinary,
-        cx: &mut AsyncApp,
-    ) -> Result<(TransportPipe, Self)> {
+    async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
         let Some(connection_args) = binary.connection.as_ref() else {
             return Err(anyhow!("No connection arguments provided"));
         };
@@ -675,7 +669,7 @@ pub struct StdioTransport {
 }
 
 impl StdioTransport {
-    async fn start(binary: &DebugAdapterBinary, _: &mut AsyncApp) -> Result<(TransportPipe, Self)> {
+    async fn start(binary: &DebugAdapterBinary, _: AsyncApp) -> Result<(TransportPipe, Self)> {
         let mut command = util::command::new_smol_command(&binary.command);
 
         if let Some(cwd) = &binary.cwd {
@@ -739,7 +733,7 @@ impl StdioTransport {
         false
     }
 
-    async fn reconnect(&self, _: &mut AsyncApp) -> Result<TransportPipe> {
+    async fn reconnect(&self, _: AsyncApp) -> Result<TransportPipe> {
         bail!("Cannot reconnect to adapter")
     }
 
@@ -816,7 +810,7 @@ impl FakeTransport {
             .insert(R::COMMAND, Box::new(handler));
     }
 
-    async fn reconnect(&self, cx: &mut AsyncApp) -> Result<TransportPipe> {
+    async fn reconnect(&self, cx: AsyncApp) -> Result<TransportPipe> {
         self.start(
             &DebugAdapterBinary {
                 command: "command".into(),
@@ -830,7 +824,7 @@ impl FakeTransport {
         .await
     }
 
-    async fn start(cx: &mut AsyncApp) -> Result<TransportPipe> {
+    async fn start(cx: AsyncApp) -> Result<TransportPipe> {
         let this = Self {
             request_handlers: Arc::new(Mutex::new(HashMap::default())),
             response_handlers: Arc::new(Mutex::new(HashMap::default())),

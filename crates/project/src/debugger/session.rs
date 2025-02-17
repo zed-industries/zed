@@ -1,3 +1,5 @@
+use crate::project_settings::ProjectSettings;
+
 use super::breakpoint_store::BreakpointStore;
 use super::dap_command::{
     self, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand, NextCommand,
@@ -8,15 +10,19 @@ use super::dap_command::{
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
 use collections::{HashMap, IndexMap};
+use dap::adapters::{DapDelegate, DapStatus, DebugAdapterName};
 use dap::client::{DebugAdapterClient, DebugAdapterClientId};
 use dap::{
-    Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, SteppingGranularity,
+    messages::Message, Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source,
+    SteppingGranularity,
 };
 use dap_adapters::build_adapter;
 use futures::{future::Shared, FutureExt};
-use gpui::{App, AppContext, Context, Entity, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
 use rpc::AnyProtoClient;
 use serde_json::Value;
+use settings::Settings;
+use std::path::PathBuf;
 use std::u64;
 use std::{
     any::Any,
@@ -154,14 +160,19 @@ struct LocalMode {
 }
 
 impl LocalMode {
-    fn new(
+    fn new<F>(
+        client_id: DebugAdapterClientId,
         breakpoint_store: Entity<BreakpointStore>,
         disposition: DebugAdapterConfig,
         delegate: DapAdapterDelegate,
-        cx: &mut App,
-    ) -> Task<Result<Self>> {
-        cx.spawn(move |cx| async move {
-            let adapter = build_adapter(&config.kind).await?;
+        message_handler: F,
+        cx: AsyncApp,
+    ) -> Task<Result<Self>>
+    where
+        F: FnMut(Message, &mut App) + 'static + Send + Sync + Clone,
+    {
+        cx.spawn(move |mut cx| async move {
+            let adapter = build_adapter(&disposition.kind).await?;
 
             let binary = cx.update(|cx| {
                 let name = DebugAdapterName::from(adapter.name().as_ref());
@@ -172,19 +183,43 @@ impl LocalMode {
                     .and_then(|s| s.binary.as_ref().map(PathBuf::from))
             })?;
 
-            todo!()
+            let (adapter, binary) = match adapter
+                .get_binary(&delegate, &disposition, binary, &mut cx)
+                .await
+            {
+                Err(error) => {
+                    delegate.update_status(
+                        adapter.name(),
+                        DapStatus::Failed {
+                            error: error.to_string(),
+                        },
+                    );
+
+                    return Err(error);
+                }
+                Ok(mut binary) => {
+                    delegate.update_status(adapter.name(), DapStatus::None);
+
+                    let shell_env = delegate.shell_env().await;
+                    let mut envs = binary.envs.unwrap_or_default();
+                    envs.extend(shell_env);
+                    binary.envs = Some(envs);
+
+                    (adapter, binary)
+                }
+            };
+
+            Ok(Self {
+                client: Arc::new(
+                    DebugAdapterClient::start(client_id, binary, message_handler, cx).await?,
+                ),
+            })
         })
     }
 }
 impl From<RemoteConnection> for Mode {
     fn from(value: RemoteConnection) -> Self {
         Self::Remote(value)
-    }
-}
-
-impl From<Arc<DebugAdapterClient>> for Mode {
-    fn from(client: Arc<DebugAdapterClient>) -> Self {
-        Mode::Local(client)
     }
 }
 
@@ -225,7 +260,7 @@ impl Mode {
     {
         match self {
             Mode::Local(debug_adapter_client) => {
-                Self::request_local(&debug_adapter_client, request, cx)
+                Self::request_local(&debug_adapter_client.client, request, cx)
             }
             Mode::Remote(remote_connection) => {
                 remote_connection.request_remote(request, client_id, cx)
@@ -330,9 +365,10 @@ impl Session {
         config: DebugAdapterConfig,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        cx.spawn(move |cx| async move {
+        cx.spawn(move |mut cx| async move {
             let adapter = build_adapter(&config.kind).await?;
-            let mode = LocalMode::new(breakpoints, config, adapter, cx).await?;
+            let mode =
+                LocalMode::new(client_id, breakpoints, config, adapter, |_, _| {}, cx).await?;
             cx.update(|cx| {
                 cx.new(|cx| Self {
                     mode: Mode::Local(mode),
@@ -629,7 +665,7 @@ impl Session {
 
     pub fn adapter_client(&self) -> Option<Arc<DebugAdapterClient>> {
         match self.mode {
-            Mode::Local(ref adapter_client) => Some(adapter_client.clone()),
+            Mode::Local(ref adapter_client) => Some(adapter_client.client.clone()),
             Mode::Remote(_) => None,
         }
     }

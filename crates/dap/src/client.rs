@@ -53,13 +53,13 @@ impl DebugAdapterClient {
         id: DebugAdapterClientId,
         binary: DebugAdapterBinary,
         message_handler: F,
-        cx: &mut AsyncApp,
-    ) -> Result<()>
+        cx: AsyncApp,
+    ) -> Result<Self>
     where
         F: FnMut(Message, &mut App) + 'static + Send + Sync + Clone,
     {
         let ((server_rx, server_tx), transport_delegate) =
-            TransportDelegate::start(&binary, cx).await?;
+            TransportDelegate::start(&binary, cx.clone()).await?;
         let this = Self {
             id,
             binary,
@@ -87,6 +87,8 @@ impl DebugAdapterClient {
                 }
             })
             .detach_and_log_err(cx);
+
+            this
         })
     }
 

@@ -620,23 +620,7 @@ impl DapStore {
                 }
             };
 
-            let mut client = DebugAdapterClient::new(client_id, binary, &cx);
-
-            client
-                .start(
-                    {
-                        let dap_store = this.clone();
-                        move |message, cx| {
-                            dap_store
-                                .update(cx, |_, cx| {
-                                    cx.emit(DapStoreEvent::DebugClientEvent { client_id, message })
-                                })
-                                .log_err();
-                        }
-                    },
-                    &mut cx,
-                )
-                .await?;
+            let mut client = DebugAdapterClient::start(client_id, binary, |_, _| {}, cx).await?;
 
             Ok(Arc::new(client))
         })
@@ -709,7 +693,7 @@ impl DapStore {
 
         cx.spawn(|this, mut cx| async move {
             let capabilities = client
-                .request::<Initialize>(dap_client_capabilities(client.adapter_id()))
+                .request::<Initialize>(dap_client_capabilities(todo!()))
                 .await?;
 
             this.update(&mut cx, |store, cx| {
