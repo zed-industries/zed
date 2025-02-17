@@ -98,6 +98,14 @@ impl Focusable for DebugSession {
 
 impl Item for DebugSession {
     type Event = DebugPanelItemEvent;
+    fn tab_content(&self, _: item::TabContentParams, _: &Window, _: &App) -> AnyElement {
+        let label = match &self.mode {
+            DebugSessionState::Inert(_) => "New Session",
+            DebugSessionState::Starting(_) => "Starting",
+            DebugSessionState::Running(_) => "Running",
+        };
+        div().child(Label::new(label)).into_any_element()
+    }
 }
 
 impl FollowableItem for DebugSession {
