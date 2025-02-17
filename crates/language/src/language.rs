@@ -915,7 +915,7 @@ impl GrammarId {
 pub struct Grammar {
     id: GrammarId,
     pub ts_language: tree_sitter::Language,
-    pub(crate) error_query: Query,
+    pub(crate) error_query: Option<Query>,
     pub(crate) highlights_query: Option<Query>,
     pub(crate) brackets_config: Option<BracketConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
@@ -1070,7 +1070,7 @@ impl Language {
                     override_config: None,
                     redactions_config: None,
                     runnable_config: None,
-                    error_query: Query::new(&ts_language, "(ERROR) @error").unwrap(),
+                    error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
                     ts_language,
                     highlight_map: Default::default(),
                 })

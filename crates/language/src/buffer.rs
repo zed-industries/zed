@@ -2915,7 +2915,7 @@ impl BufferSnapshot {
 
         let mut error_ranges = Vec::<Range<Point>>::new();
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
-            Some(&grammar.error_query)
+            grammar.error_query.as_ref()
         });
         while let Some(mat) = matches.peek() {
             let node = mat.captures[0].node;
