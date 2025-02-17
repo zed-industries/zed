@@ -4731,16 +4731,18 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        self.clear_background_highlights::<SelectedTextHighlight>(cx);
         self.selection_highlight_task.take();
         if !EditorSettings::get_global(cx).selection_highlight {
+            self.clear_background_highlights::<SelectedTextHighlight>(cx);
             return;
         }
         if self.selections.count() != 1 || self.selections.line_mode {
+            self.clear_background_highlights::<SelectedTextHighlight>(cx);
             return;
         }
         let selection = self.selections.newest::<Point>(cx);
         if selection.is_empty() || selection.start.row != selection.end.row {
+            self.clear_background_highlights::<SelectedTextHighlight>(cx);
             return;
         }
         let debounce = EditorSettings::get_global(cx).selection_highlight_debounce;
@@ -4798,6 +4800,7 @@ impl Editor {
             let matches = matches_task.await;
             editor
                 .update_in(&mut cx, |editor, _, cx| {
+                    editor.clear_background_highlights::<SelectedTextHighlight>(cx);
                     if !matches.is_empty() {
                         editor.highlight_background::<SelectedTextHighlight>(
                             &matches,
