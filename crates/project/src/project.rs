@@ -117,8 +117,8 @@ pub use worktree::{
 pub use buffer_store::ProjectTransaction;
 pub use lsp_store::{
     DiagnosticSummary, LanguageServerLogType, LanguageServerProgress, LanguageServerPromptRequest,
-    LanguageServerStatus, LanguageServerToQuery, LspStore, LspStoreEvent,
-    SERVER_PROGRESS_THROTTLE_TIMEOUT,
+    LanguageServerShowDocumentRequest, LanguageServerStatus, LanguageServerToQuery, LspStore,
+    LspStoreEvent, SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
 pub use toolchain_store::ToolchainStore;
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
@@ -252,6 +252,7 @@ pub enum Event {
         notification_id: SharedString,
     },
     LanguageServerPrompt(LanguageServerPromptRequest),
+    LanguageServerShowDocument(LanguageServerShowDocumentRequest),
     LanguageNotFound(Entity<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
@@ -2334,6 +2335,9 @@ impl Project {
             LspStoreEvent::RefreshInlayHints => cx.emit(Event::RefreshInlayHints),
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
+            }
+            LspStoreEvent::LanguageServerShowDocument(request) => {
+                cx.emit(Event::LanguageServerShowDocument(request.clone()))
             }
             LspStoreEvent::DiskBasedDiagnosticsStarted { language_server_id } => {
                 cx.emit(Event::DiskBasedDiagnosticsStarted {

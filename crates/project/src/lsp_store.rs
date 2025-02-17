@@ -48,8 +48,8 @@ use lsp::{
     FileOperationPatternKind, FileOperationRegistrationOptions, FileRename, FileSystemWatcher,
     InsertTextFormat, LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions,
     LanguageServerId, LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf,
-    RenameFilesParams, ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, WillRenameFiles,
-    WorkDoneProgressCancelParams, WorkspaceFolder,
+    RenameFilesParams, ServerHealthStatus, ServerStatus, ShowDocumentResult, SymbolKind, TextEdit,
+    WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
@@ -812,6 +812,42 @@ impl LocalLspStore {
                             Ok(response)
                         } else {
                             Ok(None)
+                        }
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_request::<lsp::request::ShowDocument, _, _>({
+                let this = this.clone();
+                let name = name.to_string();
+                move |params, mut cx| {
+                    let this = this.clone();
+                    let (tx, rx) = smol::channel::bounded(1);
+                    async move {
+                        let request = LanguageServerShowDocumentRequest {
+                            uri: params.uri,
+                            external: match params.external {
+                                Some(opt) => opt,
+                                None => false,
+                            },
+                            response_channel: tx,
+                        };
+                        let did_update = this
+                            .update(&mut cx, |_, cx| {
+                                cx.emit(LspStoreEvent::LanguageServerShowDocument(request));
+                            })
+                            .is_ok();
+                        if did_update {
+                            let response = rx.recv().await.ok();
+                            let ret = match response {
+                                Some(v) => Ok(v),
+                                None => Ok(ShowDocumentResult { success: false }),
+                            };
+                            ret
+                        } else {
+                            Ok(ShowDocumentResult { success: false })
                         }
                     }
                 }
@@ -2837,6 +2873,7 @@ pub enum LspStoreEvent {
     },
     LanguageServerLog(LanguageServerId, LanguageServerLogType, String),
     LanguageServerPrompt(LanguageServerPromptRequest),
+    LanguageServerShowDocument(LanguageServerShowDocumentRequest),
     LanguageDetected {
         buffer: Entity<Buffer>,
         new_language: Option<Arc<Language>>,
@@ -8313,6 +8350,36 @@ impl LanguageServerPromptRequest {
 impl PartialEq for LanguageServerPromptRequest {
     fn eq(&self, other: &Self) -> bool {
         self.message == other.message && self.actions == other.actions
+    }
+}
+
+/// A show document request by LSP server
+#[derive(Clone, Debug)]
+pub struct LanguageServerShowDocumentRequest {
+    pub uri: Url,
+    pub external: bool,
+    pub(crate) response_channel: Sender<ShowDocumentResult>,
+}
+
+impl LanguageServerShowDocumentRequest {
+    pub async fn respond(&self, result: Result<()>) -> Option<()> {
+        match result {
+            Ok(_) => self
+                .response_channel
+                .send(ShowDocumentResult { success: true })
+                .await
+                .ok(),
+            Err(_) => self
+                .response_channel
+                .send(ShowDocumentResult { success: false })
+                .await
+                .ok(),
+        }
+    }
+}
+impl PartialEq for LanguageServerShowDocumentRequest {
+    fn eq(&self, other: &Self) -> bool {
+        self.uri == other.uri && self.external == other.external
     }
 }
 
