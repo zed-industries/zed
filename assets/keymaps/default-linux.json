@@ -364,6 +364,7 @@
       "ctrl-.": "editor::ToggleCodeActions",
       "ctrl-k r": "editor::RevealInFileManager",
       "ctrl-k p": "editor::CopyPath",
+      "ctrl-k n": "editor::CopyPathWithLineNumber",
       "ctrl-\\": "pane::SplitRight",
       "ctrl-k v": "markdown::OpenPreviewToTheSide",
       "ctrl-shift-v": "markdown::OpenPreview",

@@ -13077,6 +13077,21 @@ impl Editor {
         }
     }
 
+    pub fn copy_path_with_line_number(
+        &mut self,
+        _: &zed_actions::workspace::CopyPathWithLineNumber,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(path) = self.target_file_abs_path(cx) {
+            if let Some(path) = path.to_str() {
+                let selection = self.selections.newest::<Point>(cx).start.row + 1;
+                let path_with_line_number = format!("{}:{}", path, selection);
+                cx.write_to_clipboard(ClipboardItem::new_string(path_with_line_number));
+            }
+        }
+    }
+
     pub fn copy_relative_path(
         &mut self,
         _: &zed_actions::workspace::CopyRelativePath,
@@ -13086,6 +13101,21 @@ impl Editor {
         if let Some(path) = self.target_file_path(cx) {
             if let Some(path) = path.to_str() {
                 cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
+            }
+        }
+    }
+
+    pub fn copy_relative_path_with_line_number(
+        &mut self,
+        _: &zed_actions::workspace::CopyRelativePathWithLineNumber,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(path) = self.target_file_path(cx) {
+            if let Some(path) = path.to_str() {
+                let selection = self.selections.newest::<Point>(cx).start.row + 1;
+                let path_with_line_number = format!("{}:{}", path, selection);
+                cx.write_to_clipboard(ClipboardItem::new_string(path_with_line_number));
             }
         }
     }

@@ -409,7 +409,9 @@ impl EditorElement {
         register_action(editor, window, hover_popover::hover);
         register_action(editor, window, Editor::reveal_in_finder);
         register_action(editor, window, Editor::copy_path);
+        register_action(editor, window, Editor::copy_path_with_line_number);
         register_action(editor, window, Editor::copy_relative_path);
+        register_action(editor, window, Editor::copy_relative_path_with_line_number);
         register_action(editor, window, Editor::copy_file_name);
         register_action(editor, window, Editor::copy_file_name_without_extension);
         register_action(editor, window, Editor::copy_highlight_json);

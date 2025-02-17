@@ -104,11 +104,31 @@ pub mod workspace {
 
     action_with_deprecated_aliases!(
         workspace,
+        CopyPathWithLineNumber,
+        [
+            "editor::CopyPathWithLineNumber",
+            "outline_panel::CopyPathWithLineNumber",
+            "project_panel::CopyPathWithLineNumber"
+        ]
+    );
+
+    action_with_deprecated_aliases!(
+        workspace,
         CopyRelativePath,
         [
             "editor::CopyRelativePath",
             "outline_panel::CopyRelativePath",
             "project_panel::CopyRelativePath"
+        ]
+    );
+
+    action_with_deprecated_aliases!(
+        workspace,
+        CopyRelativePathWithLineNumber,
+        [
+            "editor::CopyRelativePathWithLineNumber",
+            "outline_panel::CopyRelativePathWithLineNumber",
+            "project_panel::CopyRelativePathWithLineNumber"
         ]
     );
 }
