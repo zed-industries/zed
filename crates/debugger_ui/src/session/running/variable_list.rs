@@ -1,4 +1,4 @@
-use crate::stack_frame_list::{StackFrameId, StackFrameList, StackFrameListEvent};
+use super::stack_frame_list::{StackFrameId, StackFrameList, StackFrameListEvent};
 use anyhow::{anyhow, Result};
 use dap::{
     client::DebugAdapterClientId, proto_conversions::ProtoConversion, Scope, ScopePresentationHint,

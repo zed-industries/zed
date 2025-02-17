@@ -5,7 +5,7 @@ use dap::{
     SourceBreakpoint, StackFrame,
 };
 use debugger_ui::debugger_panel::DebugPanel;
-use debugger_ui::debugger_panel_item::DebugSession;
+use debugger_ui::session::DebugSession;
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use project::{Project, ProjectPath, WorktreeId};

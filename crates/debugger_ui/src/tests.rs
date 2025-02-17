@@ -4,7 +4,7 @@ use settings::SettingsStore;
 use terminal_view::terminal_panel::TerminalPanel;
 use workspace::Workspace;
 
-use crate::{debugger_panel::DebugPanel, debugger_panel_item::DebugSession};
+use crate::{debugger_panel::DebugPanel, session::DebugSession};
 
 mod attach_modal;
 mod console;

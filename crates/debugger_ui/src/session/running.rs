@@ -1,0 +1,691 @@
+mod console;
+mod loaded_source_list;
+mod module_list;
+mod stack_frame_list;
+mod variable_list;
+
+use console::Console;
+use dap::{
+    client::DebugAdapterClientId, debugger_settings::DebuggerSettings, Capabilities, ContinuedEvent,
+};
+use gpui::{
+    AppContext, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
+};
+use loaded_source_list::LoadedSourceList;
+use module_list::ModuleList;
+use project::debugger::session::{Session, ThreadId, ThreadStatus};
+use rpc::proto::{self, ViewId};
+use settings::Settings;
+use stack_frame_list::{StackFrameList, StackFrameListEvent};
+use ui::{
+    div, h_flex, v_flex, ActiveTheme, AnyElement, App, Button, ButtonCommon, Clickable, Color,
+    Context, ContextMenu, Disableable, DropdownMenu, Element, FluentBuilder, IconButton, IconName,
+    IconSize, Indicator, InteractiveElement, IntoElement, Label, LabelCommon, ParentElement,
+    Render, SharedString, StatefulInteractiveElement, Styled, Tooltip, Window,
+};
+use variable_list::VariableList;
+use workspace::{
+    item::{self, ItemEvent},
+    FollowableItem, Item, Workspace,
+};
+
+use crate::debugger_panel::{DebugPanel, DebugPanelEvent};
+
+use super::{DebugPanelItemEvent, ThreadItem};
+
+pub struct RunningState {
+    session: Entity<Session>,
+    thread_id: ThreadId,
+    console: Entity<console::Console>,
+    focus_handle: FocusHandle,
+    remote_id: Option<ViewId>,
+    show_console_indicator: bool,
+    module_list: Entity<module_list::ModuleList>,
+    active_thread_item: ThreadItem,
+    _workspace: WeakEntity<Workspace>,
+    client_id: DebugAdapterClientId,
+    variable_list: Entity<variable_list::VariableList>,
+    _subscriptions: Vec<Subscription>,
+    stack_frame_list: Entity<stack_frame_list::StackFrameList>,
+    loaded_source_list: Entity<loaded_source_list::LoadedSourceList>,
+}
+
+impl Render for RunningState {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let thread_status = ThreadStatus::Running;
+        let active_thread_item = &self.active_thread_item;
+
+        let capabilities = self.capabilities(cx);
+
+        h_flex()
+            .key_context("DebugPanelItem")
+            .track_focus(&self.focus_handle(cx))
+            .size_full()
+            .items_start()
+            .child(
+                v_flex()
+                    .size_full()
+                    .items_start()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .justify_between()
+                            .child(
+                                h_flex()
+                                    .p_1()
+                                    .w_full()
+                                    .gap_2()
+                                    .map(|this| {
+                                        if thread_status == ThreadStatus::Running {
+                                            this.child(
+                                                IconButton::new(
+                                                    "debug-pause",
+                                                    IconName::DebugPause,
+                                                )
+                                                .icon_size(IconSize::Small)
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.pause_thread(cx);
+                                                }))
+                                                .tooltip(move |window, cx| {
+                                                    Tooltip::text("Pause program")(window, cx)
+                                                }),
+                                            )
+                                        } else {
+                                            this.child(
+                                                IconButton::new(
+                                                    "debug-continue",
+                                                    IconName::DebugContinue,
+                                                )
+                                                .icon_size(IconSize::Small)
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.continue_thread(cx)
+                                                }))
+                                                .disabled(thread_status != ThreadStatus::Stopped)
+                                                .tooltip(move |window, cx| {
+                                                    Tooltip::text("Continue program")(window, cx)
+                                                }),
+                                            )
+                                        }
+                                    })
+                                    .when(
+                                        capabilities.supports_step_back.unwrap_or(false),
+                                        |this| {
+                                            this.child(
+                                                IconButton::new(
+                                                    "debug-step-back",
+                                                    IconName::DebugStepBack,
+                                                )
+                                                .icon_size(IconSize::Small)
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.step_back(cx);
+                                                }))
+                                                .disabled(thread_status != ThreadStatus::Stopped)
+                                                .tooltip(move |window, cx| {
+                                                    Tooltip::text("Step back")(window, cx)
+                                                }),
+                                            )
+                                        },
+                                    )
+                                    .child(
+                                        IconButton::new("debug-step-over", IconName::DebugStepOver)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.step_over(cx);
+                                            }))
+                                            .disabled(thread_status != ThreadStatus::Stopped)
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text("Step over")(window, cx)
+                                            }),
+                                    )
+                                    .child(
+                                        IconButton::new("debug-step-in", IconName::DebugStepInto)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.step_in(cx);
+                                            }))
+                                            .disabled(thread_status != ThreadStatus::Stopped)
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text("Step in")(window, cx)
+                                            }),
+                                    )
+                                    .child(
+                                        IconButton::new("debug-step-out", IconName::DebugStepOut)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.step_out(cx);
+                                            }))
+                                            .disabled(thread_status != ThreadStatus::Stopped)
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text("Step out")(window, cx)
+                                            }),
+                                    )
+                                    .child(
+                                        IconButton::new("debug-restart", IconName::DebugRestart)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.restart_client(cx);
+                                            }))
+                                            .disabled(
+                                                !capabilities
+                                                    .supports_restart_request
+                                                    .unwrap_or_default(),
+                                            )
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text("Restart")(window, cx)
+                                            }),
+                                    )
+                                    .child(
+                                        IconButton::new("debug-stop", IconName::DebugStop)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.stop_thread(cx);
+                                            }))
+                                            .disabled(
+                                                thread_status != ThreadStatus::Stopped
+                                                    && thread_status != ThreadStatus::Running,
+                                            )
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text("Stop")(window, cx)
+                                            }),
+                                    )
+                                    .child(
+                                        IconButton::new(
+                                            "debug-disconnect",
+                                            IconName::DebugDisconnect,
+                                        )
+                                        .icon_size(IconSize::Small)
+                                        .on_click(cx.listener(|this, _, _window, cx| {
+                                            this.disconnect_client(cx);
+                                        }))
+                                        .disabled(
+                                            thread_status == ThreadStatus::Exited
+                                                || thread_status == ThreadStatus::Ended,
+                                        )
+                                        .tooltip(
+                                            move |window, cx| {
+                                                Tooltip::text("Disconnect")(window, cx)
+                                            },
+                                        ),
+                                    )
+                                    .child(
+                                        IconButton::new(
+                                            "debug-ignore-breakpoints",
+                                            if self.session.read(cx).breakpoints_enabled() {
+                                                IconName::DebugBreakpoint
+                                            } else {
+                                                IconName::DebugIgnoreBreakpoints
+                                            },
+                                        )
+                                        .icon_size(IconSize::Small)
+                                        .on_click(cx.listener(|this, _, _window, cx| {
+                                            this.toggle_ignore_breakpoints(cx);
+                                        }))
+                                        .disabled(
+                                            thread_status == ThreadStatus::Exited
+                                                || thread_status == ThreadStatus::Ended,
+                                        )
+                                        .tooltip(
+                                            move |window, cx| {
+                                                Tooltip::text("Ignore breakpoints")(window, cx)
+                                            },
+                                        ),
+                                    ),
+                            )
+                            //.child(h_flex())
+                            .child(h_flex().p_1().mx_2().w_3_4().justify_end().child(
+                                DropdownMenu::new(
+                                    "thread-list",
+                                    "Threads",
+                                    ContextMenu::build(window, cx, |this, _, _| {
+                                        this.entry("Thread 1", None, |_, _| {}).entry(
+                                            "Thread 2",
+                                            None,
+                                            |_, _| {},
+                                        )
+                                    }),
+                                ),
+                            )),
+                    )
+                    .child(
+                        h_flex()
+                            .size_full()
+                            .items_start()
+                            .p_1()
+                            .gap_4()
+                            .child(self.stack_frame_list.clone()),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .border_l_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .size_full()
+                    .items_start()
+                    .child(
+                        h_flex()
+                            .border_b_1()
+                            .w_full()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(self.render_entry_button(
+                                &SharedString::from("Variables"),
+                                ThreadItem::Variables,
+                                cx,
+                            ))
+                            .when(
+                                capabilities.supports_modules_request.unwrap_or_default(),
+                                |this| {
+                                    this.child(self.render_entry_button(
+                                        &SharedString::from("Modules"),
+                                        ThreadItem::Modules,
+                                        cx,
+                                    ))
+                                },
+                            )
+                            .when(
+                                capabilities
+                                    .supports_loaded_sources_request
+                                    .unwrap_or_default(),
+                                |this| {
+                                    this.child(self.render_entry_button(
+                                        &SharedString::from("Loaded Sources"),
+                                        ThreadItem::LoadedSource,
+                                        cx,
+                                    ))
+                                },
+                            )
+                            .child(self.render_entry_button(
+                                &SharedString::from("Console"),
+                                ThreadItem::Console,
+                                cx,
+                            )),
+                    )
+                    .when(*active_thread_item == ThreadItem::Variables, |this| {
+                        this.size_full().child(self.variable_list.clone())
+                    })
+                    .when(*active_thread_item == ThreadItem::Modules, |this| {
+                        this.size_full().child(self.module_list.clone())
+                    })
+                    .when(*active_thread_item == ThreadItem::LoadedSource, |this| {
+                        this.size_full().child(self.loaded_source_list.clone())
+                    })
+                    .when(*active_thread_item == ThreadItem::Console, |this| {
+                        this.child(self.console.clone())
+                    }),
+            )
+    }
+}
+
+impl RunningState {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        session: Entity<Session>,
+        client_id: DebugAdapterClientId,
+        thread_id: ThreadId,
+        debug_panel: &Entity<DebugPanel>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let focus_handle = cx.focus_handle();
+
+        let stack_frame_list = cx.new(|cx| {
+            StackFrameList::new(workspace.clone(), session.clone(), thread_id, window, cx)
+        });
+
+        let variable_list = cx.new(|cx| {
+            VariableList::new(
+                session.clone(),
+                client_id,
+                stack_frame_list.clone(),
+                window,
+                cx,
+            )
+        });
+
+        let module_list = cx.new(|cx| ModuleList::new(session.clone(), client_id, cx));
+
+        let loaded_source_list = cx.new(|cx| LoadedSourceList::new(session.clone(), client_id, cx));
+
+        let console = cx.new(|cx| {
+            Console::new(
+                session.clone(),
+                client_id,
+                stack_frame_list.clone(),
+                variable_list.clone(),
+                window,
+                cx,
+            )
+        });
+
+        cx.observe(&module_list, |_, _, cx| cx.notify()).detach();
+
+        let _subscriptions = vec![
+            cx.subscribe_in(debug_panel, window, {
+                move |this: &mut Self, _, event: &DebugPanelEvent, window, cx| {
+                    match event {
+                        DebugPanelEvent::Stopped {
+                            client_id,
+                            event,
+                            go_to_stack_frame,
+                        } => this.handle_stopped_event(client_id, event, *go_to_stack_frame, cx),
+                        DebugPanelEvent::Thread((client_id, event)) => {
+                            this.handle_thread_event(client_id, event, cx)
+                        }
+                        DebugPanelEvent::Output((client_id, event)) => {
+                            this.handle_output_event(client_id, event, window, cx)
+                        }
+                        DebugPanelEvent::Module((client_id, event)) => {
+                            this.handle_module_event(client_id, event, cx)
+                        }
+                        DebugPanelEvent::LoadedSource((client_id, event)) => {
+                            this.handle_loaded_source_event(client_id, event, cx)
+                        }
+                        DebugPanelEvent::ClientShutdown(client_id) => {
+                            this.handle_client_shutdown_event(client_id, cx)
+                        }
+                        DebugPanelEvent::Continued((client_id, event)) => {
+                            this.handle_thread_continued_event(client_id, event, cx);
+                        }
+                        DebugPanelEvent::Exited(client_id)
+                        | DebugPanelEvent::Terminated(client_id) => {
+                            this.handle_client_exited_and_terminated_event(client_id, cx);
+                        }
+                        DebugPanelEvent::CapabilitiesChanged(client_id) => {
+                            this.handle_capabilities_changed_event(client_id, cx);
+                        }
+                    };
+                }
+            }),
+            cx.subscribe(
+                &stack_frame_list,
+                move |this: &mut Self, _, event: &StackFrameListEvent, cx| match event {
+                    StackFrameListEvent::SelectedStackFrameChanged(_)
+                    | StackFrameListEvent::StackFramesUpdated => this.clear_highlights(cx),
+                },
+            ),
+        ];
+
+        Self {
+            session,
+            console,
+            thread_id,
+            _workspace: workspace,
+            module_list,
+
+            focus_handle,
+            variable_list,
+            _subscriptions,
+            remote_id: None,
+            stack_frame_list,
+            loaded_source_list,
+            client_id,
+            show_console_indicator: false,
+            active_thread_item: ThreadItem::Variables,
+        }
+    }
+
+    // pub(crate) fn update_adapter(
+    //     &mut self,
+    //     update: &UpdateDebugAdapter,
+    //     window: &mut Window,
+    //     cx: &mut Context<Self>,
+    // ) {
+    //     if let Some(update_variant) = update.variant.as_ref() {
+    //         match update_variant {
+    //             proto::update_debug_adapter::Variant::StackFrameList(stack_frame_list) => {
+    //                 self.stack_frame_list.update(cx, |this, cx| {
+    //                     this.set_from_proto(stack_frame_list.clone(), cx);
+    //                 })
+    //             }
+    //             proto::update_debug_adapter::Variant::ThreadState(thread_state) => {
+    //                 self.thread_state.update(cx, |this, _| {
+    //                     *this = ThreadState::from_proto(thread_state.clone());
+    //                 })
+    //             }
+    //             proto::update_debug_adapter::Variant::VariableList(variable_list) => self
+    //                 .variable_list
+    //                 .update(cx, |this, cx| this.set_from_proto(variable_list, cx)),
+    //             proto::update_debug_adapter::Variant::AddToVariableList(variables_to_add) => self
+    //                 .variable_list
+    //                 .update(cx, |this, _| this.add_variables(variables_to_add.clone())),
+    //             proto::update_debug_adapter::Variant::Modules(_) => {}
+    //             proto::update_debug_adapter::Variant::OutputEvent(output_event) => {
+    //                 self.console.update(cx, |this, cx| {
+    //                     this.add_message(OutputEvent::from_proto(output_event.clone()), window, cx);
+    //                 })
+    //             }
+    //         }
+    //     }
+    // }
+
+    pub fn session(&self) -> &Entity<Session> {
+        &self.session
+    }
+
+    pub fn client_id(&self) -> DebugAdapterClientId {
+        self.client_id
+    }
+
+    pub fn thread_id(&self) -> ThreadId {
+        self.thread_id
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_thread_item(&mut self, thread_item: ThreadItem, cx: &mut Context<Self>) {
+        self.active_thread_item = thread_item;
+        cx.notify()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn stack_frame_list(&self) -> &Entity<StackFrameList> {
+        &self.stack_frame_list
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn console(&self) -> &Entity<Console> {
+        &self.console
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn module_list(&self) -> &Entity<ModuleList> {
+        &self.module_list
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn variable_list(&self) -> &Entity<VariableList> {
+        &self.variable_list
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn are_breakpoints_ignored(&self, cx: &App) -> bool {
+        self.session.read(cx).ignore_breakpoints()
+    }
+
+    pub fn capabilities(&self, cx: &mut Context<Self>) -> Capabilities {
+        self.session().read(cx).capabilities().clone()
+    }
+
+    fn clear_highlights(&self, _cx: &mut Context<Self>) {
+        // TODO(debugger): make this work again
+        // if let Some((_, project_path, _)) = self.dap_store.read(cx).active_debug_line() {
+        //     self.workspace
+        //         .update(cx, |workspace, cx| {
+        //             let editor = workspace
+        //                 .items_of_type::<Editor>(cx)
+        //                 .find(|editor| Some(project_path.clone()) == editor.project_path(cx));
+
+        //             if let Some(editor) = editor {
+        //                 editor.update(cx, |editor, cx| {
+        //                     editor.clear_row_highlights::<editor::DebugCurrentRowHighlight>();
+
+        //                     cx.notify();
+        //                 });
+        //             }
+        //         })
+        //         .ok();
+        // }
+    }
+
+    pub fn go_to_current_stack_frame(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.stack_frame_list.update(cx, |stack_frame_list, cx| {
+            if let Some(stack_frame) = stack_frame_list
+                .stack_frames(cx)
+                .iter()
+                .find(|frame| frame.dap.id == stack_frame_list.current_stack_frame_id())
+                .cloned()
+            {
+                stack_frame_list
+                    .select_stack_frame(&stack_frame.dap, true, window, cx)
+                    .detach_and_log_err(cx);
+            }
+        });
+    }
+
+    fn render_entry_button(
+        &self,
+        label: &SharedString,
+        thread_item: ThreadItem,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let has_indicator =
+            matches!(thread_item, ThreadItem::Console) && self.show_console_indicator;
+
+        div()
+            .id(label.clone())
+            .px_2()
+            .py_1()
+            .cursor_pointer()
+            .border_b_2()
+            .when(self.active_thread_item == thread_item, |this| {
+                this.border_color(cx.theme().colors().border)
+            })
+            .child(
+                h_flex()
+                    .child(Button::new(label.clone(), label.clone()))
+                    .when(has_indicator, |this| this.child(Indicator::dot())),
+            )
+            .on_click(cx.listener(move |this, _, _window, cx| {
+                this.active_thread_item = thread_item.clone();
+
+                if matches!(this.active_thread_item, ThreadItem::Console) {
+                    this.show_console_indicator = false;
+                }
+
+                cx.notify();
+            }))
+            .into_any_element()
+    }
+
+    pub fn continue_thread(&mut self, cx: &mut Context<Self>) {
+        self.session().update(cx, |state, cx| {
+            state.continue_thread(self.thread_id, cx);
+        });
+    }
+
+    pub fn step_over(&mut self, cx: &mut Context<Self>) {
+        let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
+
+        self.session().update(cx, |state, cx| {
+            state.step_over(self.thread_id, granularity, cx);
+        });
+    }
+
+    pub fn step_in(&mut self, cx: &mut Context<Self>) {
+        let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
+
+        self.session().update(cx, |state, cx| {
+            state.step_in(self.thread_id, granularity, cx);
+        });
+    }
+
+    pub fn step_out(&mut self, cx: &mut Context<Self>) {
+        let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
+
+        self.session().update(cx, |state, cx| {
+            state.step_out(self.thread_id, granularity, cx);
+        });
+    }
+
+    pub fn step_back(&mut self, cx: &mut Context<Self>) {
+        let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
+
+        self.session().update(cx, |state, cx| {
+            state.step_back(self.thread_id, granularity, cx);
+        });
+    }
+
+    pub fn restart_client(&self, cx: &mut Context<Self>) {
+        self.session().update(cx, |state, cx| {
+            state.restart(None, cx);
+        });
+    }
+
+    pub fn pause_thread(&self, cx: &mut Context<Self>) {
+        self.session().update(cx, |state, cx| {
+            state.pause_thread(self.thread_id, cx);
+        });
+    }
+
+    pub fn stop_thread(&self, cx: &mut Context<Self>) {
+        self.session().update(cx, |state, cx| {
+            state.terminate_threads(Some(vec![self.thread_id; 1]), cx);
+        });
+    }
+
+    pub fn disconnect_client(&self, cx: &mut Context<Self>) {
+        self.session().update(cx, |state, cx| {
+            state.disconnect_client(cx);
+        });
+    }
+
+    pub fn toggle_ignore_breakpoints(&mut self, cx: &mut Context<Self>) {
+        self.session.update(cx, |session, cx| {
+            session.set_ignore_breakpoints(!session.breakpoints_enabled());
+        });
+    }
+}
+
+impl EventEmitter<DebugPanelItemEvent> for RunningState {}
+
+impl Focusable for RunningState {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Item for RunningState {
+    type Event = DebugPanelItemEvent;
+
+    fn tab_content(
+        &self,
+        params: workspace::item::TabContentParams,
+        _window: &Window,
+        cx: &App,
+    ) -> AnyElement {
+        Label::new(format!("{} - Thread {}", todo!(), self.thread_id.0))
+            .color(if params.selected {
+                Color::Default
+            } else {
+                Color::Muted
+            })
+            .into_any_element()
+    }
+
+    fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
+        Some(SharedString::from(format!(
+            "{} Thread {} - {:?}",
+            todo!(),
+            self.thread_id.0,
+            todo!("thread state"),
+        )))
+    }
+
+    fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+        match event {
+            DebugPanelItemEvent::Close => f(ItemEvent::CloseItem),
+            DebugPanelItemEvent::Stopped { .. } => {}
+        }
+    }
+}

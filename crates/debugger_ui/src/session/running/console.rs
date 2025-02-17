@@ -1,4 +1,4 @@
-use crate::{
+use super::{
     stack_frame_list::{StackFrameList, StackFrameListEvent},
     variable_list::VariableList,
 };

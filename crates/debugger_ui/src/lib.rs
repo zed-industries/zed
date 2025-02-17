@@ -1,7 +1,7 @@
 use dap::debugger_settings::DebuggerSettings;
-use debug_session::DebugSession;
 use debugger_panel::{DebugPanel, ToggleFocus};
 use gpui::App;
+use session::DebugSession;
 use settings::Settings;
 use workspace::{
     Continue, Pause, Restart, ShutdownDebugAdapters, Start, StepBack, StepInto, StepOut, StepOver,
@@ -9,13 +9,8 @@ use workspace::{
 };
 
 pub mod attach_modal;
-pub mod console;
-pub mod debug_session;
 pub mod debugger_panel;
-pub mod loaded_source_list;
-pub mod module_list;
-pub mod stack_frame_list;
-pub mod variable_list;
+pub mod session;
 
 #[cfg(test)]
 mod tests;
