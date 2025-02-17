@@ -1141,7 +1141,6 @@ dependencies = [
  "gpui",
  "http_client",
  "markdown_preview",
- "menu",
  "release_channel",
  "serde",
  "serde_json",
