@@ -1342,6 +1342,10 @@ impl Item for TerminalView {
         false
     }
 
+    fn can_save_as(&self, _cx: &App) -> bool {
+        false
+    }
+
     fn is_singleton(&self, _cx: &App) -> bool {
         true
     }
