@@ -133,7 +133,7 @@ Or explicitly include escaped quotes like so:
 
 The same task modal opened via `task: spawn` supports arbitrary bash-like command execution: type a command inside the modal text field, and use `opt-enter` to spawn it.
 
-The task modal will persist list of those commands for current Zed session, `task: rerun` will also rerun such tasks if they were the last ones spawned.
+The task modal persists these ad-hoc commands for the duration of the session, `task: rerun` will also rerun such tasks if they were the last ones spawned.
 
 You can also adjust currently selected task in a modal (`tab` is a default key binding). Doing so will put its command into a prompt that can then be edited & spawned as an oneshot task.
 
