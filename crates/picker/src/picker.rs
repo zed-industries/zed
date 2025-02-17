@@ -50,7 +50,9 @@ pub struct Picker<D: PickerDelegate> {
     width: Option<Length>,
     max_height: Option<Length>,
     focus_handle: FocusHandle,
+    /// An external control to display scrollbar in the `Picker`.
     show_scrollbar: bool,
+    /// An internal state that controls whether to show the scrollbar based on the user's focus.
     scrollbar_visibility: bool,
     scrollbar_state: ScrollbarState,
     hide_scrollbar_task: Option<Task<()>>,
@@ -669,22 +671,21 @@ impl<D: PickerDelegate> Picker<D> {
         };
 
         match &self.element_container {
-            ElementContainer::UniformList(scroll_handle) =>
-                uniform_list(
-                    cx.entity().clone(),
-                    "candidates",
-                    self.delegate.match_count(),
-                    move |picker, visible_range, window, cx| {
-                        visible_range
-                            .map(|ix| picker.render_element(window, cx, ix))
-                            .collect()
-                    },
-                )
-                .with_sizing_behavior(sizing_behavior)
-                .flex_grow()
-                .py_1()
-                .track_scroll(scroll_handle.clone())
-                .into_any_element(),
+            ElementContainer::UniformList(scroll_handle) => uniform_list(
+                cx.entity().clone(),
+                "candidates",
+                self.delegate.match_count(),
+                move |picker, visible_range, window, cx| {
+                    visible_range
+                        .map(|ix| picker.render_element(window, cx, ix))
+                        .collect()
+                },
+            )
+            .with_sizing_behavior(sizing_behavior)
+            .flex_grow()
+            .py_1()
+            .track_scroll(scroll_handle.clone())
+            .into_any_element(),
             ElementContainer::List(state) => list(state.clone())
                 .with_sizing_behavior(sizing_behavior)
                 .flex_grow()
