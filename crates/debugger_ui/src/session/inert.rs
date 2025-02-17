@@ -1,7 +1,7 @@
 use gpui::{App, FocusHandle, Focusable};
 use ui::{
-    div, h_flex, v_flex, Context, ContextMenu, DropdownMenu, Element, InteractiveElement,
-    ParentElement, Render, Styled,
+    div, h_flex, v_flex, Button, ButtonCommon, ButtonStyle, Context, ContextMenu, DropdownMenu,
+    Element, InteractiveElement, ParentElement, Render, Styled,
 };
 
 pub(super) struct InertState {
@@ -30,6 +30,7 @@ impl Render for InertState {
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
+            .gap_1()
             .p_1()
             .child(h_flex().child(DropdownMenu::new(
                 "dap-adapter-picker",
@@ -40,5 +41,11 @@ impl Render for InertState {
                         .entry("LLDB", None, |_, _| {})
                 }),
             )))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(Button::new("launch-dap", "Launch").style(ButtonStyle::Filled))
+                    .child(Button::new("attach-dap", "Attach").style(ButtonStyle::Filled)),
+            )
     }
 }
