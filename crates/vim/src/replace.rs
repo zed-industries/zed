@@ -5,10 +5,11 @@ use crate::{
     Vim,
 };
 use editor::{
-    display_map::ToDisplayPoint, Anchor, Bias, Editor, EditorSnapshot, ToOffset, ToPoint,
+    display_map::ToDisplayPoint, scroll::Autoscroll, Anchor, Bias, Editor, EditorSnapshot,
+    ToOffset, ToPoint,
 };
 use gpui::{actions, Context, Window};
-use language::Point;
+use language::{Point, SelectionGoal};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -210,7 +211,7 @@ impl Vim {
         new_range: Range<Anchor>,
         editor: &mut Editor,
         snapshot: &EditorSnapshot,
-        _window: &Window,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         if let Some((_, ranges)) = editor.clear_background_highlights::<VimExchange>(cx) {
@@ -229,6 +230,8 @@ impl Vim {
                 editor.edit([(larger_range, new_text)], cx);
             };
 
+            let mut final_cursor_position = new_range.start.to_display_point(snapshot);
+
             if previous_range_end < new_range_start || new_range_end < previous_range_start {
                 let previous_text: String = snapshot
                     .buffer_snapshot
@@ -245,8 +248,15 @@ impl Vim {
                 overwrite(previous_range, new_range);
             } else if previous_range_start <= new_range_start && previous_range_end >= new_range_end
             {
+                final_cursor_position = previous_range.start.to_display_point(snapshot);
                 overwrite(new_range, previous_range);
             }
+
+            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                s.move_with(|_map, selection| {
+                    selection.collapse_to(final_cursor_position, SelectionGoal::None);
+                });
+            })
         } else {
             let ranges = [new_range];
             editor.highlight_background::<VimExchange>(
@@ -450,7 +460,7 @@ mod test {
 
         cx.set_state("ˇhello world", Mode::Normal);
         cx.simulate_keystrokes("c x i w w c x i w");
-        cx.assert_state("world helloˇ", Mode::Normal);
+        cx.assert_state("world ˇhello", Mode::Normal);
     }
 
     #[gpui::test]
@@ -459,7 +469,11 @@ mod test {
 
         cx.set_state("ˇhello world", Mode::Normal);
         cx.simulate_keystrokes("c x x w c x i w");
-        cx.assert_state("worldˇ", Mode::Normal);
+        cx.assert_state("ˇworld", Mode::Normal);
+
+        cx.set_state("ˇhello world", Mode::Normal);
+        cx.simulate_keystrokes("c x i w c x x");
+        cx.assert_state("ˇhello", Mode::Normal);
     }
 
     #[gpui::test]
@@ -469,5 +483,9 @@ mod test {
         cx.set_state("ˇhello world", Mode::Normal);
         cx.simulate_keystrokes("c x t r w c x i w");
         cx.assert_state("hello ˇworld", Mode::Normal);
+
+        cx.set_state("ˇhello world", Mode::Normal);
+        cx.simulate_keystrokes("w c x i w ^ c x t r");
+        cx.assert_state("ˇhello world", Mode::Normal);
     }
 }
