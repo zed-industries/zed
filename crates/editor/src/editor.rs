@@ -5762,7 +5762,7 @@ impl Editor {
         max_width: Pixels,
         cursor_point: Point,
         style: &EditorStyle,
-        accept_keystroke: &gpui::Keystroke,
+        accept_keystroke: Option<&gpui::Keystroke>,
         _window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
@@ -5841,7 +5841,7 @@ impl Editor {
                             )
                             .child(Label::new("Hold").size(LabelSize::Small))
                             .child(h_flex().children(ui::render_modifiers(
-                                &accept_keystroke.modifiers,
+                                &accept_keystroke?.modifiers,
                                 PlatformStyle::platform(),
                                 Some(Color::Default),
                                 Some(IconSize::Small.rems().into()),
@@ -5906,35 +5906,41 @@ impl Editor {
                         .overflow_hidden()
                         .child(completion),
                 )
-                .child(
-                    h_flex()
-                        .h_full()
-                        .border_l_1()
-                        .rounded_r_lg()
-                        .border_color(cx.theme().colors().border)
-                        .bg(Self::edit_prediction_line_popover_bg_color(cx))
-                        .gap_1()
-                        .py_1()
-                        .px_2()
-                        .child(
-                            h_flex()
-                                .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                                .when(is_platform_style_mac, |parent| parent.gap_1())
-                                .child(h_flex().children(ui::render_modifiers(
-                                    &accept_keystroke.modifiers,
-                                    PlatformStyle::platform(),
-                                    Some(if !has_completion {
-                                        Color::Muted
-                                    } else {
-                                        Color::Default
-                                    }),
-                                    None,
-                                    false,
-                                ))),
-                        )
-                        .child(Label::new("Preview").into_any_element())
-                        .opacity(if has_completion { 1.0 } else { 0.4 }),
-                )
+                .when_some(accept_keystroke, |el, accept_keystroke| {
+                    if !accept_keystroke.modifiers.modified() {
+                        return el;
+                    }
+
+                    el.child(
+                        h_flex()
+                            .h_full()
+                            .border_l_1()
+                            .rounded_r_lg()
+                            .border_color(cx.theme().colors().border)
+                            .bg(Self::edit_prediction_line_popover_bg_color(cx))
+                            .gap_1()
+                            .py_1()
+                            .px_2()
+                            .child(
+                                h_flex()
+                                    .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                                    .when(is_platform_style_mac, |parent| parent.gap_1())
+                                    .child(h_flex().children(ui::render_modifiers(
+                                        &accept_keystroke.modifiers,
+                                        PlatformStyle::platform(),
+                                        Some(if !has_completion {
+                                            Color::Muted
+                                        } else {
+                                            Color::Default
+                                        }),
+                                        None,
+                                        false,
+                                    ))),
+                            )
+                            .child(Label::new("Preview").into_any_element())
+                            .opacity(if has_completion { 1.0 } else { 0.4 }),
+                    )
+                })
                 .into_any(),
         )
     }
