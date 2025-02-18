@@ -287,7 +287,7 @@ impl GitRepository for RealGitRepository {
         let repo = self.repository.lock();
         let head = repo.head().ok()?.peel_to_tree().log_err()?;
         let entry = head.get_path(path).ok()?;
-        if entry.filemode() == git2::FileMode::Link as i32 {
+        if entry.filemode() == i32::from(git2::FileMode::Link) {
             return None;
         }
         let content = repo.find_blob(entry.id()).log_err()?.content().to_owned();
