@@ -13481,6 +13481,7 @@ dependencies = [
  "serde_repr",
  "settings",
  "strum",
+ "thiserror 1.0.69",
  "util",
  "uuid",
 ]
