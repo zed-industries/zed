@@ -281,7 +281,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             query = alias.to_string();
         }
         let (mut tx, mut rx) = postage::dispatch::channel(1);
-        let task = cx.background_executor().spawn({
+        let task = cx.background_spawn({
             let mut commands = self.all_commands.clone();
             let hit_counts = cx.global::<HitCounts>().clone();
             let executor = cx.background_executor().clone();

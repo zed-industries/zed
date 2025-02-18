@@ -127,7 +127,7 @@ impl FileFinder {
                 let abs_path = abs_path?;
                 if project.is_local() {
                     let fs = fs.clone();
-                    Some(cx.background_executor().spawn(async move {
+                    Some(cx.background_spawn(async move {
                         if fs.is_file(&abs_path).await {
                             Some(FoundPath::new(project_path, Some(abs_path)))
                         } else {

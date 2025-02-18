@@ -281,26 +281,25 @@ impl LanguageModel for MistralLanguageModel {
         request: LanguageModelRequest,
         cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
-        cx.background_executor()
-            .spawn(async move {
-                let messages = request
-                    .messages
-                    .into_iter()
-                    .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                        role: match message.role {
-                            Role::User => "user".into(),
-                            Role::Assistant => "assistant".into(),
-                            Role::System => "system".into(),
-                        },
-                        content: Some(message.string_contents()),
-                        name: None,
-                        function_call: None,
-                    })
-                    .collect::<Vec<_>>();
+        cx.background_spawn(async move {
+            let messages = request
+                .messages
+                .into_iter()
+                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+                    role: match message.role {
+                        Role::User => "user".into(),
+                        Role::Assistant => "assistant".into(),
+                        Role::System => "system".into(),
+                    },
+                    content: Some(message.string_contents()),
+                    name: None,
+                    function_call: None,
+                })
+                .collect::<Vec<_>>();
 
-                tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
-            })
-            .boxed()
+            tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
+        })
+        .boxed()
     }
 
     fn stream_completion(

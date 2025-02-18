@@ -252,54 +252,53 @@ pub fn count_anthropic_tokens(
     request: LanguageModelRequest,
     cx: &App,
 ) -> BoxFuture<'static, Result<usize>> {
-    cx.background_executor()
-        .spawn(async move {
-            let messages = request.messages;
-            let mut tokens_from_images = 0;
-            let mut string_messages = Vec::with_capacity(messages.len());
+    cx.background_spawn(async move {
+        let messages = request.messages;
+        let mut tokens_from_images = 0;
+        let mut string_messages = Vec::with_capacity(messages.len());
 
-            for message in messages {
-                use language_model::MessageContent;
+        for message in messages {
+            use language_model::MessageContent;
 
-                let mut string_contents = String::new();
+            let mut string_contents = String::new();
 
-                for content in message.content {
-                    match content {
-                        MessageContent::Text(text) => {
-                            string_contents.push_str(&text);
-                        }
-                        MessageContent::Image(image) => {
-                            tokens_from_images += image.estimate_tokens();
-                        }
-                        MessageContent::ToolUse(_tool_use) => {
-                            // TODO: Estimate token usage from tool uses.
-                        }
-                        MessageContent::ToolResult(tool_result) => {
-                            string_contents.push_str(&tool_result.content);
-                        }
+            for content in message.content {
+                match content {
+                    MessageContent::Text(text) => {
+                        string_contents.push_str(&text);
                     }
-                }
-
-                if !string_contents.is_empty() {
-                    string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
-                        role: match message.role {
-                            Role::User => "user".into(),
-                            Role::Assistant => "assistant".into(),
-                            Role::System => "system".into(),
-                        },
-                        content: Some(string_contents),
-                        name: None,
-                        function_call: None,
-                    });
+                    MessageContent::Image(image) => {
+                        tokens_from_images += image.estimate_tokens();
+                    }
+                    MessageContent::ToolUse(_tool_use) => {
+                        // TODO: Estimate token usage from tool uses.
+                    }
+                    MessageContent::ToolResult(tool_result) => {
+                        string_contents.push_str(&tool_result.content);
+                    }
                 }
             }
 
-            // Tiktoken doesn't yet support these models, so we manually use the
-            // same tokenizer as GPT-4.
-            tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
-                .map(|tokens| tokens + tokens_from_images)
-        })
-        .boxed()
+            if !string_contents.is_empty() {
+                string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
+                    role: match message.role {
+                        Role::User => "user".into(),
+                        Role::Assistant => "assistant".into(),
+                        Role::System => "system".into(),
+                    },
+                    content: Some(string_contents),
+                    name: None,
+                    function_call: None,
+                });
+            }
+        }
+
+        // Tiktoken doesn't yet support these models, so we manually use the
+        // same tokenizer as GPT-4.
+        tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
+            .map(|tokens| tokens + tokens_from_images)
+    })
+    .boxed()
 }
 
 impl AnthropicModel {

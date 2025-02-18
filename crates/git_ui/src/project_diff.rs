@@ -7,7 +7,7 @@ use editor::{scroll::Autoscroll, Editor, EditorEvent, ToPoint};
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
 use gpui::{
-    actions, AnyElement, AnyView, App, AppContext, AsyncWindowContext, Entity, EventEmitter,
+    actions, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt, Point};

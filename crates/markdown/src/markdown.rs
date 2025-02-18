@@ -178,7 +178,7 @@ impl Markdown {
 
         let text = self.source.clone();
         let parse_text_only = self.options.parse_links_only;
-        let parsed = cx.background_executor().spawn(async move {
+        let parsed = cx.background_spawn(async move {
             let text = SharedString::from(text);
             let events = match parse_text_only {
                 true => Arc::from(parse_links_only(text.as_ref())),

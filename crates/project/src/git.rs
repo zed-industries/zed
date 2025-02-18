@@ -11,8 +11,8 @@ use git::{
     status::{GitSummary, TrackedSummary},
 };
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-    WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription,
+    Task, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
 use rpc::proto::{git_reset, ToProto};
@@ -242,10 +242,7 @@ impl GitStore {
             mpsc::unbounded::<(Message, oneshot::Sender<Result<()>>)>();
         cx.spawn(|_, cx| async move {
             while let Some((msg, respond)) = update_receiver.next().await {
-                let result = cx
-                    .background_executor()
-                    .spawn(Self::process_git_msg(msg))
-                    .await;
+                let result = cx.background_spawn(Self::process_git_msg(msg)).await;
                 respond.send(result).ok();
             }
         })
@@ -841,15 +838,14 @@ impl Repository {
         match self.git_repo.clone() {
             GitRepo::Local(git_repository) => {
                 let commit = commit.to_string();
-                cx.background_executor()
-                    .spawn(async move { git_repository.show(&commit) })
+                cx.background_spawn(async move { git_repository.show(&commit) })
             }
             GitRepo::Remote {
                 project_id,
                 client,
                 worktree_id,
                 work_directory_id,
-            } => cx.background_executor().spawn(async move {
+            } => cx.background_spawn(async move {
                 let resp = client
                     .request(proto::GitShow {
                         project_id: project_id.0,

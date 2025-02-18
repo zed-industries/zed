@@ -343,34 +343,31 @@ pub fn count_open_ai_tokens(
     model: open_ai::Model,
     cx: &App,
 ) -> BoxFuture<'static, Result<usize>> {
-    cx.background_executor()
-        .spawn(async move {
-            let messages = request
-                .messages
-                .into_iter()
-                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(message.string_contents()),
-                    name: None,
-                    function_call: None,
-                })
-                .collect::<Vec<_>>();
+    cx.background_spawn(async move {
+        let messages = request
+            .messages
+            .into_iter()
+            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+                role: match message.role {
+                    Role::User => "user".into(),
+                    Role::Assistant => "assistant".into(),
+                    Role::System => "system".into(),
+                },
+                content: Some(message.string_contents()),
+                name: None,
+                function_call: None,
+            })
+            .collect::<Vec<_>>();
 
-            match model {
-                open_ai::Model::Custom { .. }
-                | open_ai::Model::O1Mini
-                | open_ai::Model::O1
-                | open_ai::Model::O3Mini => {
-                    tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
-                }
-                _ => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
-            }
-        })
-        .boxed()
+        match model {
+            open_ai::Model::Custom { .. }
+            | open_ai::Model::O1Mini
+            | open_ai::Model::O1
+            | open_ai::Model::O3Mini => tiktoken_rs::num_tokens_from_messages("gpt-4", &messages),
+            _ => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
+        }
+    })
+    .boxed()
 }
 
 struct ConfigurationView {
