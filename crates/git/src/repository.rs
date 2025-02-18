@@ -286,8 +286,11 @@ impl GitRepository for RealGitRepository {
     fn load_committed_text(&self, path: &RepoPath) -> Option<String> {
         let repo = self.repository.lock();
         let head = repo.head().ok()?.peel_to_tree().log_err()?;
-        let oid = head.get_path(path).ok()?.id();
-        let content = repo.find_blob(oid).log_err()?.content().to_owned();
+        let entry = head.get_path(path).ok()?;
+        if entry.filemode() == git2::FileMode::Link as i32 {
+            return None;
+        }
+        let content = repo.find_blob(entry.id()).log_err()?.content().to_owned();
         let content = String::from_utf8(content).log_err()?;
         Some(content)
     }
