@@ -555,62 +555,11 @@ impl Object {
         around: bool,
     ) -> bool {
         if let Some(range) = self.range(map, selection.clone(), around) {
-            // Validate range is non-empty
-            if range.end <= range.start {
-                return false;
-            }
             selection.start = range.start;
             selection.end = range.end;
-            if !around && self.is_multiline() {
-                preserve_indented_newline(map, selection);
-            }
             true
         } else {
             false
-        }
-    }
-}
-
-/// Returns a range without the final newline char.
-///
-/// If the selection spans multiple lines and is preceded by an opening brace (`{`),
-/// this function will trim the selection to exclude the final newline
-/// in order to preserve a properly indented line.
-pub fn preserve_indented_newline(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) {
-    let (start_point, end_point) = (selection.start.to_point(map), selection.end.to_point(map));
-
-    if start_point.row == end_point.row {
-        return;
-    }
-
-    let start_offset = selection.start.to_offset(map, Bias::Left);
-    let mut pos = start_offset;
-
-    while pos > 0 {
-        pos -= 1;
-        let current_char = map.buffer_chars_at(pos).next().map(|(ch, _)| ch);
-
-        match current_char {
-            Some(ch) if !ch.is_whitespace() => break,
-            Some('\n') if pos > 0 => {
-                let prev_char = map.buffer_chars_at(pos - 1).next().map(|(ch, _)| ch);
-                if prev_char == Some('{') {
-                    let end_pos = selection.end.to_offset(map, Bias::Left);
-                    for (ch, offset) in map.reverse_buffer_chars_at(end_pos) {
-                        match ch {
-                            '\n' => {
-                                selection.end = offset.to_display_point(map);
-                                selection.reversed = true;
-                                break;
-                            }
-                            ch if !ch.is_whitespace() => break,
-                            _ => continue,
-                        }
-                    }
-                }
-                break;
-            }
-            _ => continue,
         }
     }
 }
@@ -1519,38 +1468,42 @@ fn surrounding_markers(
         }
     }
 
-    if !around && search_across_lines {
-        // Handle trailing newline after opening
-        if let Some((ch, range)) = movement::chars_after(map, opening.end).next() {
-            if ch == '\n' {
-                opening.end = range.end;
-
-                // After newline, skip leading whitespace
-                let mut chars = movement::chars_after(map, opening.end).peekable();
-                while let Some((ch, range)) = chars.peek() {
-                    if !ch.is_whitespace() {
-                        break;
+    // Preseve an indented newline for nonempty multiline { }
+    if !around && open_marker == '{' && close_marker == '}' {
+        let start_point = opening.end.to_display_point(map);
+        let end_point = closing.start.to_display_point(map);
+        let start_offset = start_point.to_offset(map, Bias::Left);
+        let end_offset = end_point.to_offset(map, Bias::Left);
+        // Check if there are any non-whitespace characters
+        if map
+            .buffer_chars_at(start_offset)
+            .take_while(|(_, offset)| offset < &end_offset)
+            .any(|(ch, _)| !ch.is_whitespace())
+        {
+            // Handle opening newline and following whitespace
+            if let Some((ch, range)) = movement::chars_after(map, start_offset).next() {
+                if ch == '\n' {
+                    let mut new_start = range.end;
+                    for (ch, range) in movement::chars_after(map, new_start) {
+                        if !ch.is_whitespace() {
+                            break;
+                        }
+                        new_start = range.end;
                     }
-                    opening.end = range.end;
-                    chars.next();
+                    opening.end = new_start;
                 }
             }
-        }
-
-        // Handle leading whitespace before closing
-        let mut last_newline_end = None;
-        for (ch, range) in movement::chars_before(map, closing.start) {
-            if !ch.is_whitespace() {
-                break;
+            // Handle trailing whitespace and newline
+            for (ch, offset) in map.reverse_buffer_chars_at(end_offset) {
+                if ch == '\n' {
+                    closing.start = offset;
+                    break;
+                }
+                if !ch.is_whitespace() {
+                    break;
+                }
+                closing.start = offset;
             }
-            if ch == '\n' {
-                last_newline_end = Some(range.end);
-                break;
-            }
-        }
-        // Adjust closing.start to exclude whitespace after a newline, if present
-        if let Some(end) = last_newline_end {
-            closing.start = end;
         }
     }
 
