@@ -15032,8 +15032,11 @@ impl Editor {
             return;
         }
 
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         self.change_selections(None, window, cx, |s| {
-            s.select_ranges(selections.into_iter().map(|(start, end)| start..end));
+            s.select_ranges(selections.into_iter().map(|(start, end)| {
+                snapshot.clip_offset(start, Bias::Left)..snapshot.clip_offset(end, Bias::Right)
+            }));
         });
     }
 }
