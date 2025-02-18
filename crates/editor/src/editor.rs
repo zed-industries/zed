@@ -2191,7 +2191,7 @@ impl Editor {
         if selections.len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
         }
-        if local {
+        if local && EditorSettings::get_global(cx).persist_selections {
             if let Some(workspace_id) = self.workspace.as_ref().and_then(|workspace| workspace.1) {
                 let background_executor = cx.background_executor().clone();
                 let editor_id = cx.entity().entity_id().as_u64() as ItemId;
@@ -15014,8 +15014,6 @@ impl Editor {
         self.load_diff_task.clone()
     }
 
-    // TODO kb allow to turn it off in the settings.
-    // TODO kb does not work when keeping the editor open, and close && go back the same editor.
     fn read_selections_from_db(
         &mut self,
         item_id: u64,
@@ -15023,6 +15021,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        if !EditorSettings::get_global(cx).persist_selections {
+            return;
+        }
         let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() else {
             return;
         };
