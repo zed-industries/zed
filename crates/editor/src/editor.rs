@@ -172,10 +172,13 @@ use ui::{
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt};
 use workspace::{
     item::{ItemHandle, PreviewTabsSettings},
-    ItemId,
+    ItemId, RestoreOnStartupBehavior,
+};
+use workspace::{
+    notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
+    WorkspaceSettings,
 };
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
@@ -2191,7 +2194,9 @@ impl Editor {
         if selections.len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
         }
-        if local && EditorSettings::get_global(cx).persist_selections {
+        if local
+            && WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
+        {
             if let Some(workspace_id) = self.workspace.as_ref().and_then(|workspace| workspace.1) {
                 let background_executor = cx.background_executor().clone();
                 let editor_id = cx.entity().entity_id().as_u64() as ItemId;
@@ -15022,7 +15027,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if !EditorSettings::get_global(cx).persist_selections {
+        if WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None {
             return;
         }
         let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() else {

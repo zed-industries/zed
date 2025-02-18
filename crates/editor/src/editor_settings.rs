@@ -3,7 +3,6 @@ use language::CursorShape;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
-use util::serde::default_true;
 
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
@@ -38,8 +37,6 @@ pub struct EditorSettings {
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     pub jupyter: Jupyter,
-    #[serde(default = "default_true")]
-    pub persist_selections: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -383,11 +380,6 @@ pub struct EditorSettingsContent {
 
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,
-
-    /// Whether to persist editor selections and restore them on restart.
-    ///
-    /// Default: true
-    pub persist_selections: Option<bool>,
 }
 
 // Toolbar related settings
