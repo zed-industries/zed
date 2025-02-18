@@ -33,7 +33,7 @@ use std::{
 };
 use text::Point;
 use ui::{
-    prelude::*, ContextMenu, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, PopoverMenu,
+    prelude::*, ContextMenu, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenu,
     PopoverMenuHandle,
 };
 use util::{paths::PathWithPosition, post_inc, ResultExt};
@@ -1301,11 +1301,7 @@ impl PickerDelegate for FileFinderDelegate {
         )
     }
 
-    fn render_footer(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Option<AnyElement> {
+    fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         let context = self.focus_handle.clone();
         Some(
             h_flex()
