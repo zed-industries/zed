@@ -6283,7 +6283,7 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
                 autoclose_before: "})]>".into(),
                 ..Default::default()
             },
-            Some(tree_sitter_html::language()),
+            Some(tree_sitter_html::LANGUAGE.into()),
         )
         .with_injection_query(
             r#"
@@ -9685,7 +9685,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
                 block_comment: Some(("<!-- ".into(), " -->".into())),
                 ..Default::default()
             },
-            Some(tree_sitter_html::language()),
+            Some(tree_sitter_html::LANGUAGE.into()),
         )
         .with_injection_query(
             r#"
