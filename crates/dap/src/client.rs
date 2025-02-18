@@ -97,7 +97,7 @@ impl DebugAdapterClient {
         client_id: DebugAdapterClientId,
         server_rx: Receiver<Message>,
         client_tx: Sender<Message>,
-        mut event_handler: F,
+        mut message_handler: F,
         cx: &mut AsyncApp,
     ) -> Result<()>
     where
@@ -113,9 +113,9 @@ impl DebugAdapterClient {
                 Message::Event(ev) => {
                     log::debug!("Client {} received event `{}`", client_id.0, &ev);
 
-                    cx.update(|cx| event_handler(Message::Event(ev), cx))
+                    cx.update(|cx| message_handler(Message::Event(ev), cx))
                 }
-                Message::Request(req) => cx.update(|cx| event_handler(Message::Request(req), cx)),
+                Message::Request(req) => cx.update(|cx| message_handler(Message::Request(req), cx)),
                 Message::Response(response) => {
                     log::debug!("Received response after request timeout: {:#?}", response);
 
