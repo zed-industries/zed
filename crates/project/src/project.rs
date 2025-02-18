@@ -705,8 +705,6 @@ impl Project {
                 )
             });
             cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
-            cx.subscribe(&breakpoint_store, Self::on_breakpoint_store_event)
-                .detach();
 
             let image_store = cx.new(|cx| ImageStore::local(worktree_store.clone(), cx));
             cx.subscribe(&image_store, Self::on_image_store_event)
@@ -1174,8 +1172,6 @@ impl Project {
                 .detach();
 
             cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
-            cx.subscribe(&breakpoint_store, Self::on_breakpoint_store_event)
-                .detach();
 
             let mut this = Self {
                 buffer_ordered_messages_tx: tx,
@@ -2572,44 +2568,6 @@ impl Project {
                     this.on_image_event(image, event, cx);
                 })
                 .detach();
-            }
-        }
-    }
-
-    fn on_breakpoint_store_event(
-        &mut self,
-        _: Entity<BreakpointStore>,
-        event: &BreakpointStoreEvent,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            BreakpointStoreEvent::BreakpointsChanged {
-                project_path,
-                source_changed,
-            } => {
-                cx.notify(); // so the UI updates
-
-                let buffer_snapshot = self
-                    .buffer_store
-                    .read(cx)
-                    .get_by_path(&project_path, cx)
-                    .map(|buffer| buffer.read(cx).snapshot());
-
-                let Some(absolute_path) = self.absolute_path(project_path, cx) else {
-                    return;
-                };
-
-                self.dap_store.read_with(cx, |dap_store, cx| {
-                    dap_store
-                        .send_changed_breakpoints(
-                            project_path,
-                            absolute_path,
-                            buffer_snapshot,
-                            *source_changed,
-                            cx,
-                        )
-                        .detach_and_log_err(cx)
-                });
             }
         }
     }

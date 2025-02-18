@@ -884,55 +884,6 @@ impl DapStore {
         })
     }
 
-    pub fn send_changed_breakpoints(
-        &self,
-        project_path: &ProjectPath,
-        absolute_path: PathBuf,
-        buffer_snapshot: Option<BufferSnapshot>,
-        source_changed: bool,
-        cx: &App,
-    ) -> Task<Result<()>> {
-        todo!()
-        // let source_breakpoints = self
-        //     .breakpoint_store
-        //     .read(cx)
-        //     .breakpoints
-        //     .get(project_path)
-        //     .cloned()
-        //     .unwrap_or_default()
-        //     .iter()
-        //     .map(|breakpoint| breakpoint.source_for_snapshot(buffer_snapshot.as_ref()))
-        //     .collect::<Vec<_>>();
-
-        // let mut tasks = Vec::new();
-        // for (client_id, client) in self
-        //     .sessions
-        //     .iter()
-        //     .filter(|(_, client)| client.read(cx).adapter_client().is_some())
-        // {
-        //     let client = client.read(cx);
-        //     let ignore_breakpoints = !client.breakpoints_enabled();
-
-        //     tasks.push(self.send_breakpoints(
-        //         *client_id,
-        //         Arc::from(absolute_path.clone()),
-        //         source_breakpoints.clone(),
-        //         ignore_breakpoints,
-        //         source_changed,
-        //         cx,
-        //     ));
-        // }
-
-        // if tasks.is_empty() {
-        //     return Task::ready(Ok(()));
-        // }
-
-        // cx.background_executor().spawn(async move {
-        //     futures::future::join_all(tasks).await;
-        //     Ok(())
-        // })
-    }
-
     pub fn shared(
         &mut self,
         project_id: u64,
