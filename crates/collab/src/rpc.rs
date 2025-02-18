@@ -395,6 +395,10 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::Stage>)
             .add_request_handler(forward_mutating_project_request::<proto::Unstage>)
             .add_request_handler(forward_mutating_project_request::<proto::Commit>)
+            .add_request_handler(forward_read_only_project_request::<proto::GitShow>)
+            .add_request_handler(forward_read_only_project_request::<proto::GitReset>)
+            .add_request_handler(forward_read_only_project_request::<proto::GitCheckoutFiles>)
+            .add_request_handler(forward_mutating_project_request::<proto::SetIndexText>)
             .add_request_handler(forward_mutating_project_request::<proto::OpenCommitMessageBuffer>)
             .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
             .add_message_handler(update_context)
@@ -687,7 +691,6 @@ impl Server {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn handle_connection(
         self: &Arc<Self>,
         connection: Connection,
@@ -1071,7 +1074,6 @@ pub fn routes(server: Arc<Server>) -> Router<(), Body> {
         .layer(Extension(server))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn handle_websocket_request(
     TypedHeader(ProtocolVersion(protocol_version)): TypedHeader<ProtocolVersion>,
     app_version_header: Option<TypedHeader<AppVersionHeader>>,
@@ -1541,7 +1543,7 @@ async fn set_room_participant_role(
             .update_participant(
                 livekit_room.clone(),
                 request.user_id.to_string(),
-                livekit_server::proto::ParticipantPermission {
+                livekit_api::proto::ParticipantPermission {
                     can_subscribe: true,
                     can_publish,
                     can_publish_data: can_publish,

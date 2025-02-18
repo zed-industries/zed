@@ -271,7 +271,7 @@ impl<T: 'static> PromptEditor<T> {
         };
 
         let assistant_panel_keybinding =
-            ui::text_for_action(&zed_actions::assistant::ToggleFocus, window)
+            ui::text_for_action(&zed_actions::assistant::ToggleFocus, window, cx)
                 .map(|keybinding| format!("{keybinding} to chat ― "))
                 .unwrap_or_default();
 
@@ -618,12 +618,13 @@ impl<T: 'static> PromptEditor<T> {
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
-                            cx.new(|_| {
+                            cx.new(|cx| {
                                 let mut tooltip = Tooltip::new("Previous Alternative").key_binding(
                                     KeyBinding::for_action_in(
                                         &CyclePreviousInlineAssist,
                                         &focus_handle,
                                         window,
+                                        cx,
                                     ),
                                 );
                                 if !disabled && current_index != 0 {
@@ -659,12 +660,13 @@ impl<T: 'static> PromptEditor<T> {
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
-                            cx.new(|_| {
+                            cx.new(|cx| {
                                 let mut tooltip = Tooltip::new("Next Alternative").key_binding(
                                     KeyBinding::for_action_in(
                                         &CycleNextInlineAssist,
                                         &focus_handle,
                                         window,
+                                        cx,
                                     ),
                                 );
                                 if !disabled && current_index != total_models - 1 {
@@ -821,7 +823,6 @@ impl InlineAssistId {
 }
 
 impl PromptEditor<BufferCodegen> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new_buffer(
         id: InlineAssistId,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
@@ -982,7 +983,6 @@ impl TerminalInlineAssistId {
 }
 
 impl PromptEditor<TerminalCodegen> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new_terminal(
         id: TerminalInlineAssistId,
         prompt_history: VecDeque<String>,

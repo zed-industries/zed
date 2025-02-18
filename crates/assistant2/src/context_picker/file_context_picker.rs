@@ -288,9 +288,12 @@ impl PickerDelegate for FileContextPickerDelegate {
 
                 editor.insert("\n", window, cx); // Needed to end the fold
 
+                let file_icon = FileIcons::get_icon(&Path::new(&full_path), cx)
+                    .unwrap_or_else(|| SharedString::new(""));
+
                 let placeholder = FoldPlaceholder {
                     render: render_fold_icon_button(
-                        IconName::File,
+                        file_icon,
                         file_name.into(),
                         editor_entity.downgrade(),
                     ),
@@ -463,7 +466,7 @@ pub fn render_file_context_entry(
 }
 
 fn render_fold_icon_button(
-    icon: IconName,
+    icon: SharedString,
     label: SharedString,
     editor: WeakEntity<Editor>,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
@@ -510,9 +513,21 @@ fn render_fold_icon_button(
             .bordered()
             .selected_style(ButtonStyle::HighlightBorder(ButtonStyle::Filled.into()))
             .toggle_state(is_in_text_selection)
-            .layer(ElevationIndex::EditorSurface)
-            .child(Icon::new(icon))
-            .child(Label::new(label.clone()).single_line())
+            .layer(ElevationIndex::ElevatedSurface)
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::from_path(icon.clone())
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(label.clone())
+                            .size(LabelSize::Small)
+                            .single_line(),
+                    ),
+            )
             .into_any_element()
     })
 }

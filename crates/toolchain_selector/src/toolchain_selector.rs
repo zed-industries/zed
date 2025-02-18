@@ -85,7 +85,6 @@ impl ToolchainSelector {
         Some(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
@@ -143,7 +142,6 @@ pub struct ToolchainSelectorDelegate {
 }
 
 impl ToolchainSelectorDelegate {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         active_toolchain: Option<Toolchain>,
         toolchain_selector: WeakEntity<ToolchainSelector>,

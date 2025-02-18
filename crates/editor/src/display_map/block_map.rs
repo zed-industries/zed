@@ -723,7 +723,6 @@ impl BlockMap {
         self.show_excerpt_controls
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn header_and_footer_blocks<'a, R, T>(
         show_excerpt_controls: bool,
         excerpt_footer_height: u32,
@@ -1721,6 +1720,7 @@ impl BlockSnapshot {
 impl<'a> BlockChunks<'a> {
     /// Go to the next transform
     fn advance(&mut self) {
+        self.input_chunk = Chunk::default();
         self.transforms.next(&());
         while let Some(transform) = self.transforms.item() {
             if transform
@@ -1748,7 +1748,6 @@ impl<'a> BlockChunks<'a> {
                 );
                 self.input_chunks.seek(start_input_row..end_input_row);
             }
-            self.input_chunk = Chunk::default();
         }
     }
 }
@@ -1812,9 +1811,6 @@ impl<'a> Iterator for BlockChunks<'a> {
 
         let (mut prefix, suffix) = self.input_chunk.text.split_at(prefix_bytes);
         self.input_chunk.text = suffix;
-        if self.output_row == transform_end {
-            self.advance();
-        }
 
         if self.masked {
             // Not great for multibyte text because to keep cursor math correct we
@@ -1824,10 +1820,16 @@ impl<'a> Iterator for BlockChunks<'a> {
             prefix = &BULLETS[..bullet_len];
         }
 
-        Some(Chunk {
+        let chunk = Chunk {
             text: prefix,
             ..self.input_chunk.clone()
-        })
+        };
+
+        if self.output_row == transform_end {
+            self.advance();
+        }
+
+        Some(chunk)
     }
 }
 

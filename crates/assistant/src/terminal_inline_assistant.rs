@@ -701,7 +701,6 @@ impl Focusable for PromptEditor {
 impl PromptEditor {
     const MAX_LINES: u8 = 8;
 
-    #[allow(clippy::too_many_arguments)]
     fn new(
         id: TerminalInlineAssistId,
         prompt_history: VecDeque<String>,
@@ -725,7 +724,7 @@ impl PromptEditor {
                 cx,
             );
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(Self::placeholder_text(window), cx);
+            editor.set_placeholder_text(Self::placeholder_text(window, cx), cx);
             editor
         });
 
@@ -774,8 +773,8 @@ impl PromptEditor {
         this
     }
 
-    fn placeholder_text(window: &Window) -> String {
-        let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, window)
+    fn placeholder_text(window: &Window, cx: &App) -> String {
+        let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, window, cx)
             .map(|keybinding| format!(" • {keybinding} for context"))
             .unwrap_or_default();
 
@@ -1150,7 +1149,7 @@ impl Codegen {
 
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
 
-                let task = cx.background_executor().spawn({
+                let task = cx.background_spawn({
                     let message_id = message_id.clone();
                     let executor = cx.background_executor().clone();
                     async move {

@@ -1246,8 +1246,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     diff.read_with(cx, |diff, cx| {
         assert_eq!(diff.base_text_string().unwrap(), text_1);
         assert_eq!(
-            diff.unstaged_diff
-                .as_ref()
+            diff.secondary_diff()
                 .unwrap()
                 .read(cx)
                 .base_text_string()
@@ -1266,8 +1265,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     diff.read_with(cx, |diff, cx| {
         assert_eq!(diff.base_text_string().unwrap(), text_1);
         assert_eq!(
-            diff.unstaged_diff
-                .as_ref()
+            diff.secondary_diff()
                 .unwrap()
                 .read(cx)
                 .base_text_string()
@@ -1286,8 +1284,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     diff.read_with(cx, |diff, cx| {
         assert_eq!(diff.base_text_string().unwrap(), text_2);
         assert_eq!(
-            diff.unstaged_diff
-                .as_ref()
+            diff.secondary_diff()
                 .unwrap()
                 .read(cx)
                 .base_text_string()
@@ -1367,7 +1364,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         })
     });
 
-    assert_eq!(server_branch.as_ref(), branches[2]);
+    assert_eq!(server_branch.name, branches[2]);
 
     // Also try creating a new branch
     cx.update(|cx| {
@@ -1390,7 +1387,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         })
     });
 
-    assert_eq!(server_branch.as_ref(), "totally-new-branch");
+    assert_eq!(server_branch.name, "totally-new-branch");
 }
 
 pub async fn init_test(

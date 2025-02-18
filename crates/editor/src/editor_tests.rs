@@ -7,7 +7,7 @@ use crate::{
     },
     JoinLines,
 };
-use diff::{BufferDiff, DiffHunkStatus};
+use buffer_diff::{BufferDiff, DiffHunkStatus};
 use futures::StreamExt;
 use gpui::{
     div, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
@@ -4874,13 +4874,76 @@ fn test_select_line(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_split_selection_into_lines(cx: &mut TestAppContext) {
+async fn test_split_selection_into_lines(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    #[track_caller]
+    fn test(cx: &mut EditorTestContext, initial_state: &'static str, expected_state: &'static str) {
+        cx.set_state(initial_state);
+        cx.update_editor(|e, window, cx| {
+            e.split_selection_into_lines(&SplitSelectionIntoLines, window, cx)
+        });
+        cx.assert_editor_state(expected_state);
+    }
+
+    // Selection starts and ends at the middle of lines, left-to-right
+    test(
+        &mut cx,
+        "aa\nb«ˇb\ncc\ndd\ne»e\nff",
+        "aa\nbbˇ\nccˇ\nddˇ\neˇe\nff",
+    );
+    // Same thing, right-to-left
+    test(
+        &mut cx,
+        "aa\nb«b\ncc\ndd\neˇ»e\nff",
+        "aa\nbbˇ\nccˇ\nddˇ\neˇe\nff",
+    );
+
+    // Whole buffer, left-to-right, last line *doesn't* end with newline
+    test(
+        &mut cx,
+        "«ˇaa\nbb\ncc\ndd\nee\nff»",
+        "aaˇ\nbbˇ\nccˇ\nddˇ\neeˇ\nffˇ",
+    );
+    // Same thing, right-to-left
+    test(
+        &mut cx,
+        "«aa\nbb\ncc\ndd\nee\nffˇ»",
+        "aaˇ\nbbˇ\nccˇ\nddˇ\neeˇ\nffˇ",
+    );
+
+    // Whole buffer, left-to-right, last line ends with newline
+    test(
+        &mut cx,
+        "«ˇaa\nbb\ncc\ndd\nee\nff\n»",
+        "aaˇ\nbbˇ\nccˇ\nddˇ\neeˇ\nffˇ\n",
+    );
+    // Same thing, right-to-left
+    test(
+        &mut cx,
+        "«aa\nbb\ncc\ndd\nee\nff\nˇ»",
+        "aaˇ\nbbˇ\nccˇ\nddˇ\neeˇ\nffˇ\n",
+    );
+
+    // Starts at the end of a line, ends at the start of another
+    test(
+        &mut cx,
+        "aa\nbb«ˇ\ncc\ndd\nee\n»ff\n",
+        "aa\nbbˇ\nccˇ\nddˇ\neeˇ\nff\n",
+    );
+}
+
+#[gpui::test]
+async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(&sample_text(9, 5, 'a'), cx);
         build_editor(buffer, window, cx)
     });
+
+    // setup
     _ = editor.update(cx, |editor, window, cx| {
         editor.fold_creases(
             vec![
@@ -4892,6 +4955,13 @@ fn test_split_selection_into_lines(cx: &mut TestAppContext) {
             window,
             cx,
         );
+        assert_eq!(
+            editor.display_text(cx),
+            "aa⋯bbb\nccc⋯eeee\nfffff\nggggg\n⋯i"
+        );
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(None, window, cx, |s| {
             s.select_display_ranges([
                 DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 1),
@@ -4900,28 +4970,15 @@ fn test_split_selection_into_lines(cx: &mut TestAppContext) {
                 DisplayPoint::new(DisplayRow(4), 4)..DisplayPoint::new(DisplayRow(4), 4),
             ])
         });
-        assert_eq!(
-            editor.display_text(cx),
-            "aa⋯bbb\nccc⋯eeee\nfffff\nggggg\n⋯i"
-        );
-    });
-
-    _ = editor.update(cx, |editor, window, cx| {
         editor.split_selection_into_lines(&SplitSelectionIntoLines, window, cx);
         assert_eq!(
             editor.display_text(cx),
             "aaaaa\nbbbbb\nccc⋯eeee\nfffff\nggggg\n⋯i"
         );
-        assert_eq!(
-            editor.selections.display_ranges(cx),
-            [
-                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
-                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
-                DisplayPoint::new(DisplayRow(2), 0)..DisplayPoint::new(DisplayRow(2), 0),
-                DisplayPoint::new(DisplayRow(5), 4)..DisplayPoint::new(DisplayRow(5), 4)
-            ]
-        );
     });
+    EditorTestContext::for_editor(editor, cx)
+        .await
+        .assert_editor_state("aˇaˇaaa\nbbbbb\nˇccccc\nddddd\neeeee\nfffff\nggggg\nhhhhh\niiiiiˇ");
 
     _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(None, window, cx, |s| {
@@ -4943,11 +5000,15 @@ fn test_split_selection_into_lines(cx: &mut TestAppContext) {
                 DisplayPoint::new(DisplayRow(3), 5)..DisplayPoint::new(DisplayRow(3), 5),
                 DisplayPoint::new(DisplayRow(4), 5)..DisplayPoint::new(DisplayRow(4), 5),
                 DisplayPoint::new(DisplayRow(5), 5)..DisplayPoint::new(DisplayRow(5), 5),
-                DisplayPoint::new(DisplayRow(6), 5)..DisplayPoint::new(DisplayRow(6), 5),
-                DisplayPoint::new(DisplayRow(7), 0)..DisplayPoint::new(DisplayRow(7), 0)
+                DisplayPoint::new(DisplayRow(6), 5)..DisplayPoint::new(DisplayRow(6), 5)
             ]
         );
     });
+    EditorTestContext::for_editor(editor, cx)
+        .await
+        .assert_editor_state(
+            "aaaaaˇ\nbbbbbˇ\ncccccˇ\ndddddˇ\neeeeeˇ\nfffffˇ\ngggggˇ\nhhhhh\niiiii",
+        );
 }
 
 #[gpui::test]
@@ -4956,7 +5017,6 @@ async fn test_add_selection_above_below(cx: &mut TestAppContext) {
 
     let mut cx = EditorTestContext::new(cx).await;
 
-    // let buffer = MultiBuffer::build_simple("abc\ndefghi\n\njk\nlmno\n", cx);
     cx.set_state(indoc!(
         r#"abc
            defˇghi
@@ -5241,24 +5301,39 @@ async fn test_select_all_matches(cx: &mut gpui::TestAppContext) {
 
     // Test caret-only selections
     cx.set_state("abc\nˇabc abc\ndefabc\nabc");
-
     cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
         .unwrap();
     cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
 
     // Test left-to-right selections
     cx.set_state("abc\n«abcˇ»\nabc");
-
     cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
         .unwrap();
     cx.assert_editor_state("«abcˇ»\n«abcˇ»\n«abcˇ»");
 
     // Test right-to-left selections
     cx.set_state("abc\n«ˇabc»\nabc");
-
     cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
         .unwrap();
     cx.assert_editor_state("«ˇabc»\n«ˇabc»\n«ˇabc»");
+
+    // Test selecting whitespace with caret selection
+    cx.set_state("abc\nˇ   abc\nabc");
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("abc\n«   ˇ»abc\nabc");
+
+    // Test selecting whitespace with left-to-right selection
+    cx.set_state("abc\n«ˇ  »abc\nabc");
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("abc\n«ˇ  »abc\nabc");
+
+    // Test no matches with right-to-left selection
+    cx.set_state("abc\n«  ˇ»abc\nabc");
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("abc\n«  ˇ»abc\nabc");
 }
 
 #[gpui::test]
@@ -5360,6 +5435,21 @@ async fn test_select_previous_with_single_caret(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
     cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndef«abcˇ»\n«abcˇ»");
+}
+
+#[gpui::test]
+async fn test_select_previous_empty_buffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("aˇ");
+
+    cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
+        .unwrap();
+    cx.assert_editor_state("«aˇ»");
+    cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
+        .unwrap();
+    cx.assert_editor_state("«aˇ»");
 }
 
 #[gpui::test]
@@ -6193,7 +6283,7 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
                 autoclose_before: "})]>".into(),
                 ..Default::default()
             },
-            Some(tree_sitter_html::language()),
+            Some(tree_sitter_html::LANGUAGE.into()),
         )
         .with_injection_query(
             r#"
@@ -9595,7 +9685,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
                 block_comment: Some(("<!-- ".into(), " -->".into())),
                 ..Default::default()
             },
-            Some(tree_sitter_html::language()),
+            Some(tree_sitter_html::LANGUAGE.into()),
         )
         .with_injection_query(
             r#"
@@ -10649,6 +10739,176 @@ async fn go_to_prev_overlapping_diagnostic(
 
     cx.assert_editor_state(indoc! {"
         fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+}
+
+#[gpui::test]
+async fn cycle_through_same_place_diagnostics(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+
+    cx.set_state(indoc! {"
+        ˇfn func(abc def: i32) -> u32 {
+        }
+    "});
+
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        version: None,
+                        diagnostics: vec![
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 11),
+                                    lsp::Position::new(0, 12),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 12),
+                                    lsp::Position::new(0, 15),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 12),
+                                    lsp::Position::new(0, 15),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 25),
+                                    lsp::Position::new(0, 28),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                        ],
+                    },
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+    executor.run_until_parked();
+
+    //// Backward
+
+    // Fourth diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+
+    // Third diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc ˇdef: i32) -> u32 {
+        }
+    "});
+
+    // Second diagnostic, same place
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc ˇdef: i32) -> u32 {
+        }
+    "});
+
+    // First diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    // Wrapped over, fourth diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_diagnostic(&GoToPrevDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.move_to_beginning(&MoveToBeginning, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        ˇfn func(abc def: i32) -> u32 {
+        }
+    "});
+
+    //// Forward
+
+    // First diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    // Second diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc ˇdef: i32) -> u32 {
+        }
+    "});
+
+    // Third diagnostic, same place
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc ˇdef: i32) -> u32 {
+        }
+    "});
+
+    // Fourth diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abc def: i32) -> ˇu32 {
+        }
+    "});
+
+    // Wrapped around, first diagnostic
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
         }
     "});
 }
@@ -11989,7 +12249,7 @@ async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row9.2;
                    struct Row9.3;
                    struct Row10;"#},
-        vec![DiffHunkStatus::Added, DiffHunkStatus::Added],
+        vec![DiffHunkStatus::added(), DiffHunkStatus::added()],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row1.1;
@@ -12027,7 +12287,7 @@ async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row8;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::Added, DiffHunkStatus::Added],
+        vec![DiffHunkStatus::added(), DiffHunkStatus::added()],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row2;
@@ -12074,11 +12334,11 @@ async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
                    «ˇ// something on bottom»
                    struct Row10;"#},
         vec![
-            DiffHunkStatus::Added,
-            DiffHunkStatus::Added,
-            DiffHunkStatus::Added,
-            DiffHunkStatus::Added,
-            DiffHunkStatus::Added,
+            DiffHunkStatus::added(),
+            DiffHunkStatus::added(),
+            DiffHunkStatus::added(),
+            DiffHunkStatus::added(),
+            DiffHunkStatus::added(),
         ],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
@@ -12126,7 +12386,7 @@ async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::Modified, DiffHunkStatus::Modified],
+        vec![DiffHunkStatus::modified(), DiffHunkStatus::modified()],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -12153,7 +12413,7 @@ async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::Modified, DiffHunkStatus::Modified],
+        vec![DiffHunkStatus::modified(), DiffHunkStatus::modified()],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -12182,12 +12442,12 @@ async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row9;
                    struct Row1011;ˇ"#},
         vec![
-            DiffHunkStatus::Modified,
-            DiffHunkStatus::Modified,
-            DiffHunkStatus::Modified,
-            DiffHunkStatus::Modified,
-            DiffHunkStatus::Modified,
-            DiffHunkStatus::Modified,
+            DiffHunkStatus::modified(),
+            DiffHunkStatus::modified(),
+            DiffHunkStatus::modified(),
+            DiffHunkStatus::modified(),
+            DiffHunkStatus::modified(),
+            DiffHunkStatus::modified(),
         ],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
@@ -12265,7 +12525,7 @@ struct Row10;"#};
                    ˇ
                    struct Row8;
                    struct Row10;"#},
-        vec![DiffHunkStatus::Removed, DiffHunkStatus::Removed],
+        vec![DiffHunkStatus::removed(), DiffHunkStatus::removed()],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -12288,7 +12548,7 @@ struct Row10;"#};
                    ˇ»
                    struct Row8;
                    struct Row10;"#},
-        vec![DiffHunkStatus::Removed, DiffHunkStatus::Removed],
+        vec![DiffHunkStatus::removed(), DiffHunkStatus::removed()],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -12313,7 +12573,7 @@ struct Row10;"#};
 
                    struct Row8;ˇ
                    struct Row10;"#},
-        vec![DiffHunkStatus::Removed, DiffHunkStatus::Removed],
+        vec![DiffHunkStatus::removed(), DiffHunkStatus::removed()],
         indoc! {r#"struct Row;
                    struct Row1;
                    ˇstruct Row2;
@@ -12338,9 +12598,9 @@ struct Row10;"#};
                    struct Row8;ˇ»
                    struct Row10;"#},
         vec![
-            DiffHunkStatus::Removed,
-            DiffHunkStatus::Removed,
-            DiffHunkStatus::Removed,
+            DiffHunkStatus::removed(),
+            DiffHunkStatus::removed(),
+            DiffHunkStatus::removed(),
         ],
         indoc! {r#"struct Row;
                    struct Row1;
@@ -13007,28 +13267,6 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
     );
 
     cx.set_diff_base("new diff base!");
-    executor.run_until_parked();
-    cx.assert_state_with_diff(
-        r#"
-          use some::mod2;
-
-          const A: u32 = 42;
-          const C: u32 = 42;
-
-          fn main(ˇ) {
-              //println!("hello");
-
-              println!("world");
-              //
-              //
-          }
-        "#
-        .unindent(),
-    );
-
-    cx.update_editor(|editor, window, cx| {
-        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, window, cx);
-    });
     executor.run_until_parked();
     cx.assert_state_with_diff(
         r#"
@@ -13860,6 +14098,59 @@ async fn test_edit_after_expanded_modification_hunk(
         }"#
         .unindent(),
     );
+}
+
+#[gpui::test]
+async fn test_stage_and_unstage_added_file_hunk(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_editor(|editor, _, cx| {
+        editor.set_expand_all_diff_hunks(cx);
+    });
+
+    let working_copy = r#"
+            ˇfn main() {
+                println!("hello, world!");
+            }
+        "#
+    .unindent();
+
+    cx.set_state(&working_copy);
+    executor.run_until_parked();
+
+    cx.assert_state_with_diff(
+        r#"
+            + ˇfn main() {
+            +     println!("hello, world!");
+            + }
+        "#
+        .unindent(),
+    );
+    cx.assert_index_text(None);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_staged_selected_diff_hunks(&ToggleStagedSelectedDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_index_text(Some(&working_copy.replace("ˇ", "")));
+    cx.assert_state_with_diff(
+        r#"
+            + ˇfn main() {
+            +     println!("hello, world!");
+            + }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_staged_selected_diff_hunks(&ToggleStagedSelectedDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_index_text(None);
 }
 
 async fn setup_indent_guides_editor(

@@ -164,7 +164,6 @@ impl<'a> Matcher<'a> {
         score
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn recursive_score_match(
         &mut self,
         path: &[char],

@@ -131,6 +131,7 @@ pub enum IconName {
     AiDeepSeek,
     AiGoogle,
     AiLmStudio,
+    AiMistral,
     AiOllama,
     AiOpenAi,
     AiZed,
@@ -221,7 +222,6 @@ pub enum IconName {
     Hash,
     HistoryRerun,
     Indicator,
-    IndicatorX,
     Info,
     InlayHint,
     Keyboard,
@@ -325,6 +325,8 @@ pub enum IconName {
     ZedAssistant2,
     ZedAssistantFilled,
     ZedPredict,
+    ZedPredictUp,
+    ZedPredictDown,
     ZedPredictDisabled,
     ZedXCopilot,
 }
@@ -489,6 +491,7 @@ impl RenderOnce for IconWithIndicator {
     }
 }
 
+// View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Icon {
     fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
         v_flex()

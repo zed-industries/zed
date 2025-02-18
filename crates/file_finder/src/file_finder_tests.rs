@@ -23,7 +23,7 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
         .fs
         .as_fake()
         .insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "a": {
                     "banana": "",
@@ -33,7 +33,7 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
 
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
@@ -153,7 +153,7 @@ async fn test_complex_path(cx: &mut TestAppContext) {
         .fs
         .as_fake()
         .insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "其他": {
                     "S数据表格": {
@@ -164,7 +164,7 @@ async fn test_complex_path(cx: &mut TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
 
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
@@ -194,7 +194,7 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
         .fs
         .as_fake()
         .insert_tree(
-            "/src",
+            path!("/src"),
             json!({
                 "test": {
                     first_file_name: first_file_contents,
@@ -204,7 +204,7 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
 
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
@@ -269,7 +269,7 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
         .fs
         .as_fake()
         .insert_tree(
-            "/src",
+            path!("/src"),
             json!({
                 "test": {
                     first_file_name: first_file_contents,
@@ -279,7 +279,7 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
 
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
@@ -384,6 +384,7 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
                 ProjectPanelOrdMatch(matches[1].clone()),
                 ProjectPanelOrdMatch(matches[3].clone()),
             ],
+            window,
             cx,
         );
 
@@ -398,6 +399,7 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
                 ProjectPanelOrdMatch(matches[2].clone()),
                 ProjectPanelOrdMatch(matches[3].clone()),
             ],
+            window,
             cx,
         );
 
@@ -492,12 +494,11 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
         let matches = collect_search_matches(picker).search_matches_only();
         assert_eq!(matches.len(), 1);
 
-        let (file_name, file_name_positions, full_path, full_path_positions) =
-            delegate.labels_for_path_match(&matches[0]);
-        assert_eq!(file_name, "the-file");
-        assert_eq!(file_name_positions, &[0, 1, 4]);
-        assert_eq!(full_path, "");
-        assert_eq!(full_path_positions, &[0; 0]);
+        let labels = delegate.labels_for_path_match(&matches[0]);
+        assert_eq!(labels.file_name, "the-file");
+        assert_eq!(labels.file_name_positions, &[0, 1, 4]);
+        assert_eq!(labels.path, "");
+        assert_eq!(labels.path_positions, &[0; 0]);
     });
 
     // Since the worktree root is a file, searching for its name followed by a slash does
@@ -1777,7 +1778,7 @@ async fn test_opens_file_on_modifier_keys_release(cx: &mut gpui::TestAppContext)
         .fs
         .as_fake()
         .insert_tree(
-            "/test",
+            path!("/test"),
             json!({
                 "1.txt": "// One",
                 "2.txt": "// Two",
@@ -1785,7 +1786,7 @@ async fn test_opens_file_on_modifier_keys_release(cx: &mut gpui::TestAppContext)
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
+    let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
     open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;

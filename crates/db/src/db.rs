@@ -4,7 +4,7 @@ pub mod query;
 // Re-export
 pub use anyhow;
 use anyhow::Context as _;
-use gpui::App;
+use gpui::{App, AppContext};
 pub use indoc::indoc;
 pub use paths::database_dir;
 pub use smol;
@@ -192,8 +192,7 @@ pub fn write_and_log<F>(cx: &App, db_write: impl FnOnce() -> F + Send + 'static)
 where
     F: Future<Output = anyhow::Result<()>> + Send,
 {
-    cx.background_executor()
-        .spawn(async move { db_write().await.log_err() })
+    cx.background_spawn(async move { db_write().await.log_err() })
         .detach()
 }
 

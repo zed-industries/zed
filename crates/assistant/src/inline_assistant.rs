@@ -387,7 +387,6 @@ impl InlineAssistant {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn suggest_assist(
         &mut self,
         editor: &Entity<Editor>,
@@ -1674,7 +1673,6 @@ impl Focusable for PromptEditor {
 impl PromptEditor {
     const MAX_LINES: u8 = 8;
 
-    #[allow(clippy::too_many_arguments)]
     fn new(
         id: InlineAssistId,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
@@ -1704,7 +1702,7 @@ impl PromptEditor {
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, cx);
-            editor.set_placeholder_text(Self::placeholder_text(codegen.read(cx), window), cx);
+            editor.set_placeholder_text(Self::placeholder_text(codegen.read(cx), window, cx), cx);
             editor
         });
 
@@ -1783,7 +1781,10 @@ impl PromptEditor {
         self.editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(Self::placeholder_text(self.codegen.read(cx), window), cx);
+            editor.set_placeholder_text(
+                Self::placeholder_text(self.codegen.read(cx), window, cx),
+                cx,
+            );
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, window, cx);
             if focus {
@@ -1794,8 +1795,8 @@ impl PromptEditor {
         self.subscribe_to_editor(window, cx);
     }
 
-    fn placeholder_text(codegen: &Codegen, window: &Window) -> String {
-        let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, window)
+    fn placeholder_text(codegen: &Codegen, window: &Window, cx: &App) -> String {
+        let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, window, cx)
             .map(|keybinding| format!(" • {keybinding} for context"))
             .unwrap_or_default();
 
@@ -2084,12 +2085,13 @@ impl PromptEditor {
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
-                            cx.new(|_| {
+                            cx.new(|cx| {
                                 let mut tooltip = Tooltip::new("Previous Alternative").key_binding(
                                     KeyBinding::for_action_in(
                                         &CyclePreviousInlineAssist,
                                         &focus_handle,
                                         window,
+                                        cx,
                                     ),
                                 );
                                 if !disabled && current_index != 0 {
@@ -2126,12 +2128,13 @@ impl PromptEditor {
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
-                            cx.new(|_| {
+                            cx.new(|cx| {
                                 let mut tooltip = Tooltip::new("Next Alternative").key_binding(
                                     KeyBinding::for_action_in(
                                         &CycleNextInlineAssist,
                                         &focus_handle,
                                         window,
+                                        cx,
                                     ),
                                 );
                                 if !disabled && current_index != total_models - 1 {
@@ -2328,7 +2331,6 @@ struct InlineAssist {
 }
 
 impl InlineAssist {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         assist_id: InlineAssistId,
         group_id: InlineAssistGroupId,
@@ -3010,7 +3012,7 @@ impl CodegenAlternative {
                     let executor = cx.background_executor().clone();
                     let message_id = message_id.clone();
                     let line_based_stream_diff: Task<anyhow::Result<()>> =
-                        cx.background_executor().spawn(async move {
+                        cx.background_spawn(async move {
                             let mut response_latency = None;
                             let request_start = Instant::now();
                             let diff = async {
@@ -3324,8 +3326,7 @@ impl CodegenAlternative {
 
         cx.spawn(|codegen, mut cx| async move {
             let (deleted_row_ranges, inserted_row_ranges) = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     let old_text = old_snapshot
                         .text_for_range(
                             Point::new(old_range.start.row, 0)

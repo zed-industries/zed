@@ -524,7 +524,7 @@ impl Render for ContextMenu {
                         .occlude()
                         .elevation_2(cx)
                         .p_2()
-                        .max_w_80()
+                        .max_w_96()
                         .child(aside(cx)),
                 )
             })
@@ -598,21 +598,26 @@ impl Render for ContextMenu {
                                         }) => {
                                             let handler = handler.clone();
                                             let menu = cx.entity().downgrade();
+
                                             let icon_color = if *disabled {
                                                 Color::Muted
+                                            } else if toggle.is_some() {
+                                                icon_color.unwrap_or(Color::Accent)
                                             } else {
                                                 icon_color.unwrap_or(Color::Default)
                                             };
+
                                             let label_color = if *disabled {
                                                 Color::Muted
                                             } else {
                                                 Color::Default
                                             };
+
                                             let label_element = if let Some(icon_name) = icon {
                                                 h_flex()
                                                     .gap_1p5()
                                                     .when(
-                                                        *icon_position == IconPosition::Start,
+                                                        *icon_position == IconPosition::Start && toggle.is_none(),
                                                         |flex| {
                                                             flex.child(
                                                                 Icon::new(*icon_name)
@@ -641,8 +646,10 @@ impl Render for ContextMenu {
                                                     .color(label_color)
                                                     .into_any_element()
                                             };
+
                                             let documentation_aside_callback =
                                                 documentation_aside.clone();
+
                                             div()
                                                 .id(("context-menu-child", ix))
                                                 .when_some(
@@ -673,8 +680,8 @@ impl Render for ContextMenu {
                                                             |list_item, (position, toggled)| {
                                                                 let contents =
                                                                     div().flex_none().child(
-                                                                        Icon::new(IconName::Check)
-                                                                            .color(Color::Accent)
+                                                                        Icon::new(icon.unwrap_or(IconName::Check))
+                                                                            .color(icon_color)
                                                                             .size(*icon_size)
                                                                     )
                                                                     .when(!toggled, |contents|
@@ -709,11 +716,12 @@ impl Render for ContextMenu {
                                                                         KeyBinding::for_action_in(
                                                                             &**action, focus,
                                                                             window,
+                                                                            cx
                                                                         )
                                                                     })
                                                                     .unwrap_or_else(|| {
                                                                         KeyBinding::for_action(
-                                                                            &**action, window,
+                                                                            &**action, window, cx
                                                                         )
                                                                     })
                                                                     .map(|binding| {
@@ -776,7 +784,7 @@ impl Render for ContextMenu {
                                         }
                                     }
                                 },
-                            ))),
+                            )))
                     ),
             )
     }

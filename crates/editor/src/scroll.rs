@@ -3,6 +3,7 @@ pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
 
 use crate::editor_settings::{ScrollBeyondLastLine, ScrollbarAxes};
+use crate::EditPredictionPreview;
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
@@ -223,7 +224,6 @@ impl ScrollManager {
         self.anchor.scroll_position(snapshot)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn set_scroll_position(
         &mut self,
         scroll_position: gpui::Point<f32>,
@@ -298,7 +298,6 @@ impl ScrollManager {
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn set_anchor(
         &mut self,
         anchor: ScrollAnchor,
@@ -494,6 +493,15 @@ impl Editor {
     ) {
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
+
+        if let EditPredictionPreview::Active {
+            previous_scroll_position,
+        } = &mut self.edit_prediction_preview
+        {
+            if !autoscroll {
+                previous_scroll_position.take();
+            }
+        }
 
         self.scroll_manager.set_scroll_position(
             scroll_position,

@@ -463,7 +463,6 @@ impl<T: RandomizedTest> TestPlan<T> {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn apply_server_operation(
         plan: Arc<Mutex<Self>>,
         deterministic: BackgroundExecutor,
