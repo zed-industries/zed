@@ -540,67 +540,6 @@ impl DapStore {
     //     })
     // }
 
-    fn start_client_internal(
-        &mut self,
-        delegate: DapAdapterDelegate,
-        config: DebugAdapterConfig,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Arc<DebugAdapterClient>>> {
-        let Some(local_store) = self.as_local_mut() else {
-            return Task::ready(Err(anyhow!("cannot start client on remote side")));
-        };
-
-        let session_id = local_store.next_session_id();
-
-        cx.spawn(|this, mut cx| async move {
-            let adapter = build_adapter(&config.kind).await?;
-
-            if !config.supports_attach && matches!(config.request, DebugRequestType::Attach(_)) {
-                bail!("Debug adapter does not support `attach` request");
-            }
-
-            let binary = cx.update(|cx| {
-                let name = DebugAdapterName::from(adapter.name().as_ref());
-
-                ProjectSettings::get_global(cx)
-                    .dap
-                    .get(&name)
-                    .and_then(|s| s.binary.as_ref().map(PathBuf::from))
-            })?;
-
-            let (adapter, binary) = match adapter
-                .get_binary(&delegate, &config, binary, &mut cx)
-                .await
-            {
-                Err(error) => {
-                    delegate.update_status(
-                        adapter.name(),
-                        DapStatus::Failed {
-                            error: error.to_string(),
-                        },
-                    );
-
-                    return Err(error);
-                }
-                Ok(mut binary) => {
-                    delegate.update_status(adapter.name(), DapStatus::None);
-
-                    let shell_env = delegate.shell_env().await;
-                    let mut envs = binary.envs.unwrap_or_default();
-                    envs.extend(shell_env);
-                    binary.envs = Some(envs);
-
-                    (adapter, binary)
-                }
-            };
-
-            let mut client =
-                DebugAdapterClient::start(session_id, binary, Box::new(|_, _| {}), cx).await?;
-
-            Ok(Arc::new(client))
-        })
-    }
-
     pub fn start_debug_session(
         &mut self,
         config: DebugAdapterConfig,
