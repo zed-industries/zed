@@ -1843,7 +1843,7 @@ impl Interactivity {
         if !drop_listeners.is_empty() {
             let hitbox = hitbox.clone();
             window.on_mouse_event({
-                move |e: &MouseUpEvent, phase, window, cx| {
+                move |_: &MouseUpEvent, phase, window, cx| {
                     if let Some(drag) = &cx.active_drag {
                         if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                             let drag_state_type = drag.value.as_ref().type_id();
@@ -2050,7 +2050,7 @@ impl Interactivity {
                     .as_ref()
                     .and_then(|group_active| GroupHitboxes::get(&group_active.group, cx));
                 let hitbox = hitbox.clone();
-                window.on_mouse_event(move |e: &MouseDownEvent, phase, window, _cx| {
+                window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _cx| {
                     if phase == DispatchPhase::Bubble && !window.default_prevented() {
                         let group_hovered = active_group_hitbox
                             .map_or(false, |group_hitbox_id| group_hitbox_id.is_hovered(window));
