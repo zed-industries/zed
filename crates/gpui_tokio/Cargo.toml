@@ -8,6 +8,9 @@ license = "Apache-2.0"
 [lints]
 workspace = true
 
+[features]
+test-support = []
+
 [lib]
 path = "src/gpui_tokio.rs"
 doctest = false
@@ -15,4 +18,4 @@ doctest = false
 [dependencies]
 util.workspace = true
 gpui.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
+tokio = { workspace = true }

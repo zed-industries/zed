@@ -22,6 +22,7 @@ test-support = [
     "session/test-support",
     "settings/test-support",
     "gpui/test-support",
+    "gpui_tokio/test-support",
     "fs/test-support",
 ]
 
@@ -40,7 +41,6 @@ derive_more.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
-gpui_tokio.workspace = true
 http_client.workspace = true
 itertools.workspace = true
 language.workspace = true
@@ -72,6 +72,7 @@ db = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+gpui_tokio = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
