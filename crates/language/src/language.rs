@@ -1723,12 +1723,13 @@ impl Grammar {
                 .expect("incompatible grammar");
             let mut chunks = text.chunks_in_range(0..text.len());
             parser
-                .parse_with(
+                .parse_with_options(
                     &mut move |offset, _| {
                         chunks.seek(offset);
                         chunks.next().unwrap_or("").as_bytes()
                     },
                     old_tree.as_ref(),
+                    None,
                 )
                 .unwrap()
         })
