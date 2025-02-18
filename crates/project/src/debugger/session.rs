@@ -164,8 +164,8 @@ struct LocalMode {
 }
 
 impl LocalMode {
-    fn new<F>(
-        client_id: DebugAdapterClientId,
+    fn new(
+        session_id: SessionId,
         disposition: DebugAdapterConfig,
         delegate: DapAdapterDelegate,
         message_handler: DapMessageHandler,
@@ -221,10 +221,7 @@ impl LocalMode {
                     cx.background_executor().clone(),
                 )
                 .await?;
-            let breakpoints =
-                breakpoint_store.update(&mut cx, |this, cx| this.all_breakpoints(true, cx))?;
 
-            for (path, breakpoints) in breakpoints {}
             Ok((this, capabilities))
         })
     }

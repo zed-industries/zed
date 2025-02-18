@@ -1304,44 +1304,6 @@ impl Project {
         }
     }
 
-<<<<<<< HEAD
-    pub fn initial_send_breakpoints(
-        &self,
-        session_id: SessionId,
-        cx: &mut Context<Self>,
-    ) -> Task<()> {
-        let mut tasks = Vec::new();
-
-        for (abs_path, serialized_breakpoints) in self
-            .breakpoint_store()
-            .read_with(cx, |store, cx| store.all_breakpoints(true, cx))
-            .into_iter()
-            .filter(|(_, bps)| !bps.is_empty())
-        {
-            let source_breakpoints = serialized_breakpoints
-                .iter()
-                .map(|bp| bp.to_source_breakpoint())
-                .collect::<Vec<_>>();
-
-            tasks.push(self.dap_store.update(cx, |store, cx| {
-                store.send_breakpoints(
-                    session_id,
-                    abs_path,
-                    source_breakpoints,
-                    store.ignore_breakpoints(&session_id, cx),
-                    false,
-                    cx,
-                )
-            }));
-        }
-
-        cx.background_executor().spawn(async move {
-            join_all(tasks).await;
-        })
-    }
-
-=======
->>>>>>> e1c7e1088b (Handle initialize event)
     pub fn start_debug_session(
         &mut self,
         config: DebugAdapterConfig,

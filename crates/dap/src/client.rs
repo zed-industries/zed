@@ -96,7 +96,7 @@ impl DebugAdapterClient {
         client_id: SessionId,
         server_rx: Receiver<Message>,
         client_tx: Sender<Message>,
-        mut event_handler: DapMessageHandler,
+        mut message_handler: DapMessageHandler,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let result = loop {
@@ -109,9 +109,9 @@ impl DebugAdapterClient {
                 Message::Event(ev) => {
                     log::debug!("Client {} received event `{}`", client_id.0, &ev);
 
-                    cx.update(|cx| event_handler(Message::Event(ev), cx))
+                    cx.update(|cx| message_handler(Message::Event(ev), cx))
                 }
-                Message::Request(req) => cx.update(|cx| event_handler(Message::Request(req), cx)),
+                Message::Request(req) => cx.update(|cx| message_handler(Message::Request(req), cx)),
                 Message::Response(response) => {
                     log::debug!("Received response after request timeout: {:#?}", response);
 
