@@ -43,7 +43,7 @@ use crate::ssh_connections::SshConnectionModal;
 use crate::ssh_connections::SshProject;
 use crate::ssh_connections::SshPrompt;
 use crate::ssh_connections::SshSettings;
-use crate::OpenRemote;
+use crate::ToggleRemote;
 
 mod navigation_base {}
 pub struct RemoteServerProjects {
@@ -313,7 +313,7 @@ impl RemoteServerProjects {
         _window: Option<&mut Window>,
         _: &mut Context<Workspace>,
     ) {
-        workspace.register_action(|workspace, _: &OpenRemote, window, cx| {
+        workspace.register_action(|workspace, _: &ToggleRemote, window, cx| {
             let handle = cx.entity().downgrade();
             workspace.toggle_modal(window, cx, |window, cx| Self::new(window, cx, handle))
         });
