@@ -117,7 +117,6 @@ impl WorktreeIndex {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         worktree: Entity<Worktree>,
         db_connection: heed::Env,

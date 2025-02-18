@@ -870,7 +870,6 @@ impl CollabPanel {
             })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_participant_project(
         &self,
         project_id: u64,

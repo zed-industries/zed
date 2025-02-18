@@ -721,7 +721,6 @@ impl BufferDiff {
         Some(start..end)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn update_diff(
         this: Entity<BufferDiff>,
         buffer: text::BufferSnapshot,

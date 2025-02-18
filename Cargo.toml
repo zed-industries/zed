@@ -701,6 +701,7 @@ codegen-units = 16
 [workspace.lints.clippy]
 dbg_macro = "deny"
 todo = "deny"
+too_many_arguments = "allow"
 
 # Motivation: We use `vec![a..b]` a lot when dealing with ranges in text, so
 # warning on this rule produces a lot of noise.
