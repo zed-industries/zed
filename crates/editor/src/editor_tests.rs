@@ -5007,7 +5007,7 @@ async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestA
     EditorTestContext::for_editor(editor, cx)
         .await
         .assert_editor_state(
-            "aaaaaˇ\nbbbbbˇ\ncccccˇ\ndddddˇ\neeeeeˇ\nfffffˇ\ngggggˇ\nhhhhhˇ\niiiiiˇ",
+            "aaaaaˇ\nbbbbbˇ\ncccccˇ\ndddddˇ\neeeeeˇ\nfffffˇ\ngggggˇ\nhhhhh\niiiii",
         );
 }
 
