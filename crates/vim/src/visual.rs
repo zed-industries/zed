@@ -1285,7 +1285,7 @@ mod test {
         cx.assert_state("hello in a w«ordˇ» again.", Mode::VisualBlock);
         assert_eq!(cx.mode(), Mode::VisualBlock);
         cx.simulate_keystrokes("o a s");
-        cx.assert_state("«ˇhello in a word» again.", Mode::Visual);
+        cx.assert_state("«ˇhello in a word» again.", Mode::VisualBlock);
     }
 
     #[gpui::test]
