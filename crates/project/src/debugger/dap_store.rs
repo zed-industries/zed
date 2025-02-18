@@ -555,9 +555,7 @@ impl DapStore {
         cx.spawn(|this, mut cx| async move {
             let adapter = build_adapter(&config.kind).await?;
 
-            if !unimplemented!("adapter.supports_attach()")
-                && matches!(config.request, DebugRequestType::Attach(_))
-            {
+            if !config.supports_attach && matches!(config.request, DebugRequestType::Attach(_)) {
                 bail!("Debug adapter does not support `attach` request");
             }
 
@@ -596,7 +594,8 @@ impl DapStore {
                 }
             };
 
-            let mut client = DebugAdapterClient::start(session_id, binary, |_, _| {}, cx).await?;
+            let mut client =
+                DebugAdapterClient::start(session_id, binary, Box::new(|_, _| {}), cx).await?;
 
             Ok(Arc::new(client))
         })
@@ -607,9 +606,9 @@ impl DapStore {
         config: DebugAdapterConfig,
         worktree: &Entity<Worktree>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Arc<DebugAdapterClient>>> {
+    ) -> Task<Result<Entity<Session>>> {
         let Some(local_store) = self.as_local() else {
-            return Task::ready(Err(anyhow!("cannot start session on remote side")));
+            unimplemented!("Starting session on remote side");
         };
 
         let delegate = DapAdapterDelegate::new(
@@ -625,32 +624,13 @@ impl DapStore {
             }),
         );
 
-        let start_client_task = self.start_client_internal(delegate, config.clone(), cx);
-
-        cx.spawn(|this, mut cx| async move {
-            let client = match start_client_task.await {
-                Ok(client) => client,
-                Err(error) => {
-                    this.update(&mut cx, |_, cx| {
-                        cx.emit(DapStoreEvent::Notification(error.to_string()));
-                    })
-                    .log_err();
-
-                    return Err(error);
-                }
-            };
-
-            this.update(&mut cx, |store, cx| {
-                let session_id = client.id();
-
-                unimplemented!("store.clients.insert(session_id, client);");
-
-                cx.emit(DapStoreEvent::DebugClientStarted(session_id));
-                cx.notify();
-
-                client
-            })
-        })
+        Session::local(
+            self.breakpoint_store.clone(),
+            local_store.next_session_id(),
+            delegate,
+            config,
+            cx,
+        )
     }
 
     pub fn configuration_done(

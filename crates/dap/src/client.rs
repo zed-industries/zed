@@ -48,16 +48,15 @@ pub struct DebugAdapterClient {
     transport_delegate: TransportDelegate,
 }
 
+pub type DapMessageHandler = Box<dyn FnMut(Message, &mut App) + 'static + Send + Sync>;
+
 impl DebugAdapterClient {
-    pub async fn start<F>(
+    pub async fn start(
         id: SessionId,
         binary: DebugAdapterBinary,
-        message_handler: F,
+        message_handler: DapMessageHandler,
         cx: AsyncApp,
-    ) -> Result<Self>
-    where
-        F: FnMut(Message, &mut App) + 'static + Send + Sync + Clone,
-    {
+    ) -> Result<Self> {
         let ((server_rx, server_tx), transport_delegate) =
             TransportDelegate::start(&binary, cx.clone()).await?;
         let this = Self {
@@ -92,16 +91,13 @@ impl DebugAdapterClient {
         })
     }
 
-    async fn handle_receive_messages<F>(
+    async fn handle_receive_messages(
         client_id: SessionId,
         server_rx: Receiver<Message>,
         client_tx: Sender<Message>,
-        mut event_handler: F,
+        mut event_handler: DapMessageHandler,
         cx: &mut AsyncApp,
-    ) -> Result<()>
-    where
-        F: FnMut(Message, &mut App) + 'static + Send + Sync + Clone,
-    {
+    ) -> Result<()> {
         let result = loop {
             let message = match server_rx.recv().await {
                 Ok(message) => message,

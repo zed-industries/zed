@@ -50,6 +50,7 @@ use debounced_delay::DebouncedDelay;
 use debugger::{
     breakpoint_store::{BreakpointStore, BreakpointStoreEvent, SerializedBreakpoint},
     dap_store::{DapStore, DapStoreEvent},
+    session::Session,
 };
 pub use environment::ProjectEnvironment;
 use futures::{
@@ -1343,7 +1344,7 @@ impl Project {
         &mut self,
         config: DebugAdapterConfig,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Arc<DebugAdapterClient>>> {
+    ) -> Task<Result<Entity<Session>>> {
         let worktree = maybe!({
             if let Some(cwd) = &config.cwd {
                 Some(self.find_worktree(cwd.as_path(), cx)?.0)

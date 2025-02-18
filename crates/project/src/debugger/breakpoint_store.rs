@@ -504,7 +504,7 @@ impl BreakpointStore {
                             .as_path(),
                     ))
                 } else {
-                    Some(project_path.clone().path)
+                    Some(project_path.path.clone())
                 }
             }) else {
                 continue;

@@ -11,7 +11,7 @@ use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
 use collections::{HashMap, IndexMap};
 use dap::adapters::{DapDelegate, DapStatus, DebugAdapterName};
-use dap::client::{DebugAdapterClient, SessionId};
+use dap::client::{DapMessageHandler, DebugAdapterClient, SessionId};
 use dap::{
     messages::Message, Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source,
     SteppingGranularity,
@@ -160,17 +160,14 @@ struct LocalMode {
 }
 
 impl LocalMode {
-    fn new<F>(
+    fn new(
         session_id: SessionId,
         breakpoint_store: Entity<BreakpointStore>,
         disposition: DebugAdapterConfig,
         delegate: DapAdapterDelegate,
-        message_handler: F,
+        message_handler: DapMessageHandler,
         cx: AsyncApp,
-    ) -> Task<Result<(Self, Capabilities)>>
-    where
-        F: FnMut(Message, &mut App) + 'static + Send + Sync + Clone,
-    {
+    ) -> Task<Result<(Self, Capabilities)>> {
         cx.spawn(move |mut cx| async move {
             let adapter = build_adapter(&disposition.kind).await?;
 
@@ -221,6 +218,10 @@ impl LocalMode {
                     cx.background_executor().clone(),
                 )
                 .await?;
+            let breakpoints =
+                breakpoint_store.update(&mut cx, |this, cx| this.all_breakpoints(true, cx))?;
+
+            for (path, breakpoints) in breakpoints {}
             Ok((this, capabilities))
         })
     }
@@ -377,7 +378,7 @@ impl Session {
                 breakpoints,
                 config.clone(),
                 delegate,
-                |_, _| {},
+                Box::new(|_, _| {}),
                 cx.clone(),
             )
             .await?;
