@@ -342,7 +342,6 @@ impl RunningState {
         let console = cx.new(|cx| {
             Console::new(
                 session.clone(),
-                session_id,
                 stack_frame_list.clone(),
                 variable_list.clone(),
                 window,
