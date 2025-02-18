@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use feature_flags::ZedPro;
 use gpui::{
     Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
@@ -9,6 +10,7 @@ use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegi
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
+use util::ResultExt as _;
 use workspace::ShowConfiguration;
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
@@ -20,6 +22,7 @@ pub struct LanguageModelSelector {
     /// The task used to update the picker's matches when there is a change to
     /// the language model registry.
     update_matches_task: Option<Task<()>>,
+    _authenticate_all_providers_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -50,6 +53,7 @@ impl LanguageModelSelector {
         LanguageModelSelector {
             picker,
             update_matches_task: None,
+            _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
             _subscriptions: vec![cx.subscribe_in(
                 &LanguageModelRegistry::global(cx),
                 window,
@@ -78,6 +82,26 @@ impl LanguageModelSelector {
             }
             _ => {}
         }
+    }
+
+    fn authenticate_all_providers(cx: &mut App) -> Task<()> {
+        let authenticate_all_providers = LanguageModelRegistry::global(cx)
+            .read(cx)
+            .providers()
+            .iter()
+            .map(|provider| (provider.name(), provider.authenticate(cx)))
+            .collect::<Vec<_>>();
+
+        cx.spawn(|_cx| async move {
+            for (provider_name, authenticate_task) in authenticate_all_providers {
+                authenticate_task
+                    .await
+                    .with_context(|| {
+                        format!("Failed to authenticate provider: {}", provider_name.0)
+                    })
+                    .log_err();
+            }
+        })
     }
 
     fn all_models(cx: &App) -> Vec<ModelInfo> {
