@@ -258,7 +258,7 @@ impl TerminalView {
                 })
                 .separator()
                 .action(
-                    "Close",
+                    "Close Terminal",
                     Box::new(CloseActiveItem {
                         save_intent: None,
                         close_pinned: true,
