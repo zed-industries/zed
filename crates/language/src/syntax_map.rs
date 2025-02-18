@@ -1244,7 +1244,7 @@ fn parse_text(
                     chunks.next().unwrap_or("").as_bytes()
                 },
                 old_tree.as_ref(),
-                None
+                None,
             )
             .ok_or_else(|| anyhow::anyhow!("failed to parse"))
     })
