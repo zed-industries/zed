@@ -4879,11 +4879,7 @@ async fn test_split_selection_into_lines(cx: &mut TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
 
     #[track_caller]
-    fn test<'a>(
-        cx: &'a mut EditorTestContext,
-        initial_state: &'static str,
-        expected_state: &'static str,
-    ) {
+    fn test(cx: &mut EditorTestContext, initial_state: &'static str, expected_state: &'static str) {
         cx.set_state(initial_state);
         cx.update_editor(|e, window, cx| {
             e.split_selection_into_lines(&SplitSelectionIntoLines, window, cx)
