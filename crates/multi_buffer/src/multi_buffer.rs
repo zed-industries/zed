@@ -9,6 +9,7 @@ pub use position::{TypedOffset, TypedPoint, TypedRow};
 use anyhow::{anyhow, Result};
 use buffer_diff::{
     BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffHunkSecondaryStatus, DiffHunkStatus,
+    DiffHunkStatusKind,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
@@ -138,12 +139,16 @@ pub struct MultiBufferDiffHunk {
 
 impl MultiBufferDiffHunk {
     pub fn status(&self) -> DiffHunkStatus {
-        if self.buffer_range.start == self.buffer_range.end {
-            DiffHunkStatus::Removed(self.secondary_status)
+        let kind = if self.buffer_range.start == self.buffer_range.end {
+            DiffHunkStatusKind::Deleted
         } else if self.diff_base_byte_range.is_empty() {
-            DiffHunkStatus::Added(self.secondary_status)
+            DiffHunkStatusKind::Added
         } else {
-            DiffHunkStatus::Modified(self.secondary_status)
+            DiffHunkStatusKind::Modified
+        };
+        DiffHunkStatus {
+            kind,
+            secondary: self.secondary_status,
         }
     }
 }
@@ -6213,9 +6218,10 @@ where
                     excerpt,
                     has_trailing_newline: *has_trailing_newline,
                     is_main_buffer: false,
-                    diff_hunk_status: Some(DiffHunkStatus::Removed(
-                        hunk_info.hunk_secondary_status,
-                    )),
+                    diff_hunk_status: Some(DiffHunkStatus {
+                        kind: DiffHunkStatusKind::Deleted,
+                        secondary: hunk_info.hunk_secondary_status,
+                    }),
                     buffer_range: buffer_start..buffer_end,
                     range: start..end,
                 });
@@ -6258,8 +6264,10 @@ where
                     excerpt,
                     has_trailing_newline,
                     is_main_buffer: true,
-                    diff_hunk_status: inserted_hunk_info
-                        .map(|info| DiffHunkStatus::Added(info.hunk_secondary_status)),
+                    diff_hunk_status: inserted_hunk_info.map(|info| DiffHunkStatus {
+                        kind: DiffHunkStatusKind::Added,
+                        secondary: info.hunk_secondary_status,
+                    }),
                     buffer_range: buffer_start..buffer_end,
                     range: start..end,
                 })

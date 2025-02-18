@@ -29,10 +29,16 @@ struct BufferDiffInner {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DiffHunkStatus {
-    Added(DiffHunkSecondaryStatus),
-    Modified(DiffHunkSecondaryStatus),
-    Removed(DiffHunkSecondaryStatus),
+pub struct DiffHunkStatus {
+    pub kind: DiffHunkStatusKind,
+    pub secondary: DiffHunkSecondaryStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DiffHunkStatusKind {
+    Added,
+    Modified,
+    Deleted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -40,6 +46,16 @@ pub enum DiffHunkSecondaryStatus {
     HasSecondaryHunk,
     OverlapsWithSecondaryHunk,
     None,
+}
+
+impl DiffHunkSecondaryStatus {
+    pub fn is_secondary(&self) -> bool {
+        match self {
+            DiffHunkSecondaryStatus::HasSecondaryHunk => true,
+            DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => true,
+            DiffHunkSecondaryStatus::None => false,
+        }
+    }
 }
 
 /// A diff hunk resolved to rows in the buffer.
@@ -928,34 +944,47 @@ impl BufferDiff {
 
 impl DiffHunk {
     pub fn status(&self) -> DiffHunkStatus {
-        if self.buffer_range.start == self.buffer_range.end {
-            DiffHunkStatus::Removed(self.secondary_status)
+        let kind = if self.buffer_range.start == self.buffer_range.end {
+            DiffHunkStatusKind::Deleted
         } else if self.diff_base_byte_range.is_empty() {
-            DiffHunkStatus::Added(self.secondary_status)
+            DiffHunkStatusKind::Added
         } else {
-            DiffHunkStatus::Modified(self.secondary_status)
+            DiffHunkStatusKind::Modified
+        };
+        DiffHunkStatus {
+            kind,
+            secondary: self.secondary_status,
         }
     }
 }
 
 impl DiffHunkStatus {
-    pub fn is_removed(&self) -> bool {
-        matches!(self, DiffHunkStatus::Removed(_))
+    pub fn is_deleted(&self) -> bool {
+        self.kind == DiffHunkStatusKind::Deleted
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn removed() -> Self {
-        DiffHunkStatus::Removed(DiffHunkSecondaryStatus::None)
+    pub fn deleted() -> Self {
+        Self {
+            kind: DiffHunkStatusKind::Deleted,
+            secondary: DiffHunkSecondaryStatus::None,
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn added() -> Self {
-        DiffHunkStatus::Added(DiffHunkSecondaryStatus::None)
+        Self {
+            kind: DiffHunkStatusKind::Added,
+            secondary: DiffHunkSecondaryStatus::None,
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn modified() -> Self {
-        DiffHunkStatus::Modified(DiffHunkSecondaryStatus::None)
+        Self {
+            kind: DiffHunkStatusKind::Modified,
+            secondary: DiffHunkSecondaryStatus::None,
+        }
     }
 }
 
@@ -1106,23 +1135,24 @@ mod tests {
         let uncommitted_diff = BufferDiff::build_sync(buffer.clone(), head_text.clone(), cx);
 
         let expected_hunks = vec![
-            (
-                2..3,
-                "two\n",
-                "TWO\n",
-                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::None),
-            ),
+            (2..3, "two\n", "TWO\n", DiffHunkStatus::modified()),
             (
                 4..6,
                 "four\nfive\n",
                 "FOUR\nFIVE\n",
-                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk),
+                DiffHunkStatus {
+                    kind: DiffHunkStatusKind::Modified,
+                    secondary: DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk,
+                },
             ),
             (
                 7..8,
                 "seven\n",
                 "SEVEN\n",
-                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::HasSecondaryHunk),
+                DiffHunkStatus {
+                    kind: DiffHunkStatusKind::Modified,
+                    secondary: DiffHunkSecondaryStatus::HasSecondaryHunk,
+                },
             ),
         ];
 

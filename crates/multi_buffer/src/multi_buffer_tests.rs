@@ -1,5 +1,5 @@
 use super::*;
-use buffer_diff::DiffHunkStatus;
+use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use gpui::{App, TestAppContext};
 use indoc::indoc;
 use language::{Buffer, Rope};
@@ -1327,11 +1327,11 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
         vec![
             (Some(0), Some(DiffHunkStatus::added())),
             (Some(1), None),
-            (Some(1), Some(DiffHunkStatus::removed())),
+            (Some(1), Some(DiffHunkStatus::deleted())),
             (Some(2), Some(DiffHunkStatus::added())),
             (Some(3), None),
-            (Some(3), Some(DiffHunkStatus::removed())),
-            (Some(4), Some(DiffHunkStatus::removed())),
+            (Some(3), Some(DiffHunkStatus::deleted())),
+            (Some(4), Some(DiffHunkStatus::deleted())),
             (Some(4), None),
             (Some(5), None)
         ]
@@ -2279,7 +2279,10 @@ impl ReferenceMultibuffer {
                             buffer_start: Some(
                                 base_buffer.offset_to_point(hunk.diff_base_byte_range.start),
                             ),
-                            status: Some(DiffHunkStatus::Removed(hunk.secondary_status)),
+                            status: Some(DiffHunkStatus {
+                                kind: DiffHunkStatusKind::Deleted,
+                                secondary: hunk.secondary_status,
+                            }),
                         });
                     }
 
@@ -2287,17 +2290,6 @@ impl ReferenceMultibuffer {
                 }
 
                 // Add the inserted text for the hunk.
-                if hunk_range.end > offset {
-                    let len = text.len();
-                    text.extend(buffer.text_for_range(offset..hunk_range.end));
-                    regions.push(ReferenceRegion {
-                        buffer_id: Some(buffer.remote_id()),
-                        range: len..text.len(),
-                        buffer_start: Some(buffer.offset_to_point(offset)),
-                        status: Some(DiffHunkStatus::Added(hunk.secondary_status)),
-                    });
-                    offset = hunk_range.end;
-                }
             }
 
             // Add the buffer text for the rest of the excerpt.
@@ -2664,13 +2656,19 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             snapshot.widest_line_number(),
             expected_row_infos
                 .into_iter()
-                .filter_map(
-                    |info| if matches!(info.diff_status, Some(DiffHunkStatus::Removed(_))) {
+                .filter_map(|info| {
+                    if matches!(
+                        info.diff_status,
+                        Some(DiffHunkStatusKind {
+                            kind: DiffHunkStatusKind::Deleted,
+                            ..
+                        })
+                    ) {
                         None
                     } else {
                         info.buffer_row
                     }
-                )
+                })
                 .max()
                 .unwrap()
                 + 1
@@ -3021,10 +3019,10 @@ fn format_diff(
         .enumerate()
         .zip(row_infos)
         .map(|((ix, line), info)| {
-            let marker = match info.diff_status {
-                Some(DiffHunkStatus::Added(_)) => "+ ",
-                Some(DiffHunkStatus::Removed(_)) => "- ",
-                Some(DiffHunkStatus::Modified(_)) => unreachable!(),
+            let marker = match info.diff_status.map(|status| status.kind) {
+                Some(DiffHunkStatusKind::Added) => "+ ",
+                Some(DiffHunkStatusKind::Deleted) => "- ",
+                Some(DiffHunkStatusKind::Modified) => unreachable!(),
                 None => {
                     if has_diff && !line.is_empty() {
                         "  "

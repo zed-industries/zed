@@ -12525,7 +12525,7 @@ struct Row10;"#};
                    ˇ
                    struct Row8;
                    struct Row10;"#},
-        vec![DiffHunkStatus::removed(), DiffHunkStatus::removed()],
+        vec![DiffHunkStatus::deleted(), DiffHunkStatus::deleted()],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -12548,7 +12548,7 @@ struct Row10;"#};
                    ˇ»
                    struct Row8;
                    struct Row10;"#},
-        vec![DiffHunkStatus::removed(), DiffHunkStatus::removed()],
+        vec![DiffHunkStatus::deleted(), DiffHunkStatus::deleted()],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -12573,7 +12573,7 @@ struct Row10;"#};
 
                    struct Row8;ˇ
                    struct Row10;"#},
-        vec![DiffHunkStatus::removed(), DiffHunkStatus::removed()],
+        vec![DiffHunkStatus::deleted(), DiffHunkStatus::deleted()],
         indoc! {r#"struct Row;
                    struct Row1;
                    ˇstruct Row2;
@@ -12598,9 +12598,9 @@ struct Row10;"#};
                    struct Row8;ˇ»
                    struct Row10;"#},
         vec![
-            DiffHunkStatus::removed(),
-            DiffHunkStatus::removed(),
-            DiffHunkStatus::removed(),
+            DiffHunkStatus::deleted(),
+            DiffHunkStatus::deleted(),
+            DiffHunkStatus::deleted(),
         ],
         indoc! {r#"struct Row;
                    struct Row1;
