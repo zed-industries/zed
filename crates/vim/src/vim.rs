@@ -44,6 +44,7 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{px, IntoElement, SharedString};
+use util::serde::{deserialize_enum_fromstr, deserialize_option_enum_fromstr};
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
 
@@ -352,7 +353,7 @@ impl Vim {
         let editor = cx.entity().clone();
 
         cx.new(|cx| Vim {
-            mode: Mode::Normal,
+            mode: VimSettings::get_global(cx).default_mode,
             last_mode: Mode::Normal,
             temp_mode: false,
             exit_temporary_mode: false,
@@ -1047,14 +1048,12 @@ impl Vim {
     }
 
     pub fn extend_key_context(&self, context: &mut KeyContext, cx: &App) {
-        let mut mode = match self.mode {
-            Mode::Normal => "normal",
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
-            Mode::Insert => "insert",
-            Mode::Replace => "replace",
-            Mode::HelixNormal => "helix_normal",
-        }
-        .to_string();
+        // if self.mode.is_visual() then mode = "visual"
+        let mut mode = if self.mode.is_visual() {
+            Mode::Visual.to_string()
+        } else {
+            self.mode.to_string()
+        };
 
         let mut operator_id = "none";
 
@@ -1633,6 +1632,7 @@ struct VimSettings {
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
+    pub default_mode: Mode,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1643,6 +1643,7 @@ struct VimSettingsContent {
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
+    pub default_mode: Option<Mode>,
 }
 
 impl Settings for VimSettings {
