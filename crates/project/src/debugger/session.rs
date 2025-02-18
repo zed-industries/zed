@@ -2,10 +2,10 @@ use crate::project_settings::ProjectSettings;
 
 use super::breakpoint_store::BreakpointStore;
 use super::dap_command::{
-    self, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand, LocalDapCommand,
-    NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand, ScopesCommand,
-    SetVariableValueCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
-    TerminateCommand, TerminateThreadsCommand, VariablesCommand,
+    self, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand, Initialize,
+    LocalDapCommand, NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand,
+    ScopesCommand, SetVariableValueCommand, StepBackCommand, StepCommand, StepInCommand,
+    StepOutCommand, TerminateCommand, TerminateThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
@@ -18,7 +18,7 @@ use dap::{
 };
 use dap_adapters::build_adapter;
 use futures::{future::Shared, FutureExt};
-use gpui::{App, AppContext, AsyncApp, Context, Entity, Task};
+use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, Task};
 use rpc::AnyProtoClient;
 use serde_json::Value;
 use settings::Settings;
@@ -167,7 +167,7 @@ impl LocalMode {
         delegate: DapAdapterDelegate,
         message_handler: F,
         cx: AsyncApp,
-    ) -> Task<Result<Self>>
+    ) -> Task<Result<(Self, Capabilities)>>
     where
         F: FnMut(Message, &mut App) + 'static + Send + Sync + Clone,
     {
@@ -209,18 +209,26 @@ impl LocalMode {
                 }
             };
 
-            let client =
-                Arc::new(DebugAdapterClient::start(client_id, binary, message_handler, cx).await?);
+            let client = Arc::new(
+                DebugAdapterClient::start(client_id, binary, message_handler, cx.clone()).await?,
+            );
             let this = Self { client };
-
-            Ok(this)
+            let capabilities = this
+                .request(
+                    Initialize {
+                        adapter_id: "zed-dap-this-value-needs-changing".to_owned(),
+                    },
+                    cx.background_executor().clone(),
+                )
+                .await?;
+            Ok((this, capabilities))
         })
     }
 
     fn request<R: LocalDapCommand>(
         &self,
         request: R,
-        cx: &mut Context<Session>,
+        executor: BackgroundExecutor,
     ) -> Task<Result<R::Response>>
     where
         <R::DapRequest as dap::requests::Request>::Response: 'static,
@@ -230,12 +238,12 @@ impl LocalMode {
 
         let request_clone = request.clone();
         let connection = self.client.clone();
-        let request_task = cx.background_executor().spawn(async move {
+        let request_task = executor.spawn(async move {
             let args = request_clone.to_dap();
             connection.request::<R::DapRequest>(args).await
         });
 
-        cx.background_executor().spawn(async move {
+        executor.spawn(async move {
             let response = request.response_from_dap(request_task.await?);
             response
         })
@@ -259,7 +267,9 @@ impl Mode {
         <R::DapRequest as dap::requests::Request>::Arguments: 'static + Send,
     {
         match self {
-            Mode::Local(debug_adapter_client) => debug_adapter_client.request(request, cx),
+            Mode::Local(debug_adapter_client) => {
+                debug_adapter_client.request(request, cx.background_executor().clone())
+            }
             Mode::Remote(remote_connection) => remote_connection.request(request, client_id, cx),
         }
     }
@@ -362,7 +372,7 @@ impl Session {
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(move |mut cx| async move {
-            let mode = LocalMode::new(
+            let (mode, capabilities) = LocalMode::new(
                 client_id,
                 breakpoints,
                 config.clone(),
@@ -375,7 +385,7 @@ impl Session {
                 mode: Mode::Local(mode),
                 client_id,
                 config,
-                capabilities: unimplemented!(),
+                capabilities,
                 ignore_breakpoints: false,
                 requests: HashMap::default(),
                 modules: Vec::default(),

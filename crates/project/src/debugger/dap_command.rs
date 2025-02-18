@@ -5,7 +5,8 @@ use dap::{
     client::DebugAdapterClientId,
     proto_conversions::ProtoConversion,
     requests::{Continue, Next},
-    Capabilities, ContinueArguments, NextArguments, SetVariableResponse, StepInArguments,
+    Capabilities, ContinueArguments, InitializeRequestArguments,
+    InitializeRequestArgumentsPathFormat, NextArguments, SetVariableResponse, StepInArguments,
     StepOutArguments, SteppingGranularity, ValueFormat, Variable, VariablesArgumentsFilter,
 };
 use rpc::proto;
@@ -1589,5 +1590,47 @@ impl DapCommand for ThreadsCommand {
         proto::DapThreadsResponse {
             threads: message.to_proto(),
         }
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub(super) struct Initialize {
+    pub(super) adapter_id: String,
+}
+
+fn dap_client_capabilities(adapter_id: String) -> InitializeRequestArguments {
+    InitializeRequestArguments {
+        client_id: Some("zed".to_owned()),
+        client_name: Some("Zed".to_owned()),
+        adapter_id,
+        locale: Some("en-US".to_owned()),
+        path_format: Some(InitializeRequestArgumentsPathFormat::Path),
+        supports_variable_type: Some(true),
+        supports_variable_paging: Some(false),
+        supports_run_in_terminal_request: Some(true),
+        supports_memory_references: Some(true),
+        supports_progress_reporting: Some(false),
+        supports_invalidated_event: Some(false),
+        lines_start_at1: Some(true),
+        columns_start_at1: Some(true),
+        supports_memory_event: Some(false),
+        supports_args_can_be_interpreted_by_shell: Some(false),
+        supports_start_debugging_request: Some(true),
+    }
+}
+
+impl LocalDapCommand for Initialize {
+    type Response = Capabilities;
+    type DapRequest = dap::requests::Initialize;
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap_client_capabilities(self.adapter_id.clone())
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message)
     }
 }
