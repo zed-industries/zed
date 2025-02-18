@@ -274,7 +274,7 @@ pub enum Event {
     DebugClientShutdown(SessionId),
     ActiveDebugLineChanged,
     DebugClientEvent {
-        client_id: SessionId,
+        session_id: SessionId,
         message: Message,
     },
     DebugClientLog(SessionId, String),
@@ -1306,7 +1306,7 @@ impl Project {
 
     pub fn initial_send_breakpoints(
         &self,
-        client_id: SessionId,
+        session_id: SessionId,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let mut tasks = Vec::new();
@@ -1324,10 +1324,10 @@ impl Project {
 
             tasks.push(self.dap_store.update(cx, |store, cx| {
                 store.send_breakpoints(
-                    client_id,
+                    session_id,
                     abs_path,
                     source_breakpoints,
-                    store.ignore_breakpoints(&client_id, cx),
+                    store.ignore_breakpoints(&session_id, cx),
                     false,
                     cx,
                 )
@@ -1389,14 +1389,14 @@ impl Project {
 
     pub fn toggle_ignore_breakpoints(
         &self,
-        client_id: SessionId,
+        session_id: SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let tasks = self.dap_store.update(cx, |store, cx| {
             if let Some((upstream_client, project_id)) = store.upstream_client() {
                 upstream_client
                     .send(proto::ToggleIgnoreBreakpoints {
-                        client_id: client_id.to_proto(),
+                        client_id: session_id.to_proto(),
                         project_id,
                     })
                     .log_err();
@@ -1404,14 +1404,14 @@ impl Project {
                 return Vec::new();
             }
 
-            store.toggle_ignore_breakpoints(&client_id, cx);
+            store.toggle_ignore_breakpoints(&session_id, cx);
 
             if let Some((downstream_client, project_id)) = store.downstream_client() {
                 downstream_client
                     .send(proto::IgnoreBreakpointState {
-                        client_id: client_id.to_proto(),
+                        session_id: session_id.to_proto(),
                         project_id: *project_id,
-                        ignore: store.ignore_breakpoints(&client_id, cx),
+                        ignore: store.ignore_breakpoints(&session_id, cx),
                     })
                     .log_err();
             }
@@ -1437,13 +1437,13 @@ impl Project {
 
                 tasks.push(
                     store.send_breakpoints(
-                        client_id,
+                        session_id,
                         Arc::from(buffer_path),
                         breakpoints
                             .into_iter()
                             .map(|breakpoint| breakpoint.to_source_breakpoint(buffer))
                             .collect::<Vec<_>>(),
-                        store.ignore_breakpoints(&client_id, cx),
+                        store.ignore_breakpoints(&session_id, cx),
                         false,
                         cx,
                     ),
@@ -2655,15 +2655,18 @@ impl Project {
         cx: &mut Context<Self>,
     ) {
         match event {
-            DapStoreEvent::DebugClientStarted(client_id) => {
-                cx.emit(Event::DebugClientStarted(*client_id));
+            DapStoreEvent::DebugClientStarted(session_id) => {
+                cx.emit(Event::DebugClientStarted(*session_id));
             }
-            DapStoreEvent::DebugClientShutdown(client_id) => {
-                cx.emit(Event::DebugClientShutdown(*client_id));
+            DapStoreEvent::DebugClientShutdown(session_id) => {
+                cx.emit(Event::DebugClientShutdown(*session_id));
             }
-            DapStoreEvent::DebugClientEvent { client_id, message } => {
+            DapStoreEvent::DebugClientEvent {
+                session_id,
+                message,
+            } => {
                 cx.emit(Event::DebugClientEvent {
-                    client_id: *client_id,
+                    session_id: *session_id,
                     message: message.clone(),
                 });
             }

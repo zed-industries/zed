@@ -126,10 +126,10 @@ impl RemoteConnection {
     fn send_proto_client_request<R: DapCommand>(
         &self,
         request: R,
-        client_id: SessionId,
+        session_id: SessionId,
         cx: &mut App,
     ) -> Task<Result<R::Response>> {
-        let message = request.to_proto(client_id, self.upstream_project_id);
+        let message = request.to_proto(session_id, self.upstream_project_id);
         let upstream_client = self.client.clone();
         cx.background_executor().spawn(async move {
             let response = upstream_client.request(message).await?;
@@ -139,14 +139,14 @@ impl RemoteConnection {
     fn request<R: DapCommand>(
         &self,
         request: R,
-        client_id: SessionId,
+        session_id: SessionId,
         cx: &mut App,
     ) -> Task<Result<R::Response>>
     where
         <R::DapRequest as dap::requests::Request>::Response: 'static,
         <R::DapRequest as dap::requests::Request>::Arguments: 'static + Send,
     {
-        return self.send_proto_client_request::<R>(request, client_id, cx);
+        return self.send_proto_client_request::<R>(request, session_id, cx);
     }
 }
 
@@ -161,7 +161,7 @@ struct LocalMode {
 
 impl LocalMode {
     fn new<F>(
-        client_id: SessionId,
+        session_id: SessionId,
         breakpoint_store: Entity<BreakpointStore>,
         disposition: DebugAdapterConfig,
         delegate: DapAdapterDelegate,
@@ -210,7 +210,7 @@ impl LocalMode {
             };
 
             let client = Arc::new(
-                DebugAdapterClient::start(client_id, binary, message_handler, cx.clone()).await?,
+                DebugAdapterClient::start(session_id, binary, message_handler, cx.clone()).await?,
             );
             let this = Self { client };
             let capabilities = this
@@ -258,7 +258,7 @@ impl From<RemoteConnection> for Mode {
 impl Mode {
     fn request_dap<R: DapCommand>(
         &self,
-        client_id: SessionId,
+        session_id: SessionId,
         request: R,
         cx: &mut Context<Session>,
     ) -> Task<Result<R::Response>>
@@ -270,7 +270,7 @@ impl Mode {
             Mode::Local(debug_adapter_client) => {
                 debug_adapter_client.request(request, cx.background_executor().clone())
             }
-            Mode::Remote(remote_connection) => remote_connection.request(request, client_id, cx),
+            Mode::Remote(remote_connection) => remote_connection.request(request, session_id, cx),
         }
     }
 }
@@ -280,7 +280,7 @@ pub struct Session {
     mode: Mode,
     config: DebugAdapterConfig,
     pub(super) capabilities: Capabilities,
-    client_id: SessionId,
+    id: SessionId,
     ignore_breakpoints: bool,
     modules: Vec<dap::Module>,
     loaded_sources: Vec<dap::Source>,
@@ -366,14 +366,14 @@ impl CompletionsQuery {
 impl Session {
     pub(crate) fn local(
         breakpoints: Entity<BreakpointStore>,
-        client_id: SessionId,
+        session_id: SessionId,
         delegate: DapAdapterDelegate,
         config: DebugAdapterConfig,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(move |mut cx| async move {
             let (mode, capabilities) = LocalMode::new(
-                client_id,
+                session_id,
                 breakpoints,
                 config.clone(),
                 delegate,
@@ -383,7 +383,7 @@ impl Session {
             .await?;
             cx.new(|_| Self {
                 mode: Mode::Local(mode),
-                client_id,
+                id: session_id,
                 config,
                 capabilities,
                 ignore_breakpoints: false,
@@ -396,7 +396,7 @@ impl Session {
     }
 
     pub(crate) fn remote(
-        client_id: SessionId,
+        session_id: SessionId,
         client: AnyProtoClient,
         upstream_project_id: u64,
         ignore_breakpoints: bool,
@@ -406,7 +406,7 @@ impl Session {
                 client,
                 upstream_project_id,
             }),
-            client_id,
+            id: session_id,
             capabilities: Capabilities::default(),
             ignore_breakpoints,
             requests: HashMap::default(),
@@ -444,7 +444,7 @@ impl Session {
 
             let task = Self::request_inner::<Arc<T>>(
                 &self.capabilities,
-                self.client_id,
+                self.id,
                 &self.mode,
                 command,
                 process_result,
@@ -464,7 +464,7 @@ impl Session {
 
     fn request_inner<T: DapCommand + PartialEq + Eq + Hash>(
         capabilities: &Capabilities,
-        client_id: SessionId,
+        session_id: SessionId,
         mode: &Mode,
         request: T,
         process_result: impl FnOnce(&mut Self, &T::Response, &mut Context<Self>) + 'static,
@@ -473,7 +473,7 @@ impl Session {
         if !T::is_supported(&capabilities) {
             return Task::ready(None);
         }
-        let request = mode.request_dap(client_id, request, cx);
+        let request = mode.request_dap(session_id, request, cx);
         cx.spawn(|this, mut cx| async move {
             let result = request.await.log_err()?;
             this.update(&mut cx, |this, cx| {
@@ -492,7 +492,7 @@ impl Session {
     ) -> Task<Option<T::Response>> {
         Self::request_inner(
             &self.capabilities,
-            self.client_id,
+            self.id,
             &self.mode,
             request,
             process_result,

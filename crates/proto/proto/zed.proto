@@ -2568,11 +2568,11 @@ message DebugClient {
 
 message ShutdownDebugClient {
     uint64 project_id = 1;
-    uint64 client_id = 2;
+    uint64 session_id = 2;
 }
 
 message SetDebugClientCapabilities {
-    uint64 client_id = 1;
+    uint64 session_id = 1;
     uint64 project_id = 2;
     bool supports_loaded_sources_request = 3;
     bool supports_modules_request = 4;
@@ -2602,7 +2602,7 @@ message SynchronizeBreakpoints {
 message SetActiveDebugLine {
     uint64 project_id = 1;
     ProjectPath project_path  = 2;
-    uint64 client_id = 3;
+    uint64 session_id = 3;
     uint32 row = 4;
 }
 
@@ -2895,7 +2895,7 @@ message ToggleIgnoreBreakpoints {
 
 message IgnoreBreakpointState {
     uint64 project_id = 1;
-    uint64 client_id = 2;
+    uint64 session_id = 2;
     bool ignore = 3;
 }
 
