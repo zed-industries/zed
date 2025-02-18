@@ -2580,7 +2580,7 @@ mod test {
             },
             Mode::Normal,
         );
-        cx.simulate_keystrokes("v i p");
+        cx.simulate_keystrokes("v i b");
         cx.assert_state(
             indoc! {
                 "(«ˇtrailing whitespace          »)"
@@ -2594,7 +2594,7 @@ mod test {
             },
             Mode::Normal,
         );
-        cx.simulate_keystrokes("y i p");
+        cx.simulate_keystrokes("y i b");
         cx.assert_state(
             indoc! {
                 "(«ˇtrailing whitespace          »)"
