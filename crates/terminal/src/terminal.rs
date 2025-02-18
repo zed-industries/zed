@@ -615,8 +615,6 @@ pub struct Terminal {
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
     last_mouse: Option<(AlacPoint, AlacDirection)>,
-    /// This is only used for terminal hovered word checking
-    // last_mouse_position: Option<Point<Pixels>>,
     pub matches: Vec<RangeInclusive<AlacPoint>>,
     pub last_content: TerminalContent,
     pub selection_head: Option<AlacPoint>,
@@ -1013,6 +1011,7 @@ impl Terminal {
             id: self.next_link_id(),
         });
         cx.emit(Event::NewNavigationTarget(Some(navigation_target)));
+        cx.notify()
     }
 
     fn next_link_id(&mut self) -> usize {
@@ -1401,7 +1400,7 @@ impl Terminal {
         self.last_content.mode.intersects(TermMode::MOUSE_MODE) && !shift
     }
 
-    pub fn mouse_move(&mut self, e: &MouseMoveEvent) {
+    pub fn mouse_move(&mut self, e: &MouseMoveEvent, cx: &mut Context<Self>) {
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
         if self.mouse_mode(e.modifiers.shift) {
             let (point, side) = grid_point_and_side(
@@ -1420,6 +1419,7 @@ impl Terminal {
         } else if e.modifiers.secondary() {
             self.word_from_position(e.position);
         }
+        cx.notify();
     }
 
     fn word_from_position(&mut self, position: Point<Pixels>) {
@@ -1430,10 +1430,17 @@ impl Terminal {
                 position - self.last_content.terminal_bounds.bounds.origin,
                 false,
             ));
+        } else {
+            self.last_content.last_hovered_word = None;
         }
     }
 
-    pub fn mouse_drag(&mut self, e: &MouseMoveEvent, region: Bounds<Pixels>) {
+    pub fn mouse_drag(
+        &mut self,
+        e: &MouseMoveEvent,
+        region: Bounds<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
         if !self.mouse_mode(e.modifiers.shift) {
             self.selection_phase = SelectionPhase::Selecting;
@@ -1455,6 +1462,8 @@ impl Terminal {
                 self.events
                     .push_back(InternalEvent::Scroll(AlacScroll::Delta(scroll_lines)));
             }
+
+            cx.notify();
         }
     }
 
@@ -1710,10 +1719,6 @@ impl Terminal {
                         .unwrap_or_else(|| "Terminal".to_string())
                 }),
         }
-    }
-
-    pub fn has_hovered_word(&self) -> bool {
-        self.last_content.last_hovered_word.is_some()
     }
 
     pub fn task(&self) -> Option<&TaskState> {

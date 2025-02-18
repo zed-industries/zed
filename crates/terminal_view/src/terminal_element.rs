@@ -443,22 +443,19 @@ impl TerminalElement {
         });
 
         window.on_mouse_event({
-            let focus = self.focus.clone();
             let terminal = self.terminal.clone();
             let hitbox = hitbox.clone();
+            let focus = focus.clone();
             move |e: &MouseMoveEvent, phase, window, cx| {
-                if phase != DispatchPhase::Bubble || !focus.is_focused(window) {
+                if phase != DispatchPhase::Bubble {
                     return;
                 }
 
-                if e.pressed_button.is_some() && !cx.has_active_drag() {
+                if e.pressed_button.is_some() && !cx.has_active_drag() && focus.is_focused(window) {
                     let hovered = hitbox.is_hovered(window);
                     terminal.update(cx, |terminal, cx| {
-                        if terminal.selection_started() {
-                            terminal.mouse_drag(e, hitbox.bounds);
-                            cx.notify();
-                        } else if hovered {
-                            terminal.mouse_drag(e, hitbox.bounds);
+                        if terminal.selection_started() || hovered {
+                            terminal.mouse_drag(e, hitbox.bounds, cx);
                             cx.notify();
                         }
                     })
@@ -466,8 +463,7 @@ impl TerminalElement {
 
                 if hitbox.is_hovered(window) {
                     terminal.update(cx, |terminal, cx| {
-                        terminal.mouse_move(e);
-                        cx.notify();
+                        terminal.mouse_move(e, cx);
                     })
                 }
             }
@@ -706,7 +702,7 @@ impl Element for TerminalElement {
 
                     if self.can_navigate_to_selected_word
                         && window.modifiers().secondary()
-                        && terminal.has_hovered_word()
+                        && bounds.contains(&window.mouse_position())
                     {
                         terminal.last_content.last_hovered_word.clone()
                     } else {

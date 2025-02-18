@@ -865,7 +865,8 @@ fn subscribe_for_terminal_events(
                         }
                     }
                     None => false,
-                }
+                };
+                cx.notify()
             }
 
             Event::Open(maybe_navigation_target) => match maybe_navigation_target {
