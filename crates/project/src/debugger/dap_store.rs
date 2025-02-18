@@ -487,59 +487,6 @@ impl DapStore {
         }
     }
 
-    // fn reconnect_client(
-    //     &mut self,
-    //     adapter: Arc<dyn DebugAdapter>,
-    //     binary: DebugAdapterBinary,
-    //     config: DebugAdapterConfig,
-    //     cx: &mut Context<Self>,
-    // ) -> Task<Result<()>> {
-    //     if !config.supports_attach && matches!(config.request, DebugRequestType::Attach(_)) {
-    //         return Task::ready(Err(anyhow!(
-    //             "Debug adapter does not support `attach` request"
-    //         )));
-    //     }
-
-    //     let session_id = self.as_local().unwrap().next_session_id();
-
-    //     cx.spawn(|dap_store, mut cx| async move {
-    //         let mut client = DebugAdapterClient::new(session_id, adapter, binary, &cx);
-
-    //         client
-    //             .reconnect(
-    //                 {
-    //                     let dap_store = dap_store.clone();
-    //                     move |message, cx| {
-    //                         dap_store
-    //                             .update(cx, |_, cx| {
-    //                                 cx.emit(DapStoreEvent::DebugClientEvent { session_id, message })
-    //                             })
-    //                             .log_err();
-    //                     }
-    //                 },
-    //                 &mut cx,
-    //             )
-    //             .await?;
-
-    //         dap_store.update(&mut cx, |store, cx| {
-    //             cx.new(|cx| {
-    //                 let client_state =
-    //                     debugger::client::Client::local(Arc::new(client), capabilities);
-    //             });
-
-    //             store.clients.insert(Arc::new(client), session_id);
-
-    //             // don't emit this event ourself in tests, so we can add request,
-    //             // response and event handlers for this client
-    //             if !cfg!(any(test, feature = "test-support")) {
-    //                 cx.emit(DapStoreEvent::DebugClientStarted(session_id));
-    //             }
-
-    //             cx.notify();
-    //         })
-    //     })
-    // }
-
     pub fn start_debug_session(
         &mut self,
         config: DebugAdapterConfig,
