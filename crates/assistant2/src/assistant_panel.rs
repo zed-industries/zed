@@ -323,6 +323,9 @@ impl AssistantPanel {
     }
 
     fn open_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.thread_store
+            .update(cx, |thread_store, cx| thread_store.reload(cx))
+            .detach_and_log_err(cx);
         self.active_view = ActiveView::History;
         self.history.focus_handle(cx).focus(window);
         cx.notify();
