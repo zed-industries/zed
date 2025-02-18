@@ -131,6 +131,8 @@ pub struct DebugAdapterConfig {
     pub cwd: Option<PathBuf>,
     /// Additional initialization arguments to be sent on DAP initialization
     pub initialize_args: Option<serde_json::Value>,
+    /// Whether the debug adapter supports attaching to a running process.
+    pub supports_attach: bool,
 }
 
 /// Represents the type of the debugger adapter connection
@@ -176,6 +178,7 @@ impl DebugTaskDefinition {
             program: self.program,
             cwd: cwd.clone(),
             initialize_args: self.initialize_args,
+            supports_attach: true,
         });
 
         let args: Vec<String> = Vec::new();

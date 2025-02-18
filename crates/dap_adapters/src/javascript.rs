@@ -1,5 +1,5 @@
 use adapters::latest_github_release;
-use dap::transport::{TcpTransport, Transport};
+use dap::transport::TcpTransport;
 use gpui::AsyncApp;
 use regex::Regex;
 use std::{collections::HashMap, net::Ipv4Addr, path::PathBuf, sync::Arc};
@@ -31,10 +31,6 @@ impl JsDebugAdapter {
 impl DebugAdapter for JsDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
-    }
-
-    fn transport(&self) -> Arc<dyn Transport> {
-        Arc::new(TcpTransport::new(self.host, self.port, self.timeout))
     }
 
     async fn fetch_latest_adapter_version(
@@ -98,6 +94,11 @@ impl DebugAdapter for JsDebugAdapter {
             ]),
             cwd: config.cwd.clone(),
             envs: None,
+            connection: Some(adapters::TcpArguments {
+                host: self.host,
+                port: Some(self.port),
+                timeout: self.timeout,
+            }),
         })
     }
 
@@ -134,10 +135,6 @@ impl DebugAdapter for JsDebugAdapter {
             "processId": pid,
             "cwd": config.cwd,
         })
-    }
-
-    fn supports_attach(&self) -> bool {
-        true
     }
 
     fn attach_processes<'a>(

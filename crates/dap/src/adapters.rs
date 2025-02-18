@@ -1,6 +1,5 @@
 #[cfg(any(test, feature = "test-support"))]
 use crate::transport::FakeTransport;
-use crate::transport::Transport;
 use ::fs::Fs;
 use anyhow::{anyhow, Context as _, Ok, Result};
 use async_compression::futures::bufread::GzipDecoder;
@@ -19,9 +18,11 @@ use std::{
     collections::{HashMap, HashSet},
     ffi::{OsStr, OsString},
     fmt::Debug,
+    net::Ipv4Addr,
     ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use sysinfo::{Pid, Process};
 use task::DebugAdapterConfig;
@@ -90,11 +91,18 @@ impl<'a> From<&'a str> for DebugAdapterName {
 }
 
 #[derive(Debug, Clone)]
+pub struct TcpArguments {
+    pub host: Ipv4Addr,
+    pub port: Option<u16>,
+    pub timeout: Option<u64>,
+}
+#[derive(Debug, Clone)]
 pub struct DebugAdapterBinary {
     pub command: String,
     pub arguments: Option<Vec<OsString>>,
     pub envs: Option<HashMap<String, String>>,
     pub cwd: Option<PathBuf>,
+    pub connection: Option<TcpArguments>,
 }
 
 pub struct AdapterVersion {
@@ -261,8 +269,6 @@ pub trait DebugAdapter: 'static + Send + Sync {
             .await
     }
 
-    fn transport(&self) -> Arc<dyn Transport>;
-
     async fn fetch_latest_adapter_version(
         &self,
         delegate: &dyn DapDelegate,
@@ -287,12 +293,6 @@ pub trait DebugAdapter: 'static + Send + Sync {
 
     /// Should return base configuration to make the debug adapter work
     fn request_args(&self, config: &DebugAdapterConfig) -> Value;
-
-    /// Whether the adapter supports `attach` request,
-    /// if not support and the request is selected we will show an error message
-    fn supports_attach(&self) -> bool {
-        false
-    }
 
     /// Filters out the processes that the adapter can attach to for debugging
     fn attach_processes<'a>(
@@ -322,10 +322,6 @@ impl DebugAdapter for FakeAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn transport(&self) -> Arc<dyn Transport> {
-        Arc::new(FakeTransport::new())
-    }
-
     async fn get_binary(
         &self,
         _: &dyn DapDelegate,
@@ -336,6 +332,11 @@ impl DebugAdapter for FakeAdapter {
         Ok(DebugAdapterBinary {
             command: "command".into(),
             arguments: None,
+            connection: Some(TcpArguments {
+                host: Ipv4Addr::LOCALHOST,
+                port: None,
+                timeout: None,
+            }),
             envs: None,
             cwd: None,
         })
@@ -381,10 +382,6 @@ impl DebugAdapter for FakeAdapter {
                 None
             },
         })
-    }
-
-    fn supports_attach(&self) -> bool {
-        true
     }
 
     fn attach_processes<'a>(

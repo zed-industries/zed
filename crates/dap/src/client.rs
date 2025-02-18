@@ -27,9 +27,9 @@ const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct DebugAdapterClientId(pub u32);
+pub struct SessionId(pub u32);
 
-impl DebugAdapterClientId {
+impl SessionId {
     pub fn from_proto(client_id: u64) -> Self {
         Self(client_id as u32)
     }
@@ -41,69 +41,35 @@ impl DebugAdapterClientId {
 
 /// Represents a connection to the debug adapter process, either via stdout/stdin or a socket.
 pub struct DebugAdapterClient {
-    id: DebugAdapterClientId,
+    id: SessionId,
     sequence_count: AtomicU64,
     binary: DebugAdapterBinary,
     executor: BackgroundExecutor,
-    adapter: Arc<dyn DebugAdapter>,
     transport_delegate: TransportDelegate,
 }
 
 impl DebugAdapterClient {
-    pub fn new(
-        id: DebugAdapterClientId,
-        adapter: Arc<dyn DebugAdapter>,
+    pub async fn start<F>(
+        id: SessionId,
         binary: DebugAdapterBinary,
-        cx: &AsyncApp,
-    ) -> Self {
-        let transport_delegate = TransportDelegate::new(adapter.transport());
-
-        Self {
+        message_handler: F,
+        cx: AsyncApp,
+    ) -> Result<Self>
+    where
+        F: FnMut(Message, &mut App) + 'static + Send + Sync + Clone,
+    {
+        let ((server_rx, server_tx), transport_delegate) =
+            TransportDelegate::start(&binary, cx.clone()).await?;
+        let this = Self {
             id,
             binary,
-            adapter,
             transport_delegate,
             sequence_count: AtomicU64::new(1),
             executor: cx.background_executor().clone(),
-        }
-    }
-
-    pub async fn reconnect<F>(&mut self, message_handler: F, cx: &mut AsyncApp) -> Result<()>
-    where
-        F: FnMut(Message, &mut App) + 'static + Send + Sync + Clone,
-    {
-        let (server_rx, server_tx) = self.transport_delegate.reconnect(cx).await?;
-        log::info!("Successfully reconnected to debug adapter");
-
-        let client_id = self.id;
-
-        // start handling events/reverse requests
-        cx.update(|cx| {
-            cx.spawn({
-                let server_tx = server_tx.clone();
-                |mut cx| async move {
-                    Self::handle_receive_messages(
-                        client_id,
-                        server_rx,
-                        server_tx,
-                        message_handler,
-                        &mut cx,
-                    )
-                    .await
-                }
-            })
-            .detach_and_log_err(cx);
-        })
-    }
-
-    pub async fn start<F>(&mut self, message_handler: F, cx: &mut AsyncApp) -> Result<()>
-    where
-        F: FnMut(Message, &mut App) + 'static + Send + Sync + Clone,
-    {
-        let (server_rx, server_tx) = self.transport_delegate.start(&self.binary, cx).await?;
+        };
         log::info!("Successfully connected to debug adapter");
 
-        let client_id = self.id;
+        let client_id = this.id;
 
         // start handling events/reverse requests
         cx.update(|cx| {
@@ -121,11 +87,13 @@ impl DebugAdapterClient {
                 }
             })
             .detach_and_log_err(cx);
+
+            this
         })
     }
 
     async fn handle_receive_messages<F>(
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         server_rx: Receiver<Message>,
         client_tx: Sender<Message>,
         mut event_handler: F,
@@ -225,20 +193,12 @@ impl DebugAdapterClient {
         self.transport_delegate.send_message(message).await
     }
 
-    pub fn id(&self) -> DebugAdapterClientId {
+    pub fn id(&self) -> SessionId {
         self.id
-    }
-
-    pub fn adapter(&self) -> &Arc<dyn DebugAdapter> {
-        &self.adapter
     }
 
     pub fn binary(&self) -> &DebugAdapterBinary {
         &self.binary
-    }
-
-    pub fn adapter_id(&self) -> String {
-        self.adapter.name().to_string()
     }
 
     /// Get the next sequence id to be used in a request
@@ -335,15 +295,17 @@ mod tests {
     pub async fn test_initialize_client(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let adapter = Arc::new(FakeAdapter::new());
-
         let mut client = DebugAdapterClient::new(
-            crate::client::DebugAdapterClientId(1),
-            adapter,
+            crate::client::SessionId(1),
             DebugAdapterBinary {
                 command: "command".into(),
                 arguments: Default::default(),
                 envs: Default::default(),
+                connection: Some(TcpArguments {
+                    host: Ipv4Addr::LOCALHOST,
+                    port: None,
+                    timeout: None,
+                }),
                 cwd: None,
             },
             &mut cx.to_async(),
@@ -411,12 +373,16 @@ mod tests {
         let called_event_handler = Arc::new(AtomicBool::new(false));
 
         let mut client = DebugAdapterClient::new(
-            crate::client::DebugAdapterClientId(1),
-            adapter,
+            crate::client::SessionId(1),
             DebugAdapterBinary {
                 command: "command".into(),
                 arguments: Default::default(),
                 envs: Default::default(),
+                connection: Some(TCPArguments {
+                    host: Ipv4Addr::LOCALHOST,
+                    port: None,
+                    path: None,
+                }),
                 cwd: None,
             },
             &mut cx.to_async(),
@@ -466,12 +432,17 @@ mod tests {
         let called_event_handler = Arc::new(AtomicBool::new(false));
 
         let mut client = DebugAdapterClient::new(
-            crate::client::DebugAdapterClientId(1),
-            adapter,
+            crate::client::SessionId(1),
             DebugAdapterBinary {
                 command: "command".into(),
                 arguments: Default::default(),
                 envs: Default::default(),
+
+                connection: Some(TCPArguments {
+                    host: Ipv4Addr::LOCALHOST,
+                    port: None,
+                    path: None,
+                }),
                 cwd: None,
             },
             &mut cx.to_async(),

@@ -29,10 +29,7 @@ use git::Repository;
 pub mod search_history;
 mod yarn;
 
-use crate::{
-    debugger::dap_session::{DebugSession, DebugSessionId},
-    git::GitStore,
-};
+use crate::git::GitStore;
 
 use anyhow::{anyhow, Context as _, Result};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -42,7 +39,7 @@ use client::{
 use clock::ReplicaId;
 
 use dap::{
-    client::{DebugAdapterClient, DebugAdapterClientId},
+    client::{DebugAdapterClient, SessionId},
     debugger_settings::DebuggerSettings,
     messages::Message,
     DebugAdapterConfig,
@@ -90,9 +87,7 @@ pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 use remote::{SshConnectionOptions, SshRemoteClient};
 use rpc::{
-    proto::{
-        FromProto, LanguageServerPromptResponse, SetDebuggerPanelItem, ToProto, SSH_PROJECT_ID,
-    },
+    proto::{FromProto, LanguageServerPromptResponse, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, ErrorCode,
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
@@ -275,16 +270,14 @@ pub enum Event {
         notification_id: SharedString,
     },
     LanguageServerPrompt(LanguageServerPromptRequest),
-    DebugClientStarted((DebugSessionId, DebugAdapterClientId)),
-    DebugClientShutdown(DebugAdapterClientId),
-    SetDebugClient(SetDebuggerPanelItem),
+    DebugClientStarted(SessionId),
+    DebugClientShutdown(SessionId),
     ActiveDebugLineChanged,
     DebugClientEvent {
-        session_id: DebugSessionId,
-        client_id: DebugAdapterClientId,
+        session_id: SessionId,
         message: Message,
     },
-    DebugClientLog(DebugAdapterClientId, String),
+    DebugClientLog(SessionId, String),
     LanguageNotFound(Entity<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
@@ -1090,7 +1083,7 @@ impl Project {
         let breakpoint_store = cx.new(|cx| {
             let mut bp_store = {
                 BreakpointStore::remote(
-                    SSH_PROJECT_ID,
+                    remote_id,
                     client.clone().into(),
                     buffer_store.clone(),
                     worktree_store.clone(),
@@ -1106,7 +1099,7 @@ impl Project {
             let mut dap_store =
                 DapStore::new_remote(remote_id, client.clone().into(), breakpoint_store.clone());
 
-            dap_store.request_active_debug_sessions(cx);
+            unimplemented!("dap_store.request_active_debug_sessions(cx)");
             dap_store
         })?;
 
@@ -1313,8 +1306,7 @@ impl Project {
 
     pub fn initial_send_breakpoints(
         &self,
-        session_id: &DebugSessionId,
-        client_id: DebugAdapterClientId,
+        session_id: SessionId,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let mut tasks = Vec::new();
@@ -1332,10 +1324,10 @@ impl Project {
 
             tasks.push(self.dap_store.update(cx, |store, cx| {
                 store.send_breakpoints(
-                    client_id,
+                    session_id,
                     abs_path,
                     source_breakpoints,
-                    store.ignore_breakpoints(session_id, cx),
+                    store.ignore_breakpoints(&session_id, cx),
                     false,
                     cx,
                 )
@@ -1351,7 +1343,7 @@ impl Project {
         &mut self,
         config: DebugAdapterConfig,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(Entity<DebugSession>, Arc<DebugAdapterClient>)>> {
+    ) -> Task<Result<Arc<DebugAdapterClient>>> {
         let worktree = maybe!({
             if let Some(cwd) = &config.cwd {
                 Some(self.find_worktree(cwd.as_path(), cx)?.0)
@@ -1387,8 +1379,7 @@ impl Project {
             if let Some((_, _)) = project.dap_store.read(cx).downstream_client() {
                 project
                     .toggle_ignore_breakpoints(
-                        &DebugSessionId::from_proto(envelope.payload.session_id),
-                        DebugAdapterClientId::from_proto(envelope.payload.client_id),
+                        SessionId::from_proto(envelope.payload.client_id),
                         cx,
                     )
                     .detach_and_log_err(cx);
@@ -1398,16 +1389,14 @@ impl Project {
 
     pub fn toggle_ignore_breakpoints(
         &self,
-        session_id: &DebugSessionId,
-        client_id: DebugAdapterClientId,
+        session_id: SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let tasks = self.dap_store.update(cx, |store, cx| {
             if let Some((upstream_client, project_id)) = store.upstream_client() {
                 upstream_client
                     .send(proto::ToggleIgnoreBreakpoints {
-                        session_id: session_id.to_proto(),
-                        client_id: client_id.to_proto(),
+                        client_id: session_id.to_proto(),
                         project_id,
                     })
                     .log_err();
@@ -1415,14 +1404,14 @@ impl Project {
                 return Vec::new();
             }
 
-            store.toggle_ignore_breakpoints(session_id, cx);
+            store.toggle_ignore_breakpoints(&session_id, cx);
 
             if let Some((downstream_client, project_id)) = store.downstream_client() {
                 downstream_client
                     .send(proto::IgnoreBreakpointState {
                         session_id: session_id.to_proto(),
                         project_id: *project_id,
-                        ignore: store.ignore_breakpoints(session_id, cx),
+                        ignore: store.ignore_breakpoints(&session_id, cx),
                     })
                     .log_err();
             }
@@ -1448,13 +1437,13 @@ impl Project {
 
                 tasks.push(
                     store.send_breakpoints(
-                        client_id,
+                        session_id,
                         Arc::from(buffer_path),
                         breakpoints
                             .into_iter()
                             .map(|breakpoint| breakpoint.to_source_breakpoint(buffer))
                             .collect::<Vec<_>>(),
-                        store.ignore_breakpoints(session_id, cx),
+                        store.ignore_breakpoints(&session_id, cx),
                         false,
                         cx,
                     ),
@@ -2666,20 +2655,18 @@ impl Project {
         cx: &mut Context<Self>,
     ) {
         match event {
-            DapStoreEvent::DebugClientStarted(client_id) => {
-                cx.emit(Event::DebugClientStarted(*client_id));
+            DapStoreEvent::DebugClientStarted(session_id) => {
+                cx.emit(Event::DebugClientStarted(*session_id));
             }
-            DapStoreEvent::DebugClientShutdown(client_id) => {
-                cx.emit(Event::DebugClientShutdown(*client_id));
+            DapStoreEvent::DebugClientShutdown(session_id) => {
+                cx.emit(Event::DebugClientShutdown(*session_id));
             }
             DapStoreEvent::DebugClientEvent {
                 session_id,
-                client_id,
                 message,
             } => {
                 cx.emit(Event::DebugClientEvent {
                     session_id: *session_id,
-                    client_id: *client_id,
                     message: message.clone(),
                 });
             }

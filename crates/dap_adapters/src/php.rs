@@ -1,5 +1,5 @@
 use adapters::latest_github_release;
-use dap::transport::{TcpTransport, Transport};
+use dap::{adapters::TcpArguments, transport::TcpTransport};
 use gpui::AsyncApp;
 use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
 
@@ -28,10 +28,6 @@ impl PhpDebugAdapter {
 impl DebugAdapter for PhpDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
-    }
-
-    fn transport(&self) -> Arc<dyn Transport> {
-        Arc::new(TcpTransport::new(self.host, self.port, self.timeout))
     }
 
     async fn fetch_latest_adapter_version(
@@ -92,6 +88,11 @@ impl DebugAdapter for PhpDebugAdapter {
                 adapter_path.join(Self::ADAPTER_PATH).into(),
                 format!("--server={}", self.port).into(),
             ]),
+            connection: Some(TcpArguments {
+                port: Some(self.port),
+                host: Ipv4Addr::LOCALHOST,
+                timeout: None,
+            }),
             cwd: config.cwd.clone(),
             envs: None,
         })

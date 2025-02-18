@@ -1,9 +1,9 @@
-use dap::client::DebugAdapterClientId;
+use dap::client::SessionId;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::Subscription;
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
 use picker::{Picker, PickerDelegate};
-use project::debugger::{dap_session::DebugSessionId, dap_store::DapStore};
+use project::debugger::dap_store::DapStore;
 use std::sync::Arc;
 use sysinfo::System;
 use ui::{prelude::*, Context, Tooltip};
@@ -20,19 +20,15 @@ struct Candidate {
 pub(crate) struct AttachModalDelegate {
     selected_index: usize,
     matches: Vec<StringMatch>,
-    session_id: DebugSessionId,
+    session_id: SessionId,
     placeholder_text: Arc<str>,
     dap_store: Entity<DapStore>,
-    client_id: DebugAdapterClientId,
+    client_id: SessionId,
     candidates: Option<Vec<Candidate>>,
 }
 
 impl AttachModalDelegate {
-    pub fn new(
-        session_id: DebugSessionId,
-        client_id: DebugAdapterClientId,
-        dap_store: Entity<DapStore>,
-    ) -> Self {
+    pub fn new(session_id: SessionId, client_id: SessionId, dap_store: Entity<DapStore>) -> Self {
         Self {
             client_id,
             dap_store,
@@ -52,8 +48,8 @@ pub(crate) struct AttachModal {
 
 impl AttachModal {
     pub fn new(
-        session_id: &DebugSessionId,
-        client_id: DebugAdapterClientId,
+        session_id: &SessionId,
+        client_id: SessionId,
         dap_store: Entity<DapStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -132,18 +128,15 @@ impl PickerDelegate for AttachModalDelegate {
                     } else {
                         let Some(client) = this.delegate.dap_store.update(cx, |store, cx| {
                             store
-                                .client_by_id(&this.delegate.client_id, cx)
-                                .and_then(|(_, client)| client.read(cx).adapter_client())
+                                .session_by_id(&this.delegate.client_id)
+                                .and_then(|client| client.read(cx).adapter_client())
                         }) else {
                             return Vec::new();
                         };
 
                         let system = System::new_all();
-                        let Some(processes) =
-                            client.adapter().attach_processes(&system.processes())
-                        else {
-                            return Vec::new();
-                        };
+                        todo!("client.adapter().attach_processes(&system.processes())");
+                        let processes: Vec<(&sysinfo::Pid, &sysinfo::Process)> = vec![];
 
                         let processes = processes
                             .into_iter()
@@ -156,7 +149,7 @@ impl PickerDelegate for AttachModalDelegate {
                                     .map(|s| s.to_string_lossy().to_string())
                                     .collect::<Vec<_>>(),
                             })
-                            .collect::<Vec<_>>();
+                            .collect::<Vec<Candidate>>();
 
                         let _ = this.delegate.candidates.insert(processes.clone());
 
@@ -224,7 +217,7 @@ impl PickerDelegate for AttachModalDelegate {
 
         self.dap_store.update(cx, |store, cx| {
             store
-                .attach(&self.session_id, self.client_id, candidate.pid, cx)
+                .attach(self.client_id, candidate.pid, cx)
                 .detach_and_log_err(cx);
         });
 

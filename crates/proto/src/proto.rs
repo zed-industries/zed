@@ -249,11 +249,9 @@ messages!(
     (DapPauseRequest, Background),
     (DapRestartRequest, Background),
     (DapRestartStackFrameRequest, Background),
-    (DapShutdownSession, Background),
     (DapStepBackRequest, Background),
     (DapStepInRequest, Background),
     (DapStepOutRequest, Background),
-    (DapTerminateRequest, Background),
     (DapTerminateThreadsRequest, Background),
     (DeclineCall, Foreground),
     (DeleteChannel, Foreground),
@@ -416,7 +414,6 @@ messages!(
     (SetChannelMemberRole, Foreground),
     (SetChannelVisibility, Foreground),
     (SetDebugClientCapabilities, Background),
-    (SetDebuggerPanelItem, Background),
     (SetRoomParticipantRole, Foreground),
     (ShareProject, Foreground),
     (ShareProjectResponse, Foreground),
@@ -474,9 +471,6 @@ messages!(
     (DapVariables, Background),
     (IgnoreBreakpointState, Background),
     (ToggleIgnoreBreakpoints, Background),
-    (DebuggerSessionEnded, Background),
-    (ActiveDebugSessionsRequest, Foreground),
-    (ActiveDebugSessionsResponse, Foreground),
     (DapStackTraceRequest, Background),
     (DapStackTraceResponse, Background),
     (DapScopesRequest, Background),
@@ -489,6 +483,7 @@ messages!(
     (DapCompletionResponse, Background),
     (DapThreadsRequest, Background),
     (DapThreadsResponse, Background),
+    (DapTerminateRequest, Background)
 );
 
 request_messages!(
@@ -636,18 +631,17 @@ request_messages!(
     (DapPauseRequest, Ack),
     (DapDisconnectRequest, Ack),
     (DapTerminateThreadsRequest, Ack),
-    (DapTerminateRequest, Ack),
     (DapRestartRequest, Ack),
     (DapRestartStackFrameRequest, Ack),
-    (DapShutdownSession, Ack),
     (VariablesRequest, DapVariables),
-    (ActiveDebugSessionsRequest, ActiveDebugSessionsResponse),
     (DapStackTraceRequest, DapStackTraceResponse),
     (DapScopesRequest, DapScopesResponse),
     (DapSetVariableValueRequest, DapSetVariableValueResponse),
     (DapEvaluateRequest, DapEvaluateResponse),
     (DapCompletionRequest, DapCompletionResponse),
     (DapThreadsRequest, DapThreadsResponse),
+    (DapTerminateRequest, Ack),
+    (ShutdownDebugClient, Ack),
 );
 
 entity_messages!(
@@ -748,7 +742,6 @@ entity_messages!(
     SynchronizeBreakpoints,
     SetActiveDebugLine,
     RemoveActiveDebugLine,
-    SetDebuggerPanelItem,
     ShutdownDebugClient,
     SetDebugClientCapabilities,
     DapNextRequest,
@@ -759,22 +752,19 @@ entity_messages!(
     DapPauseRequest,
     DapDisconnectRequest,
     DapTerminateThreadsRequest,
-    DapTerminateRequest,
     DapRestartRequest,
     DapRestartStackFrameRequest,
-    DapShutdownSession,
     UpdateThreadStatus,
     VariablesRequest,
     IgnoreBreakpointState,
     ToggleIgnoreBreakpoints,
-    DebuggerSessionEnded,
-    ActiveDebugSessionsRequest,
     DapStackTraceRequest,
     DapScopesRequest,
     DapSetVariableValueRequest,
     DapEvaluateRequest,
     DapCompletionRequest,
     DapThreadsRequest,
+    DapTerminateRequest
 );
 
 entity_messages!(

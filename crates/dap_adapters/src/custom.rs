@@ -1,6 +1,6 @@
 use std::{ffi::OsString, path::PathBuf, sync::Arc};
 
-use dap::transport::{StdioTransport, TcpTransport, Transport};
+use dap::transport::{StdioTransport, TcpTransport};
 use gpui::AsyncApp;
 use serde_json::Value;
 use task::DebugAdapterConfig;
@@ -9,24 +9,13 @@ use crate::*;
 
 pub(crate) struct CustomDebugAdapter {
     custom_args: CustomArgs,
-    transport: Arc<dyn Transport>,
 }
 
 impl CustomDebugAdapter {
     const ADAPTER_NAME: &'static str = "custom_dap";
 
     pub(crate) async fn new(custom_args: CustomArgs) -> Result<Self> {
-        Ok(CustomDebugAdapter {
-            transport: match &custom_args.connection {
-                DebugConnectionType::TCP(host) => Arc::new(TcpTransport::new(
-                    host.host(),
-                    TcpTransport::port(&host).await?,
-                    host.timeout,
-                )),
-                DebugConnectionType::STDIO => Arc::new(StdioTransport::new()),
-            },
-            custom_args,
-        })
+        Ok(CustomDebugAdapter { custom_args })
     }
 }
 
@@ -36,10 +25,6 @@ impl DebugAdapter for CustomDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn transport(&self) -> Arc<dyn Transport> {
-        self.transport.clone()
-    }
-
     async fn get_binary(
         &self,
         _: &dyn DapDelegate,
@@ -47,7 +32,17 @@ impl DebugAdapter for CustomDebugAdapter {
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        Ok(DebugAdapterBinary {
+        let connection = if let DebugConnectionType::TCP(connection) = &self.custom_args.connection
+        {
+            Some(adapters::TcpArguments {
+                host: connection.host(),
+                port: connection.port,
+                timeout: connection.timeout,
+            })
+        } else {
+            None
+        };
+        let ret = DebugAdapterBinary {
             command: self.custom_args.command.clone(),
             arguments: self
                 .custom_args
@@ -56,7 +51,9 @@ impl DebugAdapter for CustomDebugAdapter {
                 .map(|args| args.iter().map(OsString::from).collect()),
             cwd: config.cwd.clone(),
             envs: self.custom_args.envs.clone(),
-        })
+            connection,
+        };
+        Ok(ret)
     }
 
     async fn fetch_latest_adapter_version(&self, _: &dyn DapDelegate) -> Result<AdapterVersion> {

@@ -5,7 +5,7 @@ use dap::{
     SourceBreakpoint, StackFrame,
 };
 use debugger_ui::debugger_panel::DebugPanel;
-use debugger_ui::debugger_panel_item::DebugPanelItem;
+use debugger_ui::session::DebugSession;
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use project::{Project, ProjectPath, WorktreeId};
@@ -52,7 +52,7 @@ async fn add_debugger_panel(workspace: &Entity<Workspace>, cx: &mut VisualTestCo
 pub fn active_debug_panel_item(
     workspace: Entity<Workspace>,
     cx: &mut VisualTestContext,
-) -> Entity<DebugPanelItem> {
+) -> Entity<DebugSession> {
     workspace.update_in(cx, |workspace, _window, cx| {
         let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
         debug_panel
@@ -1251,9 +1251,7 @@ async fn test_module_list(
         debug_panel_item.update(cx, |item, cx| {
             assert_eq!(
                 true,
-                item.capabilities(cx)
-                    .and_then(|caps| caps.supports_modules_request)
-                    .unwrap(),
+                item.capabilities(cx).supports_modules_request.unwrap(),
                 "Local supports modules request should be true"
             );
 
@@ -1281,9 +1279,7 @@ async fn test_module_list(
         debug_panel_item.update(cx, |item, cx| {
             assert_eq!(
                 true,
-                item.capabilities(cx)
-                    .and_then(|caps| caps.supports_modules_request)
-                    .unwrap(),
+                item.capabilities(cx).supports_modules_request.unwrap(),
                 "Remote capabilities supports modules request should be true"
             );
             let remote_module_list = item.module_list().update(cx, |list, cx| list.modules(cx));
@@ -1314,9 +1310,7 @@ async fn test_module_list(
         debug_panel_item.update(cx, |item, cx| {
             assert_eq!(
                 true,
-                item.capabilities(cx)
-                    .and_then(|caps| caps.supports_modules_request)
-                    .unwrap(),
+                item.capabilities(cx).supports_modules_request.unwrap(),
                 "Remote (mid session join) capabilities supports modules request should be true"
             );
             let remote_module_list = item.module_list().update(cx, |list, cx| list.modules(cx));

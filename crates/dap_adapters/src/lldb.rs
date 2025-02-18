@@ -2,7 +2,7 @@ use std::{collections::HashMap, ffi::OsStr, path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use dap::transport::{StdioTransport, Transport};
+use dap::transport::StdioTransport;
 use gpui::AsyncApp;
 use sysinfo::{Pid, Process};
 use task::{DebugAdapterConfig, DebugRequestType};
@@ -23,10 +23,6 @@ impl LldbDebugAdapter {
 impl DebugAdapter for LldbDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
-    }
-
-    fn transport(&self) -> Arc<dyn Transport> {
-        Arc::new(StdioTransport::new())
     }
 
     async fn get_binary(
@@ -59,6 +55,7 @@ impl DebugAdapter for LldbDebugAdapter {
             arguments: None,
             envs: None,
             cwd: config.cwd.clone(),
+            connection: None,
         })
     }
 
@@ -100,10 +97,6 @@ impl DebugAdapter for LldbDebugAdapter {
             "pid": pid,
             "cwd": config.cwd,
         })
-    }
-
-    fn supports_attach(&self) -> bool {
-        true
     }
 
     fn attach_processes<'a>(

@@ -1,5 +1,5 @@
 use crate::{
-    debugger_panel_item::ThreadItem,
+    session::ThreadItem,
     tests::{active_debug_panel_item, init_test, init_test_workspace},
 };
 use dap::{

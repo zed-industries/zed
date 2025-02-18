@@ -1,20 +1,28 @@
+use crate::project_settings::ProjectSettings;
+
+use super::breakpoint_store::BreakpointStore;
 use super::dap_command::{
-    self, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand, NextCommand,
-    PauseCommand, RestartCommand, RestartStackFrameCommand, ScopesCommand, SetVariableValueCommand,
-    StepBackCommand, StepCommand, StepInCommand, StepOutCommand, TerminateCommand,
-    TerminateThreadsCommand, VariablesCommand,
+    self, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand, Initialize,
+    LocalDapCommand, NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand,
+    ScopesCommand, SetVariableValueCommand, StepBackCommand, StepCommand, StepInCommand,
+    StepOutCommand, TerminateCommand, TerminateThreadsCommand, VariablesCommand,
 };
+use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
-use collections::{BTreeMap, HashMap, IndexMap};
-use dap::client::{DebugAdapterClient, DebugAdapterClientId};
+use collections::{HashMap, IndexMap};
+use dap::adapters::{DapDelegate, DapStatus, DebugAdapterName};
+use dap::client::{DebugAdapterClient, SessionId};
 use dap::{
-    Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, SteppingGranularity,
+    messages::Message, Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source,
+    SteppingGranularity,
 };
+use dap_adapters::build_adapter;
 use futures::{future::Shared, FutureExt};
-use gpui::{App, AppContext, Context, Entity, Task};
+use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, Task};
 use rpc::AnyProtoClient;
 use serde_json::Value;
-use std::borrow::Borrow;
+use settings::Settings;
+use std::path::PathBuf;
 use std::u64;
 use std::{
     any::Any,
@@ -25,20 +33,6 @@ use std::{
 use task::DebugAdapterConfig;
 use text::{PointUtf16, ToPointUtf16};
 use util::ResultExt;
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(transparent)]
-pub struct DebugSessionId(pub usize);
-
-impl DebugSessionId {
-    pub fn from_proto(session_id: u64) -> Self {
-        Self(session_id as usize)
-    }
-
-    pub fn to_proto(&self) -> u64 {
-        self.0 as u64
-    }
-}
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Ord, Eq)]
 #[repr(transparent)]
@@ -123,7 +117,7 @@ impl From<dap::Thread> for Thread {
 
 type UpstreamProjectId = u64;
 
-pub struct RemoteConnection {
+struct RemoteConnection {
     client: AnyProtoClient,
     upstream_project_id: UpstreamProjectId,
 }
@@ -132,52 +126,109 @@ impl RemoteConnection {
     fn send_proto_client_request<R: DapCommand>(
         &self,
         request: R,
-        client_id: DebugAdapterClientId,
+        session_id: SessionId,
         cx: &mut App,
     ) -> Task<Result<R::Response>> {
-        let message = request.to_proto(client_id, self.upstream_project_id);
+        let message = request.to_proto(session_id, self.upstream_project_id);
         let upstream_client = self.client.clone();
         cx.background_executor().spawn(async move {
             let response = upstream_client.request(message).await?;
             request.response_from_proto(response)
         })
     }
-    fn request_remote<R: DapCommand>(
+    fn request<R: DapCommand>(
         &self,
         request: R,
-        client_id: DebugAdapterClientId,
+        session_id: SessionId,
         cx: &mut App,
     ) -> Task<Result<R::Response>>
     where
         <R::DapRequest as dap::requests::Request>::Response: 'static,
         <R::DapRequest as dap::requests::Request>::Arguments: 'static + Send,
     {
-        return self.send_proto_client_request::<R>(request, client_id, cx);
+        return self.send_proto_client_request::<R>(request, session_id, cx);
     }
 }
 
-pub enum Mode {
-    Local(Arc<DebugAdapterClient>),
+enum Mode {
+    Local(LocalMode),
     Remote(RemoteConnection),
 }
 
-impl From<RemoteConnection> for Mode {
-    fn from(value: RemoteConnection) -> Self {
-        Self::Remote(value)
-    }
+struct LocalMode {
+    client: Arc<DebugAdapterClient>,
 }
 
-impl From<Arc<DebugAdapterClient>> for Mode {
-    fn from(client: Arc<DebugAdapterClient>) -> Self {
-        Mode::Local(client)
-    }
-}
+impl LocalMode {
+    fn new<F>(
+        session_id: SessionId,
+        breakpoint_store: Entity<BreakpointStore>,
+        disposition: DebugAdapterConfig,
+        delegate: DapAdapterDelegate,
+        message_handler: F,
+        cx: AsyncApp,
+    ) -> Task<Result<(Self, Capabilities)>>
+    where
+        F: FnMut(Message, &mut App) + 'static + Send + Sync + Clone,
+    {
+        cx.spawn(move |mut cx| async move {
+            let adapter = build_adapter(&disposition.kind).await?;
 
-impl Mode {
-    fn request_local<R: DapCommand>(
-        connection: &Arc<DebugAdapterClient>,
+            let binary = cx.update(|cx| {
+                let name = DebugAdapterName::from(adapter.name().as_ref());
+
+                ProjectSettings::get_global(cx)
+                    .dap
+                    .get(&name)
+                    .and_then(|s| s.binary.as_ref().map(PathBuf::from))
+            })?;
+
+            let binary = match adapter
+                .get_binary(&delegate, &disposition, binary, &mut cx)
+                .await
+            {
+                Err(error) => {
+                    delegate.update_status(
+                        adapter.name(),
+                        DapStatus::Failed {
+                            error: error.to_string(),
+                        },
+                    );
+
+                    return Err(error);
+                }
+                Ok(mut binary) => {
+                    delegate.update_status(adapter.name(), DapStatus::None);
+
+                    let shell_env = delegate.shell_env().await;
+                    let mut envs = binary.envs.unwrap_or_default();
+                    envs.extend(shell_env);
+                    binary.envs = Some(envs);
+
+                    binary
+                }
+            };
+
+            let client = Arc::new(
+                DebugAdapterClient::start(session_id, binary, message_handler, cx.clone()).await?,
+            );
+            let this = Self { client };
+            let capabilities = this
+                .request(
+                    Initialize {
+                        adapter_id: "zed-dap-this-value-needs-changing".to_owned(),
+                    },
+                    cx.background_executor().clone(),
+                )
+                .await?;
+            Ok((this, capabilities))
+        })
+    }
+
+    fn request<R: LocalDapCommand>(
+        &self,
         request: R,
-        cx: &mut Context<Client>,
+        executor: BackgroundExecutor,
     ) -> Task<Result<R::Response>>
     where
         <R::DapRequest as dap::requests::Request>::Response: 'static,
@@ -186,23 +237,30 @@ impl Mode {
         let request = Arc::new(request);
 
         let request_clone = request.clone();
-        let connection = connection.clone();
-        let request_task = cx.background_executor().spawn(async move {
+        let connection = self.client.clone();
+        let request_task = executor.spawn(async move {
             let args = request_clone.to_dap();
             connection.request::<R::DapRequest>(args).await
         });
 
-        cx.background_executor().spawn(async move {
+        executor.spawn(async move {
             let response = request.response_from_dap(request_task.await?);
             response
         })
     }
+}
+impl From<RemoteConnection> for Mode {
+    fn from(value: RemoteConnection) -> Self {
+        Self::Remote(value)
+    }
+}
 
+impl Mode {
     fn request_dap<R: DapCommand>(
         &self,
-        client_id: DebugAdapterClientId,
+        session_id: SessionId,
         request: R,
-        cx: &mut Context<Client>,
+        cx: &mut Context<Session>,
     ) -> Task<Result<R::Response>>
     where
         <R::DapRequest as dap::requests::Request>::Response: 'static,
@@ -210,21 +268,20 @@ impl Mode {
     {
         match self {
             Mode::Local(debug_adapter_client) => {
-                Self::request_local(&debug_adapter_client, request, cx)
+                debug_adapter_client.request(request, cx.background_executor().clone())
             }
-            Mode::Remote(remote_connection) => {
-                remote_connection.request_remote(request, client_id, cx)
-            }
+            Mode::Remote(remote_connection) => remote_connection.request(request, session_id, cx),
         }
     }
 }
 
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
-pub struct Client {
+pub struct Session {
     mode: Mode,
-
+    config: DebugAdapterConfig,
     pub(super) capabilities: Capabilities,
-    client_id: DebugAdapterClientId,
+    id: SessionId,
+    ignore_breakpoints: bool,
     modules: Vec<dap::Module>,
     loaded_sources: Vec<dap::Source>,
     threads: IndexMap<ThreadId, Thread>,
@@ -306,9 +363,65 @@ impl CompletionsQuery {
     }
 }
 
-impl Client {
+impl Session {
+    pub(crate) fn local(
+        breakpoints: Entity<BreakpointStore>,
+        session_id: SessionId,
+        delegate: DapAdapterDelegate,
+        config: DebugAdapterConfig,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
+        cx.spawn(move |mut cx| async move {
+            let (mode, capabilities) = LocalMode::new(
+                session_id,
+                breakpoints,
+                config.clone(),
+                delegate,
+                |_, _| {},
+                cx.clone(),
+            )
+            .await?;
+            cx.new(|_| Self {
+                mode: Mode::Local(mode),
+                id: session_id,
+                config,
+                capabilities,
+                ignore_breakpoints: false,
+                requests: HashMap::default(),
+                modules: Vec::default(),
+                loaded_sources: Vec::default(),
+                threads: IndexMap::default(),
+            })
+        })
+    }
+
+    pub(crate) fn remote(
+        session_id: SessionId,
+        client: AnyProtoClient,
+        upstream_project_id: u64,
+        ignore_breakpoints: bool,
+    ) -> Self {
+        Self {
+            mode: Mode::Remote(RemoteConnection {
+                client,
+                upstream_project_id,
+            }),
+            id: session_id,
+            capabilities: Capabilities::default(),
+            ignore_breakpoints,
+            requests: HashMap::default(),
+            modules: Vec::default(),
+            loaded_sources: Vec::default(),
+            threads: IndexMap::default(),
+            config: todo!(),
+        }
+    }
+
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
+    }
+    pub fn configuration(&self) -> DebugAdapterConfig {
+        self.config.clone()
     }
 
     pub(crate) fn _wait_for_request<R: DapCommand + PartialEq + Eq + Hash>(
@@ -331,7 +444,7 @@ impl Client {
 
             let task = Self::request_inner::<Arc<T>>(
                 &self.capabilities,
-                self.client_id,
+                self.id,
                 &self.mode,
                 command,
                 process_result,
@@ -351,7 +464,7 @@ impl Client {
 
     fn request_inner<T: DapCommand + PartialEq + Eq + Hash>(
         capabilities: &Capabilities,
-        client_id: DebugAdapterClientId,
+        session_id: SessionId,
         mode: &Mode,
         request: T,
         process_result: impl FnOnce(&mut Self, &T::Response, &mut Context<Self>) + 'static,
@@ -360,7 +473,7 @@ impl Client {
         if !T::is_supported(&capabilities) {
             return Task::ready(None);
         }
-        let request = mode.request_dap(client_id, request, cx);
+        let request = mode.request_dap(session_id, request, cx);
         cx.spawn(|this, mut cx| async move {
             let result = request.await.log_err()?;
             this.update(&mut cx, |this, cx| {
@@ -379,7 +492,7 @@ impl Client {
     ) -> Task<Option<T::Response>> {
         Self::request_inner(
             &self.capabilities,
-            self.client_id,
+            self.id,
             &self.mode,
             request,
             process_result,
@@ -425,6 +538,12 @@ impl Client {
         &self.modules
     }
 
+    pub fn set_ignore_breakpoints(&mut self, ignore: bool) {
+        self.ignore_breakpoints = ignore;
+    }
+    pub fn breakpoints_enabled(&self) -> bool {
+        self.ignore_breakpoints
+    }
     pub fn handle_module_event(&mut self, event: &dap::ModuleEvent, cx: &mut Context<Self>) {
         match event.reason {
             dap::ModuleEventReason::New => self.modules.push(event.module.clone()),
@@ -496,7 +615,7 @@ impl Client {
         }
     }
 
-    fn shutdown(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn shutdown(&mut self, cx: &mut Context<Self>) {
         if self
             .capabilities
             .supports_terminate_request
@@ -556,7 +675,7 @@ impl Client {
 
     pub fn adapter_client(&self) -> Option<Arc<DebugAdapterClient>> {
         match self.mode {
-            Mode::Local(ref adapter_client) => Some(adapter_client.clone()),
+            Mode::Local(ref adapter_client) => Some(adapter_client.client.clone()),
             Mode::Remote(_) => None,
         }
     }
@@ -776,13 +895,11 @@ impl Client {
         &mut self,
         thread_id: ThreadId,
         stack_frame_id: u64,
-        session_id: DebugSessionId,
         variables_reference: u64,
         cx: &mut Context<Self>,
     ) -> Vec<Variable> {
         let command = VariablesCommand {
             stack_frame_id,
-            session_id,
             thread_id: thread_id.0,
             variables_reference,
             filter: None,
@@ -882,155 +999,5 @@ impl Client {
             )
             .detach();
         }
-    }
-}
-
-pub struct DebugSession {
-    id: DebugSessionId,
-    mode: DebugSessionMode,
-    pub(super) states: BTreeMap<DebugAdapterClientId, Entity<Client>>,
-    ignore_breakpoints: bool,
-}
-
-pub enum DebugSessionMode {
-    Local(LocalDebugSession),
-    Remote(RemoteDebugSession),
-}
-
-pub struct LocalDebugSession {
-    configuration: DebugAdapterConfig,
-}
-
-impl LocalDebugSession {
-    pub fn configuration(&self) -> &DebugAdapterConfig {
-        &self.configuration
-    }
-
-    pub fn update_configuration(
-        &mut self,
-        f: impl FnOnce(&mut DebugAdapterConfig),
-        cx: &mut Context<DebugSession>,
-    ) {
-        f(&mut self.configuration);
-        cx.notify();
-    }
-}
-
-pub struct RemoteDebugSession {
-    label: String,
-}
-
-impl DebugSession {
-    pub fn new_local(id: DebugSessionId, configuration: DebugAdapterConfig) -> Self {
-        Self {
-            id,
-            ignore_breakpoints: false,
-            states: BTreeMap::default(),
-            mode: DebugSessionMode::Local(LocalDebugSession { configuration }),
-        }
-    }
-
-    pub fn as_local(&self) -> Option<&LocalDebugSession> {
-        match &self.mode {
-            DebugSessionMode::Local(local) => Some(local),
-            _ => None,
-        }
-    }
-
-    pub fn as_local_mut(&mut self) -> Option<&mut LocalDebugSession> {
-        match &mut self.mode {
-            DebugSessionMode::Local(local) => Some(local),
-            _ => None,
-        }
-    }
-
-    pub fn new_remote(id: DebugSessionId, label: String, ignore_breakpoints: bool) -> Self {
-        Self {
-            id,
-            ignore_breakpoints,
-            states: BTreeMap::default(),
-            mode: DebugSessionMode::Remote(RemoteDebugSession { label }),
-        }
-    }
-
-    pub fn id(&self) -> DebugSessionId {
-        self.id
-    }
-
-    pub fn name(&self) -> String {
-        match &self.mode {
-            DebugSessionMode::Local(local) => local.configuration.label.clone(),
-            DebugSessionMode::Remote(remote) => remote.label.clone(),
-        }
-    }
-
-    pub fn ignore_breakpoints(&self) -> bool {
-        self.ignore_breakpoints
-    }
-
-    pub fn set_ignore_breakpoints(&mut self, ignore: bool, cx: &mut Context<Self>) {
-        self.ignore_breakpoints = ignore;
-        cx.notify();
-    }
-
-    pub fn client_state(&self, client_id: DebugAdapterClientId) -> Option<Entity<Client>> {
-        self.states.get(&client_id).cloned()
-    }
-
-    pub(super) fn client_ids(&self) -> impl Iterator<Item = DebugAdapterClientId> + '_ {
-        self.states.keys().copied()
-    }
-
-    pub fn clients(&self, cx: &App) -> Vec<Arc<DebugAdapterClient>> {
-        self.states
-            .values()
-            .filter_map(|state| state.read(cx).adapter_client())
-            .collect()
-    }
-
-    pub fn add_client(
-        &mut self,
-        client: impl Into<Mode>,
-        client_id: DebugAdapterClientId,
-        cx: &mut Context<DebugSession>,
-    ) {
-        if !self.states.contains_key(&client_id) {
-            let mode = client.into();
-            let state = cx.new(|_cx| Client {
-                client_id,
-                modules: Vec::default(),
-                loaded_sources: Vec::default(),
-                threads: IndexMap::default(),
-                requests: HashMap::default(),
-                capabilities: Default::default(),
-                mode,
-            });
-
-            self.states.insert(client_id, state);
-        }
-    }
-
-    pub(crate) fn client_by_id(
-        &self,
-        client_id: impl Borrow<DebugAdapterClientId>,
-    ) -> Option<Entity<Client>> {
-        self.states.get(client_id.borrow()).cloned()
-    }
-
-    pub(crate) fn shutdown_client(
-        &mut self,
-        client_id: DebugAdapterClientId,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(client) = self.states.remove(&client_id) {
-            client.update(cx, |this, cx| {
-                this.shutdown(cx);
-            })
-        }
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn clients_len(&self) -> usize {
-        self.states.len()
     }
 }

@@ -1,5 +1,5 @@
 use crate::*;
-use dap::transport::{TcpTransport, Transport};
+use dap::transport::TcpTransport;
 use gpui::AsyncApp;
 use std::{ffi::OsStr, net::Ipv4Addr, path::PathBuf, sync::Arc};
 
@@ -27,10 +27,6 @@ impl PythonDebugAdapter {
 impl DebugAdapter for PythonDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
-    }
-
-    fn transport(&self) -> Arc<dyn Transport> {
-        Arc::new(TcpTransport::new(self.host, self.port, self.timeout))
     }
 
     async fn fetch_latest_adapter_version(
@@ -125,6 +121,11 @@ impl DebugAdapter for PythonDebugAdapter {
                 format!("--port={}", self.port).into(),
                 format!("--host={}", self.host).into(),
             ]),
+            connection: Some(adapters::TcpArguments {
+                host: self.host,
+                port: Some(self.port),
+                timeout: self.timeout,
+            }),
             cwd: config.cwd.clone(),
             envs: None,
         })
