@@ -2624,7 +2624,12 @@ impl ContextEditor {
         (token_count, max_token_count)
     }
 
-    fn render_token_count(&self, token_count: usize, max_token_count: usize) -> impl IntoElement {
+    fn render_token_count(
+        &self,
+        token_count: usize,
+        max_token_count: usize,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let (color, is_over_threshold) = if token_count >= max_token_count {
             (Color::Error, true)
         } else if (token_count as f32 / max_token_count as f32) >= 0.8 {
@@ -2634,28 +2639,44 @@ impl ContextEditor {
         };
 
         h_flex()
-            .id("token-count")
-            .gap_0p5()
+            .absolute()
+            .top_0()
+            .right_0()
+            .w(px(85.))
+            .justify_center()
+            .bg(cx.theme().colors().editor_background)
+            .py_1()
+            .px_2p5()
+            .border_l_1()
+            .border_b_1()
+            .rounded_bl_md()
+            .border_color(cx.theme().colors().border)
             .child(
-                Label::new(humanize_token_count(token_count))
-                    .size(LabelSize::Small)
-                    .color(color),
+                h_flex()
+                    .id("token-count")
+                    .gap_0p5()
+                    .child(
+                        Label::new(humanize_token_count(token_count))
+                            .size(LabelSize::Small)
+                            .color(color),
+                    )
+                    .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+                    .child(
+                        Label::new(humanize_token_count(max_token_count))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .when(is_over_threshold, |element| {
+                        element.tooltip({
+                            Tooltip::text(if token_count >= max_token_count {
+                                "Token Limit Reached"
+                            } else {
+                                "Token Limit is Close to Exhaustion"
+                            })
+                        })
+                    }),
             )
-            .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
-            .child(
-                Label::new(humanize_token_count(max_token_count))
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .when(is_over_threshold, |element| {
-                element.tooltip({
-                    Tooltip::text(if token_count >= max_token_count {
-                        "Token Limit Reached"
-                    } else {
-                        "Token Limit is Close to Exhaustion"
-                    })
-                })
-            })
+            .into_any_element()
     }
 }
 
@@ -2998,22 +3019,12 @@ impl Render for ContextEditor {
                         ),
                 ),
             )
-            .child(
-                h_flex()
-                    .absolute()
-                    .top_0()
-                    .right_0()
-                    .w(px(85.))
-                    .justify_end()
-                    .bg(cx.theme().colors().editor_background)
-                    .py_1()
-                    .px_2p5()
-                    .border_l_1()
-                    .border_b_1()
-                    .rounded_bl_lg()
-                    .border_color(cx.theme().colors().border)
-                    .child(self.render_token_count(token_count, max_token_count)),
-            )
+            // .when(self.is_assistant2_enabled || cx.is_staff(), |element| {
+            //     element.child(self.render_token_count(token_count, max_token_count, cx))
+            // })
+            .when(cx.is_staff(), |element| {
+                element.child(self.render_token_count(token_count, max_token_count, cx))
+            })
     }
 }
 
