@@ -1511,6 +1511,7 @@ mod tests {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
+            workspace::init_settings(cx);
             editor::init(cx);
 
             language::init(cx);
