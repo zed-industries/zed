@@ -2,10 +2,10 @@ use crate::project_settings::ProjectSettings;
 
 use super::breakpoint_store::BreakpointStore;
 use super::dap_command::{
-    self, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand, NextCommand,
-    PauseCommand, RestartCommand, RestartStackFrameCommand, ScopesCommand, SetVariableValueCommand,
-    StepBackCommand, StepCommand, StepInCommand, StepOutCommand, TerminateCommand,
-    TerminateThreadsCommand, VariablesCommand,
+    self, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand, LocalDapCommand,
+    NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand, ScopesCommand,
+    SetVariableValueCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
+    TerminateCommand, TerminateThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
@@ -216,7 +216,8 @@ impl LocalMode {
             Ok(this)
         })
     }
-    fn request<R: DapCommand>(
+
+    fn request<R: LocalDapCommand>(
         &self,
         request: R,
         cx: &mut Context<Session>,
