@@ -1,7 +1,15 @@
+use std::time::Duration;
+
 use anyhow::Result;
 
-use gpui::{EventEmitter, FocusHandle, Focusable, Subscription, Task};
-use ui::{div, Context, Element, ParentElement, Render, Styled};
+use gpui::{
+    percentage, Animation, AnimationExt, EventEmitter, FocusHandle, Focusable, Subscription, Task,
+    Transformation,
+};
+use ui::{
+    div, v_flex, Color, Context, Element, Icon, IconName, IconSize, IntoElement, ParentElement,
+    Render, Styled,
+};
 
 pub(super) struct StartingState {
     focus_handle: FocusHandle,
@@ -39,6 +47,20 @@ impl Render for StartingState {
         window: &mut ui::Window,
         cx: &mut ui::Context<'_, Self>,
     ) -> impl ui::IntoElement {
-        div().size_full().child("Starting a debug adapter")
+        v_flex()
+            .size_full()
+            .gap_1()
+            .items_center()
+            .child("Starting a debug adapter")
+            .child(
+                Icon::new(IconName::ArrowCircle)
+                    .color(Color::Info)
+                    .with_animation(
+                        "arrow-circle",
+                        Animation::new(Duration::from_secs(2)).repeat(),
+                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                    )
+                    .into_any_element(),
+            )
     }
 }
