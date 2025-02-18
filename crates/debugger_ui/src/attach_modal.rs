@@ -128,7 +128,7 @@ impl PickerDelegate for AttachModalDelegate {
                     } else {
                         let Some(client) = this.delegate.dap_store.update(cx, |store, cx| {
                             store
-                                .client_by_id(&this.delegate.client_id)
+                                .session_by_id(&this.delegate.client_id)
                                 .and_then(|client| client.read(cx).adapter_client())
                         }) else {
                             return Vec::new();

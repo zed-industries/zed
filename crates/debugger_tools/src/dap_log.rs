@@ -113,8 +113,7 @@ impl LogStore {
         })
         .detach_and_log_err(cx);
 
-        let (adapter_log_tx, mut adapter_log_rx) =
-            unbounded::<(SessionId, IoKind, String)>();
+        let (adapter_log_tx, mut adapter_log_rx) = unbounded::<(SessionId, IoKind, String)>();
         cx.spawn(|this, mut cx| async move {
             while let Some((client_id, io_kind, message)) = adapter_log_rx.next().await {
                 if let Some(this) = this.upgrade() {
@@ -170,7 +169,7 @@ impl LogStore {
                             let client = project.update(cx, |project, cx| {
                                 project.dap_store().update(cx, |store, cx| {
                                     store
-                                        .client_by_id(client_id)
+                                        .session_by_id(client_id)
                                         .and_then(|client| Some(client))
                                 })
                             });
@@ -189,10 +188,7 @@ impl LogStore {
         );
     }
 
-    fn get_debug_adapter_state(
-        &mut self,
-        id: SessionId,
-    ) -> Option<&mut DebugAdapterState> {
+    fn get_debug_adapter_state(&mut self, id: SessionId) -> Option<&mut DebugAdapterState> {
         self.debug_clients.get_mut(&id)
     }
 
@@ -328,17 +324,11 @@ impl LogStore {
         cx.notify();
     }
 
-    fn log_messages_for_client(
-        &mut self,
-        client_id: SessionId,
-    ) -> Option<&mut VecDeque<String>> {
+    fn log_messages_for_client(&mut self, client_id: SessionId) -> Option<&mut VecDeque<String>> {
         Some(&mut self.debug_clients.get_mut(&client_id)?.log_messages)
     }
 
-    fn rpc_messages_for_client(
-        &mut self,
-        client_id: SessionId,
-    ) -> Option<&mut VecDeque<String>> {
+    fn rpc_messages_for_client(&mut self, client_id: SessionId) -> Option<&mut VecDeque<String>> {
         Some(
             &mut self
                 .debug_clients
@@ -568,7 +558,7 @@ impl DapLogView {
             .read(cx)
             .dap_store()
             .read(cx)
-            .clients()
+            .sessions()
             .filter_map(|client| {
                 let client = client.read(cx).adapter_client()?;
                 Some(DapMenuItem {

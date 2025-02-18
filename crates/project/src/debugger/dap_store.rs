@@ -353,7 +353,7 @@ impl DapStore {
         }
     }
 
-    pub fn client_by_id(
+    pub fn session_by_id(
         &self,
         session_id: impl Borrow<SessionId>,
     ) -> Option<Entity<session::Session>> {
@@ -362,7 +362,7 @@ impl DapStore {
 
         client
     }
-    pub fn clients(&self) -> impl Iterator<Item = &Entity<Session>> {
+    pub fn sessions(&self) -> impl Iterator<Item = &Entity<Session>> {
         self.sessions.values()
     }
 
@@ -383,7 +383,7 @@ impl DapStore {
         capabilities: &Capabilities,
         cx: &mut Context<Self>,
     ) {
-        if let Some(client) = self.client_by_id(session_id) {
+        if let Some(client) = self.session_by_id(session_id) {
             client.update(cx, |this, cx| {
                 this.capabilities = this.capabilities.merge(capabilities.clone());
             });
@@ -450,7 +450,7 @@ impl DapStore {
         let session_id = SessionId::from_proto(envelope.payload.session_id);
 
         this.update(&mut cx, |this, cx| {
-            if let Some(client) = this.client_by_id(&session_id) {
+            if let Some(client) = this.session_by_id(&session_id) {
                 client.update(cx, |client, cx| {
                     client.set_ignore_breakpoints(envelope.payload.ignore)
                 });
@@ -466,7 +466,7 @@ impl DapStore {
         ignore: bool,
         cx: &mut Context<Self>,
     ) {
-        if let Some(session) = self.client_by_id(session_id) {
+        if let Some(session) = self.session_by_id(session_id) {
             session.update(cx, |session, _| {
                 session.set_ignore_breakpoints(ignore);
             });
@@ -474,13 +474,13 @@ impl DapStore {
     }
 
     pub fn ignore_breakpoints(&self, session_id: &SessionId, cx: &App) -> bool {
-        self.client_by_id(session_id)
+        self.session_by_id(session_id)
             .map(|client| client.read(cx).breakpoints_enabled())
             .unwrap_or_default()
     }
 
     pub fn toggle_ignore_breakpoints(&mut self, session_id: &SessionId, cx: &mut Context<Self>) {
-        if let Some(client) = self.client_by_id(session_id) {
+        if let Some(client) = self.session_by_id(session_id) {
             client.update(cx, |client, _| {
                 client.set_ignore_breakpoints(!client.breakpoints_enabled());
             });
@@ -659,7 +659,7 @@ impl DapStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self
-            .client_by_id(session_id)
+            .session_by_id(session_id)
             .and_then(|client| client.read(cx).adapter_client())
         else {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", session_id)));
@@ -768,7 +768,7 @@ impl DapStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self
-            .client_by_id(session_id)
+            .session_by_id(session_id)
             .and_then(|client| client.read(cx).adapter_client())
         else {
             return Task::ready(Err(anyhow!(
@@ -800,7 +800,7 @@ impl DapStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<EvaluateResponse>> {
         let Some(client) = self
-            .client_by_id(session_id)
+            .session_by_id(session_id)
             .and_then(|client| client.read(cx).adapter_client())
         else {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", session_id)));
@@ -830,7 +830,7 @@ impl DapStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<CompletionItem>>> {
         let Some(client) = self
-            .client_by_id(session_id)
+            .session_by_id(session_id)
             .and_then(|client| client.read(cx).adapter_client())
         else {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", session_id)));
@@ -861,7 +861,7 @@ impl DapStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self
-            .client_by_id(session_id)
+            .session_by_id(session_id)
             .and_then(|client| client.read(cx).adapter_client())
         else {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", session_id)));
@@ -1035,7 +1035,7 @@ impl DapStore {
         this.update(&mut cx, |dap_store, cx| {
             let session_id = SessionId::from_proto(envelope.payload.session_id);
 
-            dap_store.client_by_id(session_id).map(|state| {
+            dap_store.session_by_id(session_id).map(|state| {
                 state.update(cx, |state, cx| {
                     state.shutdown(cx);
                 })
@@ -1093,7 +1093,7 @@ impl DapStore {
         cx: &App,
     ) -> Task<Result<()>> {
         let Some(client) = self
-            .client_by_id(session_id)
+            .session_by_id(session_id)
             .and_then(|client| client.read(cx).adapter_client())
         else {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", session_id)));
