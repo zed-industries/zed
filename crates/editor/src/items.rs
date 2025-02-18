@@ -1073,6 +1073,9 @@ impl SerializableItem for Editor {
                             buffer.set_language(Some(language), cx);
                         }
                         buffer.set_text(contents, cx);
+                        if let Some(entry) = buffer.peek_undo_stack() {
+                            buffer.forget_transaction(entry.transaction_id());
+                        }
                     })?;
 
                     cx.update(|window, cx| {
@@ -1127,6 +1130,9 @@ impl SerializableItem for Editor {
                                         );
                                     }
                                     buffer.set_text(buffer_text, cx);
+                                    if let Some(entry) = buffer.peek_undo_stack() {
+                                        buffer.forget_transaction(entry.transaction_id());
+                                    }
                                 })?;
                             }
 
