@@ -1861,7 +1861,7 @@ impl Interactivity {
 
                                     if can_drop {
                                         listener(drag.value.as_ref(), window, cx);
-                                        window.refresh_at(e.position);
+                                        window.refresh();
                                         cx.stop_propagation();
                                     }
                                 }
@@ -1893,7 +1893,7 @@ impl Interactivity {
                             && hitbox.is_hovered(window)
                         {
                             *pending_mouse_down.borrow_mut() = Some(event.clone());
-                            window.refresh_at(event.position);
+                            window.refresh();
                         }
                     }
                 });
@@ -2038,10 +2038,10 @@ impl Interactivity {
                 .get_or_insert_with(Default::default)
                 .clone();
             if active_state.borrow().is_clicked() {
-                window.on_mouse_event(move |e: &MouseUpEvent, phase, window, _cx| {
+                window.on_mouse_event(move |_: &MouseUpEvent, phase, window, _cx| {
                     if phase == DispatchPhase::Capture {
                         *active_state.borrow_mut() = ElementClickedState::default();
-                        window.refresh_at(e.position);
+                        window.refresh();
                     }
                 });
             } else {
@@ -2060,7 +2060,7 @@ impl Interactivity {
                                 group: group_hovered,
                                 element: element_hovered,
                             };
-                            window.refresh_at(e.position);
+                            window.refresh();
                         }
                     }
                 });
