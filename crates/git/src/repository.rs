@@ -84,12 +84,12 @@ pub trait GitRepository: Send + Sync {
 
     /// Returns the contents of an entry in the repository's index, or None if there is no entry for the given path.
     ///
-    /// Note that for symlink entries, this will return the contents of the symlink, not the target.
+    /// Also returns `None` for symlinks.
     fn load_index_text(&self, path: &RepoPath) -> Option<String>;
 
     /// Returns the contents of an entry in the repository's HEAD, or None if HEAD does not exist or has no entry for the given path.
     ///
-    /// Note that for symlink entries, this will return the contents of the symlink, not the target.
+    /// Also returns `None` for symlinks.
     fn load_committed_text(&self, path: &RepoPath) -> Option<String>;
 
     fn set_index_text(&self, path: &RepoPath, content: Option<String>) -> anyhow::Result<()>;
