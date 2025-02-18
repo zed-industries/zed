@@ -1282,7 +1282,7 @@ mod test {
 
         cx.set_state("hello in a wˇord again.", Mode::Normal);
         cx.simulate_keystrokes("ctrl-v l i w");
-        cx.assert_state("hello in a w«orˇd» again.", Mode::VisualBlock);
+        cx.assert_state("hello in a w«ordˇ» again.", Mode::VisualBlock);
         assert_eq!(cx.mode(), Mode::VisualBlock);
         cx.simulate_keystrokes("o a s");
         cx.assert_state("«ˇhello in a word» again.", Mode::Visual);
