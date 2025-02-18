@@ -142,7 +142,7 @@ impl ThreadStore {
         })
     }
 
-    fn reload(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn reload(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let database_future = ThreadsDatabase::global_future(cx);
         cx.spawn(|this, mut cx| async move {
             let threads = database_future
