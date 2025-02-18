@@ -60,6 +60,7 @@ pub struct Markdown {
     focus_handle: FocusHandle,
     language_registry: Option<Arc<LanguageRegistry>>,
     fallback_code_block_language: Option<String>,
+    open_url: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
     options: Options,
 }
 
@@ -97,9 +98,20 @@ impl Markdown {
                 parse_links_only: false,
                 copy_code_block_buttons: true,
             },
+            open_url: None,
         };
         this.parse(window, cx);
         this
+    }
+
+    pub fn open_url(
+        self,
+        open_url: impl Fn(SharedString, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            open_url: Some(Box::new(open_url)),
+            ..self
+        }
     }
 
     pub fn new_text(
@@ -127,6 +139,7 @@ impl Markdown {
                 parse_links_only: true,
                 copy_code_block_buttons: true,
             },
+            open_url: None,
         };
         this.parse(window, cx);
         this
@@ -492,11 +505,15 @@ impl MarkdownElement {
         });
         self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
-            move |markdown, event: &MouseUpEvent, phase, _, cx| {
+            move |markdown, event: &MouseUpEvent, phase, window, cx| {
                 if phase.bubble() {
                     if let Some(pressed_link) = markdown.pressed_link.take() {
                         if Some(&pressed_link) == rendered_text.link_for_position(event.position) {
-                            cx.open_url(&pressed_link.destination_url);
+                            if let Some(open_url) = markdown.open_url.as_mut() {
+                                open_url(pressed_link.destination_url, window, cx);
+                            } else {
+                                cx.open_url(&pressed_link.destination_url);
+                            }
                         }
                     }
                 } else if markdown.selection.pending {

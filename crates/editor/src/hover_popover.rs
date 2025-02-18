@@ -1,7 +1,7 @@
 use crate::{
     display_map::{invisibles::is_invisible, InlayOffset, ToDisplayPoint},
     hover_links::{InlayHighlight, RangeInEditor},
-    scroll::ScrollAmount,
+    scroll::{Autoscroll, ScrollAmount},
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     Hover,
 };
@@ -18,12 +18,14 @@ use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
-use std::rc::Rc;
 use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
+use std::{path::PathBuf, rc::Rc};
 use theme::ThemeSettings;
 use ui::{prelude::*, theme_is_transparent, Scrollbar, ScrollbarState};
+use url::Url;
 use util::TryFutureExt;
+use workspace::Workspace;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
@@ -357,6 +359,7 @@ fn show_hover(
                             ..Default::default()
                         };
                         Markdown::new_text(text, markdown_style.clone(), None, None, window, cx)
+                            .open_url(open_markdown_url)
                     })
                     .ok();
 
@@ -615,10 +618,62 @@ async fn parse_blocks(
                 cx,
             )
             .copy_code_block_buttons(false)
+            .open_url(open_markdown_url)
         })
         .ok();
 
     rendered_block
+}
+
+fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) {
+    if let Ok(uri) = Url::parse(&link) {
+        if uri.scheme() == "file" {
+            if let Some(workspace) = window.root::<Workspace>().flatten() {
+                workspace.update(cx, |workspace, cx| {
+                    let task =
+                        workspace.open_abs_path(PathBuf::from(uri.path()), false, window, cx);
+
+                    cx.spawn_in(window, |_, mut cx| async move {
+                        let item = task.await?;
+                        // Ruby LSP uses URLs with #L1,1-4,4
+                        // we'll just take the first number and assume it's a line number
+                        let Some(fragment) = uri.fragment() else {
+                            return anyhow::Ok(());
+                        };
+                        let mut accum = 0 as u32;
+                        for c in fragment.chars() {
+                            if c >= '0' && c <= '9' && accum < u32::MAX / 2 {
+                                accum *= 10;
+                                accum += c as u32 - '0' as u32;
+                            } else if accum > 0 {
+                                break;
+                            }
+                        }
+                        if accum == 0 {
+                            return Ok(());
+                        }
+                        let Some(editor) = cx.update(|_, cx| item.act_as::<Editor>(cx))? else {
+                            return Ok(());
+                        };
+                        editor.update_in(&mut cx, |editor, window, cx| {
+                            editor.change_selections(
+                                Some(Autoscroll::fit()),
+                                window,
+                                cx,
+                                |selections| {
+                                    selections.select_ranges([text::Point::new(accum - 1, 0)
+                                        ..text::Point::new(accum - 1, 0)]);
+                                },
+                            );
+                        })
+                    })
+                    .detach_and_log_err(cx);
+                });
+                return;
+            }
+        }
+    }
+    cx.open_url(&link);
 }
 
 #[derive(Default, Debug)]
