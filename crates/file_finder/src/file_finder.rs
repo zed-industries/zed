@@ -1316,11 +1316,9 @@ impl PickerDelegate for FileFinderDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    Button::new("open-selection", "Open")
-                        .key_binding(KeyBinding::for_action(&menu::Confirm, window, cx))
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
-                        }),
+                    Button::new("open-selection", "Open").on_click(|_, window, cx| {
+                        window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                    }),
                 )
                 .child(
                     PopoverMenu::new("menu-popover")
@@ -1328,14 +1326,8 @@ impl PickerDelegate for FileFinderDelegate {
                         .attach(gpui::Corner::TopRight)
                         .anchor(gpui::Corner::BottomRight)
                         .trigger(
-                            Button::new("actions-trigger", "Split Options")
-                                .selected_label_color(Color::Accent)
-                                .key_binding(KeyBinding::for_action_in(
-                                    &ToggleMenu,
-                                    &context,
-                                    window,
-                                    cx,
-                                )),
+                            Button::new("actions-trigger", "Split…")
+                                .selected_label_color(Color::Accent),
                         )
                         .menu({
                             move |window, cx| {
