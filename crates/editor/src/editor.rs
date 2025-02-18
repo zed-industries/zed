@@ -2223,7 +2223,7 @@ impl Editor {
                         .collect();
                     DB.save_editor_selections(editor_id, workspace_id, selections)
                         .await
-                        .context("persisting editor selections")
+                        .with_context(|| format!("persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"))
                         .log_err();
                 });
             }
