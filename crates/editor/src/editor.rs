@@ -206,6 +206,14 @@ pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration:
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
 pub(crate) const EDIT_PREDICTION_CONFLICT_KEY_CONTEXT: &str = "edit_prediction_conflict";
 
+const COLUMNAR_SELECTION_MODIFIERS: Modifiers = Modifiers {
+    alt: true,
+    shift: true,
+    control: false,
+    platform: false,
+    function: false,
+};
+
 pub fn render_parsed_markdown(
     element_id: impl Into<ElementId>,
     parsed: &language::ParsedMarkdown,
@@ -5341,6 +5349,8 @@ impl Editor {
             self.update_edit_prediction_preview(&modifiers, window, cx);
         }
 
+        self.update_selection_mode(&modifiers, position_map, window, cx);
+
         let mouse_position = window.mouse_position();
         if !position_map.text_hitbox.is_hovered(window) {
             return;
@@ -5353,6 +5363,32 @@ impl Editor {
             window,
             cx,
         )
+    }
+
+    fn update_selection_mode(
+        &mut self,
+        modifiers: &Modifiers,
+        position_map: &PositionMap,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if modifiers != &COLUMNAR_SELECTION_MODIFIERS || self.selections.pending.is_none() {
+            return;
+        }
+
+        let mouse_position = window.mouse_position();
+        let point_for_position = position_map.point_for_position(mouse_position);
+        let position = point_for_position.previous_valid;
+
+        self.select(
+            SelectPhase::BeginColumnar {
+                position,
+                reset: false,
+                goal_column: point_for_position.exact_unclipped.column(),
+            },
+            window,
+            cx,
+        );
     }
 
     fn update_edit_prediction_preview(
