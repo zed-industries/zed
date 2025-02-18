@@ -185,6 +185,7 @@ pub struct OpenRecent {
 }
 
 impl_actions!(projects, [OpenRecent]);
+actions!(projects, [ToggleRecent]);
 actions!(projects, [OpenRemote]);
 
 /// Where to spawn the task in the UI.

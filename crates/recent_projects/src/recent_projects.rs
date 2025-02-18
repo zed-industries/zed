@@ -27,7 +27,7 @@ use workspace::{
     CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, Workspace, WorkspaceId,
     WORKSPACE_DB,
 };
-use zed_actions::{OpenRecent, OpenRemote};
+use zed_actions::{OpenRecent, OpenRemote, ToggleRecent};
 
 pub fn init(cx: &mut App) {
     SshSettings::register(cx);
@@ -100,6 +100,11 @@ impl RecentProjects {
                     .picker
                     .update(cx, |picker, cx| picker.cycle_selection(window, cx))
             });
+        });
+
+        workspace.register_action(|workspace, _: &ToggleRecent, window, cx| {
+            let active_modal = workspace.active_modal::<Self>(cx);
+            Self::open(workspace, active_modal.is_none(), window, cx);
         });
     }
 
