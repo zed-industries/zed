@@ -2614,70 +2614,6 @@ impl ContextEditor {
             )
             .into_any()
     }
-
-    fn get_token_counts(&self, cx: &Context<Self>) -> (usize, usize) {
-        let context = self.context().read(cx);
-        let token_count = context.token_count().unwrap_or(0);
-        let max_token_count = LanguageModelRegistry::read_global(cx)
-            .active_model()
-            .map_or(0, |model| model.max_token_count());
-        (token_count, max_token_count)
-    }
-
-    fn render_token_count(
-        &self,
-        token_count: usize,
-        max_token_count: usize,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let (color, is_over_threshold) = if token_count >= max_token_count {
-            (Color::Error, true)
-        } else if (token_count as f32 / max_token_count as f32) >= 0.8 {
-            (Color::Warning, true)
-        } else {
-            (Color::Muted, false)
-        };
-
-        h_flex()
-            .absolute()
-            .top_0()
-            .right_0()
-            .w(px(85.))
-            .justify_center()
-            .bg(cx.theme().colors().editor_background)
-            .py_1()
-            .px_2p5()
-            .border_l_1()
-            .border_b_1()
-            .rounded_bl_md()
-            .border_color(cx.theme().colors().border)
-            .child(
-                h_flex()
-                    .id("token-count")
-                    .gap_0p5()
-                    .child(
-                        Label::new(humanize_token_count(token_count))
-                            .size(LabelSize::Small)
-                            .color(color),
-                    )
-                    .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
-                    .child(
-                        Label::new(humanize_token_count(max_token_count))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .when(is_over_threshold, |element| {
-                        element.tooltip({
-                            Tooltip::text(if token_count >= max_token_count {
-                                "Token Limit Reached"
-                            } else {
-                                "Token Limit is Close to Exhaustion"
-                            })
-                        })
-                    }),
-            )
-            .into_any_element()
-    }
 }
 
 /// Returns the contents of the *outermost* fenced code block that contains the given offset.
@@ -2940,7 +2876,6 @@ impl Render for ContextEditor {
         } else {
             None
         };
-        let (token_count, max_token_count) = self.get_token_counts(cx);
 
         v_flex()
             .key_context("ContextEditor")
@@ -3019,12 +2954,6 @@ impl Render for ContextEditor {
                         ),
                 ),
             )
-            // .when(self.is_assistant2_enabled || cx.is_staff(), |element| {
-            //     element.child(self.render_token_count(token_count, max_token_count, cx))
-            // })
-            .when(cx.is_staff(), |element| {
-                element.child(self.render_token_count(token_count, max_token_count, cx))
-            })
     }
 }
 
@@ -3322,48 +3251,58 @@ impl ContextEditorToolbarItem {
             model_summary_editor,
         }
     }
+}
 
-    fn render_remaining_tokens(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let context = &self
-            .active_context_editor
-            .as_ref()?
-            .upgrade()?
-            .read(cx)
-            .context;
-        let (token_count_color, token_count, max_token_count) = match token_state(context, cx)? {
-            TokenState::NoTokensLeft {
-                max_token_count,
-                token_count,
-            } => (Color::Error, token_count, max_token_count),
-            TokenState::HasMoreTokens {
-                max_token_count,
-                token_count,
-                over_warn_threshold,
-            } => {
-                let color = if over_warn_threshold {
-                    Color::Warning
-                } else {
-                    Color::Muted
-                };
-                (color, token_count, max_token_count)
-            }
-        };
-        Some(
-            h_flex()
-                .gap_0p5()
-                .child(
-                    Label::new(humanize_token_count(token_count))
-                        .size(LabelSize::Small)
-                        .color(token_count_color),
-                )
-                .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
-                .child(
-                    Label::new(humanize_token_count(max_token_count))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                ),
-        )
-    }
+pub fn render_remaining_tokens(
+    context_editor: &Entity<ContextEditor>,
+    cx: &App,
+) -> Option<impl IntoElement> {
+    let context = &context_editor.read(cx).context;
+
+    let (token_count_color, token_count, max_token_count, tooltip) = match token_state(context, cx)?
+    {
+        TokenState::NoTokensLeft {
+            max_token_count,
+            token_count,
+        } => (
+            Color::Error,
+            token_count,
+            max_token_count,
+            Some("Token Limit Reached"),
+        ),
+        TokenState::HasMoreTokens {
+            max_token_count,
+            token_count,
+            over_warn_threshold,
+        } => {
+            let (color, tooltip) = if over_warn_threshold {
+                (Color::Warning, Some("Token Limit is Close to Exhaustion"))
+            } else {
+                (Color::Muted, None)
+            };
+            (color, token_count, max_token_count, tooltip)
+        }
+    };
+
+    Some(
+        h_flex()
+            .id("token-count")
+            .gap_0p5()
+            .child(
+                Label::new(humanize_token_count(token_count))
+                    .size(LabelSize::Small)
+                    .color(token_count_color),
+            )
+            .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+            .child(
+                Label::new(humanize_token_count(max_token_count))
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .when_some(tooltip, |element, tooltip| {
+                element.tooltip(Tooltip::text(tooltip))
+            }),
+    )
 }
 
 impl Render for ContextEditorToolbarItem {
@@ -3406,7 +3345,12 @@ impl Render for ContextEditorToolbarItem {
             //     scan_items_remaining
             //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
             // })
-            .children(self.render_remaining_tokens(cx));
+            .children(
+                self.active_context_editor
+                    .as_ref()
+                    .and_then(|editor| editor.upgrade())
+                    .and_then(|editor| render_remaining_tokens(&editor, cx)),
+            );
 
         h_flex()
             .px_0p5()
