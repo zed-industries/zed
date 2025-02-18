@@ -11,7 +11,7 @@ use dap::{
 use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
-use inert::InertState;
+use inert::{InertEvent, InertState};
 use project::debugger::session::Session;
 use project::debugger::session::{ThreadId, ThreadStatus};
 
@@ -33,6 +33,7 @@ enum DebugSessionState {
 pub struct DebugSession {
     remote_id: Option<workspace::ViewId>,
     mode: DebugSessionState,
+    _subscriptions: [Subscription; 1],
 }
 #[derive(Debug)]
 pub enum DebugPanelItemEvent {
@@ -70,9 +71,15 @@ impl ThreadItem {
 
 impl DebugSession {
     pub(super) fn inert(cx: &mut App) -> Entity<Self> {
-        cx.new(|cx| Self {
-            remote_id: None,
-            mode: DebugSessionState::Inert(cx.new(|cx| InertState::new(cx))),
+        let inert = cx.new(|cx| InertState::new(cx));
+
+        cx.new(|cx| {
+            let _subscriptions = [cx.subscribe(&inert, Self::on_inert_event)];
+            Self {
+                remote_id: None,
+                mode: DebugSessionState::Inert(inert),
+                _subscriptions,
+            }
         })
     }
     pub(crate) fn session_id(&self, cx: &App) -> Option<SessionId> {
@@ -81,6 +88,20 @@ impl DebugSession {
             DebugSessionState::Starting(_entity) => unimplemented!(),
             DebugSessionState::Running(entity) => Some(entity.read(cx).client_id()),
         }
+    }
+    fn on_inert_event(
+        &mut self,
+        _: Entity<InertState>,
+        _: &InertEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.mode = DebugSessionState::Starting(cx.new(|cx| {
+            let task = cx.background_executor().spawn(async move {
+                std::future::pending::<()>().await;
+                Ok(())
+            });
+            StartingState::new(task, cx)
+        }));
     }
 }
 impl EventEmitter<DebugPanelItemEvent> for DebugSession {}

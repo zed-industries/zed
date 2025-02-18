@@ -1,7 +1,7 @@
-use gpui::{App, FocusHandle, Focusable};
+use gpui::{App, EventEmitter, FocusHandle, Focusable};
 use ui::{
-    div, h_flex, v_flex, Button, ButtonCommon, ButtonStyle, Context, ContextMenu, DropdownMenu,
-    Element, InteractiveElement, ParentElement, Render, SharedString, Styled, Window,
+    div, h_flex, v_flex, Button, ButtonCommon, ButtonStyle, Clickable, Context, ContextMenu,
+    DropdownMenu, Element, InteractiveElement, ParentElement, Render, SharedString, Styled, Window,
 };
 
 pub(super) struct InertState {
@@ -22,6 +22,12 @@ impl Focusable for InertState {
         self.focus_handle.clone()
     }
 }
+
+pub(crate) enum InertEvent {
+    Spawned { config: () },
+}
+
+impl EventEmitter<InertEvent> for InertState {}
 
 static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select Debugger");
 impl Render for InertState {
@@ -64,7 +70,13 @@ impl Render for InertState {
             .child(
                 h_flex()
                     .gap_1()
-                    .child(Button::new("launch-dap", "Launch").style(ButtonStyle::Filled))
+                    .child(
+                        Button::new("launch-dap", "Launch")
+                            .style(ButtonStyle::Filled)
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(InertEvent::Spawned { config: () });
+                            })),
+                    )
                     .child(Button::new("attach-dap", "Attach").style(ButtonStyle::Filled)),
             )
     }
