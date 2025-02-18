@@ -1278,11 +1278,11 @@ mod test {
         cx.simulate_keystrokes("a ]");
         cx.assert_state("hello (in «ˇ[parens]» o)", Mode::Visual);
         cx.simulate_keystrokes("i (");
-        cx.assert_state("hello (ˇ«in [parens] o»)", Mode::Visual);
+        cx.assert_state("hello («ˇin [parens] o»)", Mode::Visual);
 
         cx.set_state("hello in a wˇord again.", Mode::Normal);
         cx.simulate_keystrokes("ctrl-v l i w");
-        cx.assert_state("hello in a w«ordˇ» again.", Mode::VisualBlock);
+        cx.assert_state("hello in a w«orˇd» again.", Mode::VisualBlock);
         assert_eq!(cx.mode(), Mode::VisualBlock);
         cx.simulate_keystrokes("o a s");
         cx.assert_state("«ˇhello in a word» again.", Mode::Visual);
