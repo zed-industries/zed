@@ -17,7 +17,7 @@ use dap::{
     messages::{self, Events, Message},
     requests::{RunInTerminal, SetBreakpoints, StartDebugging},
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, SetBreakpointsArguments,
-    Source, SourceBreakpoint, SteppingGranularity,
+    Source, SourceBreakpoint, SteppingGranularity, StoppedEvent,
 };
 use dap_adapters::build_adapter;
 use futures::{future::join_all, future::Shared, FutureExt};
@@ -104,8 +104,8 @@ pub enum ThreadStatus {
 pub struct Thread {
     dap: dap::Thread,
     stack_frames: Vec<StackFrame>,
-    _status: ThreadStatus,
-    _has_stopped: bool,
+    status: ThreadStatus,
+    has_stopped: bool,
 }
 
 impl From<dap::Thread> for Thread {
@@ -113,8 +113,8 @@ impl From<dap::Thread> for Thread {
         Self {
             dap,
             stack_frames: vec![],
-            _status: ThreadStatus::default(),
-            _has_stopped: false,
+            status: ThreadStatus::default(),
+            has_stopped: false,
         }
     }
 }
@@ -536,19 +536,42 @@ impl Session {
         .detach_and_log_err(cx);
     }
 
+    fn handle_stopped_event(&mut self, event: StoppedEvent, cx: &mut Context<Self>) {
+        // todo(debugger): We should see if we could only invalidate the thread that stopped
+        // instead of everything right now
+        self.invalidate(cx);
+
+        // todo(debugger): We should query for all threads here if we don't get a thread id
+        // maybe in both cases too?
+        if let Some(thread_id) = event.thread_id {
+            self.threads.insert(
+                ThreadId(thread_id),
+                Thread {
+                    dap: dap::Thread {
+                        id: thread_id,
+                        name: "".into(),
+                    },
+                    stack_frames: vec![],
+                    status: ThreadStatus::Stopped,
+                    has_stopped: true,
+                },
+            );
+        }
+    }
+
     fn handle_dap_event(&mut self, event: Box<Events>, cx: &mut Context<Self>) {
         match *event {
             Events::Initialized(event) => self.handle_initialized_event(event, cx),
-            Events::Stopped(event) => {}
-            Events::Continued(event) => {}
-            Events::Exited(event) => {}
-            Events::Terminated(event) => {}
-            Events::Thread(event) => {}
-            Events::Output(event) => {}
+            Events::Stopped(event) => self.handle_stopped_event(event, cx),
+            Events::Continued(_event) => {}
+            Events::Exited(_event) => {}
+            Events::Terminated(_event) => {}
+            Events::Thread(_event) => {}
+            Events::Output(_event) => {}
             Events::Breakpoint(_) => {}
-            Events::Module(event) => {}
-            Events::LoadedSource(event) => {}
-            Events::Capabilities(event) => {}
+            Events::Module(_event) => {}
+            Events::LoadedSource(_event) => {}
+            Events::Capabilities(_event) => {}
             Events::Memory(_) => {}
             Events::Process(_) => {}
             Events::ProgressEnd(_) => {}
