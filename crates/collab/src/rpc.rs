@@ -446,7 +446,6 @@ impl Server {
             )
             .add_request_handler(forward_mutating_project_request::<proto::DapRestartRequest>)
             .add_request_handler(forward_mutating_project_request::<proto::DapTerminateRequest>)
-            .add_request_handler(forward_mutating_project_request::<proto::DapShutdownSession>)
             .add_message_handler(broadcast_project_message_from_host::<proto::UpdateThreadStatus>)
             .add_request_handler(forward_mutating_project_request::<proto::VariablesRequest>)
             .add_message_handler(
@@ -457,10 +456,6 @@ impl Server {
             )
             .add_message_handler(
                 broadcast_project_message_from_host::<proto::IgnoreBreakpointState>,
-            )
-            .add_message_handler(broadcast_project_message_from_host::<proto::DebuggerSessionEnded>)
-            .add_request_handler(
-                forward_mutating_project_request::<proto::ActiveDebugSessionsRequest>,
             );
 
         Arc::new(server)

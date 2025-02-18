@@ -358,23 +358,28 @@ impl CompletionsQuery {
 }
 
 impl Session {
-    pub(crate) fn local(
+    pub(crate) fn local<F>(
         breakpoints: Entity<BreakpointStore>,
         client_id: DebugAdapterClientId,
         delegate: DapAdapterDelegate,
         config: DebugAdapterConfig,
+        message_handler: F,
         cx: &mut App,
-    ) -> Task<Result<Entity<Self>>> {
+    ) -> Task<Result<Entity<Self>>>
+    where
+        F: FnMut(Message, &mut App) + 'static + Send + Sync + Clone,
+    {
         cx.spawn(move |mut cx| async move {
             let mode = LocalMode::new(
                 client_id,
                 breakpoints,
                 config.clone(),
                 delegate,
-                |_, _| {},
+                message_handler,
                 cx.clone(),
             )
             .await?;
+
             cx.new(|_| Self {
                 mode: Mode::Local(mode),
                 client_id,
@@ -417,6 +422,8 @@ impl Session {
     pub fn configuration(&self) -> DebugAdapterConfig {
         self.config.clone()
     }
+
+    pub(crate) fn handle_dap_message(&mut self, message: Message) {}
 
     pub(crate) fn _wait_for_request<R: DapCommand + PartialEq + Eq + Hash>(
         &self,

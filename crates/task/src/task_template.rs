@@ -109,6 +109,7 @@ mod deserialization_tests {
             kind: DebugAdapterKind::Python(TCPHost::default()),
             request: crate::DebugRequestType::Launch,
             program: Some("main".to_string()),
+            supports_attach: false,
             cwd: None,
             initialize_args: None,
         };
@@ -116,7 +117,8 @@ mod deserialization_tests {
             "label": "test config",
             "type": "debug",
             "adapter": "python",
-            "program": "main"
+            "program": "main",
+            "supports_attach": false,
         });
 
         let task_type: TaskType =

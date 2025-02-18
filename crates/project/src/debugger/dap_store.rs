@@ -208,7 +208,7 @@ pub struct DapStore {
     downstream_client: Option<(AnyProtoClient, u64)>,
     breakpoint_store: Entity<BreakpointStore>,
     active_debug_line: Option<(DebugAdapterClientId, ProjectPath, u32)>,
-    clients: BTreeMap<DebugAdapterClientId, Entity<Session>>,
+    sessions: BTreeMap<DebugAdapterClientId, Entity<Session>>,
 }
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
@@ -283,7 +283,7 @@ impl DapStore {
             downstream_client: None,
             active_debug_line: None,
             breakpoint_store,
-            clients: Default::default(),
+            sessions: Default::default(),
         }
     }
 
@@ -301,7 +301,7 @@ impl DapStore {
             downstream_client: None,
             active_debug_line: None,
             breakpoint_store,
-            clients: Default::default(),
+            sessions: Default::default(),
         }
     }
 
@@ -357,7 +357,7 @@ impl DapStore {
         cx: &mut Context<Self>,
     ) {
         if let DapStoreMode::Remote(remote) = &self.mode {
-            self.clients.insert(
+            self.sessions.insert(
                 client_id,
                 cx.new(|_| {
                     debugger::session::Session::remote(
@@ -378,12 +378,12 @@ impl DapStore {
         client_id: impl Borrow<DebugAdapterClientId>,
     ) -> Option<Entity<session::Session>> {
         let client_id = client_id.borrow();
-        let client = self.clients.get(client_id).cloned();
+        let client = self.sessions.get(client_id).cloned();
 
         client
     }
     pub fn clients(&self) -> impl Iterator<Item = &Entity<Session>> {
-        self.clients.values()
+        self.sessions.values()
     }
 
     pub fn capabilities_by_id(
@@ -392,7 +392,7 @@ impl DapStore {
         cx: &App,
     ) -> Option<Capabilities> {
         let client_id = client_id.borrow();
-        self.clients
+        self.sessions
             .get(client_id)
             .map(|client| client.read(cx).capabilities.clone())
     }
@@ -564,74 +564,12 @@ impl DapStore {
     //     })
     // }
 
-    fn start_client_internal(
-        &mut self,
-        delegate: DapAdapterDelegate,
-        config: DebugAdapterConfig,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Arc<DebugAdapterClient>>> {
-        let Some(local_store) = self.as_local_mut() else {
-            return Task::ready(Err(anyhow!("cannot start client on remote side")));
-        };
-
-        let client_id = local_store.next_client_id();
-
-        cx.spawn(|this, mut cx| async move {
-            let adapter = build_adapter(&config.kind).await?;
-
-            if !unimplemented!("adapter.supports_attach()")
-                && matches!(config.request, DebugRequestType::Attach(_))
-            {
-                bail!("Debug adapter does not support `attach` request");
-            }
-
-            let binary = cx.update(|cx| {
-                let name = DebugAdapterName::from(adapter.name().as_ref());
-
-                ProjectSettings::get_global(cx)
-                    .dap
-                    .get(&name)
-                    .and_then(|s| s.binary.as_ref().map(PathBuf::from))
-            })?;
-
-            let (adapter, binary) = match adapter
-                .get_binary(&delegate, &config, binary, &mut cx)
-                .await
-            {
-                Err(error) => {
-                    delegate.update_status(
-                        adapter.name(),
-                        DapStatus::Failed {
-                            error: error.to_string(),
-                        },
-                    );
-
-                    return Err(error);
-                }
-                Ok(mut binary) => {
-                    delegate.update_status(adapter.name(), DapStatus::None);
-
-                    let shell_env = delegate.shell_env().await;
-                    let mut envs = binary.envs.unwrap_or_default();
-                    envs.extend(shell_env);
-                    binary.envs = Some(envs);
-
-                    (adapter, binary)
-                }
-            };
-
-            let mut client = DebugAdapterClient::start(client_id, binary, |_, _| {}, cx).await?;
-
-            Ok(Arc::new(client))
-        })
-    }
-
     pub fn start_debug_session(
         &mut self,
         config: DebugAdapterConfig,
         worktree: &Entity<Worktree>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Arc<DebugAdapterClient>>> {
+    ) -> Task<Result<Entity<Session>>> {
         let Some(local_store) = self.as_local() else {
             return Task::ready(Err(anyhow!("cannot start session on remote side")));
         };
@@ -648,12 +586,35 @@ impl DapStore {
                 env.get_environment(Some(worktree.id()), Some(worktree.abs_path()), cx)
             }),
         );
+        let client_id = local_store.next_client_id();
 
-        let start_client_task = self.start_client_internal(delegate, config.clone(), cx);
+        let start_client_task = Session::local(
+            self.breakpoint_store.clone(),
+            client_id,
+            delegate,
+            config,
+            {
+                let weak_store = cx.weak_entity();
+
+                move |message, cx| {
+                    weak_store
+                        .update(cx, |store, cx| {
+                            if let Some(session) = store.sessions.get(&client_id) {
+                                session.update(cx, |session, cx| {
+                                    session.handle_dap_message(message);
+                                });
+                            }
+                        })
+                        .with_context(|| "Failed to process message from DAP server")
+                        .log_err();
+                }
+            },
+            cx,
+        );
 
         cx.spawn(|this, mut cx| async move {
-            let client = match start_client_task.await {
-                Ok(client) => client,
+            let session = match start_client_task.await {
+                Ok(session) => session,
                 Err(error) => {
                     this.update(&mut cx, |_, cx| {
                         cx.emit(DapStoreEvent::Notification(error.to_string()));
@@ -665,14 +626,12 @@ impl DapStore {
             };
 
             this.update(&mut cx, |store, cx| {
-                let client_id = client.id();
-
-                unimplemented!("store.clients.insert(client_id, client);");
+                store.sessions.insert(client_id, session.clone());
 
                 cx.emit(DapStoreEvent::DebugClientStarted(client_id));
                 cx.notify();
 
-                client
+                session
             })
         })
     }
@@ -951,7 +910,7 @@ impl DapStore {
 
     pub fn shutdown_clients(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let mut tasks = vec![];
-        for client_id in self.clients.keys().cloned().collect::<Vec<_>>() {
+        for client_id in self.sessions.keys().cloned().collect::<Vec<_>>() {
             tasks.push(self.shutdown_client(&client_id, cx));
         }
 
@@ -979,7 +938,7 @@ impl DapStore {
 
             return Task::ready(Err(anyhow!("Cannot shutdown session on remote side")));
         };
-        let Some(client) = self.clients.remove(client_id) else {
+        let Some(client) = self.sessions.remove(client_id) else {
             return Task::ready(Err(anyhow!("Could not find session: {:?}", client_id)));
         };
 
@@ -1194,7 +1153,7 @@ impl DapStore {
 
         let mut tasks = Vec::new();
         for (client_id, client) in self
-            .clients
+            .sessions
             .iter()
             .filter(|(_, client)| client.read(cx).adapter_client().is_some())
         {

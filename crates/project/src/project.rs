@@ -1343,7 +1343,7 @@ impl Project {
         &mut self,
         config: DebugAdapterConfig,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Arc<DebugAdapterClient>>> {
+    ) -> Task<Result<Entity<debugger::session::Session>>> {
         let worktree = maybe!({
             if let Some(cwd) = &config.cwd {
                 Some(self.find_worktree(cwd.as_path(), cx)?.0)
