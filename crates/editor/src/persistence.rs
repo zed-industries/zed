@@ -151,7 +151,7 @@ define_connection!(
 );
 
 // https://www.sqlite.org/limits.html
-// > .. the maximum value of a host parameter number is SQLITE_MAX_VARIABLE_NUMBER,
+// > <..> the maximum value of a host parameter number is SQLITE_MAX_VARIABLE_NUMBER,
 // > which defaults to <..> 32766 for SQLite versions after 3.32.0.
 const MAX_QUERY_PLACEHOLDERS: usize = 32000;
 

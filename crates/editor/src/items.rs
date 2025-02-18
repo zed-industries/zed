@@ -1127,7 +1127,6 @@ impl SerializableItem for Editor {
                                         );
                                     }
                                     buffer.set_text(buffer_text, cx);
-                                    // buffer.set_active_selections(selections, line_mode, cursor_shape, cx);
                                 })?;
                             }
 

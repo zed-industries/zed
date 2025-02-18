@@ -2187,7 +2187,7 @@ impl Editor {
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
         cx.emit(EditorEvent::SelectionsChanged { local });
 
-        let selections = self.selections.disjoint.clone();
+        let selections = &self.selections.disjoint;
         if selections.len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
         }
@@ -2196,6 +2196,7 @@ impl Editor {
                 let background_executor = cx.background_executor().clone();
                 let editor_id = cx.entity().entity_id().as_u64() as ItemId;
                 let snapshot = self.buffer().read(cx).snapshot(cx);
+                let selections = selections.clone();
                 self.serialize_selections = cx.background_spawn(async move {
                     background_executor.timer(Duration::from_millis(100)).await;
                     let selections = selections
