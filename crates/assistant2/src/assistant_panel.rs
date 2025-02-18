@@ -478,6 +478,10 @@ impl AssistantPanel {
             .update(cx, |this, cx| this.delete_thread(thread_id, cx))
             .detach_and_log_err(cx);
     }
+
+    pub(crate) fn active_context_editor(&self) -> Option<Entity<ContextEditor>> {
+        self.context_editor.clone()
+    }
 }
 
 impl Focusable for AssistantPanel {
