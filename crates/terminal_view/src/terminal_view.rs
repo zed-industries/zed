@@ -23,7 +23,7 @@ use terminal::{
     terminal_settings::{self, CursorShape, TerminalBlink, TerminalSettings, WorkingDirectory},
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown,
     ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskStatus, Terminal,
-    TerminalSize, ToggleViMode,
+    TerminalBounds, ToggleViMode,
 };
 use terminal_element::{is_blank, TerminalElement};
 use terminal_panel::TerminalPanel;
@@ -101,7 +101,7 @@ pub struct BlockProperties {
 pub struct BlockContext<'a, 'b> {
     pub window: &'a mut Window,
     pub context: &'b mut App,
-    pub dimensions: TerminalSize,
+    pub dimensions: TerminalBounds,
 }
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
@@ -342,7 +342,7 @@ impl TerminalView {
             return Pixels::ZERO;
         };
 
-        let line_height = terminal.last_content().size.line_height;
+        let line_height = terminal.last_content().terminal_bounds.line_height;
         let mut terminal_lines = terminal.total_lines();
         let viewport_lines = terminal.viewport_lines();
         if terminal.total_lines() == terminal.viewport_lines() {
@@ -366,16 +366,11 @@ impl TerminalView {
         max_scroll_top_in_lines as f32 * line_height
     }
 
-    fn scroll_wheel(
-        &mut self,
-        event: &ScrollWheelEvent,
-        origin: gpui::Point<Pixels>,
-        cx: &mut Context<Self>,
-    ) {
+    fn scroll_wheel(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
         let terminal_content = self.terminal.read(cx).last_content();
 
         if self.block_below_cursor.is_some() && terminal_content.display_offset == 0 {
-            let line_height = terminal_content.size.line_height;
+            let line_height = terminal_content.terminal_bounds.line_height;
             let y_delta = event.delta.pixel_delta(line_height).y;
             if y_delta < Pixels::ZERO || self.scroll_top > Pixels::ZERO {
                 self.scroll_top = cmp::max(
@@ -387,8 +382,7 @@ impl TerminalView {
             }
         }
 
-        self.terminal
-            .update(cx, |term, _| term.scroll_wheel(event, origin));
+        self.terminal.update(cx, |term, _| term.scroll_wheel(event));
     }
 
     fn scroll_line_up(&mut self, _: &ScrollLineUp, _: &mut Window, cx: &mut Context<Self>) {
@@ -397,7 +391,7 @@ impl TerminalView {
             && terminal_content.display_offset == 0
             && self.scroll_top > Pixels::ZERO
         {
-            let line_height = terminal_content.size.line_height;
+            let line_height = terminal_content.terminal_bounds.line_height;
             self.scroll_top = cmp::max(self.scroll_top - line_height, Pixels::ZERO);
             return;
         }
@@ -411,7 +405,7 @@ impl TerminalView {
         if self.block_below_cursor.is_some() && terminal_content.display_offset == 0 {
             let max_scroll_top = self.max_scroll_top(cx);
             if self.scroll_top < max_scroll_top {
-                let line_height = terminal_content.size.line_height;
+                let line_height = terminal_content.terminal_bounds.line_height;
                 self.scroll_top = cmp::min(self.scroll_top + line_height, max_scroll_top);
             }
             return;
@@ -425,7 +419,12 @@ impl TerminalView {
         if self.scroll_top == Pixels::ZERO {
             self.terminal.update(cx, |term, _| term.scroll_page_up());
         } else {
-            let line_height = self.terminal.read(cx).last_content.size.line_height();
+            let line_height = self
+                .terminal
+                .read(cx)
+                .last_content
+                .terminal_bounds
+                .line_height();
             let visible_block_lines = (self.scroll_top / line_height) as usize;
             let viewport_lines = self.terminal.read(cx).viewport_lines();
             let visible_content_lines = viewport_lines - visible_block_lines;
@@ -866,7 +865,8 @@ fn subscribe_for_terminal_events(
                         }
                     }
                     None => false,
-                }
+                };
+                cx.notify()
             }
 
             Event::Open(maybe_navigation_target) => match maybe_navigation_target {
