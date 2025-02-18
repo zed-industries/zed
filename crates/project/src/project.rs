@@ -121,6 +121,8 @@ pub use lsp_store::{
     SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
 pub use toolchain_store::ToolchainStore;
+use util::paths::{compare_paths_with_sort_mode, SortMode};
+
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
 const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
@@ -4575,13 +4577,14 @@ impl Completion {
     }
 }
 
-pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
+pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>], sort_mode: SortMode) {
     entries.sort_by(|entry_a, entry_b| {
         let entry_a = entry_a.as_ref();
         let entry_b = entry_b.as_ref();
-        compare_paths(
+        compare_paths_with_sort_mode(
             (&entry_a.path, entry_a.is_file()),
             (&entry_b.path, entry_b.is_file()),
+            sort_mode
         )
     });
 }

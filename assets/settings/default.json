@@ -437,7 +437,14 @@
       // 2. Never show indent guides:
       //    "never"
       "show": "always"
-    }
+    },
+    // Sort mode for the project panel.
+    // This setting can take two values:
+    // 1. Sort by natural, alphabetical order:
+    //    "alphabetical"
+    // 2. Sort lexicographically:
+    //    "lexicographical"
+    "sort_mode": "alphabetical"
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar

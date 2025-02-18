@@ -1,4 +1,10 @@
+use crate::NumericPrefixWithSuffix;
+use globset::{Glob, GlobSet, GlobSetBuilder};
+use regex::Regex;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::cmp;
+use std::cmp::Ordering;
 use std::path::StripPrefixError;
 use std::sync::{Arc, OnceLock};
 use std::{
@@ -6,12 +12,6 @@ use std::{
     path::{Path, PathBuf},
     sync::LazyLock,
 };
-
-use globset::{Glob, GlobSet, GlobSetBuilder};
-use regex::Regex;
-use serde::{Deserialize, Serialize};
-
-use crate::NumericPrefixWithSuffix;
 
 /// Returns the path to the user's home directory.
 pub fn home_dir() -> &'static PathBuf {
@@ -409,6 +409,69 @@ impl PathMatcher {
     }
 }
 
+/// Parse a number from an iterator and return (number, digit_count)
+fn parse_number<I>(iter: &mut std::iter::Peekable<I>) -> (u64, usize)
+where
+    I: Iterator<Item = char>,
+{
+    let mut number = 0u64;
+    let mut count = 0;
+
+    while let Some(&c) = iter.peek() {
+        if !c.is_ascii_digit() {
+            break;
+        }
+        number = number * 10 + (c as u64 - '0' as u64);
+        count += 1;
+        iter.next(); // consume the digit
+    }
+
+    (number, count)
+}
+
+/// Helper function to perform natural sorting that handles numeric segments
+fn natural_sort(a: &str, b: &str) -> Ordering {
+    let mut a_iter = a.chars().peekable();
+    let mut b_iter = b.chars().peekable();
+
+    loop {
+        match (a_iter.peek(), b_iter.peek()) {
+            (None, None) => return Ordering::Equal,
+            (None, _) => return Ordering::Less,
+            (_, None) => return Ordering::Greater,
+            (Some(&a_char), Some(&b_char)) => {
+                // Check if both characters are digits
+                if a_char.is_ascii_digit() && b_char.is_ascii_digit() {
+                    // Parse numbers from both strings
+                    let (a_num, a_digits) = parse_number(&mut a_iter);
+                    let (b_num, b_digits) = parse_number(&mut b_iter);
+
+                    // First compare by numeric value
+                    match a_num.cmp(&b_num) {
+                        Ordering::Equal => {
+                            // If the same number, then compare by number of digits (fewer digits first)
+                            match a_digits.cmp(&b_digits) {
+                                Ordering::Equal => continue, // Both digits and values are equal
+                                ordering => return ordering, // Sort by digit count (fewer digits first)
+                            }
+                        }
+                        ordering => return ordering,
+                    }
+                } else {
+                    // Regular character comparison
+                    match a_char.cmp(&b_char) {
+                        Ordering::Equal => {
+                            a_iter.next();
+                            b_iter.next();
+                        }
+                        ordering => return ordering,
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn compare_paths(
     (path_a, a_is_file): (&Path, bool),
     (path_b, b_is_file): (&Path, bool),
@@ -460,6 +523,81 @@ pub fn compare_paths(
             (Some(_), None) => break cmp::Ordering::Greater,
             (None, Some(_)) => break cmp::Ordering::Less,
             (None, None) => break cmp::Ordering::Equal,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SortMode {
+    #[default]
+    Lexicographical,
+    Alphabetical,
+}
+
+
+pub fn compare_paths_with_sort_mode(
+    (path_a, a_is_file): (&Path, bool),
+    (path_b, b_is_file): (&Path, bool),
+    sort_mode: SortMode,
+) -> Ordering {
+    match sort_mode {
+        SortMode::Lexicographical => {
+            let mut components_a = path_a.components().peekable();
+            let mut components_b = path_b.components().peekable();
+            loop {
+                match (components_a.next(), components_b.next()) {
+                    (Some(component_a), Some(component_b)) => {
+                        let a_is_file = components_a.peek().is_none() && a_is_file;
+                        let b_is_file = components_b.peek().is_none() && b_is_file;
+                        let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
+                            let path_a = Path::new(component_a.as_os_str());
+                            let path_string_a = if a_is_file {
+                                path_a.file_stem()
+                            } else {
+                                path_a.file_name()
+                            }
+                            .map(|s| s.to_string_lossy());
+                            let num_and_remainder_a = path_string_a
+                                .as_deref()
+                                .map(NumericPrefixWithSuffix::from_numeric_prefixed_str);
+
+                            let path_b = Path::new(component_b.as_os_str());
+                            let path_string_b = if b_is_file {
+                                path_b.file_stem()
+                            } else {
+                                path_b.file_name()
+                            }
+                            .map(|s| s.to_string_lossy());
+                            let num_and_remainder_b = path_string_b
+                                .as_deref()
+                                .map(NumericPrefixWithSuffix::from_numeric_prefixed_str);
+
+                            num_and_remainder_a.cmp(&num_and_remainder_b).then_with(|| {
+                                if a_is_file && b_is_file {
+                                    let ext_a = path_a.extension().unwrap_or_default();
+                                    let ext_b = path_b.extension().unwrap_or_default();
+                                    ext_a.cmp(ext_b)
+                                } else {
+                                    cmp::Ordering::Equal
+                                }
+                            })
+                        });
+                        if !ordering.is_eq() {
+                            return ordering;
+                        }
+                    }
+                    (Some(_), None) => break cmp::Ordering::Greater,
+                    (None, Some(_)) => break cmp::Ordering::Less,
+                    (None, None) => break cmp::Ordering::Equal,
+                }
+            }
+        }
+        SortMode::Alphabetical => {
+            let path_a = path_a.to_string_lossy();
+            let path_b = path_b.to_string_lossy();
+
+            natural_sort(&path_a, &path_b)
         }
     }
 }
@@ -859,6 +997,108 @@ mod tests {
         assert_eq!(
             sanitized_path.to_string(),
             "C:\\Users\\someone\\test_file.rs"
+        );
+    }
+
+    #[test]
+    fn test_compare_paths_with_sort_mode() {
+        // Test Lexicographical sorting
+        let mut paths = vec![
+            (Path::new("test_dirs/file10.txt"), true),
+            (Path::new("test_dirs/file2.txt"), true),
+            (Path::new("test_dirs/file1.txt"), true),
+            (Path::new("test_dirs"), false),
+        ];
+        
+        // Test lexicographical sorting
+        paths.sort_by(|&a, &b| compare_paths_with_sort_mode(a, b, SortMode::Lexicographical));
+        assert_eq!(
+            paths,
+            vec![
+                (Path::new("test_dirs"), false),
+                (Path::new("test_dirs/file1.txt"), true),
+                (Path::new("test_dirs/file10.txt"), true),
+                (Path::new("test_dirs/file2.txt"), true),
+            ]
+        );
+
+        // Test alphabetical (natural) sorting
+        paths.sort_by(|&a, &b| compare_paths_with_sort_mode(a, b, SortMode::Alphabetical));
+        assert_eq!(
+            paths,
+            vec![
+                (Path::new("test_dirs"), false),
+                (Path::new("test_dirs/file1.txt"), true),
+                (Path::new("test_dirs/file2.txt"), true),
+                (Path::new("test_dirs/file10.txt"), true),
+            ]
+        );
+
+        // Test with mixed case and special characters
+        let mut complex_paths = vec![
+            (Path::new("test_dirs/File-1.txt"), true),
+            (Path::new("test_dirs/file-10.txt"), true),
+            (Path::new("test_dirs/File-2.txt"), true),
+            (Path::new("test_dirs/file-20.txt"), true),
+            (Path::new("test_dirs"), false),
+        ];
+
+        // Test lexicographical sorting with complex paths
+        complex_paths.sort_by(|&a, &b| compare_paths_with_sort_mode(a, b, SortMode::Lexicographical));
+        assert_eq!(
+            complex_paths,
+            vec![
+                (Path::new("test_dirs"), false),
+                (Path::new("test_dirs/File-1.txt"), true),
+                (Path::new("test_dirs/File-2.txt"), true),
+                (Path::new("test_dirs/file-10.txt"), true),
+                (Path::new("test_dirs/file-20.txt"), true),
+            ]
+        );
+
+        // Test alphabetical sorting with complex paths
+        complex_paths.sort_by(|&a, &b| compare_paths_with_sort_mode(a, b, SortMode::Alphabetical));
+        assert_eq!(
+            complex_paths,
+            vec![
+                (Path::new("test_dirs"), false),
+                (Path::new("test_dirs/File-1.txt"), true),
+                (Path::new("test_dirs/file-10.txt"), true),
+                (Path::new("test_dirs/File-2.txt"), true),
+                (Path::new("test_dirs/file-20.txt"), true),
+            ]
+        );
+
+        // Test with nested directories
+        let mut nested_paths = vec![
+            (Path::new("test_dirs/folder2/file.txt"), true),
+            (Path::new("test_dirs/folder10/file.txt"), true),
+            (Path::new("test_dirs/folder1/file.txt"), true),
+            (Path::new("test_dirs"), false),
+        ];
+
+        // Test lexicographical sorting with nested paths
+        nested_paths.sort_by(|&a, &b| compare_paths_with_sort_mode(a, b, SortMode::Lexicographical));
+        assert_eq!(
+            nested_paths,
+            vec![
+                (Path::new("test_dirs"), false),
+                (Path::new("test_dirs/folder1/file.txt"), true),
+                (Path::new("test_dirs/folder10/file.txt"), true),
+                (Path::new("test_dirs/folder2/file.txt"), true),
+            ]
+        );
+
+        // Test alphabetical sorting with nested paths
+        nested_paths.sort_by(|&a, &b| compare_paths_with_sort_mode(a, b, SortMode::Alphabetical));
+        assert_eq!(
+            nested_paths,
+            vec![
+                (Path::new("test_dirs"), false),
+                (Path::new("test_dirs/folder1/file.txt"), true),
+                (Path::new("test_dirs/folder2/file.txt"), true),
+                (Path::new("test_dirs/folder10/file.txt"), true),
+            ]
         );
     }
 }

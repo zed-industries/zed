@@ -1572,7 +1572,8 @@ impl ProjectPanel {
             .map(|entry| entry.to_owned())
             .collect();
 
-        project::sort_worktree_entries(&mut siblings);
+        let sort_mode = ProjectPanelSettings::get_global(cx).sort_mode;
+        project::sort_worktree_entries(&mut siblings, sort_mode); // HERE
         let sibling_entry_index = siblings
             .iter()
             .position(|sibling| sibling.id == latest_entry.id)?;
@@ -2765,7 +2766,8 @@ impl ProjectPanel {
                 entry_iter.advance();
             }
 
-            project::sort_worktree_entries(&mut visible_worktree_entries);
+            let sort_mode = ProjectPanelSettings::get_global(cx).sort_mode;
+            project::sort_worktree_entries(&mut visible_worktree_entries, sort_mode);
 
             self.visible_entries
                 .push((worktree_id, visible_worktree_entries, OnceCell::new()));
@@ -4816,6 +4818,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::{Path, PathBuf};
+    use util::paths::SortMode;
     use util::{path, separator};
     use workspace::{
         item::{Item, ProjectItem},
@@ -9491,6 +9494,7 @@ mod tests {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
                     project_panel_settings.auto_fold_dirs = Some(false);
+                    project_panel_settings.sort_mode = Some(SortMode::Lexicographical);
                 });
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
                     worktree_settings.file_scan_exclusions = Some(Vec::new());
@@ -9513,6 +9517,7 @@ mod tests {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
                     project_panel_settings.auto_fold_dirs = Some(false);
+                    project_panel_settings.sort_mode = Some(SortMode::Lexicographical);
                 });
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
                     worktree_settings.file_scan_exclusions = Some(Vec::new());
