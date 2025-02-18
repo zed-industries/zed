@@ -96,6 +96,8 @@ impl ExtensionHostProxy {
 }
 
 pub trait ExtensionThemeProxy: Send + Sync + 'static {
+    fn set_extensions_loaded(&self);
+
     fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>>;
 
     fn remove_user_themes(&self, themes: Vec<SharedString>);
@@ -123,6 +125,14 @@ pub trait ExtensionThemeProxy: Send + Sync + 'static {
 }
 
 impl ExtensionThemeProxy for ExtensionHostProxy {
+    fn set_extensions_loaded(&self) {
+        let Some(proxy) = self.theme_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.set_extensions_loaded()
+    }
+
     fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
         let Some(proxy) = self.theme_proxy.read().clone() else {
             return Task::ready(Ok(Vec::new()));

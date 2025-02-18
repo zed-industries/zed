@@ -157,7 +157,11 @@ impl ThemeSettings {
             // If the selected theme doesn't exist, fall back to a default theme
             // based on the system appearance.
             let theme_registry = ThemeRegistry::global(cx);
-            if theme_registry.get(theme_name).ok().is_none() {
+            if let Err(err @ ThemeNotFoundError(_)) = theme_registry.get(theme_name) {
+                if theme_registry.extensions_loaded() {
+                    log::error!("{err}");
+                }
+
                 theme_name = Self::default_theme(*system_appearance);
             };
 
@@ -180,11 +184,13 @@ impl ThemeSettings {
 
             // If the selected icon theme doesn't exist, fall back to the default theme.
             let theme_registry = ThemeRegistry::global(cx);
-            if theme_registry
-                .get_icon_theme(icon_theme_name)
-                .ok()
-                .is_none()
+            if let Err(err @ IconThemeNotFoundError(_)) =
+                theme_registry.get_icon_theme(icon_theme_name)
             {
+                if theme_registry.extensions_loaded() {
+                    log::error!("{err}");
+                }
+
                 icon_theme_name = DEFAULT_ICON_THEME_NAME;
             };
 
@@ -848,7 +854,9 @@ impl settings::Settings for ThemeSettings {
                         this.active_theme = theme;
                     }
                     Err(err @ ThemeNotFoundError(_)) => {
-                        log::error!("{err}");
+                        if themes.extensions_loaded() {
+                            log::error!("{err}");
+                        }
                     }
                 }
             }
@@ -866,7 +874,9 @@ impl settings::Settings for ThemeSettings {
                         this.active_icon_theme = icon_theme;
                     }
                     Err(err @ IconThemeNotFoundError(_)) => {
-                        log::error!("{err}");
+                        if themes.extensions_loaded() {
+                            log::error!("{err}");
+                        }
                     }
                 }
             }
