@@ -413,7 +413,7 @@ impl StateInner {
             );
         }
 
-        window.refresh();
+        window.refresh_at(window.mouse_position());
     }
 
     fn logical_scroll_top(&self) -> ListOffset {

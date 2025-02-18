@@ -327,7 +327,7 @@ mod uniform_list {
                     window.on_mouse_event({
                         let prev_hovered_hitbox_id = hovered_hitbox_id;
                         let hitboxes = hitboxes.clone();
-                        move |_: &MouseMoveEvent, phase, window, _cx| {
+                        move |e: &MouseMoveEvent, phase, window, _cx| {
                             let mut hovered_hitbox_id = None;
                             for hitbox in hitboxes.as_ref() {
                                 if hitbox.is_hovered(window) {
@@ -340,15 +340,11 @@ mod uniform_list {
                                 match (prev_hovered_hitbox_id, hovered_hitbox_id) {
                                     (Some(prev_id), Some(id)) => {
                                         if prev_id != id {
-                                            window.refresh();
+                                            window.refresh_at(e.position)
                                         }
                                     }
-                                    (None, Some(_)) => {
-                                        window.refresh();
-                                    }
-                                    (Some(_), None) => {
-                                        window.refresh();
-                                    }
+                                    (None, Some(_)) => window.refresh_at(e.position),
+                                    (Some(_), None) => window.refresh_at(e.position),
                                     (None, None) => {}
                                 }
                             }
