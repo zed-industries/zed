@@ -37,7 +37,7 @@ impl LanguageModelSelector {
             on_model_changed: on_model_changed.clone(),
             all_models: all_models.clone(),
             filtered_models: all_models,
-            selected_index: 0,
+            selected_index: Self::get_active_model_index(cx),
         };
 
         let picker = cx.new(|cx| {
@@ -99,6 +99,16 @@ impl LanguageModelSelector {
                 })
             })
             .collect::<Vec<_>>()
+    }
+
+    fn get_active_model_index(cx: &App) -> usize {
+        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+        Self::all_models(cx)
+            .iter()
+            .position(|model_info| {
+                Some(model_info.model.id()) == active_model.as_ref().map(|model| model.id())
+            })
+            .unwrap_or(0)
     }
 }
 
