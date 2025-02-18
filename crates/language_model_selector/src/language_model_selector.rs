@@ -397,7 +397,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 }),
                         ),
                 )
-                .end_slot(div().when(is_selected, |this| {
+                .end_slot(div().pr_3().when(is_selected, |this| {
                     this.child(
                         Icon::new(IconName::Check)
                             .color(Color::Accent)
