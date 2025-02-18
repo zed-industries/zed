@@ -245,12 +245,11 @@ impl PickerDelegate for OpenPathDelegate {
                         .as_ref(),
                 )
                 .join(&candidate.string);
-                // Add trailing slash to directories
-                if full_path.is_dir() {
-                    Some(format!("{}/{}/", directory_state.path, candidate.string))
-                } else {
-                    Some(format!("{}/{}", directory_state.path, candidate.string))
-                }
+                let trailing_slash = if full_path.is_dir() { "/" } else { "" };
+                Some(format!(
+                    "{}/{}{trailing_slash}",
+                    directory_state.path, candidate.string
+                ))
             })
             .unwrap_or(query),
         )
