@@ -39,7 +39,6 @@ impl ModuleList {
             session,
             focus_handle,
             _subscription,
-            session_id,
         }
     }
 
