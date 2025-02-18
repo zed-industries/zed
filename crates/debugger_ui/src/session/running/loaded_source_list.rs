@@ -1,4 +1,4 @@
-use dap::client::DebugAdapterClientId;
+use dap::client::SessionId;
 use gpui::{list, AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, Subscription};
 use project::debugger::session::Session;
 use ui::prelude::*;
@@ -9,13 +9,13 @@ pub struct LoadedSourceList {
     focus_handle: FocusHandle,
     _subscription: Subscription,
     session: Entity<Session>,
-    client_id: DebugAdapterClientId,
+    client_id: SessionId,
 }
 
 impl LoadedSourceList {
     pub fn new(
         session: Entity<Session>,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         cx: &mut Context<Self>,
     ) -> Self {
         let weak_entity = cx.weak_entity();

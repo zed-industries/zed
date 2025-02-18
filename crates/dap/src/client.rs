@@ -27,9 +27,9 @@ const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct DebugAdapterClientId(pub u32);
+pub struct SessionId(pub u32);
 
-impl DebugAdapterClientId {
+impl SessionId {
     pub fn from_proto(client_id: u64) -> Self {
         Self(client_id as u32)
     }
@@ -41,7 +41,7 @@ impl DebugAdapterClientId {
 
 /// Represents a connection to the debug adapter process, either via stdout/stdin or a socket.
 pub struct DebugAdapterClient {
-    id: DebugAdapterClientId,
+    id: SessionId,
     sequence_count: AtomicU64,
     binary: DebugAdapterBinary,
     executor: BackgroundExecutor,
@@ -50,7 +50,7 @@ pub struct DebugAdapterClient {
 
 impl DebugAdapterClient {
     pub async fn start<F>(
-        id: DebugAdapterClientId,
+        id: SessionId,
         binary: DebugAdapterBinary,
         message_handler: F,
         cx: AsyncApp,
@@ -93,7 +93,7 @@ impl DebugAdapterClient {
     }
 
     async fn handle_receive_messages<F>(
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         server_rx: Receiver<Message>,
         client_tx: Sender<Message>,
         mut event_handler: F,
@@ -193,7 +193,7 @@ impl DebugAdapterClient {
         self.transport_delegate.send_message(message).await
     }
 
-    pub fn id(&self) -> DebugAdapterClientId {
+    pub fn id(&self) -> SessionId {
         self.id
     }
 
@@ -296,7 +296,7 @@ mod tests {
         init_test(cx);
 
         let mut client = DebugAdapterClient::new(
-            crate::client::DebugAdapterClientId(1),
+            crate::client::SessionId(1),
             DebugAdapterBinary {
                 command: "command".into(),
                 arguments: Default::default(),
@@ -373,7 +373,7 @@ mod tests {
         let called_event_handler = Arc::new(AtomicBool::new(false));
 
         let mut client = DebugAdapterClient::new(
-            crate::client::DebugAdapterClientId(1),
+            crate::client::SessionId(1),
             DebugAdapterBinary {
                 command: "command".into(),
                 arguments: Default::default(),
@@ -432,7 +432,7 @@ mod tests {
         let called_event_handler = Arc::new(AtomicBool::new(false));
 
         let mut client = DebugAdapterClient::new(
-            crate::client::DebugAdapterClientId(1),
+            crate::client::SessionId(1),
             DebugAdapterBinary {
                 command: "command".into(),
                 arguments: Default::default(),

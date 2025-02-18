@@ -39,7 +39,7 @@ use client::{
 use clock::ReplicaId;
 
 use dap::{
-    client::{DebugAdapterClient, DebugAdapterClientId},
+    client::{DebugAdapterClient, SessionId},
     debugger_settings::DebuggerSettings,
     messages::Message,
     DebugAdapterConfig,
@@ -270,14 +270,14 @@ pub enum Event {
         notification_id: SharedString,
     },
     LanguageServerPrompt(LanguageServerPromptRequest),
-    DebugClientStarted(DebugAdapterClientId),
-    DebugClientShutdown(DebugAdapterClientId),
+    DebugClientStarted(SessionId),
+    DebugClientShutdown(SessionId),
     ActiveDebugLineChanged,
     DebugClientEvent {
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         message: Message,
     },
-    DebugClientLog(DebugAdapterClientId, String),
+    DebugClientLog(SessionId, String),
     LanguageNotFound(Entity<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
@@ -1306,7 +1306,7 @@ impl Project {
 
     pub fn initial_send_breakpoints(
         &self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let mut tasks = Vec::new();
@@ -1379,7 +1379,7 @@ impl Project {
             if let Some((_, _)) = project.dap_store.read(cx).downstream_client() {
                 project
                     .toggle_ignore_breakpoints(
-                        DebugAdapterClientId::from_proto(envelope.payload.client_id),
+                        SessionId::from_proto(envelope.payload.client_id),
                         cx,
                     )
                     .detach_and_log_err(cx);
@@ -1389,7 +1389,7 @@ impl Project {
 
     pub fn toggle_ignore_breakpoints(
         &self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let tasks = self.dap_store.update(cx, |store, cx| {

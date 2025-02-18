@@ -1,6 +1,6 @@
 use crate::*;
 use dap::{
-    client::DebugAdapterClientId,
+    client::SessionId,
     requests::{
         Continue, Disconnect, Initialize, Launch, Next, RunInTerminal, SetBreakpoints, StackTrace,
         StartDebugging, StepBack, StepIn, StepOut,
@@ -759,7 +759,7 @@ async fn test_handle_start_debugging_reverse_request(
     let second_client = project.update(cx, |_, cx| {
         session
             .read(cx)
-            .client_state(DebugAdapterClientId(1))
+            .client_state(SessionId(1))
             .unwrap()
             .read(cx)
             .adapter_client()

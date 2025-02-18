@@ -11,7 +11,7 @@ use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
 use collections::{HashMap, IndexMap};
 use dap::adapters::{DapDelegate, DapStatus, DebugAdapterName};
-use dap::client::{DebugAdapterClient, DebugAdapterClientId};
+use dap::client::{DebugAdapterClient, SessionId};
 use dap::{
     messages::Message, Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source,
     SteppingGranularity,
@@ -126,7 +126,7 @@ impl RemoteConnection {
     fn send_proto_client_request<R: DapCommand>(
         &self,
         request: R,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         cx: &mut App,
     ) -> Task<Result<R::Response>> {
         let message = request.to_proto(client_id, self.upstream_project_id);
@@ -139,7 +139,7 @@ impl RemoteConnection {
     fn request<R: DapCommand>(
         &self,
         request: R,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         cx: &mut App,
     ) -> Task<Result<R::Response>>
     where
@@ -161,7 +161,7 @@ struct LocalMode {
 
 impl LocalMode {
     fn new<F>(
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         breakpoint_store: Entity<BreakpointStore>,
         disposition: DebugAdapterConfig,
         delegate: DapAdapterDelegate,
@@ -258,7 +258,7 @@ impl From<RemoteConnection> for Mode {
 impl Mode {
     fn request_dap<R: DapCommand>(
         &self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         request: R,
         cx: &mut Context<Session>,
     ) -> Task<Result<R::Response>>
@@ -280,7 +280,7 @@ pub struct Session {
     mode: Mode,
     config: DebugAdapterConfig,
     pub(super) capabilities: Capabilities,
-    client_id: DebugAdapterClientId,
+    client_id: SessionId,
     ignore_breakpoints: bool,
     modules: Vec<dap::Module>,
     loaded_sources: Vec<dap::Source>,
@@ -366,7 +366,7 @@ impl CompletionsQuery {
 impl Session {
     pub(crate) fn local(
         breakpoints: Entity<BreakpointStore>,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         delegate: DapAdapterDelegate,
         config: DebugAdapterConfig,
         cx: &mut App,
@@ -396,7 +396,7 @@ impl Session {
     }
 
     pub(crate) fn remote(
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         client: AnyProtoClient,
         upstream_project_id: u64,
         ignore_breakpoints: bool,
@@ -464,7 +464,7 @@ impl Session {
 
     fn request_inner<T: DapCommand + PartialEq + Eq + Hash>(
         capabilities: &Capabilities,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         mode: &Mode,
         request: T,
         process_result: impl FnOnce(&mut Self, &T::Response, &mut Context<Self>) + 'static,

@@ -3,7 +3,7 @@ use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use command_palette_hooks::CommandPaletteFilter;
 use dap::{
-    client::DebugAdapterClientId,
+    client::SessionId,
     debugger_settings::DebuggerSettings,
     messages::{Events, Message},
     requests::{Request, RunInTerminal, StartDebugging},
@@ -37,20 +37,20 @@ use workspace::{
 };
 
 pub enum DebugPanelEvent {
-    Exited(DebugAdapterClientId),
-    Terminated(DebugAdapterClientId),
+    Exited(SessionId),
+    Terminated(SessionId),
     Stopped {
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         event: StoppedEvent,
         go_to_stack_frame: bool,
     },
-    Thread((DebugAdapterClientId, ThreadEvent)),
-    Continued((DebugAdapterClientId, ContinuedEvent)),
-    Output((DebugAdapterClientId, OutputEvent)),
-    Module((DebugAdapterClientId, ModuleEvent)),
-    LoadedSource((DebugAdapterClientId, LoadedSourceEvent)),
-    ClientShutdown(DebugAdapterClientId),
-    CapabilitiesChanged(DebugAdapterClientId),
+    Thread((SessionId, ThreadEvent)),
+    Continued((SessionId, ContinuedEvent)),
+    Output((SessionId, OutputEvent)),
+    Module((SessionId, ModuleEvent)),
+    LoadedSource((SessionId, LoadedSourceEvent)),
+    ClientShutdown(SessionId),
+    CapabilitiesChanged(SessionId),
 }
 
 actions!(debug_panel, [ToggleFocus]);
@@ -189,7 +189,7 @@ impl DebugPanel {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn message_queue(&self) -> &HashMap<DebugAdapterClientId, VecDeque<OutputEvent>> {
+    pub fn message_queue(&self) -> &HashMap<SessionId, VecDeque<OutputEvent>> {
         &self.message_queue
     }
 
@@ -207,7 +207,7 @@ impl DebugPanel {
 
     pub fn debug_panel_items_by_client(
         &self,
-        client_id: &DebugAdapterClientId,
+        client_id: &SessionId,
         cx: &Context<Self>,
     ) -> Vec<Entity<DebugSession>> {
         self.pane
@@ -221,7 +221,7 @@ impl DebugPanel {
 
     pub fn debug_panel_item_by_client(
         &self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         cx: &mut Context<Self>,
     ) -> Option<Entity<DebugSession>> {
         self.pane

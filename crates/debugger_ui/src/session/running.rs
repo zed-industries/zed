@@ -5,9 +5,7 @@ mod stack_frame_list;
 mod variable_list;
 
 use console::Console;
-use dap::{
-    client::DebugAdapterClientId, debugger_settings::DebuggerSettings, Capabilities, ContinuedEvent,
-};
+use dap::{client::SessionId, debugger_settings::DebuggerSettings, Capabilities, ContinuedEvent};
 use gpui::{
     AppContext, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
@@ -43,7 +41,7 @@ pub struct RunningState {
     module_list: Entity<module_list::ModuleList>,
     active_thread_item: ThreadItem,
     _workspace: WeakEntity<Workspace>,
-    client_id: DebugAdapterClientId,
+    client_id: SessionId,
     variable_list: Entity<variable_list::VariableList>,
     _subscriptions: Vec<Subscription>,
     stack_frame_list: Entity<stack_frame_list::StackFrameList>,
@@ -321,7 +319,7 @@ impl RunningState {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         session: Entity<Session>,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         thread_id: ThreadId,
         debug_panel: &Entity<DebugPanel>,
         workspace: WeakEntity<Workspace>,
@@ -426,7 +424,7 @@ impl RunningState {
         &self.session
     }
 
-    pub fn client_id(&self) -> DebugAdapterClientId {
+    pub fn client_id(&self) -> SessionId {
         self.client_id
     }
 

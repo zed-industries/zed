@@ -1,4 +1,4 @@
-use dap::client::DebugAdapterClientId;
+use dap::client::SessionId;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::Subscription;
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
@@ -20,19 +20,15 @@ struct Candidate {
 pub(crate) struct AttachModalDelegate {
     selected_index: usize,
     matches: Vec<StringMatch>,
-    session_id: DebugAdapterClientId,
+    session_id: SessionId,
     placeholder_text: Arc<str>,
     dap_store: Entity<DapStore>,
-    client_id: DebugAdapterClientId,
+    client_id: SessionId,
     candidates: Option<Vec<Candidate>>,
 }
 
 impl AttachModalDelegate {
-    pub fn new(
-        session_id: DebugAdapterClientId,
-        client_id: DebugAdapterClientId,
-        dap_store: Entity<DapStore>,
-    ) -> Self {
+    pub fn new(session_id: SessionId, client_id: SessionId, dap_store: Entity<DapStore>) -> Self {
         Self {
             client_id,
             dap_store,
@@ -52,8 +48,8 @@ pub(crate) struct AttachModal {
 
 impl AttachModal {
     pub fn new(
-        session_id: &DebugAdapterClientId,
-        client_id: DebugAdapterClientId,
+        session_id: &SessionId,
+        client_id: SessionId,
         dap_store: Entity<DapStore>,
         window: &mut Window,
         cx: &mut Context<Self>,

@@ -5,9 +5,8 @@ mod starting;
 use crate::debugger_panel::{DebugPanel, DebugPanelEvent};
 
 use dap::{
-    client::DebugAdapterClientId, debugger_settings::DebuggerSettings, Capabilities,
-    ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, OutputEventCategory, StoppedEvent,
-    ThreadEvent,
+    client::SessionId, debugger_settings::DebuggerSettings, Capabilities, ContinuedEvent,
+    LoadedSourceEvent, ModuleEvent, OutputEvent, OutputEventCategory, StoppedEvent, ThreadEvent,
 };
 use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
@@ -76,7 +75,7 @@ impl DebugSession {
             mode: DebugSessionState::Inert(cx.new(|cx| InertState::new(cx))),
         })
     }
-    pub(crate) fn session_id(&self, cx: &App) -> Option<DebugAdapterClientId> {
+    pub(crate) fn session_id(&self, cx: &App) -> Option<SessionId> {
         match &self.mode {
             DebugSessionState::Inert(_) => None,
             DebugSessionState::Starting(_entity) => unimplemented!(),

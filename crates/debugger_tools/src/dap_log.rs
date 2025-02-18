@@ -1,5 +1,5 @@
 use dap::{
-    client::{DebugAdapterClient, DebugAdapterClientId},
+    client::{DebugAdapterClient, SessionId},
     debugger_settings::DebuggerSettings,
     transport::{IoKind, LogKind},
 };
@@ -32,16 +32,16 @@ struct DapLogView {
     focus_handle: FocusHandle,
     log_store: Entity<LogStore>,
     editor_subscriptions: Vec<Subscription>,
-    current_view: Option<(DebugAdapterClientId, LogKind)>,
+    current_view: Option<(SessionId, LogKind)>,
     project: Entity<Project>,
     _subscriptions: Vec<Subscription>,
 }
 
 struct LogStore {
     projects: HashMap<WeakEntity<Project>, ProjectState>,
-    debug_clients: HashMap<DebugAdapterClientId, DebugAdapterState>,
-    rpc_tx: UnboundedSender<(DebugAdapterClientId, IoKind, String)>,
-    adapter_log_tx: UnboundedSender<(DebugAdapterClientId, IoKind, String)>,
+    debug_clients: HashMap<SessionId, DebugAdapterState>,
+    rpc_tx: UnboundedSender<(SessionId, IoKind, String)>,
+    adapter_log_tx: UnboundedSender<(SessionId, IoKind, String)>,
 }
 
 struct ProjectState {
@@ -98,7 +98,7 @@ impl DebugAdapterState {
 
 impl LogStore {
     fn new(cx: &Context<Self>) -> Self {
-        let (rpc_tx, mut rpc_rx) = unbounded::<(DebugAdapterClientId, IoKind, String)>();
+        let (rpc_tx, mut rpc_rx) = unbounded::<(SessionId, IoKind, String)>();
         cx.spawn(|this, mut cx| async move {
             while let Some((client_id, io_kind, message)) = rpc_rx.next().await {
                 if let Some(this) = this.upgrade() {
@@ -114,7 +114,7 @@ impl LogStore {
         .detach_and_log_err(cx);
 
         let (adapter_log_tx, mut adapter_log_rx) =
-            unbounded::<(DebugAdapterClientId, IoKind, String)>();
+            unbounded::<(SessionId, IoKind, String)>();
         cx.spawn(|this, mut cx| async move {
             while let Some((client_id, io_kind, message)) = adapter_log_rx.next().await {
                 if let Some(this) = this.upgrade() {
@@ -138,7 +138,7 @@ impl LogStore {
 
     fn on_rpc_log(
         &mut self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         io_kind: IoKind,
         message: &str,
         cx: &mut Context<Self>,
@@ -148,7 +148,7 @@ impl LogStore {
 
     fn on_adapter_log(
         &mut self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         io_kind: IoKind,
         message: &str,
         cx: &mut Context<Self>,
@@ -191,14 +191,14 @@ impl LogStore {
 
     fn get_debug_adapter_state(
         &mut self,
-        id: DebugAdapterClientId,
+        id: SessionId,
     ) -> Option<&mut DebugAdapterState> {
         self.debug_clients.get_mut(&id)
     }
 
     fn add_debug_client_message(
         &mut self,
-        id: DebugAdapterClientId,
+        id: SessionId,
         io_kind: IoKind,
         message: String,
         cx: &mut Context<Self>,
@@ -230,7 +230,7 @@ impl LogStore {
 
     fn add_debug_client_log(
         &mut self,
-        id: DebugAdapterClientId,
+        id: SessionId,
         io_kind: IoKind,
         message: String,
         cx: &mut Context<Self>,
@@ -260,7 +260,7 @@ impl LogStore {
 
     fn add_debug_client_entry(
         log_lines: &mut VecDeque<String>,
-        id: DebugAdapterClientId,
+        id: SessionId,
         message: String,
         kind: LogKind,
         cx: &mut Context<Self>,
@@ -289,7 +289,7 @@ impl LogStore {
 
     fn add_debug_client(
         &mut self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         client: Entity<Session>,
         cx: &App,
     ) -> Option<&mut DebugAdapterState> {
@@ -323,21 +323,21 @@ impl LogStore {
         Some(client_state)
     }
 
-    fn remove_debug_client(&mut self, client_id: DebugAdapterClientId, cx: &mut Context<Self>) {
+    fn remove_debug_client(&mut self, client_id: SessionId, cx: &mut Context<Self>) {
         self.debug_clients.remove(&client_id);
         cx.notify();
     }
 
     fn log_messages_for_client(
         &mut self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
     ) -> Option<&mut VecDeque<String>> {
         Some(&mut self.debug_clients.get_mut(&client_id)?.log_messages)
     }
 
     fn rpc_messages_for_client(
         &mut self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
     ) -> Option<&mut VecDeque<String>> {
         Some(
             &mut self
@@ -585,7 +585,7 @@ impl DapLogView {
 
     fn show_rpc_trace_for_server(
         &mut self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -627,7 +627,7 @@ impl DapLogView {
 
     fn show_log_messages_for_adapter(
         &mut self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -668,7 +668,7 @@ fn log_contents(lines: &VecDeque<String>) -> String {
 
 #[derive(Clone, PartialEq)]
 pub(crate) struct DapMenuItem {
-    pub client_id: DebugAdapterClientId,
+    pub client_id: SessionId,
     pub client_name: String,
     pub has_adapter_logs: bool,
     pub selected_entry: LogKind,
@@ -834,7 +834,7 @@ impl Focusable for DapLogView {
 
 pub enum Event {
     NewLogEntry {
-        id: DebugAdapterClientId,
+        id: SessionId,
         entry: String,
         kind: LogKind,
     },

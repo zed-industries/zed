@@ -1,4 +1,4 @@
-use dap::{client::DebugAdapterClientId, ModuleEvent};
+use dap::{client::SessionId, ModuleEvent};
 use gpui::{list, AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, Subscription};
 use project::debugger::session::Session;
 use ui::prelude::*;
@@ -8,13 +8,13 @@ pub struct ModuleList {
     focus_handle: FocusHandle,
     _subscription: Subscription,
     session: Entity<Session>,
-    client_id: DebugAdapterClientId,
+    client_id: SessionId,
 }
 
 impl ModuleList {
     pub fn new(
         session: Entity<Session>,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         cx: &mut Context<Self>,
     ) -> Self {
         let weak_entity = cx.weak_entity();

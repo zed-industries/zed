@@ -1,8 +1,7 @@
 use super::stack_frame_list::{StackFrameId, StackFrameList, StackFrameListEvent};
 use anyhow::{anyhow, Result};
 use dap::{
-    client::DebugAdapterClientId, proto_conversions::ProtoConversion, Scope, ScopePresentationHint,
-    Variable,
+    client::SessionId, proto_conversions::ProtoConversion, Scope, ScopePresentationHint, Variable,
 };
 use editor::{actions::SelectAll, Editor, EditorEvent};
 use gpui::{
@@ -331,7 +330,7 @@ pub struct VariableList {
     focus_handle: FocusHandle,
     open_entries: Vec<OpenEntry>,
     session: Entity<Session>,
-    client_id: DebugAdapterClientId,
+    client_id: SessionId,
     _subscriptions: Vec<Subscription>,
     set_variable_editor: Entity<Editor>,
     selection: Option<VariableListEntry>,
@@ -347,7 +346,7 @@ pub struct VariableList {
 impl VariableList {
     pub fn new(
         session: Entity<Session>,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         stack_frame_list: Entity<StackFrameList>,
         window: &mut Window,
         cx: &mut Context<Self>,

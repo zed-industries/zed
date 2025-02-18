@@ -3,7 +3,7 @@ use super::{
     variable_list::VariableList,
 };
 use anyhow::anyhow;
-use dap::{client::DebugAdapterClientId, OutputEvent, OutputEventGroup};
+use dap::{client::SessionId, OutputEvent, OutputEventGroup};
 use editor::{
     display_map::{Crease, CreaseId},
     Anchor, CompletionProvider, Editor, EditorElement, EditorStyle, FoldPlaceholder,
@@ -34,7 +34,7 @@ pub struct Console {
     console: Entity<Editor>,
     query_bar: Entity<Editor>,
     session: Entity<Session>,
-    client_id: DebugAdapterClientId,
+    client_id: SessionId,
     _subscriptions: Vec<Subscription>,
     variable_list: Entity<VariableList>,
     stack_frame_list: Entity<StackFrameList>,
@@ -43,7 +43,7 @@ pub struct Console {
 impl Console {
     pub fn new(
         session: Entity<Session>,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         stack_frame_list: Entity<StackFrameList>,
         variable_list: Entity<VariableList>,
         window: &mut Window,

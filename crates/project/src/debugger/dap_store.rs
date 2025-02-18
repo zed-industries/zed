@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
     adapters::{DapDelegate, DapStatus, DebugAdapter, DebugAdapterBinary, DebugAdapterName},
-    client::{DebugAdapterClient, DebugAdapterClientId},
+    client::{DebugAdapterClient, SessionId},
     messages::{Message, Response},
     requests::{
         Attach, Completions, Evaluate, Initialize, Launch, Request as _, RunInTerminal,
@@ -59,10 +59,10 @@ use util::{merge_json_value_into, ResultExt as _};
 use worktree::Worktree;
 
 pub enum DapStoreEvent {
-    DebugClientStarted(DebugAdapterClientId),
-    DebugClientShutdown(DebugAdapterClientId),
+    DebugClientStarted(SessionId),
+    DebugClientShutdown(SessionId),
     DebugClientEvent {
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         message: Message,
     },
     Notification(String),
@@ -89,8 +89,8 @@ pub struct LocalDapStore {
 }
 
 impl LocalDapStore {
-    fn next_client_id(&self) -> DebugAdapterClientId {
-        DebugAdapterClientId(self.next_client_id.fetch_add(1, SeqCst))
+    fn next_client_id(&self) -> SessionId {
+        SessionId(self.next_client_id.fetch_add(1, SeqCst))
     }
     pub fn respond_to_start_debugging(
         &mut self,
@@ -207,8 +207,8 @@ pub struct DapStore {
     mode: DapStoreMode,
     downstream_client: Option<(AnyProtoClient, u64)>,
     breakpoint_store: Entity<BreakpointStore>,
-    active_debug_line: Option<(DebugAdapterClientId, ProjectPath, u32)>,
-    clients: BTreeMap<DebugAdapterClientId, Entity<Session>>,
+    active_debug_line: Option<(SessionId, ProjectPath, u32)>,
+    clients: BTreeMap<SessionId, Entity<Session>>,
 }
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
@@ -332,7 +332,7 @@ impl DapStore {
 
     pub fn add_remote_client(
         &mut self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         ignore: Option<bool>,
         cx: &mut Context<Self>,
     ) {
@@ -355,7 +355,7 @@ impl DapStore {
 
     pub fn client_by_id(
         &self,
-        client_id: impl Borrow<DebugAdapterClientId>,
+        client_id: impl Borrow<SessionId>,
     ) -> Option<Entity<session::Session>> {
         let client_id = client_id.borrow();
         let client = self.clients.get(client_id).cloned();
@@ -368,7 +368,7 @@ impl DapStore {
 
     pub fn capabilities_by_id(
         &self,
-        client_id: impl Borrow<DebugAdapterClientId>,
+        client_id: impl Borrow<SessionId>,
         cx: &App,
     ) -> Option<Capabilities> {
         let client_id = client_id.borrow();
@@ -379,7 +379,7 @@ impl DapStore {
 
     pub fn update_capabilities_for_client(
         &mut self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         capabilities: &Capabilities,
         cx: &mut Context<Self>,
     ) {
@@ -402,13 +402,13 @@ impl DapStore {
         }
     }
 
-    pub fn active_debug_line(&self) -> Option<(DebugAdapterClientId, ProjectPath, u32)> {
+    pub fn active_debug_line(&self) -> Option<(SessionId, ProjectPath, u32)> {
         self.active_debug_line.clone()
     }
 
     pub fn set_active_debug_line(
         &mut self,
-        client_id: &DebugAdapterClientId,
+        client_id: &SessionId,
         project_path: &ProjectPath,
         row: u32,
         cx: &mut Context<Self>,
@@ -420,7 +420,7 @@ impl DapStore {
 
     pub fn remove_active_debug_line_for_client(
         &mut self,
-        client_id: &DebugAdapterClientId,
+        client_id: &SessionId,
         cx: &mut Context<Self>,
     ) {
         if let Some(active_line) = &self.active_debug_line {
@@ -447,7 +447,7 @@ impl DapStore {
         envelope: TypedEnvelope<proto::IgnoreBreakpointState>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        let client_id = DebugAdapterClientId::from_proto(envelope.payload.client_id);
+        let client_id = SessionId::from_proto(envelope.payload.client_id);
 
         this.update(&mut cx, |this, cx| {
             if let Some(client) = this.client_by_id(&client_id) {
@@ -462,7 +462,7 @@ impl DapStore {
 
     pub fn set_ignore_breakpoints(
         &mut self,
-        client_id: &DebugAdapterClientId,
+        client_id: &SessionId,
         ignore: bool,
         cx: &mut Context<Self>,
     ) {
@@ -473,17 +473,13 @@ impl DapStore {
         }
     }
 
-    pub fn ignore_breakpoints(&self, client_id: &DebugAdapterClientId, cx: &App) -> bool {
+    pub fn ignore_breakpoints(&self, client_id: &SessionId, cx: &App) -> bool {
         self.client_by_id(client_id)
             .map(|client| client.read(cx).breakpoints_enabled())
             .unwrap_or_default()
     }
 
-    pub fn toggle_ignore_breakpoints(
-        &mut self,
-        client_id: &DebugAdapterClientId,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn toggle_ignore_breakpoints(&mut self, client_id: &SessionId, cx: &mut Context<Self>) {
         if let Some(client) = self.client_by_id(client_id) {
             client.update(cx, |client, _| {
                 client.set_ignore_breakpoints(!client.breakpoints_enabled());
@@ -659,7 +655,7 @@ impl DapStore {
 
     pub fn configuration_done(
         &self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self
@@ -721,7 +717,7 @@ impl DapStore {
 
     pub fn attach(
         &mut self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         process_id: u32,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -765,7 +761,7 @@ impl DapStore {
 
     pub fn respond_to_run_in_terminal(
         &self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         success: bool,
         seq: u64,
         body: Option<Value>,
@@ -793,7 +789,7 @@ impl DapStore {
 
     pub fn evaluate(
         &self,
-        client_id: &DebugAdapterClientId,
+        client_id: &SessionId,
         stack_frame_id: u64,
         expression: String,
         context: EvaluateArgumentsContext,
@@ -824,7 +820,7 @@ impl DapStore {
 
     pub fn completions(
         &self,
-        client_id: &DebugAdapterClientId,
+        client_id: &SessionId,
         stack_frame_id: u64,
         text: String,
         completion_column: u64,
@@ -853,7 +849,7 @@ impl DapStore {
     #[allow(clippy::too_many_arguments)]
     pub fn set_variable_value(
         &self,
-        client_id: &DebugAdapterClientId,
+        client_id: &SessionId,
         stack_frame_id: u64,
         variables_reference: u64,
         name: String,
@@ -917,7 +913,7 @@ impl DapStore {
 
     pub fn shutdown_client(
         &mut self,
-        client_id: &DebugAdapterClientId,
+        client_id: &SessionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(_) = self.as_local_mut() else {
@@ -1021,7 +1017,7 @@ impl DapStore {
     ) -> Result<()> {
         this.update(&mut cx, |dap_store, cx| {
             dap_store.update_capabilities_for_client(
-                DebugAdapterClientId::from_proto(envelope.payload.client_id),
+                SessionId::from_proto(envelope.payload.client_id),
                 &dap::proto_conversions::capabilities_from_proto(&envelope.payload),
                 cx,
             );
@@ -1034,7 +1030,7 @@ impl DapStore {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |dap_store, cx| {
-            let client_id = DebugAdapterClientId::from_proto(envelope.payload.client_id);
+            let client_id = SessionId::from_proto(envelope.payload.client_id);
 
             dap_store.client_by_id(client_id).map(|state| {
                 state.update(cx, |state, cx| {
@@ -1061,7 +1057,7 @@ impl DapStore {
 
         this.update(&mut cx, |store, cx| {
             store.active_debug_line = Some((
-                DebugAdapterClientId::from_proto(envelope.payload.client_id),
+                SessionId::from_proto(envelope.payload.client_id),
                 project_path,
                 envelope.payload.row,
             ));
@@ -1086,7 +1082,7 @@ impl DapStore {
 
     pub fn send_breakpoints(
         &self,
-        client_id: DebugAdapterClientId,
+        client_id: SessionId,
         absolute_file_path: Arc<Path>,
         mut breakpoints: Vec<SourceBreakpoint>,
         ignore: bool,
