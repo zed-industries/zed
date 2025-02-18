@@ -2423,6 +2423,7 @@ impl ContextEditor {
                     cx,
                 )
             },
+            gpui::Corner::BottomLeft,
         )
         .with_handle(self.language_model_selector_menu_handle.clone())
     }

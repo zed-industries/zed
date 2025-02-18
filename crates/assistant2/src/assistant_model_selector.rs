@@ -80,6 +80,7 @@ impl Render for AssistantModelSelector {
                     cx,
                 )
             },
+            gpui::Corner::BottomRight,
         )
         .with_handle(self.menu_handle.clone())
     }

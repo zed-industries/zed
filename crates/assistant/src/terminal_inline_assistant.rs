@@ -662,6 +662,7 @@ impl Render for PromptEditor {
                                 cx,
                             )
                         },
+                        gpui::Corner::TopRight,
                     ))
                     .children(
                         if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
