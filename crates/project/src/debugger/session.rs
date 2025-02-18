@@ -136,7 +136,7 @@ impl RemoteConnection {
             request.response_from_proto(response)
         })
     }
-    fn request_remote<R: DapCommand>(
+    fn request<R: DapCommand>(
         &self,
         request: R,
         client_id: DebugAdapterClientId,
@@ -209,23 +209,15 @@ impl LocalMode {
                 }
             };
 
-            Ok(Self {
-                client: Arc::new(
-                    DebugAdapterClient::start(client_id, binary, message_handler, cx).await?,
-                ),
-            })
+            let client =
+                Arc::new(DebugAdapterClient::start(client_id, binary, message_handler, cx).await?);
+            let this = Self { client };
+
+            Ok(this)
         })
     }
-}
-impl From<RemoteConnection> for Mode {
-    fn from(value: RemoteConnection) -> Self {
-        Self::Remote(value)
-    }
-}
-
-impl Mode {
-    fn request_local<R: DapCommand>(
-        connection: &Arc<DebugAdapterClient>,
+    fn request<R: DapCommand>(
+        &self,
         request: R,
         cx: &mut Context<Session>,
     ) -> Task<Result<R::Response>>
@@ -236,7 +228,7 @@ impl Mode {
         let request = Arc::new(request);
 
         let request_clone = request.clone();
-        let connection = connection.clone();
+        let connection = self.client.clone();
         let request_task = cx.background_executor().spawn(async move {
             let args = request_clone.to_dap();
             connection.request::<R::DapRequest>(args).await
@@ -247,7 +239,14 @@ impl Mode {
             response
         })
     }
+}
+impl From<RemoteConnection> for Mode {
+    fn from(value: RemoteConnection) -> Self {
+        Self::Remote(value)
+    }
+}
 
+impl Mode {
     fn request_dap<R: DapCommand>(
         &self,
         client_id: DebugAdapterClientId,
@@ -259,12 +258,8 @@ impl Mode {
         <R::DapRequest as dap::requests::Request>::Arguments: 'static + Send,
     {
         match self {
-            Mode::Local(debug_adapter_client) => {
-                Self::request_local(&debug_adapter_client.client, request, cx)
-            }
-            Mode::Remote(remote_connection) => {
-                remote_connection.request_remote(request, client_id, cx)
-            }
+            Mode::Local(debug_adapter_client) => debug_adapter_client.request(request, cx),
+            Mode::Remote(remote_connection) => remote_connection.request(request, client_id, cx),
         }
     }
 }

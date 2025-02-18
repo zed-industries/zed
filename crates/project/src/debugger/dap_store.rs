@@ -294,7 +294,7 @@ impl DapStore {
     ) -> Self {
         Self {
             mode: DapStoreMode::Remote(RemoteDapStore {
-                upstream_client: upstream_client,
+                upstream_client,
                 upstream_project_id: project_id,
                 event_queue: Some(VecDeque::default()),
             }),
