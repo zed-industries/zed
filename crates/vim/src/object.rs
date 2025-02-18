@@ -1951,7 +1951,7 @@ mod test {
         cx.assert_state(
             indoc! {
                 "func empty(a string) bool {
-                             «ˇif a == \"\" {}"
+                             «if a == \"\" {ˇ}"
             },
             Mode::Insert,
         );
