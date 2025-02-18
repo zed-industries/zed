@@ -19,7 +19,7 @@ use futures::{
     channel::oneshot, future::BoxFuture, AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt,
     TryFutureExt as _, TryStreamExt,
 };
-use gpui::{actions, App, AsyncApp, Entity, Global, Task, WeakEntity};
+use gpui::{actions, App, AppContext as _, AsyncApp, Entity, Global, Task, WeakEntity};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;
@@ -1064,7 +1064,7 @@ impl Client {
         let rpc_url = self.rpc_url(http, release_channel);
         let system_id = self.telemetry.system_id();
         let metrics_id = self.telemetry.metrics_id();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             use HttpOrHttps::*;
 
             #[derive(Debug)]
@@ -1743,7 +1743,7 @@ mod tests {
     use crate::test::FakeServer;
 
     use clock::FakeSystemClock;
-    use gpui::{AppContext as _, BackgroundExecutor, TestAppContext};
+    use gpui::{BackgroundExecutor, TestAppContext};
     use http_client::FakeHttpClient;
     use parking_lot::Mutex;
     use proto::TypedEnvelope;
@@ -1806,7 +1806,7 @@ mod tests {
 
         // Time out when client tries to connect.
         client.override_authenticate(move |cx| {
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 Ok(Credentials {
                     user_id,
                     access_token: "token".into(),
@@ -1814,7 +1814,7 @@ mod tests {
             })
         });
         client.override_establish_connection(|_, cx| {
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 future::pending::<()>().await;
                 unreachable!()
             })
@@ -1848,7 +1848,7 @@ mod tests {
         // Time out when re-establishing the connection.
         server.allow_connections();
         client.override_establish_connection(|_, cx| {
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 future::pending::<()>().await;
                 unreachable!()
             })
@@ -1887,7 +1887,7 @@ mod tests {
             move |cx| {
                 let auth_count = auth_count.clone();
                 let dropped_auth_count = dropped_auth_count.clone();
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     *auth_count.lock() += 1;
                     let _drop = util::defer(move || *dropped_auth_count.lock() += 1);
                     future::pending::<()>().await;

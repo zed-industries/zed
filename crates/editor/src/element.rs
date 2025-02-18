@@ -5264,8 +5264,7 @@ impl EditorElement {
                 Some(cx.spawn_in(window, |editor, mut cx| async move {
                     let scrollbar_size = scrollbar_layout.hitbox.size;
                     let scrollbar_markers = cx
-                        .background_executor()
-                        .spawn(async move {
+                        .background_spawn(async move {
                             let max_point = snapshot.display_snapshot.buffer_snapshot.max_point();
                             let mut marker_quads = Vec::new();
                             if scrollbar_settings.git_diff {

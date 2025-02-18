@@ -976,7 +976,7 @@ fn possible_open_paths_metadata(
     potential_paths: HashSet<PathBuf>,
     cx: &mut Context<TerminalView>,
 ) -> Task<Vec<(PathWithPosition, Metadata)>> {
-    cx.background_executor().spawn(async move {
+    cx.background_spawn(async move {
         let mut canonical_paths = HashSet::default();
         for path in potential_paths {
             if let Ok(canonical) = fs.canonicalize(&path).await {
@@ -1378,9 +1378,12 @@ impl Item for TerminalView {
     ) {
         if self.terminal().read(cx).task().is_none() {
             if let Some((new_id, old_id)) = workspace.database_id().zip(self.workspace_id) {
-                cx.background_executor()
-                    .spawn(TERMINAL_DB.update_workspace_id(new_id, old_id, cx.entity_id().as_u64()))
-                    .detach();
+                cx.background_spawn(TERMINAL_DB.update_workspace_id(
+                    new_id,
+                    old_id,
+                    cx.entity_id().as_u64(),
+                ))
+                .detach();
             }
             self.workspace_id = workspace.database_id();
         }
@@ -1421,7 +1424,7 @@ impl SerializableItem for TerminalView {
         }
 
         if let Some((cwd, workspace_id)) = terminal.working_directory().zip(self.workspace_id) {
-            Some(cx.background_executor().spawn(async move {
+            Some(cx.background_spawn(async move {
                 TERMINAL_DB
                     .save_working_directory(item_id, workspace_id, cwd)
                     .await

@@ -6,7 +6,7 @@ pub use lsp_types::*;
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
-use gpui::{App, AsyncApp, BackgroundExecutor, SharedString, Task};
+use gpui::{App, AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use notification::DidChangeWorkspaceFolders;
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
@@ -448,7 +448,7 @@ impl LanguageServer {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
             stdout.or(stderr)
         });
-        let output_task = cx.background_executor().spawn({
+        let output_task = cx.background_spawn({
             Self::handle_output(
                 stdin,
                 outbound_rx,

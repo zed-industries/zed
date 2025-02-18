@@ -940,7 +940,7 @@ impl Buffer {
         }
 
         let text_operations = self.text.operations().clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let since = since.unwrap_or_default();
             operations.extend(
                 text_operations
@@ -1135,7 +1135,7 @@ impl Buffer {
         let old_snapshot = self.text.snapshot();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             if !edits.is_empty() {
                 if let Some(language) = language.clone() {
                     syntax_snapshot.reparse(&old_snapshot, registry.clone(), language);
@@ -1499,7 +1499,7 @@ impl Buffer {
         let mut syntax_snapshot = syntax_map.snapshot();
         drop(syntax_map);
 
-        let parse_task = cx.background_executor().spawn({
+        let parse_task = cx.background_spawn({
             let language = language.clone();
             let language_registry = language_registry.clone();
             async move {
@@ -1578,7 +1578,7 @@ impl Buffer {
 
     fn request_autoindent(&mut self, cx: &mut Context<Self>) {
         if let Some(indent_sizes) = self.compute_autoindents() {
-            let indent_sizes = cx.background_executor().spawn(indent_sizes);
+            let indent_sizes = cx.background_spawn(indent_sizes);
             match cx
                 .background_executor()
                 .block_with_timeout(Duration::from_micros(500), indent_sizes)
@@ -1907,7 +1907,7 @@ impl Buffer {
         let old_text = self.as_rope().clone();
         let line_ending = self.line_ending();
         let base_version = self.version();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let ranges = trailing_whitespace_ranges(&old_text);
             let empty = Arc::<str>::from("");
             Diff {

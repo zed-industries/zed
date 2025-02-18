@@ -4798,7 +4798,7 @@ impl Editor {
             let Some(matches_task) = editor
                 .read_with(&mut cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
-                    cx.background_executor().spawn(async move {
+                    cx.background_spawn(async move {
                         let mut ranges = Vec::new();
                         let buffer_ranges =
                             vec![buffer.anchor_before(0)..buffer.anchor_after(buffer.len())];
@@ -10221,13 +10221,12 @@ impl Editor {
                 return;
             }
             let new_rows =
-                cx.background_executor()
-                    .spawn({
-                        let snapshot = display_snapshot.clone();
-                        async move {
-                            Self::fetch_runnable_ranges(&snapshot, Anchor::min()..Anchor::max())
-                        }
-                    })
+                cx.background_spawn({
+                    let snapshot = display_snapshot.clone();
+                    async move {
+                        Self::fetch_runnable_ranges(&snapshot, Anchor::min()..Anchor::max())
+                    }
+                })
                     .await;
 
             let rows = Self::runnable_rows(project, display_snapshot, new_rows, cx.clone());
@@ -10989,7 +10988,7 @@ impl Editor {
                 HoverLink::InlayHint(lsp_location, server_id) => {
                     let computation =
                         self.compute_target_location(lsp_location, server_id, window, cx);
-                    cx.background_executor().spawn(async move {
+                    cx.background_spawn(async move {
                         let location = computation.await?;
                         Ok(TargetTaskResult::Location(location))
                     })
@@ -15587,7 +15586,7 @@ fn snippet_completions(
     let scope = language.map(|language| language.default_scope());
     let executor = cx.background_executor().clone();
 
-    cx.background_executor().spawn(async move {
+    cx.background_spawn(async move {
         let classifier = CharClassifier::new(scope).for_completion(true);
         let mut last_word = chars
             .chars()
@@ -15717,7 +15716,7 @@ impl CompletionProvider for Entity<Project> {
         self.update(cx, |project, cx| {
             let snippets = snippet_completions(project, buffer, buffer_position, cx);
             let project_completions = project.completions(buffer, buffer_position, options, cx);
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 let mut completions = project_completions.await?;
                 let snippets_completions = snippets.await?;
                 completions.extend(snippets_completions);
