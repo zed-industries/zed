@@ -183,7 +183,7 @@ impl LocalMode {
                     .and_then(|s| s.binary.as_ref().map(PathBuf::from))
             })?;
 
-            let (adapter, binary) = match adapter
+            let binary = match adapter
                 .get_binary(&delegate, &disposition, binary, &mut cx)
                 .await
             {
@@ -205,7 +205,7 @@ impl LocalMode {
                     envs.extend(shell_env);
                     binary.envs = Some(envs);
 
-                    (adapter, binary)
+                    binary
                 }
             };
 

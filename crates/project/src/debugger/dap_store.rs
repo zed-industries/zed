@@ -213,26 +213,6 @@ pub struct DapStore {
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
 
-fn dap_client_capabilities(adapter_id: String) -> InitializeRequestArguments {
-    InitializeRequestArguments {
-        client_id: Some("zed".to_owned()),
-        client_name: Some("Zed".to_owned()),
-        adapter_id,
-        locale: Some("en-US".to_owned()),
-        path_format: Some(InitializeRequestArgumentsPathFormat::Path),
-        supports_variable_type: Some(true),
-        supports_variable_paging: Some(false),
-        supports_run_in_terminal_request: Some(true),
-        supports_memory_references: Some(true),
-        supports_progress_reporting: Some(false),
-        supports_invalidated_event: Some(false),
-        lines_start_at1: Some(true),
-        columns_start_at1: Some(true),
-        supports_memory_event: Some(false),
-        supports_args_can_be_interpreted_by_shell: Some(false),
-        supports_start_debugging_request: Some(true),
-    }
-}
 impl DapStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_message_handler(Self::handle_remove_active_debug_line);
@@ -673,31 +653,6 @@ impl DapStore {
                 cx.notify();
 
                 client
-            })
-        })
-    }
-
-    pub fn initialize(
-        &mut self,
-        client_id: DebugAdapterClientId,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let Some(client) = self
-            .client_by_id(client_id)
-            .and_then(|client| client.read(cx).adapter_client())
-        else {
-            return Task::ready(Err(
-                anyhow!("Could not find debug client: {:?}", client_id,),
-            ));
-        };
-
-        cx.spawn(|this, mut cx| async move {
-            let capabilities = client
-                .request::<Initialize>(dap_client_capabilities(todo!()))
-                .await?;
-
-            this.update(&mut cx, |store, cx| {
-                store.update_capabilities_for_client(client_id, &capabilities, cx);
             })
         })
     }
