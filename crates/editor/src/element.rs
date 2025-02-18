@@ -5293,10 +5293,10 @@ impl EditorElement {
                                         if end_display_row != start_display_row {
                                             end_display_row.0 -= 1;
                                         }
-                                        let color = match &hunk.status() {
-                                            DiffHunkStatus::Added(_) => theme.status().created,
-                                            DiffHunkStatus::Modified(_) => theme.status().modified,
-                                            DiffHunkStatus::Removed(_) => theme.status().deleted,
+                                        let color = match &hunk.status().kind {
+                                            DiffHunkStatusKind::Added => theme.status().created,
+                                            DiffHunkStatusKind::Modified => theme.status().modified,
+                                            DiffHunkStatusKind::Deleted => theme.status().deleted,
                                         };
                                         ColoredRange {
                                             start: start_display_row,
@@ -6886,32 +6886,26 @@ impl Element for EditorElement {
                         let staged_opacity = 0.10;
                         let unstaged_opacity = 0.04;
 
-                        let background_color = match diff_status {
-                            DiffHunkStatus::Added(secondary) => {
-                                let color = cx.theme().colors().version_control_added;
-                                if secondary.is_secondary() {
-                                    color.opacity(unstaged_opacity)
-                                } else {
-                                    color.opacity(staged_opacity)
-                                }
+                        let background_color = match diff_status.kind {
+                            DiffHunkStatusKind::Added => cx.theme().colors().version_control_added,
+                            DiffHunkStatusKind::Deleted => {
+                                cx.theme().colors().version_control_deleted
                             }
-                            DiffHunkStatus::Removed(secondary) => {
-                                let color = cx.theme().colors().version_control_deleted;
-                                if secondary.is_secondary() {
-                                    color.opacity(unstaged_opacity)
-                                } else {
-                                    color.opacity(staged_opacity)
-                                }
-                            }
-                            DiffHunkStatus::Modified(secondary) => {
+                            DiffHunkStatusKind::Modified => {
                                 debug_panic!("modified diff status for row info");
                                 continue;
                             }
                         };
+                        let background_color =
+                            if diff_status.secondary == DiffHunkSecondaryStatus::None {
+                                background_color.opacity(staged_opacity)
+                            } else {
+                                background_color.opacity(unstaged_opacity)
+                            };
 
                         highlighted_rows
                             .entry(start_row + DisplayRow(ix as u32))
-                            .or_insert(background_color);
+                            .or_insert(background_color.into());
                     }
 
                     let highlighted_ranges = self.editor.read(cx).background_highlights_in_range(

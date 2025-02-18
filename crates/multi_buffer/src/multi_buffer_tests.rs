@@ -2659,7 +2659,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                 .filter_map(|info| {
                     if matches!(
                         info.diff_status,
-                        Some(DiffHunkStatusKind {
+                        Some(DiffHunkStatus {
                             kind: DiffHunkStatusKind::Deleted,
                             ..
                         })

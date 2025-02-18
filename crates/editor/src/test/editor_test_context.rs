@@ -2,7 +2,7 @@ use crate::{
     display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
     RowExt,
 };
-use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
+use buffer_diff::DiffHunkStatusKind;
 use collections::BTreeMap;
 use futures::Future;
 

@@ -8,7 +8,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use assistant_context_editor::ContextStore;
 use assistant_slash_command::SlashCommandWorkingSet;
-use buffer_diff::{assert_hunks, DiffHunkSecondaryStatus, DiffHunkStatus};
+use buffer_diff::{assert_hunks, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
@@ -2672,7 +2672,10 @@ async fn test_git_diff_base_change(
                 1..2,
                 "TWO\n",
                 "two\n",
-                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::HasSecondaryHunk),
+                DiffHunkStatus {
+                    kind: DiffHunkStatusKind::Modified,
+                    secondary: DiffHunkSecondaryStatus::HasSecondaryHunk,
+                },
             )],
         );
     });
@@ -2731,7 +2734,10 @@ async fn test_git_diff_base_change(
                 1..2,
                 "TWO_HUNDRED\n",
                 "two\n",
-                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk),
+                DiffHunkStatus {
+                    kind: DiffHunkStatusKind::Modified,
+                    secondary: DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk,
+                },
             )],
         );
     });
