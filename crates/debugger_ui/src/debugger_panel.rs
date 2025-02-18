@@ -21,6 +21,7 @@ use project::{
         session::ThreadId,
     },
     terminals::TerminalKind,
+    Project,
 };
 use rpc::proto::{self, UpdateDebugAdapter};
 use serde_json::Value;
@@ -57,7 +58,7 @@ actions!(debug_panel, [ToggleFocus]);
 pub struct DebugPanel {
     size: Pixels,
     pane: Entity<Pane>,
-
+    project: WeakEntity<Project>,
     workspace: WeakEntity<Workspace>,
     _subscriptions: Vec<Subscription>,
 }
@@ -69,6 +70,7 @@ impl DebugPanel {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
+            let project = workspace.project().clone();
             let pane = cx.new(|cx| {
                 let mut pane = Pane::new(
                     workspace.weak_handle(),
@@ -84,31 +86,38 @@ impl DebugPanel {
                 pane.display_nav_history_buttons(None);
                 pane.set_should_display_tab_bar(|_window, _cx| true);
                 pane.set_close_pane_if_empty(true, cx);
-                pane.set_render_tab_bar_buttons(cx, |_, _, cx| {
-                    (
-                        None,
-                        Some(
-                            h_flex()
-                                .child(
-                                    IconButton::new("new-debug-session", IconName::Plus)
-                                        .icon_size(IconSize::Small)
-                                        .on_click(cx.listener(|pane, _, window, cx| {
-                                            pane.add_item(
-                                                Box::new(DebugSession::inert(cx)),
-                                                false,
-                                                false,
-                                                None,
-                                                window,
-                                                cx,
-                                            );
-                                        })),
-                                )
-                                .into_any_element(),
-                        ),
-                    )
+                pane.set_render_tab_bar_buttons(cx, {
+                    let project = project.clone();
+                    move |_, _, cx| {
+                        let project = project.clone();
+                        (
+                            None,
+                            Some(
+                                h_flex()
+                                    .child(
+                                        IconButton::new("new-debug-session", IconName::Plus)
+                                            .icon_size(IconSize::Small)
+                                            .on_click(cx.listener(move |pane, _, window, cx| {
+                                                pane.add_item(
+                                                    Box::new(DebugSession::inert(
+                                                        project.clone(),
+                                                        cx,
+                                                    )),
+                                                    false,
+                                                    false,
+                                                    None,
+                                                    window,
+                                                    cx,
+                                                );
+                                            })),
+                                    )
+                                    .into_any_element(),
+                            ),
+                        )
+                    }
                 });
                 pane.add_item(
-                    Box::new(DebugSession::inert(cx)),
+                    Box::new(DebugSession::inert(project.clone(), cx)),
                     false,
                     false,
                     None,
@@ -117,8 +126,6 @@ impl DebugPanel {
                 );
                 pane
             });
-
-            let project = workspace.project().clone();
 
             let _subscriptions = vec![
                 cx.observe(&pane, |_, _, cx| cx.notify()),
@@ -129,6 +136,7 @@ impl DebugPanel {
                 pane,
                 size: px(300.),
                 _subscriptions,
+                project: project.downgrade(),
                 workspace: workspace.weak_handle(),
             };
 
@@ -327,10 +335,13 @@ impl Panel for DebugPanel {
     }
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
         if active && self.pane.read(cx).items_len() == 0 {
+            let Some(project) = self.project.clone().upgrade() else {
+                return;
+            };
             // todo: We need to revisit it when we start adding stopped items to pane (as that'll cause us to add two items).
             self.pane.update(cx, |this, cx| {
                 this.add_item(
-                    Box::new(DebugSession::inert(cx)),
+                    Box::new(DebugSession::inert(project, cx)),
                     false,
                     false,
                     None,

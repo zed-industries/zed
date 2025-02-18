@@ -3,9 +3,10 @@ use std::time::Duration;
 use anyhow::Result;
 
 use gpui::{
-    percentage, Animation, AnimationExt, EventEmitter, FocusHandle, Focusable, Subscription, Task,
-    Transformation,
+    percentage, Animation, AnimationExt, Entity, EventEmitter, FocusHandle, Focusable,
+    Subscription, Task, Transformation,
 };
+use project::debugger::session::Session;
 use ui::{
     div, v_flex, Color, Context, Element, Icon, IconName, IconSize, IntoElement, ParentElement,
     Render, Styled,
@@ -13,22 +14,23 @@ use ui::{
 
 pub(super) struct StartingState {
     focus_handle: FocusHandle,
-    _notify_parent: Task<Result<()>>,
+    _notify_parent: Task<()>,
 }
 
 pub(crate) enum StartingEvent {
-    Finished(()),
+    Finished(Result<Entity<Session>>),
 }
 
 impl EventEmitter<StartingEvent> for StartingState {}
 
 impl StartingState {
-    pub(crate) fn new(task: Task<Result<()>>, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(task: Task<Result<Entity<Session>>>, cx: &mut Context<Self>) -> Self {
         let _notify_parent = cx.spawn(move |this, mut cx| async move {
-            task.await?;
-            this.update(&mut cx, |_, cx| cx.emit(StartingEvent::Finished(())))
+            dbg!("Waiting for session to start");
+            let entity = task.await;
+            dbg!(entity.is_err());
+            this.update(&mut cx, |_, cx| cx.emit(StartingEvent::Finished(entity)))
                 .ok();
-            Ok(())
         });
         Self {
             focus_handle: cx.focus_handle(),

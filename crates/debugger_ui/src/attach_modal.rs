@@ -215,13 +215,15 @@ impl PickerDelegate for AttachModalDelegate {
             return cx.emit(DismissEvent);
         };
 
-        self.dap_store.update(cx, |store, cx| {
+        unimplemented!(
+            r#"self.dap_store.update(cx, |store, cx| {{
             store
                 .attach(self.client_id, candidate.pid, cx)
                 .detach_and_log_err(cx);
-        });
+        }})"#
+        );
 
-        cx.emit(DismissEvent);
+        // cx.emit(DismissEvent);
     }
 
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {

@@ -487,7 +487,7 @@ impl DapStore {
         }
     }
 
-    pub fn start_debug_session(
+    pub fn new_session(
         &mut self,
         config: DebugAdapterConfig,
         worktree: &Entity<Worktree>,
@@ -557,84 +557,6 @@ impl DapStore {
                 session
             })
         })
-    }
-
-    pub fn new_session(
-        &mut self,
-        config: DebugAdapterConfig,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        // let config = session.read(cx).as_local().unwrap().configuration();
-        // let mut adapter_args = client.adapter().request_args(&config);
-        // if let Some(args) = config.initialize_args.clone() {
-        //     merge_json_value_into(args, &mut adapter_args);
-        // }
-
-        // // TODO(debugger): GDB starts the debuggee program on launch instead of configurationDone
-        // // causing our sent breakpoints to not be valid. This delay should eventually be taken out
-        // let delay = if &client.adapter_id() == "gdb" {
-        //     Some(
-        //         cx.background_executor()
-        //             .timer(std::time::Duration::from_millis(20u64)),
-        //     )
-        // } else {
-        //     None
-        // };
-
-        // cx.background_executor().spawn(async move {
-        //     if let Some(delay) = delay {
-        //         delay.await;
-        //     }
-
-        //     client
-        //         .request::<Launch>(LaunchRequestArguments { raw: adapter_args })
-        //         .await
-        // })
-        Task::ready(Ok(()))
-    }
-
-    pub fn attach(
-        &mut self,
-        session_id: SessionId,
-        process_id: u32,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        unimplemented!();
-        // let Some(client) = self
-        //     .client_by_id(session_id)
-        //     .and_then(|client| Some(client.read(cx).adapter_client()?))
-        // else {
-        //     return Task::ready(Err(
-        //         anyhow!("Could not find debug client: {:?}", session_id,),
-        //     ));
-        // };
-
-        // // update the process id on the config, so when the `startDebugging` reverse request
-        // // comes in we send another `attach` request with the already selected PID
-        // // If we don't do this the user has to select the process twice if the adapter sends a `startDebugging` request
-        // session.update(cx, |session, cx| {
-        //     session.as_local_mut().unwrap().update_configuration(
-        //         |config| {
-        //             config.request = DebugRequestType::Attach(task::AttachConfig {
-        //                 process_id: Some(process_id),
-        //             });
-        //         },
-        //         cx,
-        //     );
-        // });
-
-        // let config = session.read(cx).as_local().unwrap().configuration();
-        // let mut adapter_args = client.adapter().request_args(&config);
-
-        // if let Some(args) = config.initialize_args.clone() {
-        //     merge_json_value_into(args, &mut adapter_args);
-        // }
-
-        // cx.background_executor().spawn(async move {
-        //     client
-        //         .request::<Attach>(AttachRequestArguments { raw: adapter_args })
-        //         .await
-        // })
     }
 
     pub fn respond_to_run_in_terminal(

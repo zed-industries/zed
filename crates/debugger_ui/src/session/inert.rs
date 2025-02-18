@@ -1,3 +1,4 @@
+use dap::{DebugAdapterConfig, DebugRequestType};
 use gpui::{App, EventEmitter, FocusHandle, Focusable};
 use ui::{
     div, h_flex, v_flex, Button, ButtonCommon, ButtonStyle, Clickable, Context, ContextMenu,
@@ -24,7 +25,7 @@ impl Focusable for InertState {
 }
 
 pub(crate) enum InertEvent {
-    Spawned { config: () },
+    Spawned { config: DebugAdapterConfig },
 }
 
 impl EventEmitter<InertEvent> for InertState {}
@@ -74,7 +75,23 @@ impl Render for InertState {
                         Button::new("launch-dap", "Launch")
                             .style(ButtonStyle::Filled)
                             .on_click(cx.listener(|_, _, _, cx| {
-                                cx.emit(InertEvent::Spawned { config: () });
+                                cx.emit(InertEvent::Spawned {
+                                    config: DebugAdapterConfig {
+                                        label: "hard coded".into(),
+                                        kind: dap::DebugAdapterKind::Python(task::TCPHost {
+                                            port: None,
+                                            host: None,
+                                            timeout: None,
+                                        }),
+                                        request: DebugRequestType::Launch,
+                                        program: Some(
+                                            "/Users/hiro/Projects/zed/test_debug_file.py".into(),
+                                        ),
+                                        cwd: None,
+                                        initialize_args: None,
+                                        supports_attach: false,
+                                    },
+                                });
                             })),
                     )
                     .child(Button::new("attach-dap", "Attach").style(ButtonStyle::Filled)),

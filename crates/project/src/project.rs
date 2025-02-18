@@ -1357,7 +1357,7 @@ impl Project {
         };
 
         self.dap_store.update(cx, |dap_store, cx| {
-            dap_store.start_debug_session(config, worktree, cx)
+            dap_store.new_session(config, worktree, cx)
         })
     }
 

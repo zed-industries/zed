@@ -2,8 +2,11 @@ mod inert;
 mod running;
 mod starting;
 
+use std::time::Duration;
+
 use crate::debugger_panel::{DebugPanel, DebugPanelEvent};
 
+use anyhow::anyhow;
 use dap::{
     client::SessionId, debugger_settings::DebuggerSettings, Capabilities, ContinuedEvent,
     LoadedSourceEvent, ModuleEvent, OutputEvent, OutputEventCategory, StoppedEvent, ThreadEvent,
@@ -15,9 +18,12 @@ use inert::{InertEvent, InertState};
 use project::debugger::session::Session;
 use project::debugger::session::{ThreadId, ThreadStatus};
 
+use project::debugger::dap_store::DapStore;
+use project::worktree_store::WorktreeStore;
+use project::Project;
 use rpc::proto::{self, PeerId};
 use settings::Settings;
-use starting::StartingState;
+use starting::{StartingEvent, StartingState};
 use ui::{prelude::*, ContextMenu, DropdownMenu, Indicator, Tooltip};
 use workspace::{
     item::{self, Item, ItemEvent},
@@ -33,6 +39,8 @@ enum DebugSessionState {
 pub struct DebugSession {
     remote_id: Option<workspace::ViewId>,
     mode: DebugSessionState,
+    dap_store: WeakEntity<DapStore>,
+    worktree_store: WeakEntity<WorktreeStore>,
     _subscriptions: [Subscription; 1],
 }
 #[derive(Debug)]
@@ -70,14 +78,18 @@ impl ThreadItem {
 }
 
 impl DebugSession {
-    pub(super) fn inert(cx: &mut App) -> Entity<Self> {
+    pub(super) fn inert(project: Entity<Project>, cx: &mut App) -> Entity<Self> {
         let inert = cx.new(|cx| InertState::new(cx));
-
+        let project = project.read(cx);
+        let dap_store = project.dap_store().downgrade();
+        let worktree_store = project.worktree_store().downgrade();
         cx.new(|cx| {
             let _subscriptions = [cx.subscribe(&inert, Self::on_inert_event)];
             Self {
                 remote_id: None,
                 mode: DebugSessionState::Inert(inert),
+                dap_store,
+                worktree_store,
                 _subscriptions,
             }
         })
@@ -92,16 +104,44 @@ impl DebugSession {
     fn on_inert_event(
         &mut self,
         _: Entity<InertState>,
-        _: &InertEvent,
+        event: &InertEvent,
         cx: &mut Context<'_, Self>,
     ) {
-        self.mode = DebugSessionState::Starting(cx.new(|cx| {
+        let dap_store = self.dap_store.clone();
+        let InertEvent::Spawned { config } = event;
+        let config = config.clone();
+        let worktree = self
+            .worktree_store
+            .update(cx, |this, _| this.worktrees().next())
+            .ok()
+            .flatten()
+            .expect("worktree-less project");
+        let Ok(task) = dap_store.update(cx, |store, cx| store.new_session(config, &worktree, cx))
+        else {
+            return;
+        };
+        let starting = cx.new(|cx| StartingState::new(task, cx));
+        self._subscriptions = [cx.subscribe(&starting, Self::on_starting_event)];
+        self.mode = DebugSessionState::Starting(starting);
+    }
+    fn on_starting_event(
+        &mut self,
+        _: Entity<StartingState>,
+        event: &StartingEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let StartingEvent::Finished(session) = event;
+        let session = session.as_ref().unwrap();
+        let starting = cx.new(|cx| {
+            let timer = cx.background_executor().timer(Duration::from_secs(3));
             let task = cx.background_executor().spawn(async move {
-                std::future::pending::<()>().await;
-                Ok(())
+                timer.await;
+                Err(anyhow!("Foo"))
             });
             StartingState::new(task, cx)
-        }));
+        });
+        //self._subscriptions = [cx.subscribe(Self::on_starting_event)];
+        //self.mode = DebugSessionState::Running(starting);
     }
 }
 impl EventEmitter<DebugPanelItemEvent> for DebugSession {}

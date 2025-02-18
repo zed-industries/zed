@@ -336,7 +336,7 @@ impl Eq for RequestSlot {}
 impl Hash for RequestSlot {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.dyn_hash(state);
-        self.0.as_any().type_id().hash(state);
+        self.0.as_any().type_id().hash(state)
     }
 }
 
