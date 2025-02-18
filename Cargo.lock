@@ -6951,6 +6951,7 @@ dependencies = [
  "serde_json",
  "smol",
  "strum",
+ "thiserror 1.0.69",
  "ui",
  "util",
 ]
