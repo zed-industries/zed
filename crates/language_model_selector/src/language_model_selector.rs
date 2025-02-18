@@ -216,9 +216,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         let all_models = self.all_models.clone();
         let current_index = self.selected_index;
 
-        let llm_registry = LanguageModelRegistry::global(cx);
+        let language_model_registry = LanguageModelRegistry::global(cx);
 
-        let configured_providers = llm_registry
+        let configured_providers = language_model_registry
             .read(cx)
             .providers()
             .iter()
