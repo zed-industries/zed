@@ -107,10 +107,12 @@ use language::{
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
 use mouse_context_menu::MouseContextMenu;
+use persistence::DB;
 use project::{
     debugger::breakpoint_store::{BreakpointEditAction, BreakpointStore, BreakpointStoreEvent},
     ProjectPath,
 };
+
 pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
@@ -180,8 +182,14 @@ use ui::{
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::item::{ItemHandle, PreviewTabsSettings};
-use workspace::notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt};
+use workspace::{
+    item::{ItemHandle, PreviewTabsSettings},
+    ItemId, RestoreOnStartupBehavior,
+};
+use workspace::{
+    notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
+    WorkspaceSettings,
+};
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
@@ -293,6 +301,7 @@ pub enum DebugCurrentRowHighlight {}
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
+enum SelectedTextHighlight {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Navigated {
@@ -692,6 +701,7 @@ pub struct Editor {
     next_completion_id: CompletionId,
     available_code_actions: Option<(Location, Rc<[AvailableCodeAction]>)>,
     code_actions_task: Option<Task<Result<()>>>,
+    selection_highlight_task: Option<Task<()>>,
     document_highlights_task: Option<Task<()>>,
     linked_editing_range_task: Option<Task<Option<()>>>,
     linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
@@ -778,6 +788,7 @@ pub struct Editor {
     selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
+    serialize_selections: Task<()>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1412,6 +1423,7 @@ impl Editor {
             code_action_providers,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
+            selection_highlight_task: Default::default(),
             document_highlights_task: Default::default(),
             linked_editing_range_task: Default::default(),
             pending_rename: Default::default(),
@@ -1503,6 +1515,7 @@ impl Editor {
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
+            serialize_selections: Task::ready(()),
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
         };
@@ -2198,6 +2211,7 @@ impl Editor {
             }
             self.refresh_code_actions(window, cx);
             self.refresh_document_highlights(cx);
+            self.refresh_selected_text_highlights(window, cx);
             refresh_matching_bracket_highlights(self, window, cx);
             self.update_visible_inline_completion(window, cx);
             self.edit_prediction_requires_modifier_in_leading_space = true;
@@ -2210,9 +2224,37 @@ impl Editor {
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
         cx.emit(EditorEvent::SelectionsChanged { local });
 
-        if self.selections.disjoint_anchors().len() == 1 {
+        let selections = &self.selections.disjoint;
+        if selections.len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
         }
+        if local
+            && WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
+        {
+            if let Some(workspace_id) = self.workspace.as_ref().and_then(|workspace| workspace.1) {
+                let background_executor = cx.background_executor().clone();
+                let editor_id = cx.entity().entity_id().as_u64() as ItemId;
+                let snapshot = self.buffer().read(cx).snapshot(cx);
+                let selections = selections.clone();
+                self.serialize_selections = cx.background_spawn(async move {
+                    background_executor.timer(Duration::from_millis(100)).await;
+                    let selections = selections
+                        .iter()
+                        .map(|selection| {
+                            (
+                                selection.start.to_offset(&snapshot),
+                                selection.end.to_offset(&snapshot),
+                            )
+                        })
+                        .collect();
+                    DB.save_editor_selections(editor_id, workspace_id, selections)
+                        .await
+                        .context("persisting editor selections")
+                        .log_err();
+                });
+            }
+        }
+
         cx.notify();
     }
 
@@ -2226,7 +2268,7 @@ impl Editor {
         self.change_selections_inner(autoscroll, true, window, cx, change)
     }
 
-    pub fn change_selections_inner<R>(
+    fn change_selections_inner<R>(
         &mut self,
         autoscroll: Option<Autoscroll>,
         request_completions: bool,
@@ -4755,6 +4797,93 @@ impl Editor {
         None
     }
 
+    pub fn refresh_selected_text_highlights(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.selection_highlight_task.take();
+        if !EditorSettings::get_global(cx).selection_highlight {
+            self.clear_background_highlights::<SelectedTextHighlight>(cx);
+            return;
+        }
+        if self.selections.count() != 1 || self.selections.line_mode {
+            self.clear_background_highlights::<SelectedTextHighlight>(cx);
+            return;
+        }
+        let selection = self.selections.newest::<Point>(cx);
+        if selection.is_empty() || selection.start.row != selection.end.row {
+            self.clear_background_highlights::<SelectedTextHighlight>(cx);
+            return;
+        }
+        let debounce = EditorSettings::get_global(cx).selection_highlight_debounce;
+        self.selection_highlight_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
+            cx.background_executor()
+                .timer(Duration::from_millis(debounce))
+                .await;
+            let Some(matches_task) = editor
+                .read_with(&mut cx, |editor, cx| {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    cx.background_executor().spawn(async move {
+                        let mut ranges = Vec::new();
+                        let buffer_ranges =
+                            vec![buffer.anchor_before(0)..buffer.anchor_after(buffer.len())];
+                        let query = buffer.text_for_range(selection.range()).collect::<String>();
+                        for range in buffer_ranges {
+                            for (search_buffer, search_range, excerpt_id) in
+                                buffer.range_to_buffer_ranges(range)
+                            {
+                                ranges.extend(
+                                    project::search::SearchQuery::text(
+                                        query.clone(),
+                                        false,
+                                        false,
+                                        false,
+                                        Default::default(),
+                                        Default::default(),
+                                        None,
+                                    )
+                                    .unwrap()
+                                    .search(search_buffer, Some(search_range.clone()))
+                                    .await
+                                    .into_iter()
+                                    .map(|match_range| {
+                                        let start = search_buffer
+                                            .anchor_after(search_range.start + match_range.start);
+                                        let end = search_buffer
+                                            .anchor_before(search_range.start + match_range.end);
+                                        Anchor::range_in_buffer(
+                                            excerpt_id,
+                                            search_buffer.remote_id(),
+                                            start..end,
+                                        )
+                                    }),
+                                );
+                            }
+                        }
+                        ranges
+                    })
+                })
+                .log_err()
+            else {
+                return;
+            };
+            let matches = matches_task.await;
+            editor
+                .update_in(&mut cx, |editor, _, cx| {
+                    editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                    if !matches.is_empty() {
+                        editor.highlight_background::<SelectedTextHighlight>(
+                            &matches,
+                            |theme| theme.editor_document_highlight_bracket_background,
+                            cx,
+                        )
+                    }
+                })
+                .log_err();
+        }));
+    }
+
     pub fn refresh_inline_completion(
         &mut self,
         debounce: bool,
@@ -6023,14 +6152,13 @@ impl Editor {
         editor_bg_color.blend(accent_color.opacity(0.1))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_cursor_popover(
         &self,
         min_width: Pixels,
         max_width: Pixels,
         cursor_point: Point,
         style: &EditorStyle,
-        accept_keystroke: &gpui::Keystroke,
+        accept_keystroke: Option<&gpui::Keystroke>,
         _window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
@@ -6109,7 +6237,7 @@ impl Editor {
                             )
                             .child(Label::new("Hold").size(LabelSize::Small))
                             .child(h_flex().children(ui::render_modifiers(
-                                &accept_keystroke.modifiers,
+                                &accept_keystroke?.modifiers,
                                 PlatformStyle::platform(),
                                 Some(Color::Default),
                                 Some(IconSize::Small.rems().into()),
@@ -6174,35 +6302,41 @@ impl Editor {
                         .overflow_hidden()
                         .child(completion),
                 )
-                .child(
-                    h_flex()
-                        .h_full()
-                        .border_l_1()
-                        .rounded_r_lg()
-                        .border_color(cx.theme().colors().border)
-                        .bg(Self::edit_prediction_line_popover_bg_color(cx))
-                        .gap_1()
-                        .py_1()
-                        .px_2()
-                        .child(
-                            h_flex()
-                                .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                                .when(is_platform_style_mac, |parent| parent.gap_1())
-                                .child(h_flex().children(ui::render_modifiers(
-                                    &accept_keystroke.modifiers,
-                                    PlatformStyle::platform(),
-                                    Some(if !has_completion {
-                                        Color::Muted
-                                    } else {
-                                        Color::Default
-                                    }),
-                                    None,
-                                    false,
-                                ))),
-                        )
-                        .child(Label::new("Preview").into_any_element())
-                        .opacity(if has_completion { 1.0 } else { 0.4 }),
-                )
+                .when_some(accept_keystroke, |el, accept_keystroke| {
+                    if !accept_keystroke.modifiers.modified() {
+                        return el;
+                    }
+
+                    el.child(
+                        h_flex()
+                            .h_full()
+                            .border_l_1()
+                            .rounded_r_lg()
+                            .border_color(cx.theme().colors().border)
+                            .bg(Self::edit_prediction_line_popover_bg_color(cx))
+                            .gap_1()
+                            .py_1()
+                            .px_2()
+                            .child(
+                                h_flex()
+                                    .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                                    .when(is_platform_style_mac, |parent| parent.gap_1())
+                                    .child(h_flex().children(ui::render_modifiers(
+                                        &accept_keystroke.modifiers,
+                                        PlatformStyle::platform(),
+                                        Some(if !has_completion {
+                                            Color::Muted
+                                        } else {
+                                            Color::Default
+                                        }),
+                                        None,
+                                        false,
+                                    ))),
+                            )
+                            .child(Label::new("Preview").into_any_element())
+                            .opacity(if has_completion { 1.0 } else { 0.4 }),
+                    )
+                })
                 .into_any(),
         )
     }
@@ -9523,21 +9657,32 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut to_unfold = Vec::new();
+        let selections = self
+            .selections
+            .all::<Point>(cx)
+            .into_iter()
+            .map(|selection| selection.start..selection.end)
+            .collect::<Vec<_>>();
+        self.unfold_ranges(&selections, true, true, cx);
+
         let mut new_selection_ranges = Vec::new();
         {
-            let selections = self.selections.all::<Point>(cx);
             let buffer = self.buffer.read(cx).read(cx);
             for selection in selections {
                 for row in selection.start.row..selection.end.row {
                     let cursor = Point::new(row, buffer.line_len(MultiBufferRow(row)));
                     new_selection_ranges.push(cursor..cursor);
                 }
-                new_selection_ranges.push(selection.end..selection.end);
-                to_unfold.push(selection.start..selection.end);
+
+                let is_multiline_selection = selection.start.row != selection.end.row;
+                // Don't insert last one if it's a multi-line selection ending at the start of a line,
+                // so this action feels more ergonomic when paired with other selection operations
+                let should_skip_last = is_multiline_selection && selection.end.column == 0;
+                if !should_skip_last {
+                    new_selection_ranges.push(selection.end..selection.end);
+                }
             }
         }
-        self.unfold_ranges(&to_unfold, true, true, cx);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.select_ranges(new_selection_ranges);
         });
@@ -15445,6 +15590,31 @@ impl Editor {
 
     pub fn wait_for_diff_to_load(&self) -> Option<Shared<Task<()>>> {
         self.load_diff_task.clone()
+    }
+
+    fn read_selections_from_db(
+        &mut self,
+        item_id: u64,
+        workspace_id: WorkspaceId,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        if WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None {
+            return;
+        }
+        let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() else {
+            return;
+        };
+        if selections.is_empty() {
+            return;
+        }
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        self.change_selections(None, window, cx, |s| {
+            s.select_ranges(selections.into_iter().map(|(start, end)| {
+                snapshot.clip_offset(start, Bias::Left)..snapshot.clip_offset(end, Bias::Right)
+            }));
+        });
     }
 }
 

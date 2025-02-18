@@ -451,7 +451,7 @@
         "editor.invisible": "#a3a3a4ff",
         "editor.wrap_guide": "#383a410d",
         "editor.active_wrap_guide": "#383a411a",
-        "editor.document_highlight.read_background": "#5c78e21a",
+        "editor.document_highlight.read_background": "#5c78e225",
         "editor.document_highlight.write_background": "#a3a3a466",
         "terminal.background": "#fafafaff",
         "terminal.foreground": "#242529ff",

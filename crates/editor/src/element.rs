@@ -20,8 +20,8 @@ use crate::{
     EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk,
     GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlineCompletion,
     JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, RevertSelectedHunks, RowExt,
-    RowRangeExt, SelectPhase, Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold,
-    ToggleStagedSelectedDiffHunks, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap, StickyHeaderExcerpt,
+    ToPoint, ToggleFold, ToggleStagedSelectedDiffHunks, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus};
@@ -82,19 +82,17 @@ use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
 
-/// Note that for a "modified" MultiBufferDiffHunk, there are two DisplayDiffHunks,
-/// one for the deleted portion and one for the added portion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DisplayDiffHunk {
     Folded {
         display_row: DisplayRow,
     },
     Unfolded {
+        diff_base_byte_range: Range<usize>,
         display_row_range: Range<DisplayRow>,
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
-        expanded: bool,
-        is_primary: bool,
+        contains_expanded: bool,
     },
 }
 
@@ -109,7 +107,7 @@ struct SelectionLayout {
 }
 
 impl SelectionLayout {
-    fn new<T: multi_buffer::ToPoint + ToDisplayPoint + Clone>(
+    fn new<T: ToPoint + ToDisplayPoint + Clone>(
         selection: Selection<T>,
         line_mode: bool,
         cursor_shape: CursorShape,
@@ -949,7 +947,6 @@ impl EditorElement {
         cx.notify()
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_selections(
         &self,
         start_anchor: Anchor,
@@ -1121,7 +1118,6 @@ impl EditorElement {
         cursors
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_visible_cursors(
         &self,
         snapshot: &EditorSnapshot,
@@ -1313,6 +1309,9 @@ impl EditorElement {
                     // Buffer Search Results
                     (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
                     ||
+                    // Selected Text Occurrences
+                    (is_singleton && scrollbar_settings.selected_text && editor.has_background_highlights::<SelectedTextHighlight>())
+                    ||
                     // Selected Symbol Occurrences
                     (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
                     ||
@@ -1468,7 +1467,6 @@ impl EditorElement {
         axis_pair(horizontal_scrollbar, vertical_scrollbar)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn prepaint_crease_toggles(
         &self,
         crease_toggles: &mut [Option<AnyElement>],
@@ -1503,7 +1501,6 @@ impl EditorElement {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn prepaint_crease_trailers(
         &self,
         trailers: Vec<Option<AnyElement>>,
@@ -1576,100 +1573,36 @@ impl EditorElement {
             let hunk_end_point = Point::new(hunk.row_range.end.0, 0);
 
             let hunk_display_start = snapshot.point_to_display_point(hunk_start_point, Bias::Left);
-            let hunk_added_start_at =
-                Anchor::in_buffer(hunk.excerpt_id, hunk.buffer_id, hunk.buffer_range.start);
-            let hunk_deleted_to_added_break = snapshot.point_to_display_point(
-                hunk_added_start_at.to_point(&snapshot.buffer_snapshot),
-                Bias::Right,
-            );
-
             let hunk_display_end = snapshot.point_to_display_point(hunk_end_point, Bias::Right);
 
-            if hunk_display_start.column() != 0 {
-                display_hunks.push((
-                    DisplayDiffHunk::Folded {
-                        display_row: hunk_display_start.row(),
-                    },
-                    None,
-                ));
+            let display_hunk = if hunk_display_start.column() != 0 {
+                DisplayDiffHunk::Folded {
+                    display_row: hunk_display_start.row(),
+                }
             } else {
                 let mut end_row = hunk_display_end.row();
                 if hunk_display_end.column() > 0 {
                     end_row.0 += 1;
                 }
-                let deleted_count = snapshot
-                    .buffer_snapshot
-                    .row_infos(hunk.row_range.start)
-                    .take(hunk.row_range.end.0 as usize - hunk.row_range.start.0 as usize)
-                    .take_while(|row_info| {
-                        matches!(row_info.diff_status, Some(DiffHunkStatus::Removed(_)))
-                    })
-                    .count();
-                let has_added = snapshot
-                    .buffer_snapshot
-                    .row_infos(hunk.row_range.start)
-                    .take(hunk.row_range.end.0 as usize - hunk.row_range.start.0 as usize)
-                    .any(|row_info| matches!(row_info.diff_status, Some(DiffHunkStatus::Added(_))));
-                let expanded = deleted_count > 0 || has_added;
-                if deleted_count > 0 && has_added {
-                    display_hunks.push((
-                        DisplayDiffHunk::Unfolded {
-                            status: DiffHunkStatus::Removed(hunk.secondary_status),
-                            display_row_range: hunk_display_start.row()
-                                ..hunk_display_start.row() + DisplayRow(deleted_count as u32),
-                            multi_buffer_range: Anchor::range_in_buffer(
-                                hunk.excerpt_id,
-                                hunk.buffer_id,
-                                hunk.buffer_range.clone(),
-                            ),
-                            expanded,
-                            is_primary: true,
-                        },
-                        None,
-                    ));
-                    display_hunks.push((
-                        DisplayDiffHunk::Unfolded {
-                            status: DiffHunkStatus::Added(hunk.secondary_status),
-                            display_row_range: hunk_display_start.row()
-                                + DisplayRow(deleted_count as u32)
-                                ..end_row,
-                            multi_buffer_range: Anchor::range_in_buffer(
-                                hunk.excerpt_id,
-                                hunk.buffer_id,
-                                hunk.buffer_range,
-                            ),
-                            expanded,
-                            is_primary: false,
-                        },
-                        None,
-                    ));
-                } else {
-                    let status = if expanded && matches!(hunk.status(), DiffHunkStatus::Modified(_))
-                    {
-                        if hunk_display_start.row() < hunk_deleted_to_added_break.row() {
-                            DiffHunkStatus::Removed(hunk.secondary_status)
-                        } else {
-                            DiffHunkStatus::Added(hunk.secondary_status)
-                        }
-                    } else {
-                        hunk.status()
-                    };
-                    display_hunks.push((
-                        DisplayDiffHunk::Unfolded {
-                            status,
-                            display_row_range: hunk_display_start.row()..end_row,
-                            multi_buffer_range: Anchor::range_in_buffer(
-                                hunk.excerpt_id,
-                                hunk.buffer_id,
-                                hunk.buffer_range,
-                            ),
-                            expanded,
-                            is_primary: true,
-                        },
-                        None,
-                    ));
+                let start_row = hunk_display_start.row();
+                let contains_expanded = snapshot
+                    .row_infos(start_row)
+                    .take(end_row.0 as usize - start_row.0 as usize)
+                    .any(|row_info| row_info.diff_status.is_some());
+                DisplayDiffHunk::Unfolded {
+                    status: hunk.status(),
+                    diff_base_byte_range: hunk.diff_base_byte_range,
+                    display_row_range: hunk_display_start.row()..end_row,
+                    multi_buffer_range: Anchor::range_in_buffer(
+                        hunk.excerpt_id,
+                        hunk.buffer_id,
+                        hunk.buffer_range,
+                    ),
+                    contains_expanded,
                 }
             };
+
+            display_hunks.push((display_hunk, None));
         }
 
         let git_gutter_setting = ProjectSettings::get_global(cx)
@@ -1689,7 +1622,6 @@ impl EditorElement {
         display_hunks
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_inline_blame(
         &self,
         display_row: DisplayRow,
@@ -1776,7 +1708,6 @@ impl EditorElement {
         Some(element)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_blame_entries(
         &self,
         buffer_rows: &[RowInfo],
@@ -1845,7 +1776,6 @@ impl EditorElement {
         Some(shaped_lines)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_indent_guides(
         &self,
         content_origin: gpui::Point<Pixels>,
@@ -2068,8 +1998,7 @@ impl EditorElement {
                     if tasks.offset.0 < offset_range_start || tasks.offset.0 >= offset_range_end {
                         return None;
                     }
-                    let multibuffer_point =
-                        multi_buffer::ToPoint::to_point(&tasks.offset.0, &snapshot.buffer_snapshot);
+                    let multibuffer_point = tasks.offset.0.to_point(&snapshot.buffer_snapshot);
                     let multibuffer_row = MultiBufferRow(multibuffer_point.row);
                     let buffer_folded = snapshot
                         .buffer_snapshot
@@ -2120,7 +2049,6 @@ impl EditorElement {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_code_actions_indicator(
         &self,
         line_height: Pixels,
@@ -2225,7 +2153,6 @@ impl EditorElement {
         relative_rows
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_line_numbers(
         &self,
         gutter_hitbox: Option<&Hitbox>,
@@ -2445,7 +2372,6 @@ impl EditorElement {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn prepaint_lines(
         &self,
         start_row: DisplayRow,
@@ -2472,7 +2398,6 @@ impl EditorElement {
         line_elements
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_block(
         &self,
         block: &Block,
@@ -2934,7 +2859,6 @@ impl EditorElement {
         }))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_blocks(
         &self,
         rows: Range<DisplayRow>,
@@ -3119,7 +3043,6 @@ impl EditorElement {
 
     /// Returns true if any of the blocks changed size since the previous frame. This will trigger
     /// a restart of rendering for the editor based on the new sizes.
-    #[allow(clippy::too_many_arguments)]
     fn layout_blocks(
         &self,
         blocks: &mut Vec<BlockLayout>,
@@ -3163,7 +3086,6 @@ impl EditorElement {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_sticky_buffer_header(
         &self,
         StickyHeaderExcerpt {
@@ -3238,7 +3160,6 @@ impl EditorElement {
         header
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_cursor_popovers(
         &self,
         line_height: Pixels,
@@ -3348,7 +3269,7 @@ impl EditorElement {
                             max_width,
                             cursor_point,
                             style,
-                            accept_binding.keystroke()?,
+                            accept_binding.keystroke(),
                             window,
                             cx,
                         )?;
@@ -3427,7 +3348,6 @@ impl EditorElement {
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_gutter_menu(
         &self,
         line_height: Pixels,
@@ -3480,7 +3400,6 @@ impl EditorElement {
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_popovers_above_or_below_line(
         &self,
         target_position: gpui::Point<Pixels>,
@@ -3585,7 +3504,6 @@ impl EditorElement {
         Some((laid_out_popovers, y_flipped))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_context_menu_aside(
         &self,
         y_flipped: bool,
@@ -3705,7 +3623,6 @@ impl EditorElement {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_edit_prediction_popover(
         &self,
         text_bounds: &Bounds<Pixels>,
@@ -4162,7 +4079,6 @@ impl EditorElement {
         Some(element)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_hover_popovers(
         &self,
         snapshot: &EditorSnapshot,
@@ -4279,7 +4195,6 @@ impl EditorElement {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_diff_hunk_controls(
         &self,
         row_range: Range<DisplayRow>,
@@ -4303,29 +4218,14 @@ impl EditorElement {
             newest_cursor_position,
         ];
 
-        let mut display_hunks = display_hunks.iter().peekable();
-        while let Some((hunk, _)) = display_hunks.next() {
+        for (hunk, _) in display_hunks {
             if let DisplayDiffHunk::Unfolded {
                 display_row_range,
                 multi_buffer_range,
                 status,
-                is_primary: true,
                 ..
             } = &hunk
             {
-                let mut display_row_range = display_row_range.clone();
-                if let Some((
-                    DisplayDiffHunk::Unfolded {
-                        display_row_range: secondary_display_row_range,
-                        is_primary: false,
-                        ..
-                    },
-                    _,
-                )) = display_hunks.peek()
-                {
-                    display_row_range.end = secondary_display_row_range.end;
-                }
-
                 if display_row_range.start < row_range.start
                     || display_row_range.start >= row_range.end
                 {
@@ -4375,7 +4275,6 @@ impl EditorElement {
         controls
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_signature_help(
         &self,
         hitbox: &Hitbox,
@@ -4754,7 +4653,7 @@ impl EditorElement {
                     DisplayDiffHunk::Unfolded {
                         status,
                         display_row_range,
-                        expanded,
+                        contains_expanded,
                         ..
                     } => hitbox.as_ref().map(|hunk_hitbox| match status {
                         DiffHunkStatus::Added(secondary_status) => (
@@ -4762,14 +4661,14 @@ impl EditorElement {
                             cx.theme().colors().version_control_added.opacity(0.7),
                             corners,
                             secondary_status,
-                            *expanded,
+                            *contains_expanded,
                         ),
                         DiffHunkStatus::Modified(secondary_status) => (
                             hunk_hitbox.bounds,
                             cx.theme().colors().version_control_modified.opacity(0.7),
                             corners,
                             secondary_status,
-                            *expanded,
+                            *contains_expanded,
                         ),
                         DiffHunkStatus::Removed(secondary_status)
                             if !display_row_range.is_empty() =>
@@ -4779,7 +4678,7 @@ impl EditorElement {
                                 cx.theme().colors().version_control_deleted.opacity(0.7),
                                 corners,
                                 secondary_status,
-                                *expanded,
+                                *contains_expanded,
                             )
                         }
                         DiffHunkStatus::Removed(secondary_status) => (
@@ -4793,7 +4692,7 @@ impl EditorElement {
                             cx.theme().colors().version_control_deleted.opacity(0.7),
                             Corners::all(1. * line_height),
                             secondary_status,
-                            *expanded,
+                            *contains_expanded,
                         ),
                     }),
                 };
@@ -4803,15 +4702,16 @@ impl EditorElement {
                     background_color,
                     corner_radii,
                     secondary_status,
-                    expanded,
+                    contains_expanded,
                 )) = hunk_to_paint
                 {
-                    let background =
-                        if *secondary_status != DiffHunkSecondaryStatus::None && expanded {
-                            pattern_slash(background_color, line_height.0 / 2.5)
-                        } else {
-                            solid_color(background_color)
-                        };
+                    let background = if *secondary_status != DiffHunkSecondaryStatus::None
+                        && contains_expanded
+                    {
+                        pattern_slash(background_color, line_height.0 / 2.5)
+                    } else {
+                        solid_color(background_color)
+                    };
 
                     window.paint_quad(quad(
                         hunk_bounds,
@@ -5534,11 +5434,14 @@ impl EditorElement {
                             {
                                 let is_search_highlights = *background_highlight_id
                                     == TypeId::of::<BufferSearchHighlights>();
+                                let is_text_highlights = *background_highlight_id
+                                    == TypeId::of::<SelectedTextHighlight>();
                                 let is_symbol_occurrences = *background_highlight_id
                                     == TypeId::of::<DocumentHighlightRead>()
                                     || *background_highlight_id
                                         == TypeId::of::<DocumentHighlightWrite>();
                                 if (is_search_highlights && scrollbar_settings.search_results)
+                                    || (is_text_highlights && scrollbar_settings.selected_text)
                                     || (is_symbol_occurrences && scrollbar_settings.selected_symbol)
                                 {
                                     let mut color = theme.status().info;
@@ -5641,7 +5544,6 @@ impl EditorElement {
         });
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn paint_highlighted_range(
         &self,
         range: Range<DisplayPoint>,
@@ -6056,7 +5958,6 @@ impl AcceptEditPredictionBinding {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn prepaint_gutter_button(
     button: IconButton,
     row: DisplayRow,
@@ -6297,7 +6198,6 @@ impl fmt::Debug for LineFragment {
 }
 
 impl LineWithInvisibles {
-    #[allow(clippy::too_many_arguments)]
     fn from_chunks<'a>(
         chunks: impl Iterator<Item = HighlightedChunk<'a>>,
         editor_style: &EditorStyle,
@@ -6502,7 +6402,6 @@ impl LineWithInvisibles {
         layouts
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn prepaint(
         &mut self,
         line_height: Pixels,
@@ -6537,7 +6436,6 @@ impl LineWithInvisibles {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn draw(
         &self,
         layout: &EditorLayout,
@@ -6581,7 +6479,6 @@ impl LineWithInvisibles {
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn draw_invisibles(
         &self,
         selection_ranges: &[Range<DisplayPoint>],
@@ -7930,7 +7827,6 @@ struct ScrollbarRangeData {
 }
 
 impl ScrollbarRangeData {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         scrollbar_bounds: Bounds<Pixels>,
         letter_size: Size<Pixels>,

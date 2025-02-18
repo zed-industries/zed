@@ -321,7 +321,6 @@ pub struct TerminalBuilder {
 }
 
 impl TerminalBuilder {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         working_directory: Option<PathBuf>,
         python_venv_directory: Option<PathBuf>,

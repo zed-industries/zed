@@ -258,7 +258,7 @@ impl TerminalView {
                 })
                 .separator()
                 .action(
-                    "Close",
+                    "Close Terminal Tab",
                     Box::new(CloseActiveItem {
                         save_intent: None,
                         close_pinned: true,
@@ -1339,6 +1339,10 @@ impl Item for TerminalView {
     }
 
     fn has_conflict(&self, _cx: &App) -> bool {
+        false
+    }
+
+    fn can_save_as(&self, _cx: &App) -> bool {
         false
     }
 

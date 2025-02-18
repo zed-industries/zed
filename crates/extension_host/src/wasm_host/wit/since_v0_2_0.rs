@@ -247,7 +247,6 @@ impl From<SlashCommandArgumentCompletion> for extension::SlashCommandArgumentCom
     }
 }
 
-#[async_trait]
 impl HostKeyValueStore for WasmState {
     async fn insert(
         &mut self,
@@ -265,7 +264,6 @@ impl HostKeyValueStore for WasmState {
     }
 }
 
-#[async_trait]
 impl HostProject for WasmState {
     async fn worktree_ids(
         &mut self,
@@ -281,7 +279,6 @@ impl HostProject for WasmState {
     }
 }
 
-#[async_trait]
 impl HostWorktree for WasmState {
     async fn id(&mut self, delegate: Resource<Arc<dyn WorktreeDelegate>>) -> wasmtime::Result<u64> {
         let delegate = self.table.get(&delegate)?;
@@ -331,10 +328,8 @@ impl HostWorktree for WasmState {
     }
 }
 
-#[async_trait]
 impl common::Host for WasmState {}
 
-#[async_trait]
 impl http_client::Host for WasmState {
     async fn fetch(
         &mut self,
@@ -371,7 +366,6 @@ impl http_client::Host for WasmState {
     }
 }
 
-#[async_trait]
 impl http_client::HostHttpResponseStream for WasmState {
     async fn next_chunk(
         &mut self,
@@ -458,7 +452,6 @@ async fn convert_response(
     Ok(extension_response)
 }
 
-#[async_trait]
 impl nodejs::Host for WasmState {
     async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
         self.host
@@ -525,7 +518,6 @@ impl From<::http_client::github::GithubReleaseAsset> for github::GithubReleaseAs
     }
 }
 
-#[async_trait]
 impl github::Host for WasmState {
     async fn latest_github_release(
         &mut self,
@@ -565,7 +557,6 @@ impl github::Host for WasmState {
     }
 }
 
-#[async_trait]
 impl platform::Host for WasmState {
     async fn current_platform(&mut self) -> Result<(platform::Os, platform::Architecture)> {
         Ok((
@@ -588,7 +579,6 @@ impl platform::Host for WasmState {
 #[async_trait]
 impl slash_command::Host for WasmState {}
 
-#[async_trait]
 impl ExtensionImports for WasmState {
     async fn get_settings(
         &mut self,

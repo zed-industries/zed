@@ -11,10 +11,10 @@ TEMPLATE_FILE="script/licenses/template.md.hbs"
 echo -e "# ###### THEME LICENSES ######\n" >> $OUTPUT_FILE
 cat assets/themes/LICENSES >> $OUTPUT_FILE
 
-echo -e "# ###### ICON LICENSES ######\n" >> $OUTPUT_FILE
+echo -e "\n# ###### ICON LICENSES ######\n" >> $OUTPUT_FILE
 cat assets/icons/LICENSES >> $OUTPUT_FILE
 
-echo -e "# ###### CODE LICENSES ######\n" >> $OUTPUT_FILE
+echo -e "\n# ###### CODE LICENSES ######\n" >> $OUTPUT_FILE
 
 if ! cargo install --list | grep "cargo-about v$CARGO_ABOUT_VERSION" > /dev/null; then
   echo "Installing cargo-about@$CARGO_ABOUT_VERSION..."

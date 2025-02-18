@@ -2361,7 +2361,6 @@ impl OutlinePanel {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_search_match(
         &mut self,
         multi_buffer_snapshot: Option<&MultiBufferSnapshot>,
@@ -2453,7 +2452,6 @@ impl OutlinePanel {
         ))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn entry_element(
         &self,
         rendered_entry: PanelEntry,
@@ -3839,7 +3837,6 @@ impl OutlinePanel {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn push_entry(
         &self,
         state: &mut GenerationState,
@@ -4057,7 +4054,6 @@ impl OutlinePanel {
         update_cached_entries
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn add_excerpt_entries(
         &self,
         state: &mut GenerationState,
@@ -4116,7 +4112,6 @@ impl OutlinePanel {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn add_search_entries(
         &mut self,
         state: &mut GenerationState,
