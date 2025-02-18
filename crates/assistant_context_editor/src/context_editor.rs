@@ -2867,7 +2867,6 @@ impl EventEmitter<SearchEvent> for ContextEditor {}
 impl Render for ContextEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
-
         let accept_terms = if self.show_accept_terms {
             provider.as_ref().and_then(|provider| {
                 provider.render_accept_terms(LanguageModelProviderTosView::PromptEditorPopup, cx)
@@ -3250,48 +3249,58 @@ impl ContextEditorToolbarItem {
             model_summary_editor,
         }
     }
+}
 
-    fn render_remaining_tokens(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let context = &self
-            .active_context_editor
-            .as_ref()?
-            .upgrade()?
-            .read(cx)
-            .context;
-        let (token_count_color, token_count, max_token_count) = match token_state(context, cx)? {
-            TokenState::NoTokensLeft {
-                max_token_count,
-                token_count,
-            } => (Color::Error, token_count, max_token_count),
-            TokenState::HasMoreTokens {
-                max_token_count,
-                token_count,
-                over_warn_threshold,
-            } => {
-                let color = if over_warn_threshold {
-                    Color::Warning
-                } else {
-                    Color::Muted
-                };
-                (color, token_count, max_token_count)
-            }
-        };
-        Some(
-            h_flex()
-                .gap_0p5()
-                .child(
-                    Label::new(humanize_token_count(token_count))
-                        .size(LabelSize::Small)
-                        .color(token_count_color),
-                )
-                .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
-                .child(
-                    Label::new(humanize_token_count(max_token_count))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                ),
-        )
-    }
+pub fn render_remaining_tokens(
+    context_editor: &Entity<ContextEditor>,
+    cx: &App,
+) -> Option<impl IntoElement> {
+    let context = &context_editor.read(cx).context;
+
+    let (token_count_color, token_count, max_token_count, tooltip) = match token_state(context, cx)?
+    {
+        TokenState::NoTokensLeft {
+            max_token_count,
+            token_count,
+        } => (
+            Color::Error,
+            token_count,
+            max_token_count,
+            Some("Token Limit Reached"),
+        ),
+        TokenState::HasMoreTokens {
+            max_token_count,
+            token_count,
+            over_warn_threshold,
+        } => {
+            let (color, tooltip) = if over_warn_threshold {
+                (Color::Warning, Some("Token Limit is Close to Exhaustion"))
+            } else {
+                (Color::Muted, None)
+            };
+            (color, token_count, max_token_count, tooltip)
+        }
+    };
+
+    Some(
+        h_flex()
+            .id("token-count")
+            .gap_0p5()
+            .child(
+                Label::new(humanize_token_count(token_count))
+                    .size(LabelSize::Small)
+                    .color(token_count_color),
+            )
+            .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+            .child(
+                Label::new(humanize_token_count(max_token_count))
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .when_some(tooltip, |element, tooltip| {
+                element.tooltip(Tooltip::text(tooltip))
+            }),
+    )
 }
 
 impl Render for ContextEditorToolbarItem {
@@ -3334,7 +3343,12 @@ impl Render for ContextEditorToolbarItem {
             //     scan_items_remaining
             //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
             // })
-            .children(self.render_remaining_tokens(cx));
+            .children(
+                self.active_context_editor
+                    .as_ref()
+                    .and_then(|editor| editor.upgrade())
+                    .and_then(|editor| render_remaining_tokens(&editor, cx)),
+            );
 
         h_flex()
             .px_0p5()
