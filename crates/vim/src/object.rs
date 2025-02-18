@@ -1936,6 +1936,25 @@ mod test {
             },
             Mode::Visual,
         );
+
+        cx.set_state(
+            indoc! {
+                "func empty(a string) bool {
+                             if a == \"\" {
+                             ˇ
+
+                             }"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c i {");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                             «ˇif a == \"\" {}"
+            },
+            Mode::Insert,
+        );
     }
 
     #[gpui::test]
