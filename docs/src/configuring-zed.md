@@ -1167,7 +1167,7 @@ Note, specifying `file_scan_exclusions` in settings.json will override the defau
 ## File Scan Inclusions
 
 - Setting: `file_scan_inclusions`
-- Description:  Files or globs of files that will be included by Zed, even when ignored by git. This is useful for files that are not tracked by git, but are still important to your project. Note that globs that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes precedence over these inclusions.
+- Description: Files or globs of files that will be included by Zed, even when ignored by git. This is useful for files that are not tracked by git, but are still important to your project. Note that globs that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes precedence over these inclusions.
 - Default:
 
 ```json
