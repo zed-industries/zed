@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use feature_flags::ZedPro;
 use gpui::{
-    Action, AnyElement, AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, WeakEntity,
+    Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, Subscription, Task, WeakEntity,
 };
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use picker::{Picker, PickerDelegate};
@@ -43,6 +43,7 @@ impl LanguageModelSelector {
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
                 .show_scrollbar(true)
+                .width(rems(20.))
                 .max_height(Some(rems(20.).into()))
         });
 
@@ -136,6 +137,7 @@ where
     trigger: T,
     tooltip: TT,
     handle: Option<PopoverMenuHandle<LanguageModelSelector>>,
+    anchor: Corner,
 }
 
 impl<T, TT> LanguageModelSelectorPopoverMenu<T, TT>
@@ -147,12 +149,14 @@ where
         language_model_selector: Entity<LanguageModelSelector>,
         trigger: T,
         tooltip: TT,
+        anchor: Corner,
     ) -> Self {
         Self {
             language_model_selector,
             trigger,
             tooltip,
             handle: None,
+            anchor,
         }
     }
 
@@ -173,7 +177,7 @@ where
         PopoverMenu::new("model-switcher")
             .menu(move |_window, _cx| Some(language_model_selector.clone()))
             .trigger_with_tooltip(self.trigger, self.tooltip)
-            .anchor(gpui::Corner::BottomRight)
+            .anchor(self.anchor)
             .when_some(self.handle.clone(), |menu, handle| menu.with_handle(handle))
             .offset(gpui::Point {
                 x: px(0.0),
@@ -370,7 +374,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .items_center()
                         .gap_1p5()
                         .pl_0p5()
-                        .min_w(px(240.))
+                        .w(px(240.))
                         .child(
                             div().max_w_40().child(
                                 Label::new(model_info.model.name().0.clone()).text_ellipsis(),
