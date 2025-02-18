@@ -1238,18 +1238,18 @@ fn parse_text(
         parser.set_included_ranges(&ranges)?;
         parser.set_language(&grammar.ts_language)?;
         parser
-            .parse_with(
+            .parse_with_options(
                 &mut move |offset, _| {
                     chunks.seek(start_byte + offset);
                     chunks.next().unwrap_or("").as_bytes()
                 },
                 old_tree.as_ref(),
+                None,
             )
             .ok_or_else(|| anyhow::anyhow!("failed to parse"))
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn get_injections(
     config: &InjectionConfig,
     text: &BufferSnapshot,

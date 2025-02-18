@@ -1201,7 +1201,6 @@ impl LocalLspStore {
         Ok(project_transaction)
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn execute_formatters(
         lsp_store: WeakEntity<LspStore>,
         formatters: &[Formatter],
@@ -1451,7 +1450,6 @@ impl LocalLspStore {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn format_via_lsp(
         this: &WeakEntity<LspStore>,
         buffer: &Entity<Buffer>,
@@ -1986,13 +1984,21 @@ impl LocalLspStore {
 
         if let Some(version) = version {
             let buffer_id = buffer.read(cx).remote_id();
-            let snapshots = self
+            let snapshots = if let Some(snapshots) = self
                 .buffer_snapshots
                 .get_mut(&buffer_id)
                 .and_then(|m| m.get_mut(&server_id))
-                .ok_or_else(|| {
-                    anyhow!("no snapshots found for buffer {buffer_id} and server {server_id}")
-                })?;
+            {
+                snapshots
+            } else if version == 0 {
+                // Some language servers report version 0 even if the buffer hasn't been opened yet.
+                // We detect this case and treat it as if the version was `None`.
+                return Ok(buffer.read(cx).text_snapshot());
+            } else {
+                return Err(anyhow!(
+                    "no snapshots found for buffer {buffer_id} and server {server_id}"
+                ));
+            };
 
             let found_snapshot = snapshots
                     .binary_search_by_key(&version, |e| e.version)
@@ -2138,7 +2144,7 @@ impl LocalLspStore {
         cx: &mut Context<LspStore>,
     ) -> Task<Result<Vec<(Range<Anchor>, String)>>> {
         let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx);
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let snapshot = snapshot?;
             let mut lsp_edits = lsp_edits
                 .into_iter()
@@ -2952,7 +2958,6 @@ impl LspStore {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn new_local(
         buffer_store: Entity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
@@ -3046,7 +3051,6 @@ impl LspStore {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn new_remote(
         buffer_store: Entity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
@@ -3278,16 +3282,15 @@ impl LspStore {
             }
         } else if let Some((upstream_client, upstream_project_id)) = self.upstream_client() {
             let buffer_id = buffer.read(cx).remote_id().to_proto();
-            cx.background_executor()
-                .spawn(async move {
-                    upstream_client
-                        .request(proto::RegisterBufferWithLanguageServers {
-                            project_id: upstream_project_id,
-                            buffer_id,
-                        })
-                        .await
-                })
-                .detach();
+            cx.background_spawn(async move {
+                upstream_client
+                    .request(proto::RegisterBufferWithLanguageServers {
+                        project_id: upstream_project_id,
+                        buffer_id,
+                    })
+                    .await
+            })
+            .detach();
         } else {
             panic!("oops!");
         }
@@ -4477,7 +4480,6 @@ impl LspStore {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn resolve_completion_remote(
         project_id: u64,
         server_id: LanguageServerId,
@@ -6704,7 +6706,7 @@ impl LspStore {
                     return Err(anyhow!("No language server {id}"));
                 };
 
-                Ok(cx.background_executor().spawn(async move {
+                Ok(cx.background_spawn(async move {
                     let can_resolve = server
                         .capabilities()
                         .completion_provider
@@ -7372,9 +7374,7 @@ impl LspStore {
                     .map(|b| b.read(cx).remote_id().to_proto())
                     .collect(),
             });
-            cx.background_executor()
-                .spawn(request)
-                .detach_and_log_err(cx);
+            cx.background_spawn(request).detach_and_log_err(cx);
         } else {
             let Some(local) = self.as_local_mut() else {
                 return;
@@ -7403,9 +7403,7 @@ impl LspStore {
                 .collect::<Vec<_>>();
 
             cx.spawn(|this, mut cx| async move {
-                cx.background_executor()
-                    .spawn(futures::future::join_all(tasks))
-                    .await;
+                cx.background_spawn(futures::future::join_all(tasks)).await;
                 this.update(&mut cx, |this, cx| {
                     for buffer in buffers {
                         this.register_buffer_with_language_servers(&buffer, true, cx);
@@ -7538,7 +7536,6 @@ impl LspStore {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn insert_newly_running_language_server(
         &mut self,
         adapter: Arc<CachedLspAdapter>,
@@ -7735,9 +7732,7 @@ impl LspStore {
                     },
                 )),
             });
-            cx.background_executor()
-                .spawn(request)
-                .detach_and_log_err(cx);
+            cx.background_spawn(request).detach_and_log_err(cx);
         } else if let Some(local) = self.as_local() {
             let servers = buffers
                 .into_iter()
@@ -7793,9 +7788,7 @@ impl LspStore {
                     ),
                 ),
             });
-            cx.background_executor()
-                .spawn(request)
-                .detach_and_log_err(cx);
+            cx.background_spawn(request).detach_and_log_err(cx);
         }
     }
 

@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use assistant_context_editor::{
-    make_lsp_adapter_delegate, AssistantPanelDelegate, ConfigurationError, ContextEditor,
-    ContextHistory, SlashCommandCompletionProvider,
+    make_lsp_adapter_delegate, render_remaining_tokens, AssistantPanelDelegate, ConfigurationError,
+    ContextEditor, ContextHistory, SlashCommandCompletionProvider,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -635,20 +635,33 @@ impl AssistantPanel {
             .border_color(cx.theme().colors().border)
             .child(
                 h_flex()
-                    .child(Label::new(title))
-                    .when(sub_title.is_some(), |this| {
-                        this.child(
-                            h_flex()
-                                .pl_1p5()
-                                .gap_1p5()
-                                .child(
-                                    Label::new("/")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Disabled)
-                                        .alpha(0.5),
+                    .w_full()
+                    .gap_1()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .child(Label::new(title))
+                            .when(sub_title.is_some(), |this| {
+                                this.child(
+                                    h_flex()
+                                        .pl_1p5()
+                                        .gap_1p5()
+                                        .child(
+                                            Label::new("/")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Disabled)
+                                                .alpha(0.5),
+                                        )
+                                        .child(Label::new(sub_title.unwrap())),
                                 )
-                                .child(Label::new(sub_title.unwrap())),
-                        )
+                            }),
+                    )
+                    .children(if matches!(self.active_view, ActiveView::PromptEditor) {
+                        self.context_editor
+                            .as_ref()
+                            .and_then(|editor| render_remaining_tokens(editor, cx))
+                    } else {
+                        None
                     }),
             )
             .child(

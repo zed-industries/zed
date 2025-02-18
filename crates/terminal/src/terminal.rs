@@ -58,9 +58,10 @@ use std::{
 use thiserror::Error;
 
 use gpui::{
-    actions, black, px, AnyWindowHandle, App, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
-    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window,
+    actions, black, px, AnyWindowHandle, App, AppContext as _, Bounds, ClipboardItem, Context,
+    EventEmitter, Hsla, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
+    Window,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -324,7 +325,6 @@ pub struct TerminalBuilder {
 }
 
 impl TerminalBuilder {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         working_directory: Option<PathBuf>,
         python_venv_directory: Option<PathBuf>,
@@ -1640,7 +1640,7 @@ impl Terminal {
         cx: &Context<Self>,
     ) -> Task<Vec<RangeInclusive<AlacPoint>>> {
         let term = self.term.clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let term = term.lock();
 
             all_search_matches(&term, &mut searcher).collect()

@@ -3,7 +3,9 @@ use std::io::{Cursor, Write};
 use crate::role::Role;
 use crate::LanguageModelToolUse;
 use base64::write::EncoderWriter;
-use gpui::{point, size, App, DevicePixels, Image, ObjectFit, RenderImage, Size, Task};
+use gpui::{
+    point, size, App, AppContext as _, DevicePixels, Image, ObjectFit, RenderImage, Size, Task,
+};
 use image::{codecs::png::PngEncoder, imageops::resize, DynamicImage, ImageDecoder};
 use serde::{Deserialize, Serialize};
 use ui::{px, SharedString};
@@ -30,7 +32,7 @@ const ANTHROPIC_SIZE_LIMT: f32 = 1568.;
 
 impl LanguageModelImage {
     pub fn from_image(data: Image, cx: &mut App) -> Task<Option<Self>> {
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             match data.format() {
                 gpui::ImageFormat::Png
                 | gpui::ImageFormat::Jpeg

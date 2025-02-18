@@ -228,8 +228,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
         cx.spawn_in(window, |this, mut cx| async move {
             let filtered_models = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     let displayed_models = if configured_providers.is_empty() {
                         all_models
                     } else {

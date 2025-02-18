@@ -19,7 +19,7 @@ use crate::{
 use anyhow::Context as _;
 use clock::Global;
 use futures::future;
-use gpui::{AsyncApp, Context, Entity, Task, Window};
+use gpui::{AppContext as _, AsyncApp, Context, Entity, Task, Window};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
@@ -996,19 +996,17 @@ fn fetch_and_update_hints(
 
         let background_task_buffer_snapshot = buffer_snapshot.clone();
         let background_fetch_range = fetch_range.clone();
-        let new_update = cx
-            .background_executor()
-            .spawn(async move {
-                calculate_hint_updates(
-                    query.excerpt_id,
-                    invalidate,
-                    background_fetch_range,
-                    new_hints,
-                    &background_task_buffer_snapshot,
-                    cached_excerpt_hints,
-                    &visible_hints,
-                )
-            })
+        let new_update = cx.background_spawn(async move {
+            calculate_hint_updates(
+                query.excerpt_id,
+                invalidate,
+                background_fetch_range,
+                new_hints,
+                &background_task_buffer_snapshot,
+                cached_excerpt_hints,
+                &visible_hints,
+            )
+        })
             .await;
         if let Some(new_update) = new_update {
             log::debug!(

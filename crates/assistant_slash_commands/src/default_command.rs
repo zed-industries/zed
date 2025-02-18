@@ -54,7 +54,7 @@ impl SlashCommand for DefaultSlashCommand {
         cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let store = PromptStore::global(cx);
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let store = store.await?;
             let prompts = store.default_prompt_metadata();
 

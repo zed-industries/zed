@@ -956,7 +956,7 @@ fn install_cli(
                 Some(LINUX_PROMPT_DETAIL),
                 &["Ok"],
             );
-            cx.background_executor().spawn(prompt).detach();
+            cx.background_spawn(prompt).detach();
             return Ok(());
         }
         let path = install_cli::install_cli(cx.deref())
@@ -1335,7 +1335,7 @@ fn show_markdown_app_notification<F>(
 ) where
     F: 'static + Send + Sync + Fn(&mut Window, &mut Context<MessageNotification>),
 {
-    let parsed_markdown = cx.background_executor().spawn(async move {
+    let parsed_markdown = cx.background_spawn(async move {
         let file_location_directory = None;
         let language_registry = None;
         markdown_preview::markdown_parser::parse_markdown(

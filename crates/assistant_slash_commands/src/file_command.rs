@@ -156,7 +156,7 @@ impl SlashCommand for FileSlashCommand {
             cx,
         );
         let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             Ok(paths
                 .await
                 .into_iter()

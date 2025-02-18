@@ -387,7 +387,6 @@ impl InlineAssistant {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn suggest_assist(
         &mut self,
         editor: &Entity<Editor>,
@@ -1674,7 +1673,6 @@ impl Focusable for PromptEditor {
 impl PromptEditor {
     const MAX_LINES: u8 = 8;
 
-    #[allow(clippy::too_many_arguments)]
     fn new(
         id: InlineAssistId,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
@@ -2333,7 +2331,6 @@ struct InlineAssist {
 }
 
 impl InlineAssist {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         assist_id: InlineAssistId,
         group_id: InlineAssistGroupId,
@@ -3015,7 +3012,7 @@ impl CodegenAlternative {
                     let executor = cx.background_executor().clone();
                     let message_id = message_id.clone();
                     let line_based_stream_diff: Task<anyhow::Result<()>> =
-                        cx.background_executor().spawn(async move {
+                        cx.background_spawn(async move {
                             let mut response_latency = None;
                             let request_start = Instant::now();
                             let diff = async {
@@ -3329,8 +3326,7 @@ impl CodegenAlternative {
 
         cx.spawn(|codegen, mut cx| async move {
             let (deleted_row_ranges, inserted_row_ranges) = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     let old_text = old_snapshot
                         .text_for_range(
                             Point::new(old_range.start.row, 0)

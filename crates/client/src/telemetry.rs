@@ -5,7 +5,7 @@ use anyhow::Result;
 use clock::SystemClock;
 use futures::channel::mpsc;
 use futures::{Future, StreamExt};
-use gpui::{App, BackgroundExecutor, Task};
+use gpui::{App, AppContext as _, BackgroundExecutor, Task};
 use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
@@ -219,18 +219,17 @@ impl Telemetry {
         }));
         Self::log_file_path();
 
-        cx.background_executor()
-            .spawn({
-                let state = state.clone();
-                let os_version = os_version();
-                state.lock().os_version = Some(os_version.clone());
-                async move {
-                    if let Some(tempfile) = File::create(Self::log_file_path()).log_err() {
-                        state.lock().log_file = Some(tempfile);
-                    }
+        cx.background_spawn({
+            let state = state.clone();
+            let os_version = os_version();
+            state.lock().os_version = Some(os_version.clone());
+            async move {
+                if let Some(tempfile) = File::create(Self::log_file_path()).log_err() {
+                    state.lock().log_file = Some(tempfile);
                 }
-            })
-            .detach();
+            }
+        })
+        .detach();
 
         cx.observe_global::<SettingsStore>({
             let state = state.clone();
@@ -252,17 +251,16 @@ impl Telemetry {
         let (tx, mut rx) = mpsc::unbounded();
         ::telemetry::init(tx);
 
-        cx.background_executor()
-            .spawn({
-                let this = Arc::downgrade(&this);
-                async move {
-                    while let Some(event) = rx.next().await {
-                        let Some(state) = this.upgrade() else { break };
-                        state.report_event(Event::Flexible(event))
-                    }
+        cx.background_spawn({
+            let this = Arc::downgrade(&this);
+            async move {
+                while let Some(event) = rx.next().await {
+                    let Some(state) = this.upgrade() else { break };
+                    state.report_event(Event::Flexible(event))
                 }
-            })
-            .detach();
+            }
+        })
+        .detach();
 
         // We should only ever have one instance of Telemetry, leak the subscription to keep it alive
         // rather than store in TelemetryState, complicating spawn as subscriptions are not Send
