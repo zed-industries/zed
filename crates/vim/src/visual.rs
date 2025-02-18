@@ -1276,7 +1276,7 @@ mod test {
         cx.set_state("hello (in [parˇens] o)", Mode::Normal);
         cx.simulate_keystrokes("ctrl-v l");
         cx.simulate_keystrokes("a ]");
-        cx.assert_state("hello (in «ˇ[parens]» o)", Mode::VisualBlock);
+        cx.assert_state("hello (in «ˇ[parens]» o)", Mode::Visual);
         cx.simulate_keystrokes("i (");
         cx.assert_state("hello (ˇ«in [parens] o»)", Mode::Visual);
 
