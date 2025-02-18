@@ -117,7 +117,7 @@ impl From<dap::Thread> for Thread {
 
 type UpstreamProjectId = u64;
 
-pub struct RemoteConnection {
+struct RemoteConnection {
     client: AnyProtoClient,
     upstream_project_id: UpstreamProjectId,
 }
@@ -150,7 +150,7 @@ impl RemoteConnection {
     }
 }
 
-pub enum Mode {
+enum Mode {
     Local(LocalMode),
     Remote(RemoteConnection),
 }
