@@ -370,6 +370,7 @@ impl Session {
         session_id: SessionId,
         delegate: DapAdapterDelegate,
         config: DebugAdapterConfig,
+        message_handler: DapMessageHandler,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(move |mut cx| async move {
@@ -378,10 +379,11 @@ impl Session {
                 breakpoints,
                 config.clone(),
                 delegate,
-                Box::new(|_, _| {}),
+                message_handler,
                 cx.clone(),
             )
             .await?;
+
             cx.new(|_| Self {
                 mode: Mode::Local(mode),
                 id: session_id,
@@ -424,6 +426,8 @@ impl Session {
     pub fn configuration(&self) -> DebugAdapterConfig {
         self.config.clone()
     }
+
+    pub(crate) fn handle_dap_message(&mut self, message: Message) {}
 
     pub(crate) fn _wait_for_request<R: DapCommand + PartialEq + Eq + Hash>(
         &self,

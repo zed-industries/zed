@@ -1,5 +1,5 @@
 use crate::{
-    adapters::{DebugAdapter, DebugAdapterBinary},
+    adapters::{DebugAdapter, DebugAdapterBinary, TcpArguments},
     transport::{IoKind, LogKind, TransportDelegate},
 };
 use anyhow::{anyhow, Result};
@@ -12,6 +12,7 @@ use gpui::{App, AsyncApp, BackgroundExecutor};
 use smol::channel::{Receiver, Sender};
 use std::{
     hash::Hash,
+    net::Ipv4Addr,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -226,7 +227,7 @@ impl DebugAdapterClient {
     {
         let transport = self.transport_delegate.transport();
 
-        transport.as_fake().on_request::<R, F>(handler).await;
+        transport.on_request::<R, F>(handler).await;
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -247,7 +248,7 @@ impl DebugAdapterClient {
     {
         let transport = self.transport_delegate.transport();
 
-        transport.as_fake().on_response::<R, F>(handler).await;
+        transport.on_response::<R, F>(handler).await;
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -291,21 +292,25 @@ mod tests {
     pub async fn test_initialize_client(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let mut client = DebugAdapterClient::new(
+        let mut client = DebugAdapterClient::start(
             crate::client::SessionId(1),
             DebugAdapterBinary {
                 command: "command".into(),
                 arguments: Default::default(),
                 envs: Default::default(),
-                connection: Some(TcpArguments {
+                connection: Some(crate::adapters::TcpArguments {
                     host: Ipv4Addr::LOCALHOST,
                     port: None,
                     timeout: None,
                 }),
+                is_fake: true,
                 cwd: None,
             },
-            &mut cx.to_async(),
-        );
+            |_, _| panic!("Did not expect to hit this code path"),
+            cx.to_async(),
+        )
+        .await
+        .unwrap();
 
         client
             .on_request::<Initialize, _>(move |_, _| {
@@ -315,14 +320,6 @@ mod tests {
                 })
             })
             .await;
-
-        client
-            .start(
-                |_, _| panic!("Did not expect to hit this code path"),
-                &mut cx.to_async(),
-            )
-            .await
-            .unwrap();
 
         cx.run_until_parked();
 
@@ -365,44 +362,39 @@ mod tests {
     pub async fn test_calls_event_handler(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let adapter = Arc::new(FakeAdapter::new());
         let called_event_handler = Arc::new(AtomicBool::new(false));
 
-        let mut client = DebugAdapterClient::new(
+        let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
             DebugAdapterBinary {
                 command: "command".into(),
                 arguments: Default::default(),
                 envs: Default::default(),
-                connection: Some(TCPArguments {
+                connection: Some(TcpArguments {
                     host: Ipv4Addr::LOCALHOST,
                     port: None,
-                    path: None,
+                    timeout: None,
                 }),
+                is_fake: true,
                 cwd: None,
             },
-            &mut cx.to_async(),
-        );
+            {
+                let called_event_handler = called_event_handler.clone();
+                move |event, _| {
+                    called_event_handler.store(true, Ordering::SeqCst);
 
-        client
-            .start(
-                {
-                    let called_event_handler = called_event_handler.clone();
-                    move |event, _| {
-                        called_event_handler.store(true, Ordering::SeqCst);
-
-                        assert_eq!(
-                            Message::Event(Box::new(Events::Initialized(Some(
-                                Capabilities::default()
-                            )))),
-                            event
-                        );
-                    }
-                },
-                &mut cx.to_async(),
-            )
-            .await
-            .unwrap();
+                    assert_eq!(
+                        Message::Event(Box::new(Events::Initialized(
+                            Some(Capabilities::default())
+                        ))),
+                        event
+                    );
+                }
+            },
+            cx.to_async(),
+        )
+        .await
+        .unwrap();
 
         cx.run_until_parked();
 
@@ -424,50 +416,44 @@ mod tests {
     pub async fn test_calls_event_handler_for_reverse_request(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let adapter = Arc::new(FakeAdapter::new());
         let called_event_handler = Arc::new(AtomicBool::new(false));
 
-        let mut client = DebugAdapterClient::new(
+        let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
             DebugAdapterBinary {
                 command: "command".into(),
                 arguments: Default::default(),
                 envs: Default::default(),
-
-                connection: Some(TCPArguments {
+                connection: Some(TcpArguments {
                     host: Ipv4Addr::LOCALHOST,
                     port: None,
-                    path: None,
+                    timeout: None,
                 }),
+                is_fake: true,
                 cwd: None,
             },
-            &mut cx.to_async(),
-        );
+            {
+                let called_event_handler = called_event_handler.clone();
+                move |event, _| {
+                    called_event_handler.store(true, Ordering::SeqCst);
 
-        client
-            .start(
-                {
-                    let called_event_handler = called_event_handler.clone();
-                    move |event, _| {
-                        called_event_handler.store(true, Ordering::SeqCst);
-
-                        assert_eq!(
-                            Message::Request(dap_types::messages::Request {
-                                seq: 1,
-                                command: RunInTerminal::COMMAND.into(),
-                                arguments: Some(json!({
-                                    "cwd": "/project/path/src",
-                                    "args": ["node", "test.js"],
-                                }))
-                            }),
-                            event
-                        );
-                    }
-                },
-                &mut cx.to_async(),
-            )
-            .await
-            .unwrap();
+                    assert_eq!(
+                        Message::Request(dap_types::messages::Request {
+                            seq: 1,
+                            command: RunInTerminal::COMMAND.into(),
+                            arguments: Some(json!({
+                                "cwd": "/project/path/src",
+                                "args": ["node", "test.js"],
+                            }))
+                        }),
+                        event
+                    );
+                }
+            },
+            cx.to_async(),
+        )
+        .await
+        .unwrap();
 
         cx.run_until_parked();
 

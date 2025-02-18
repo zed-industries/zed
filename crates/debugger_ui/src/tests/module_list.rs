@@ -24,17 +24,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            task::DebugAdapterConfig {
-                label: "test config".into(),
-                kind: task::DebugAdapterKind::Fake,
-                request: task::DebugRequestType::Launch,
-                program: None,
-                cwd: None,
-                initialize_args: None,
-            },
-            cx,
-        )
+        project.start_debug_session(dap::test_config(), cx)
     });
 
     let (session, client) = task.await.unwrap();
@@ -143,7 +133,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     active_debug_panel_item(workspace, cx).update(cx, |item, cx| {
         item.set_thread_item(ThreadItem::Modules, cx);
 
-        let actual_modules = item.module_list().update(cx, |list, cx| list.modules(cx));
+        let actual_modules = item.modules().update(cx, |list, cx| list.modules(cx));
         assert_eq!(modules, actual_modules);
     });
 
@@ -175,7 +165,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     cx.run_until_parked();
 
     active_debug_panel_item(workspace, cx).update(cx, |item, cx| {
-        let actual_modules = item.module_list().update(cx, |list, cx| list.modules(cx));
+        let actual_modules = item.modules().update(cx, |list, cx| list.modules(cx));
         assert_eq!(actual_modules.len(), 3);
         assert!(actual_modules.contains(&new_module));
     });
@@ -203,7 +193,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     cx.run_until_parked();
 
     active_debug_panel_item(workspace, cx).update(cx, |item, cx| {
-        let actual_modules = item.module_list().update(cx, |list, cx| list.modules(cx));
+        let actual_modules = item.modules().update(cx, |list, cx| list.modules(cx));
         assert_eq!(actual_modules.len(), 3);
         assert!(actual_modules.contains(&changed_module));
     });
@@ -218,7 +208,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     cx.run_until_parked();
 
     active_debug_panel_item(workspace, cx).update(cx, |item, cx| {
-        let actual_modules = item.module_list().update(cx, |list, cx| list.modules(cx));
+        let actual_modules = item.modules().update(cx, |list, cx| list.modules(cx));
         assert_eq!(actual_modules.len(), 2);
         assert!(!actual_modules.contains(&changed_module));
     });

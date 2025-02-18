@@ -9,3 +9,16 @@ pub use task::{DebugAdapterConfig, DebugAdapterKind, DebugRequestType};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use adapters::FakeAdapter;
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn test_config() -> DebugAdapterConfig {
+    DebugAdapterConfig {
+        label: "test config".into(),
+        kind: DebugAdapterKind::Fake,
+        request: DebugRequestType::Launch,
+        program: None,
+        supports_attach: false,
+        cwd: None,
+        initialize_args: None,
+    }
+}

@@ -509,42 +509,54 @@ impl DapStore {
                 env.get_environment(Some(worktree.id()), Some(worktree.abs_path()), cx)
             }),
         );
+        let session_id = local_store.next_session_id();
 
-        Session::local(
+        let start_client_task = Session::local(
             self.breakpoint_store.clone(),
-            local_store.next_session_id(),
+            session_id,
             delegate,
             config,
+            {
+                let weak_store = cx.weak_entity();
+
+                Box::new(move |message, cx| {
+                    weak_store
+                        .update(cx, |store, cx| {
+                            if let Some(session) = store.sessions.get(&session_id) {
+                                session.update(cx, |session, cx| {
+                                    session.handle_dap_message(message);
+                                });
+                            }
+                        })
+                        .with_context(|| "Failed to process message from DAP server")
+                        .log_err();
+                })
+            },
             cx,
-        )
-    }
+        );
 
-    pub fn configuration_done(
-        &self,
-        session_id: SessionId,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let Some(client) = self
-            .session_by_id(session_id)
-            .and_then(|client| client.read(cx).adapter_client())
-        else {
-            return Task::ready(Err(anyhow!("Could not find client: {:?}", session_id)));
-        };
+        cx.spawn(|this, mut cx| async move {
+            let session = match start_client_task.await {
+                Ok(session) => session,
+                Err(error) => {
+                    this.update(&mut cx, |_, cx| {
+                        cx.emit(DapStoreEvent::Notification(error.to_string()));
+                    })
+                    .log_err();
 
-        if self
-            .capabilities_by_id(session_id, cx)
-            .map(|caps| caps.supports_configuration_done_request)
-            .flatten()
-            .unwrap_or_default()
-        {
-            cx.background_executor().spawn(async move {
-                client
-                    .request::<dap::requests::ConfigurationDone>(dap::ConfigurationDoneArguments)
-                    .await
+                    return Err(error);
+                }
+            };
+
+            this.update(&mut cx, |store, cx| {
+                store.sessions.insert(session_id, session.clone());
+
+                cx.emit(DapStoreEvent::DebugClientStarted(session_id));
+                cx.notify();
+
+                session
             })
-        } else {
-            Task::ready(Ok(()))
-        }
+        })
     }
 
     pub fn new_session(

@@ -78,7 +78,7 @@ enum Transport {
 impl Transport {
     async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
         #[cfg(any(test, feature = "test-support"))]
-        if binary.kind == DebugAdapterKind::Fake {
+        if binary.is_fake {
             return FakeTransport::start(cx)
                 .await
                 .map(|(transports, fake)| (transports, Self::Fake(fake)));
@@ -133,7 +133,7 @@ pub(crate) struct TransportDelegate {
 impl Transport {
     #[cfg(any(test, feature = "test-support"))]
     fn fake(args: DebugAdapterBinary) -> Self {
-        let this = Self::Fake(FakeTransport::new());
+        todo!()
     }
 }
 
@@ -523,8 +523,8 @@ impl TransportDelegate {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn transport(&self) -> &Arc<dyn Transport> {
-        &self.transport
+    pub fn transport(&self) -> Arc<&FakeTransport> {
+        Arc::new(self.transport.as_fake())
     }
 
     pub fn add_log_handler<F>(&self, f: F, kind: LogKind)
@@ -810,21 +810,11 @@ impl FakeTransport {
             .insert(R::COMMAND, Box::new(handler));
     }
 
-    async fn reconnect(&self, cx: AsyncApp) -> Result<TransportPipe> {
-        self.start(
-            &DebugAdapterBinary {
-                command: "command".into(),
-                arguments: None,
-                envs: None,
-                cwd: None,
-                connection: TcpTransport::new(None, None),
-            },
-            cx,
-        )
-        .await
+    async fn reconnect(&self, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
+        FakeTransport::start(cx).await
     }
 
-    async fn start(cx: AsyncApp) -> Result<TransportPipe> {
+    async fn start(cx: AsyncApp) -> Result<(TransportPipe, Self)> {
         let this = Self {
             request_handlers: Arc::new(Mutex::new(HashMap::default())),
             response_handlers: Arc::new(Mutex::new(HashMap::default())),
@@ -925,11 +915,9 @@ impl FakeTransport {
             })
             .detach();
 
-        Ok(TransportPipe::new(
-            Box::new(stdin_writer),
-            Box::new(stdout_reader),
-            None,
-            None,
+        Ok((
+            TransportPipe::new(Box::new(stdin_writer), Box::new(stdout_reader), None, None),
+            this,
         ))
     }
 

@@ -56,6 +56,8 @@ impl DebugAdapter for LldbDebugAdapter {
             envs: None,
             cwd: config.cwd.clone(),
             connection: None,
+            #[cfg(any(test, feature = "test-support"))]
+            is_fake: false,
         })
     }
 

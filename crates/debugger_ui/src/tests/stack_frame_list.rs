@@ -51,17 +51,7 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            task::DebugAdapterConfig {
-                label: "test config".into(),
-                kind: task::DebugAdapterKind::Fake,
-                request: task::DebugRequestType::Launch,
-                program: None,
-                cwd: None,
-                initialize_args: None,
-            },
-            cx,
-        )
+        project.start_debug_session(dap::test_config(), cx)
     });
 
     let (session, client) = task.await.unwrap();
@@ -222,17 +212,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            task::DebugAdapterConfig {
-                label: "test config".into(),
-                kind: task::DebugAdapterKind::Fake,
-                request: task::DebugRequestType::Launch,
-                program: None,
-                cwd: None,
-                initialize_args: None,
-            },
-            cx,
-        )
+        project.start_debug_session(dap::test_config(), cx)
     });
 
     let (session, client) = task.await.unwrap();
@@ -485,17 +465,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            task::DebugAdapterConfig {
-                label: "test config".into(),
-                kind: task::DebugAdapterKind::Fake,
-                request: task::DebugRequestType::Launch,
-                program: None,
-                cwd: None,
-                initialize_args: None,
-            },
-            cx,
-        )
+        project.start_debug_session(dap::test_config(), cx)
     });
 
     let (session, client) = task.await.unwrap();

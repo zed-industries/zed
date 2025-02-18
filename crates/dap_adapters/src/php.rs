@@ -95,6 +95,8 @@ impl DebugAdapter for PhpDebugAdapter {
             }),
             cwd: config.cwd.clone(),
             envs: None,
+            #[cfg(any(test, feature = "test-support"))]
+            is_fake: false,
         })
     }
 

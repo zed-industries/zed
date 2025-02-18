@@ -99,10 +99,8 @@ use util::maybe;
 #[cfg(any(test, feature = "test-support"))]
 impl ModuleList {
     pub fn modules(&self, cx: &mut Context<Self>) -> Vec<Module> {
-        let Some(state) = self.session.read(cx).client_state(self.session_id) else {
-            return vec![];
-        };
-
-        state.update(cx, |state, cx| state.modules(cx).iter().cloned().collect())
+        self.session.update(cx, |session, cx| {
+            session.modules(cx).iter().cloned().collect()
+        })
     }
 }

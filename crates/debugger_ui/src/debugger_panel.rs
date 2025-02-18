@@ -190,7 +190,8 @@ impl DebugPanel {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn message_queue(&self) -> &HashMap<SessionId, VecDeque<OutputEvent>> {
-        &self.message_queue
+        // &self.message_queue
+        unimplemented!("Should chekc session for console messagse")
     }
 
     #[cfg(any(test, feature = "test-support"))]
