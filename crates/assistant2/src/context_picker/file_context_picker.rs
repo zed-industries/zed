@@ -510,10 +510,8 @@ fn render_fold_icon_button(
 
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
-            .bordered()
             .selected_style(ButtonStyle::HighlightBorder(ButtonStyle::Filled.into()))
             .toggle_state(is_in_text_selection)
-            .layer(ElevationIndex::ElevatedSurface)
             .child(
                 h_flex()
                     .gap_1()
