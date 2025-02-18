@@ -3,7 +3,6 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
-use util::paths::SortMode;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -44,7 +43,6 @@ pub struct ProjectPanelSettings {
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
     pub show_diagnostics: ShowDiagnostics,
-    pub sort_mode: SortMode,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -142,10 +140,6 @@ pub struct ProjectPanelSettingsContent {
     pub show_diagnostics: Option<ShowDiagnostics>,
     /// Settings related to indent guides in the project panel.
     pub indent_guides: Option<IndentGuidesSettingsContent>,
-    /// How to sort files in the project panel
-    ///
-    /// Default: lexicographical
-    pub sort_mode: Option<SortMode>,
 }
 
 impl Settings for ProjectPanelSettings {

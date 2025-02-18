@@ -96,7 +96,7 @@ use terminals::Terminals;
 use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
 use util::{
-    paths::{compare_paths_with_sort_mode, SanitizedPath, SortMode},
+    paths::{compare_paths_with_strategy, SanitizedPath, SortStrategy},
     ResultExt as _,
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
@@ -121,7 +121,6 @@ pub use lsp_store::{
     SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
 pub use toolchain_store::ToolchainStore;
-use util::paths::compare_paths;
 
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
@@ -3229,12 +3228,16 @@ impl Project {
             })
             .collect::<Vec<_>>();
         let (tx, rx) = smol::channel::unbounded();
-        // HERE
+
+        let sort_strategy = ProjectSettings::get_global(cx).file_sorting.strategy;
+
         buffers.sort_by(|a, b| match (a.read(cx).file(), b.read(cx).file()) {
             (None, None) => a.read(cx).remote_id().cmp(&b.read(cx).remote_id()),
             (None, Some(_)) => std::cmp::Ordering::Less,
             (Some(_), None) => std::cmp::Ordering::Greater,
-            (Some(a), Some(b)) => compare_paths((a.path(), true), (b.path(), true)),
+            (Some(a), Some(b)) => {
+                compare_paths_with_strategy((a.path(), true), (b.path(), true), sort_strategy)
+            }
         });
         for buffer in buffers {
             tx.send_blocking(buffer.clone()).unwrap()
@@ -4578,14 +4581,14 @@ impl Completion {
     }
 }
 
-pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>], sort_mode: SortMode) {
+pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>], sort_strategy: SortStrategy) {
     entries.sort_by(|entry_a, entry_b| {
         let entry_a = entry_a.as_ref();
         let entry_b = entry_b.as_ref();
-        compare_paths_with_sort_mode(
+        compare_paths_with_strategy(
             (&entry_a.path, entry_a.is_file()),
             (&entry_b.path, entry_b.is_file()),
-            sort_mode,
+            sort_strategy,
         )
     });
 }

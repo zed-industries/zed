@@ -19,6 +19,7 @@ use settings::{
 };
 use std::{path::Path, sync::Arc, time::Duration};
 use task::{TaskTemplates, VsCodeTaskFile};
+use util::paths::FileSortingSettings;
 use util::ResultExt;
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
@@ -55,6 +56,10 @@ pub struct ProjectSettings {
     /// Configuration for session-related features
     #[serde(default)]
     pub session: SessionSettings,
+
+    /// Configuration for file sorting
+    #[serde(default)]
+    pub file_sorting: FileSortingSettings,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]

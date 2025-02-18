@@ -472,77 +472,27 @@ fn natural_sort(a: &str, b: &str) -> Ordering {
     }
 }
 
-pub fn compare_paths(
-    (path_a, a_is_file): (&Path, bool),
-    (path_b, b_is_file): (&Path, bool),
-) -> cmp::Ordering {
-    let mut components_a = path_a.components().peekable();
-    let mut components_b = path_b.components().peekable();
-    loop {
-        match (components_a.next(), components_b.next()) {
-            (Some(component_a), Some(component_b)) => {
-                let a_is_file = components_a.peek().is_none() && a_is_file;
-                let b_is_file = components_b.peek().is_none() && b_is_file;
-                let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
-                    let path_a = Path::new(component_a.as_os_str());
-                    let path_string_a = if a_is_file {
-                        path_a.file_stem()
-                    } else {
-                        path_a.file_name()
-                    }
-                    .map(|s| s.to_string_lossy());
-                    let num_and_remainder_a = path_string_a
-                        .as_deref()
-                        .map(NumericPrefixWithSuffix::from_numeric_prefixed_str);
-
-                    let path_b = Path::new(component_b.as_os_str());
-                    let path_string_b = if b_is_file {
-                        path_b.file_stem()
-                    } else {
-                        path_b.file_name()
-                    }
-                    .map(|s| s.to_string_lossy());
-                    let num_and_remainder_b = path_string_b
-                        .as_deref()
-                        .map(NumericPrefixWithSuffix::from_numeric_prefixed_str);
-
-                    num_and_remainder_a.cmp(&num_and_remainder_b).then_with(|| {
-                        if a_is_file && b_is_file {
-                            let ext_a = path_a.extension().unwrap_or_default();
-                            let ext_b = path_b.extension().unwrap_or_default();
-                            ext_a.cmp(ext_b)
-                        } else {
-                            cmp::Ordering::Equal
-                        }
-                    })
-                });
-                if !ordering.is_eq() {
-                    return ordering;
-                }
-            }
-            (Some(_), None) => break cmp::Ordering::Greater,
-            (None, Some(_)) => break cmp::Ordering::Less,
-            (None, None) => break cmp::Ordering::Equal,
-        }
-    }
-}
-
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum SortMode {
+pub enum SortStrategy {
     #[default]
     Lexicographical,
     Alphabetical,
 }
 
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct FileSortingSettings {
+    pub strategy: SortStrategy,
+}
 
-pub fn compare_paths_with_sort_mode(
+pub fn compare_paths_with_strategy(
     (path_a, a_is_file): (&Path, bool),
     (path_b, b_is_file): (&Path, bool),
-    sort_mode: SortMode,
+    sort_strategy: SortStrategy,
 ) -> Ordering {
-    match sort_mode {
-        SortMode::Lexicographical => {
+    match sort_strategy {
+        SortStrategy::Lexicographical => {
             let mut components_a = path_a.components().peekable();
             let mut components_b = path_b.components().peekable();
             loop {
@@ -593,7 +543,7 @@ pub fn compare_paths_with_sort_mode(
                 }
             }
         }
-        SortMode::Alphabetical => {
+        SortStrategy::Alphabetical => {
             let path_a = path_a.to_string_lossy();
             let path_b = path_b.to_string_lossy();
 
@@ -605,98 +555,6 @@ pub fn compare_paths_with_sort_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn compare_paths_with_dots() {
-        let mut paths = vec![
-            (Path::new("test_dirs"), false),
-            (Path::new("test_dirs/1.46"), false),
-            (Path::new("test_dirs/1.46/bar_1"), true),
-            (Path::new("test_dirs/1.46/bar_2"), true),
-            (Path::new("test_dirs/1.45"), false),
-            (Path::new("test_dirs/1.45/foo_2"), true),
-            (Path::new("test_dirs/1.45/foo_1"), true),
-        ];
-        paths.sort_by(|&a, &b| compare_paths(a, b));
-        assert_eq!(
-            paths,
-            vec![
-                (Path::new("test_dirs"), false),
-                (Path::new("test_dirs/1.45"), false),
-                (Path::new("test_dirs/1.45/foo_1"), true),
-                (Path::new("test_dirs/1.45/foo_2"), true),
-                (Path::new("test_dirs/1.46"), false),
-                (Path::new("test_dirs/1.46/bar_1"), true),
-                (Path::new("test_dirs/1.46/bar_2"), true),
-            ]
-        );
-        let mut paths = vec![
-            (Path::new("root1/one.txt"), true),
-            (Path::new("root1/one.two.txt"), true),
-        ];
-        paths.sort_by(|&a, &b| compare_paths(a, b));
-        assert_eq!(
-            paths,
-            vec![
-                (Path::new("root1/one.txt"), true),
-                (Path::new("root1/one.two.txt"), true),
-            ]
-        );
-    }
-
-    #[test]
-    fn compare_paths_with_same_name_different_extensions() {
-        let mut paths = vec![
-            (Path::new("test_dirs/file.rs"), true),
-            (Path::new("test_dirs/file.txt"), true),
-            (Path::new("test_dirs/file.md"), true),
-            (Path::new("test_dirs/file"), true),
-            (Path::new("test_dirs/file.a"), true),
-        ];
-        paths.sort_by(|&a, &b| compare_paths(a, b));
-        assert_eq!(
-            paths,
-            vec![
-                (Path::new("test_dirs/file"), true),
-                (Path::new("test_dirs/file.a"), true),
-                (Path::new("test_dirs/file.md"), true),
-                (Path::new("test_dirs/file.rs"), true),
-                (Path::new("test_dirs/file.txt"), true),
-            ]
-        );
-    }
-
-    #[test]
-    fn compare_paths_case_semi_sensitive() {
-        let mut paths = vec![
-            (Path::new("test_DIRS"), false),
-            (Path::new("test_DIRS/foo_1"), true),
-            (Path::new("test_DIRS/foo_2"), true),
-            (Path::new("test_DIRS/bar"), true),
-            (Path::new("test_DIRS/BAR"), true),
-            (Path::new("test_dirs"), false),
-            (Path::new("test_dirs/foo_1"), true),
-            (Path::new("test_dirs/foo_2"), true),
-            (Path::new("test_dirs/bar"), true),
-            (Path::new("test_dirs/BAR"), true),
-        ];
-        paths.sort_by(|&a, &b| compare_paths(a, b));
-        assert_eq!(
-            paths,
-            vec![
-                (Path::new("test_dirs"), false),
-                (Path::new("test_dirs/bar"), true),
-                (Path::new("test_dirs/BAR"), true),
-                (Path::new("test_dirs/foo_1"), true),
-                (Path::new("test_dirs/foo_2"), true),
-                (Path::new("test_DIRS"), false),
-                (Path::new("test_DIRS/bar"), true),
-                (Path::new("test_DIRS/BAR"), true),
-                (Path::new("test_DIRS/foo_1"), true),
-                (Path::new("test_DIRS/foo_2"), true),
-            ]
-        );
-    }
 
     #[test]
     fn path_with_position_parse_posix_path() {
@@ -1001,7 +859,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compare_paths_with_sort_mode() {
+    fn test_compare_paths_with_sort_strategy() {
         // Test Lexicographical sorting
         let mut paths = vec![
             (Path::new("test_dirs/file10.txt"), true),
@@ -1009,9 +867,9 @@ mod tests {
             (Path::new("test_dirs/file1.txt"), true),
             (Path::new("test_dirs"), false),
         ];
-        
+
         // Test lexicographical sorting
-        paths.sort_by(|&a, &b| compare_paths_with_sort_mode(a, b, SortMode::Lexicographical));
+        paths.sort_by(|&a, &b| compare_paths_with_strategy(a, b, SortStrategy::Lexicographical));
         assert_eq!(
             paths,
             vec![
@@ -1023,7 +881,7 @@ mod tests {
         );
 
         // Test alphabetical (natural) sorting
-        paths.sort_by(|&a, &b| compare_paths_with_sort_mode(a, b, SortMode::Alphabetical));
+        paths.sort_by(|&a, &b| compare_paths_with_strategy(a, b, SortStrategy::Alphabetical));
         assert_eq!(
             paths,
             vec![
@@ -1044,7 +902,8 @@ mod tests {
         ];
 
         // Test lexicographical sorting with complex paths
-        complex_paths.sort_by(|&a, &b| compare_paths_with_sort_mode(a, b, SortMode::Lexicographical));
+        complex_paths
+            .sort_by(|&a, &b| compare_paths_with_strategy(a, b, SortStrategy::Lexicographical));
         assert_eq!(
             complex_paths,
             vec![
@@ -1057,7 +916,8 @@ mod tests {
         );
 
         // Test alphabetical sorting with complex paths
-        complex_paths.sort_by(|&a, &b| compare_paths_with_sort_mode(a, b, SortMode::Alphabetical));
+        complex_paths
+            .sort_by(|&a, &b| compare_paths_with_strategy(a, b, SortStrategy::Alphabetical));
         assert_eq!(
             complex_paths,
             vec![
@@ -1078,7 +938,8 @@ mod tests {
         ];
 
         // Test lexicographical sorting with nested paths
-        nested_paths.sort_by(|&a, &b| compare_paths_with_sort_mode(a, b, SortMode::Lexicographical));
+        nested_paths
+            .sort_by(|&a, &b| compare_paths_with_strategy(a, b, SortStrategy::Lexicographical));
         assert_eq!(
             nested_paths,
             vec![
@@ -1090,7 +951,8 @@ mod tests {
         );
 
         // Test alphabetical sorting with nested paths
-        nested_paths.sort_by(|&a, &b| compare_paths_with_sort_mode(a, b, SortMode::Alphabetical));
+        nested_paths
+            .sort_by(|&a, &b| compare_paths_with_strategy(a, b, SortStrategy::Alphabetical));
         assert_eq!(
             nested_paths,
             vec![

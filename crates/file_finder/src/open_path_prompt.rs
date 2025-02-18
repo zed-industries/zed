@@ -1,8 +1,8 @@
 use futures::channel::oneshot;
 use fuzzy::StringMatchCandidate;
 use picker::{Picker, PickerDelegate};
+use project::project_settings::ProjectSettings;
 use project::DirectoryLister;
-use project_panel::project_panel_settings::ProjectPanelSettings;
 use settings::Settings;
 use std::{
     path::{Path, PathBuf},
@@ -13,7 +13,7 @@ use std::{
 };
 use ui::{prelude::*, LabelLike, ListItemSpacing};
 use ui::{Context, ListItem, Window};
-use util::{maybe, paths::compare_paths_with_sort_mode};
+use util::{maybe, paths::compare_paths_with_strategy};
 use workspace::Workspace;
 
 pub(crate) struct OpenPathPrompt;
@@ -126,7 +126,7 @@ impl PickerDelegate for OpenPathDelegate {
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
 
-        let sort_mode = ProjectPanelSettings::get_global(cx).sort_mode;
+        let sort_strategy = ProjectSettings::get_global(cx).file_sorting.strategy;
 
         cx.spawn_in(window, |this, mut cx| async move {
             if let Some(query) = query {
@@ -138,9 +138,8 @@ impl PickerDelegate for OpenPathDelegate {
                 this.update(&mut cx, |this, _| {
                     this.delegate.directory_state = Some(match paths {
                         Ok(mut paths) => {
-                            // HERE
                             paths.sort_by(|a, b| {
-                                compare_paths_with_sort_mode((a, true), (b, true), sort_mode)
+                                compare_paths_with_strategy((a, true), (b, true), sort_strategy)
                             });
                             let match_candidates = paths
                                 .iter()

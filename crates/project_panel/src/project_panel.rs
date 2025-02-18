@@ -27,6 +27,7 @@ use gpui::{
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
+use project::project_settings::ProjectSettings;
 use project::{
     relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
     WorktreeId,
@@ -55,7 +56,7 @@ use ui::{
     IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, ListItemSpacing, Scrollbar,
     ScrollbarState, Tooltip,
 };
-use util::{maybe, paths::compare_paths_with_sort_mode, ResultExt, TakeUntilExt, TryFutureExt};
+use util::{maybe, paths::compare_paths_with_strategy, ResultExt, TakeUntilExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyTaskExt},
@@ -1540,7 +1541,7 @@ impl ProjectPanel {
             .filter(|e| e.worktree_id == worktree_id)
             .collect::<HashSet<_>>();
 
-        let sort_mode = ProjectPanelSettings::get_global(cx).sort_mode;
+        let sort_strategy = ProjectSettings::get_global(cx).file_sorting.strategy;
         let latest_entry = marked_entries_in_worktree
             .iter()
             .max_by(|a, b| {
@@ -1548,10 +1549,10 @@ impl ProjectPanel {
                     worktree.entry_for_id(a.entry_id),
                     worktree.entry_for_id(b.entry_id),
                 ) {
-                    (Some(a), Some(b)) => compare_paths_with_sort_mode(
+                    (Some(a), Some(b)) => compare_paths_with_strategy(
                         (&a.path, a.is_file()),
                         (&b.path, b.is_file()),
-                        sort_mode,
+                        sort_strategy,
                     ),
                     _ => cmp::Ordering::Equal,
                 }
@@ -1576,8 +1577,8 @@ impl ProjectPanel {
             .map(|entry| entry.to_owned())
             .collect();
 
-        let sort_mode = ProjectPanelSettings::get_global(cx).sort_mode;
-        project::sort_worktree_entries(&mut siblings, sort_mode); // HERE
+        let sort_strategy = ProjectSettings::get_global(cx).file_sorting.strategy;
+        project::sort_worktree_entries(&mut siblings, sort_strategy);
         let sibling_entry_index = siblings
             .iter()
             .position(|sibling| sibling.id == latest_entry.id)?;
@@ -2770,8 +2771,8 @@ impl ProjectPanel {
                 entry_iter.advance();
             }
 
-            let sort_mode = ProjectPanelSettings::get_global(cx).sort_mode;
-            project::sort_worktree_entries(&mut visible_worktree_entries, sort_mode);
+            let sort_strategy = ProjectSettings::get_global(cx).file_sorting.strategy;
+            project::sort_worktree_entries(&mut visible_worktree_entries, sort_strategy);
 
             self.visible_entries
                 .push((worktree_id, visible_worktree_entries, OnceCell::new()));
@@ -4822,7 +4823,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::{Path, PathBuf};
-    use util::paths::SortMode;
+    use util::paths::SortStrategy;
     use util::{path, separator};
     use workspace::{
         item::{Item, ProjectItem},
@@ -9498,10 +9499,12 @@ mod tests {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
                     project_panel_settings.auto_fold_dirs = Some(false);
-                    project_panel_settings.sort_mode = Some(SortMode::Lexicographical);
                 });
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
                     worktree_settings.file_scan_exclusions = Some(Vec::new());
+                });
+                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                    project_settings.file_sorting.strategy = SortStrategy::Lexicographical;
                 });
             });
         });
@@ -9521,10 +9524,12 @@ mod tests {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
                     project_panel_settings.auto_fold_dirs = Some(false);
-                    project_panel_settings.sort_mode = Some(SortMode::Lexicographical);
                 });
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
                     worktree_settings.file_scan_exclusions = Some(Vec::new());
+                });
+                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                    project_settings.file_sorting.strategy = SortStrategy::Lexicographical;
                 });
             });
         });
