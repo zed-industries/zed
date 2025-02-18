@@ -19,7 +19,7 @@ use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use rope::Point;
 use text::SelectionGoal;
-use ui::{prelude::*, ButtonLike, Disclosure, ElevationIndex, ListItem, Tooltip};
+use ui::{prelude::*, ButtonLike, Disclosure, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::{notifications::NotifyResultExt, Workspace};
 
