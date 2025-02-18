@@ -235,7 +235,7 @@ async fn test_basic_fetch_initial_scope_and_variables(
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_client(&session.read(cx).id(), cx)
+            dap_store.shutdown_session(&session.read(cx).id(), cx)
         })
     });
 
@@ -514,7 +514,7 @@ async fn test_fetch_variables_for_multiple_scopes(
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_client(&session.read(cx).id(), cx)
+            dap_store.shutdown_session(&session.read(cx).id(), cx)
         })
     });
 
@@ -1129,7 +1129,7 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_client(&session.read(cx).id(), cx)
+            dap_store.shutdown_session(&session.read(cx).id(), cx)
         })
     });
 
@@ -1375,7 +1375,7 @@ async fn test_it_only_fetches_scopes_and_variables_for_the_first_stack_frame(
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_client(&session.read(cx).id(), cx)
+            dap_store.shutdown_session(&session.read(cx).id(), cx)
         })
     });
 
@@ -1743,7 +1743,7 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_client(&session.read(cx).id(), cx)
+            dap_store.shutdown_session(&session.read(cx).id(), cx)
         })
     });
 
