@@ -8,6 +8,8 @@ mod migrate;
 mod open_listener;
 mod quick_action_bar;
 #[cfg(target_os = "windows")]
+pub(crate) mod windows_mailslots;
+#[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
 use anyhow::Context as _;

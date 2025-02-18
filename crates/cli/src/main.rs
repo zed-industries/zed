@@ -128,6 +128,9 @@ fn main() -> Result<()> {
             return mac_os::spawn_channel_cli(channel, std::env::args().skip(2).collect());
         }
     }
+
+    #[cfg(target_os = "windows")]
+    // check if there is a console present, and if so, attach to it
     let args = Args::parse();
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -525,26 +528,164 @@ mod flatpak {
 #[cfg(target_os = "windows")]
 mod windows {
     use crate::{Detect, InstalledApp};
-    use std::io;
-    use std::path::Path;
+    use anyhow::{anyhow, Context};
+    use std::os::windows::process::CommandExt;
+    use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
+    use std::sync::LazyLock;
+    use std::{env, io};
+    use windows::core::*;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::*;
+    use windows::{Win32::System::Console::*, Win32::System::Threading::*};
 
-    struct App;
+    static RELEASE_CHANNEL: LazyLock<String> =
+        LazyLock::new(|| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string());
+
+    struct App(PathBuf);
     impl InstalledApp for App {
         fn zed_version_string(&self) -> String {
-            unimplemented!()
+            format!(
+                "Zed {}{}{} – {}",
+                if *RELEASE_CHANNEL == "stable" {
+                    "".to_string()
+                } else {
+                    format!("{} ", *RELEASE_CHANNEL)
+                },
+                option_env!("RELEASE_VERSION").unwrap_or_default(),
+                match option_env!("ZED_COMMIT_SHA") {
+                    Some(commit_sha) => format!(" {commit_sha} "),
+                    None => "".to_string(),
+                },
+                self.0.display(),
+            )
         }
-        fn launch(&self, _ipc_url: String) -> anyhow::Result<()> {
-            unimplemented!()
+
+        fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
+            if let Err(_) = send_message_to_mailslot(ipc_url.as_bytes()) {
+                // TODO(raggi): improve upstream error kind mapping so that we
+                // can dinguish between not found, access errors, and so on.
+                return self.boot_background(ipc_url);
+            }
+            Ok(())
         }
-        fn run_foreground(&self, _ipc_url: String) -> io::Result<ExitStatus> {
-            unimplemented!()
+
+        fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
+            ensure_console_window();
+            std::process::Command::new(self.0.clone())
+                .arg(ipc_url)
+                .status()
+        }
+    }
+
+    impl App {
+        fn boot_background(&self, ipc_url: String) -> anyhow::Result<()> {
+            let path = &self.0;
+
+            std::process::Command::new(self.0.clone())
+                .arg(ipc_url)
+                .creation_flags(DETACHED_PROCESS.0)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .stdin(std::process::Stdio::null())
+                .spawn()
+                .map(|_| ())
+                .context(format!("Failed to spawn {}", path.display()))
         }
     }
 
     impl Detect {
-        pub fn detect(_path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
-            Ok(App)
+        pub fn detect(path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
+            let path = if let Some(path) = path {
+                path.to_path_buf().canonicalize()?
+            } else {
+                let cli = env::current_exe()?;
+                let dir = cli
+                    .parent()
+                    .ok_or_else(|| anyhow!("no parent path for cli"))?;
+
+                // TODO(raggi): seems slightly awkward that zed GUI builds as
+                // zed.exe when the user wants to run "zed", then we have a
+                // rename dance for different deployments, but the binaries
+                // could be combined into one, too - provided we can make the
+                // runtime loader operate quickly on a chonky file.
+                let possible_locations = ["zed-editor.exe", "zed.exe"];
+                possible_locations
+                    .iter()
+                    .find_map(|p| dir.join(p).canonicalize().ok().filter(|path| path != &cli))
+                    .ok_or_else(|| {
+                        anyhow!("could not find any of: {}", possible_locations.join(", "))
+                    })?
+            };
+
+            Ok(App(path))
+        }
+    }
+
+    fn send_message_to_mailslot(message: &[u8]) -> io::Result<()> {
+        let name = format!("zed-mailslot-{}", *RELEASE_CHANNEL);
+        let path = format!("\\\\.\\mailslot\\{}", name);
+
+        let handle = unsafe {
+            CreateFileW(
+                &HSTRING::from(path),
+                FILE_GENERIC_WRITE.0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                None,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                None,
+            )?
+        };
+
+        let mut bytes_written: u32 = 0;
+
+        unsafe {
+            WriteFile(handle, Some(message), Some(&mut bytes_written), None)?;
+
+            let _ = CloseHandle(handle);
+        }
+
+        Ok(())
+    }
+
+    fn has_console_window() -> bool {
+        !unsafe { GetConsoleWindow() }.is_invalid()
+    }
+
+    fn detach_console_window() {
+        if !has_console_window() {
+            return;
+        }
+        unsafe {
+            FreeConsole().expect("Failed to FreeConsole");
+        }
+    }
+
+    fn ensure_console_window() {
+        if has_console_window() {
+            return;
+        }
+
+        unsafe {
+            AllocConsole().expect("Failed to AllocConsole");
+            AttachConsole(GetCurrentProcessId()).expect("Failed to attach console");
+            SetStdHandle(
+                STD_INPUT_HANDLE,
+                GetStdHandle(STD_INPUT_HANDLE).expect("Failed to get STD_INPUT_HANDLE"),
+            )
+            .expect("Failed to set STD_INPUT_HANDLE");
+            SetStdHandle(
+                STD_OUTPUT_HANDLE,
+                GetStdHandle(STD_OUTPUT_HANDLE).expect("Failed to get STD_OUTPUT_HANDLE"),
+            )
+            .expect("Failed to set STD_OUTPUT_HANDLE");
+            SetStdHandle(
+                STD_ERROR_HANDLE,
+                GetStdHandle(STD_ERROR_HANDLE).expect("Failed to get STD_ERROR_HANDLE"),
+            )
+            .expect("Failed to set STD_ERROR_HANDLE");
+            // SetConsoleTitleW("Zed".into()); // TODO: better string? TODO: use the widechar API.
         }
     }
 }

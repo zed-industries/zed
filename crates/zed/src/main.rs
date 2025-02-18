@@ -206,15 +206,15 @@ fn main() {
         if *db::ZED_STATELESS || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
             false
         } else {
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
             {
                 crate::zed::listen_for_cli_connections(open_listener.clone()).is_err()
             }
 
-            #[cfg(target_os = "windows")]
-            {
-                !crate::zed::windows_only_instance::check_single_instance()
-            }
+            // #[cfg(target_os = "windows")]
+            // {
+            //     !crate::zed::windows_only_instance::check_single_instance()
+            // }
 
             #[cfg(target_os = "macos")]
             {

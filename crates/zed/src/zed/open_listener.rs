@@ -165,6 +165,20 @@ pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
+    use release_channel::RELEASE_CHANNEL_NAME;
+    let name = format!("zed-mailbox-{}", *RELEASE_CHANNEL_NAME);
+    let mut mailslot = crate::zed::windows_mailslots::Mailslot::new(&name)?;
+    thread::spawn(move || {
+        let mut buf = [0u8; 1024];
+        while let Ok(len) = mailslot.recv(&mut buf) {
+            opener.open_urls(vec![String::from_utf8_lossy(&buf[..len]).to_string()]);
+        }
+    });
+    Ok(())
+}
+
 fn connect_to_cli(
     server_name: &str,
 ) -> Result<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)> {
