@@ -1794,18 +1794,23 @@ impl Pane {
             return Ok(true);
         };
 
-        let (mut has_conflict, mut is_dirty, mut can_save, is_singleton, has_deleted_file) = cx
-            .update(|_window, cx| {
-                (
-                    item.has_conflict(cx),
-                    item.is_dirty(cx),
-                    item.can_save(cx),
-                    item.is_singleton(cx),
-                    item.has_deleted_file(cx),
-                )
-            })?;
-
-        let can_save_as = is_singleton;
+        let (
+            mut has_conflict,
+            mut is_dirty,
+            mut can_save,
+            can_save_as,
+            is_singleton,
+            has_deleted_file,
+        ) = cx.update(|_window, cx| {
+            (
+                item.has_conflict(cx),
+                item.is_dirty(cx),
+                item.can_save(cx),
+                item.can_save_as(cx),
+                item.is_singleton(cx),
+                item.has_deleted_file(cx),
+            )
+        })?;
 
         // when saving a single buffer, we ignore whether or not it's dirty.
         if save_intent == SaveIntent::Save || save_intent == SaveIntent::SaveWithoutFormat {
@@ -1939,7 +1944,7 @@ impl Pane {
                     item.save(should_format, project, window, cx)
                 })?
                 .await?;
-            } else if can_save_as {
+            } else if can_save_as && is_singleton {
                 let abs_path = pane.update_in(cx, |pane, window, cx| {
                     pane.activate_item(item_ix, true, true, window, cx);
                     pane.workspace.update(cx, |workspace, cx| {
