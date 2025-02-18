@@ -723,7 +723,6 @@ impl BlockMap {
         self.show_excerpt_controls
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn header_and_footer_blocks<'a, R, T>(
         show_excerpt_controls: bool,
         excerpt_footer_height: u32,
