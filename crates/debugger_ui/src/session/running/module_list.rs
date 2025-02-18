@@ -8,11 +8,11 @@ pub struct ModuleList {
     focus_handle: FocusHandle,
     _subscription: Subscription,
     session: Entity<Session>,
-    client_id: SessionId,
+    session_id: SessionId,
 }
 
 impl ModuleList {
-    pub fn new(session: Entity<Session>, client_id: SessionId, cx: &mut Context<Self>) -> Self {
+    pub fn new(session: Entity<Session>, session_id: SessionId, cx: &mut Context<Self>) -> Self {
         let weak_entity = cx.weak_entity();
         let focus_handle = cx.focus_handle();
 
@@ -40,7 +40,7 @@ impl ModuleList {
             session,
             focus_handle,
             _subscription,
-            client_id,
+            session_id,
         }
     }
 
@@ -101,7 +101,7 @@ use util::maybe;
 #[cfg(any(test, feature = "test-support"))]
 impl ModuleList {
     pub fn modules(&self, cx: &mut Context<Self>) -> Vec<Module> {
-        let Some(state) = self.session.read(cx).client_state(self.client_id) else {
+        let Some(state) = self.session.read(cx).client_state(self.session_id) else {
             return vec![];
         };
 

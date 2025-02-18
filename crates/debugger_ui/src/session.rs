@@ -86,7 +86,7 @@ impl DebugSession {
         match &self.mode {
             DebugSessionState::Inert(_) => None,
             DebugSessionState::Starting(_entity) => unimplemented!(),
-            DebugSessionState::Running(entity) => Some(entity.read(cx).client_id()),
+            DebugSessionState::Running(entity) => Some(entity.read(cx).session_id()),
         }
     }
     fn on_inert_event(

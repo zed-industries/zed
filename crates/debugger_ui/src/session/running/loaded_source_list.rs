@@ -9,11 +9,10 @@ pub struct LoadedSourceList {
     focus_handle: FocusHandle,
     _subscription: Subscription,
     session: Entity<Session>,
-    client_id: SessionId,
 }
 
 impl LoadedSourceList {
-    pub fn new(session: Entity<Session>, client_id: SessionId, cx: &mut Context<Self>) -> Self {
+    pub fn new(session: Entity<Session>, cx: &mut Context<Self>) -> Self {
         let weak_entity = cx.weak_entity();
         let focus_handle = cx.focus_handle();
 
@@ -43,7 +42,6 @@ impl LoadedSourceList {
             session,
             focus_handle,
             _subscription,
-            client_id,
         }
     }
 

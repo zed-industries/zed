@@ -330,7 +330,6 @@ pub struct VariableList {
     focus_handle: FocusHandle,
     open_entries: Vec<OpenEntry>,
     session: Entity<Session>,
-    client_id: SessionId,
     _subscriptions: Vec<Subscription>,
     set_variable_editor: Entity<Editor>,
     selection: Option<VariableListEntry>,
@@ -346,7 +345,6 @@ pub struct VariableList {
 impl VariableList {
     pub fn new(
         session: Entity<Session>,
-        client_id: SessionId,
         stack_frame_list: Entity<StackFrameList>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -389,7 +387,6 @@ impl VariableList {
             selection: None,
             stack_frame_list,
             set_variable_editor,
-            client_id,
             open_context_menu: None,
             set_variable_state: None,
             fetch_variables_task: None,

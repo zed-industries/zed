@@ -319,7 +319,7 @@ impl RunningState {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         session: Entity<Session>,
-        client_id: SessionId,
+        session_id: SessionId,
         thread_id: ThreadId,
         debug_panel: &Entity<DebugPanel>,
         workspace: WeakEntity<Workspace>,
@@ -332,24 +332,17 @@ impl RunningState {
             StackFrameList::new(workspace.clone(), session.clone(), thread_id, window, cx)
         });
 
-        let variable_list = cx.new(|cx| {
-            VariableList::new(
-                session.clone(),
-                client_id,
-                stack_frame_list.clone(),
-                window,
-                cx,
-            )
-        });
+        let variable_list =
+            cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));
 
-        let module_list = cx.new(|cx| ModuleList::new(session.clone(), client_id, cx));
+        let module_list = cx.new(|cx| ModuleList::new(session.clone(), session_id, cx));
 
-        let loaded_source_list = cx.new(|cx| LoadedSourceList::new(session.clone(), client_id, cx));
+        let loaded_source_list = cx.new(|cx| LoadedSourceList::new(session.clone(), cx));
 
         let console = cx.new(|cx| {
             Console::new(
                 session.clone(),
-                client_id,
+                session_id,
                 stack_frame_list.clone(),
                 variable_list.clone(),
                 window,
@@ -380,7 +373,7 @@ impl RunningState {
             remote_id: None,
             stack_frame_list,
             loaded_source_list,
-            session_id: client_id,
+            session_id,
             show_console_indicator: false,
             active_thread_item: ThreadItem::Variables,
         }
@@ -424,7 +417,7 @@ impl RunningState {
         &self.session
     }
 
-    pub fn client_id(&self) -> SessionId {
+    pub fn session_id(&self) -> SessionId {
         self.session_id
     }
 
