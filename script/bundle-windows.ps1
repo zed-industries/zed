@@ -9,7 +9,7 @@ switch ($channel) {
         $appName = "Zed Editor"
         $appDisplayName = "Zed Editor (User)"
         $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION"
-        $appMutex = "ZedSetupMutex" # TODO:
+        $appMutex = "Zed-Editor-Stable-Instance-Mutex" # The mutex name here should match the mutex name in crates\zed\src\zed\windows_only_instance.rs
         $appExeName = "zed"
         $regValueName = "ZedEditor"
         $appUserId = "ZedIndustry.Zed"
@@ -20,7 +20,7 @@ switch ($channel) {
         $appName = "Zed Editor Preview"
         $appDisplayName = "Zed Editor Preview (User)"
         $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION-preview"
-        $appMutex = "ZedSetupMutex" # TODO:
+        $appMutex = "Zed-Editor-Preview-Instance-Mutex" # The mutex name here should match the mutex name in crates\zed\src\zed\windows_only_instance.rs
         $appExeName = "zed"
         $regValueName = "ZedEditorPreview"
         $appUserId = "ZedIndustry.Zed.Preview"
