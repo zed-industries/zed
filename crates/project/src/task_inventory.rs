@@ -18,7 +18,7 @@ use task::{
     ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables, VariableName,
 };
 use text::{Point, ToPoint};
-use util::{post_inc, NumericPrefixWithSuffix, ResultExt as _};
+use util::{paths::PathExt as _, post_inc, NumericPrefixWithSuffix, ResultExt as _};
 use worktree::WorktreeId;
 
 use crate::worktree_store::WorktreeStore;
@@ -470,7 +470,7 @@ impl ContextProvider for BasicContextProvider {
         let current_file = buffer
             .file()
             .and_then(|file| file.as_local())
-            .map(|file| file.abs_path(cx).to_string_lossy().to_string());
+            .map(|file| file.abs_path(cx).to_sanitized_string());
         let Point { row, column } = location.range.start.to_point(&buffer_snapshot);
         let row = row + 1;
         let column = column + 1;
@@ -502,14 +502,14 @@ impl ContextProvider for BasicContextProvider {
         if let Some(Some(worktree_path)) = worktree_root_dir {
             task_variables.insert(
                 VariableName::WorktreeRoot,
-                worktree_path.to_string_lossy().to_string(),
+                worktree_path.to_sanitized_string(),
             );
             if let Some(full_path) = current_file.as_ref() {
                 let relative_path = pathdiff::diff_paths(full_path, worktree_path);
                 if let Some(relative_path) = relative_path {
                     task_variables.insert(
                         VariableName::RelativeFile,
-                        relative_path.to_string_lossy().into_owned(),
+                        relative_path.to_sanitized_string(),
                     );
                 }
             }

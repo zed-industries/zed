@@ -1,6 +1,5 @@
 use std::ops::{Deref, DerefMut};
 
-use assets::Assets;
 use editor::test::editor_lsp_test_context::EditorLspTestContext;
 use gpui::{Context, Entity, SemanticVersion, UpdateGlobal};
 use search::{project_search::ProjectSearchBar, BufferSearchBar};
@@ -21,7 +20,7 @@ impl VimTestContext {
             cx.set_global(settings);
             release_channel::init(SemanticVersion::default(), cx);
             command_palette::init(cx);
-            project_panel::init(Assets, cx);
+            project_panel::init(cx);
             git_ui::init(cx);
             crate::init(cx);
             search::init(cx);
@@ -79,7 +78,7 @@ impl VimTestContext {
         cx.update_workspace(|workspace, window, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.toolbar().update(cx, |toolbar, cx| {
-                    let buffer_search_bar = cx.new(|cx| BufferSearchBar::new(window, cx));
+                    let buffer_search_bar = cx.new(|cx| BufferSearchBar::new(None, window, cx));
                     toolbar.add_item(buffer_search_bar, window, cx);
 
                     let project_search_bar = cx.new(|_| ProjectSearchBar::new());
@@ -95,14 +94,14 @@ impl VimTestContext {
         Self { cx }
     }
 
-    pub fn update_entity<F, T, R>(&mut self, model: Entity<T>, update: F) -> R
+    pub fn update_entity<F, T, R>(&mut self, entity: Entity<T>, update: F) -> R
     where
         T: 'static,
         F: FnOnce(&mut T, &mut Window, &mut Context<T>) -> R + 'static,
     {
         let window = self.window;
         self.update_window(window, move |_, window, cx| {
-            model.update(cx, |t, cx| update(t, window, cx))
+            entity.update(cx, |t, cx| update(t, window, cx))
         })
         .unwrap()
     }
@@ -131,7 +130,7 @@ impl VimTestContext {
     }
 
     pub fn mode(&mut self) -> Mode {
-        self.update_editor(|editor, _, cx| editor.addon::<VimAddon>().unwrap().model.read(cx).mode)
+        self.update_editor(|editor, _, cx| editor.addon::<VimAddon>().unwrap().entity.read(cx).mode)
     }
 
     pub fn active_operator(&mut self) -> Option<Operator> {
@@ -139,7 +138,7 @@ impl VimTestContext {
             editor
                 .addon::<VimAddon>()
                 .unwrap()
-                .model
+                .entity
                 .read(cx)
                 .operator_stack
                 .last()
@@ -153,7 +152,7 @@ impl VimTestContext {
             self.update_editor(|editor, _window, _cx| editor.addon::<VimAddon>().cloned().unwrap());
 
         self.update(|window, cx| {
-            vim.model.update(cx, |vim, cx| {
+            vim.entity.update(cx, |vim, cx| {
                 vim.switch_mode(mode, true, window, cx);
             });
         });

@@ -77,4 +77,8 @@ impl ExtensionThemeProxy for ThemeRegistryProxy {
                 .await
         })
     }
+
+    fn reload_current_icon_theme(&self, cx: &mut App) {
+        ThemeSettings::reload_current_icon_theme(cx)
+    }
 }

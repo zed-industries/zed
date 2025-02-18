@@ -2,7 +2,7 @@ use anyhow::Result;
 use collections::HashMap;
 use git::{
     blame::{Blame, BlameEntry},
-    parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid, PullRequest,
+    parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid,
 };
 use gpui::{App, Context, Entity, Subscription, Task};
 use http_client::HttpClient;
@@ -12,7 +12,10 @@ use project::{Project, ProjectItem};
 use smallvec::SmallVec;
 use std::{sync::Arc, time::Duration};
 use sum_tree::SumTree;
+use ui::SharedString;
 use url::Url;
+
+use crate::commit_tooltip::ParsedCommitMessage;
 
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
@@ -77,7 +80,11 @@ impl GitRemote {
         self.host.supports_avatars()
     }
 
-    pub async fn avatar_url(&self, commit: Oid, client: Arc<dyn HttpClient>) -> Option<Url> {
+    pub async fn avatar_url(
+        &self,
+        commit: SharedString,
+        client: Arc<dyn HttpClient>,
+    ) -> Option<Url> {
         self.host
             .commit_author_avatar_url(&self.owner, &self.repo, commit, client)
             .await
@@ -85,21 +92,11 @@ impl GitRemote {
             .flatten()
     }
 }
-
-#[derive(Clone, Debug)]
-pub struct CommitDetails {
-    pub message: String,
-    pub parsed_message: ParsedMarkdown,
-    pub permalink: Option<Url>,
-    pub pull_request: Option<PullRequest>,
-    pub remote: Option<GitRemote>,
-}
-
 pub struct GitBlame {
     project: Entity<Project>,
     buffer: Entity<Buffer>,
     entries: SumTree<GitBlameEntry>,
-    commit_details: HashMap<Oid, CommitDetails>,
+    commit_details: HashMap<Oid, crate::commit_tooltip::ParsedCommitMessage>,
     buffer_snapshot: BufferSnapshot,
     buffer_edits: text::Subscription,
     task: Task<Result<()>>,
@@ -187,7 +184,7 @@ impl GitBlame {
         self.generated
     }
 
-    pub fn details_for_entry(&self, entry: &BlameEntry) -> Option<CommitDetails> {
+    pub fn details_for_entry(&self, entry: &BlameEntry) -> Option<ParsedCommitMessage> {
         self.commit_details.get(&entry.sha).cloned()
     }
 
@@ -480,7 +477,7 @@ async fn parse_commit_messages(
     deprecated_permalinks: &HashMap<Oid, Url>,
     provider_registry: Arc<GitHostingProviderRegistry>,
     languages: &Arc<LanguageRegistry>,
-) -> HashMap<Oid, CommitDetails> {
+) -> HashMap<Oid, ParsedCommitMessage> {
     let mut commit_details = HashMap::default();
 
     let parsed_remote_url = remote_url
@@ -519,8 +516,8 @@ async fn parse_commit_messages(
 
         commit_details.insert(
             oid,
-            CommitDetails {
-                message,
+            ParsedCommitMessage {
+                message: message.into(),
                 parsed_message,
                 permalink,
                 remote,
@@ -560,7 +557,7 @@ mod tests {
     use settings::SettingsStore;
     use std::{cmp, env, ops::Range, path::Path};
     use unindent::Unindent as _;
-    use util::RandomCharIter;
+    use util::{path, RandomCharIter};
 
     // macro_rules! assert_blame_rows {
     //     ($blame:expr, $rows:expr, $expected:expr, $cx:expr) => {
@@ -697,7 +694,7 @@ mod tests {
         fs.set_blame_for_repo(
             Path::new("/my-repo/.git"),
             vec![(
-                Path::new("file.txt"),
+                "file.txt".into(),
                 Blame {
                     entries: vec![
                         blame_entry("1b1b1b", 0..1),
@@ -793,7 +790,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/my-repo",
+            path!("/my-repo"),
             json!({
                 ".git": {},
                 "file.txt": r#"
@@ -807,9 +804,9 @@ mod tests {
         .await;
 
         fs.set_blame_for_repo(
-            Path::new("/my-repo/.git"),
+            Path::new(path!("/my-repo/.git")),
             vec![(
-                Path::new("file.txt"),
+                "file.txt".into(),
                 Blame {
                     entries: vec![blame_entry("1b1b1b", 0..4)],
                     ..Default::default()
@@ -817,10 +814,10 @@ mod tests {
             )],
         );
 
-        let project = Project::test(fs, ["/my-repo".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/my-repo").as_ref()], cx).await;
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/my-repo/file.txt", cx)
+                project.open_local_buffer(path!("/my-repo/file.txt"), cx)
             })
             .await
             .unwrap();
@@ -945,7 +942,7 @@ mod tests {
         log::info!("initial buffer text: {:?}", buffer_initial_text);
 
         fs.insert_tree(
-            "/my-repo",
+            path!("/my-repo"),
             json!({
                 ".git": {},
                 "file.txt": buffer_initial_text.to_string()
@@ -956,9 +953,9 @@ mod tests {
         let blame_entries = gen_blame_entries(buffer_initial_text.max_point().row, &mut rng);
         log::info!("initial blame entries: {:?}", blame_entries);
         fs.set_blame_for_repo(
-            Path::new("/my-repo/.git"),
+            Path::new(path!("/my-repo/.git")),
             vec![(
-                Path::new("file.txt"),
+                "file.txt".into(),
                 Blame {
                     entries: blame_entries,
                     ..Default::default()
@@ -966,10 +963,10 @@ mod tests {
             )],
         );
 
-        let project = Project::test(fs.clone(), ["/my-repo".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/my-repo").as_ref()], cx).await;
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/my-repo/file.txt", cx)
+                project.open_local_buffer(path!("/my-repo/file.txt"), cx)
             })
             .await
             .unwrap();
@@ -998,9 +995,9 @@ mod tests {
                     log::info!("regenerating blame entries: {:?}", blame_entries);
 
                     fs.set_blame_for_repo(
-                        Path::new("/my-repo/.git"),
+                        Path::new(path!("/my-repo/.git")),
                         vec![(
-                            Path::new("file.txt"),
+                            "file.txt".into(),
                             Blame {
                                 entries: blame_entries,
                                 ..Default::default()

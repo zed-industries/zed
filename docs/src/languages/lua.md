@@ -23,7 +23,7 @@ See [LuaLS Settings Documentation](https://luals.github.io/wiki/settings/) for a
     "indent_style": "space",
     "indent_size": "4"
   },
-  "workspace.library": ["../soemdir/library"]
+  "workspace.library": ["../somedir/library"]
 }
 ```
 
@@ -59,7 +59,13 @@ Alternative you can use [StyLua](https://github.com/JohnnyMorganz/StyLua):
       "formatter": {
         "external": {
           "command": "stylua",
-          "arguments": ["--syntax=Lua54", "-"]
+          "arguments": [
+            "--syntax=Lua54",
+            "--respect-ignores",
+            "--stdin-filepath",
+            "{buffer_path}",
+            "-"
+          ]
         }
       }
     }

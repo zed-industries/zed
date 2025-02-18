@@ -17,7 +17,7 @@ use gpui::{
 use http_client::github::get_release_by_tag_name;
 use http_client::HttpClient;
 use language::{
-    language_settings::{all_language_settings, language_settings, InlineCompletionProvider},
+    language_settings::{all_language_settings, language_settings, EditPredictionProvider},
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
     ToPointUtf16,
 };
@@ -368,8 +368,8 @@ impl Copilot {
         let server_id = self.server_id;
         let http = self.http.clone();
         let node_runtime = self.node_runtime.clone();
-        if all_language_settings(None, cx).inline_completions.provider
-            == InlineCompletionProvider::Copilot
+        if all_language_settings(None, cx).edit_predictions.provider
+            == EditPredictionProvider::Copilot
         {
             if matches!(self.server, CopilotServer::Disabled) {
                 let start_task = cx
@@ -458,12 +458,14 @@ impl Copilot {
                 .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
                 .detach();
 
-            let initialize_params = None;
             let configuration = lsp::DidChangeConfigurationParams {
                 settings: Default::default(),
             };
             let server = cx
-                .update(|cx| server.initialize(initialize_params, configuration.into(), cx))?
+                .update(|cx| {
+                    let params = server.default_initialize_params(cx);
+                    server.initialize(params, configuration.into(), cx)
+                })?
                 .await?;
 
             let status = server
@@ -1061,6 +1063,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use util::path;
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {
@@ -1123,7 +1126,7 @@ mod tests {
         buffer_1.update(cx, |buffer, cx| {
             buffer.file_updated(
                 Arc::new(File {
-                    abs_path: "/root/child/buffer-1".into(),
+                    abs_path: path!("/root/child/buffer-1").into(),
                     path: Path::new("child/buffer-1").into(),
                 }),
                 cx,
@@ -1136,7 +1139,7 @@ mod tests {
                 text_document: lsp::TextDocumentIdentifier::new(buffer_1_uri),
             }
         );
-        let buffer_1_uri = lsp::Url::from_file_path("/root/child/buffer-1").unwrap();
+        let buffer_1_uri = lsp::Url::from_file_path(path!("/root/child/buffer-1")).unwrap();
         assert_eq!(
             lsp.receive_notification::<lsp::notification::DidOpenTextDocument>()
                 .await,

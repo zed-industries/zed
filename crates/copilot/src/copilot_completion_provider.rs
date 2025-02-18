@@ -1,11 +1,9 @@
 use crate::{Completion, Copilot};
 use anyhow::Result;
 use gpui::{App, Context, Entity, EntityId, Task};
-use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
-use language::{
-    language_settings::{all_language_settings, AllLanguageSettings},
-    Buffer, OffsetRangeExt, ToOffset,
-};
+use inline_completion::{Direction, EditPredictionProvider, InlineCompletion};
+use language::{language_settings::AllLanguageSettings, Buffer, OffsetRangeExt, ToOffset};
+use project::Project;
 use settings::Settings;
 use std::{path::Path, time::Duration};
 
@@ -50,7 +48,7 @@ impl CopilotCompletionProvider {
     }
 }
 
-impl InlineCompletionProvider for CopilotCompletionProvider {
+impl EditPredictionProvider for CopilotCompletionProvider {
     fn name() -> &'static str {
         "copilot"
     }
@@ -63,33 +61,22 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         false
     }
 
-    fn show_completions_in_normal_mode() -> bool {
-        false
-    }
-
     fn is_refreshing(&self) -> bool {
         self.pending_refresh.is_some()
     }
 
     fn is_enabled(
         &self,
-        buffer: &Entity<Buffer>,
-        cursor_position: language::Anchor,
+        _buffer: &Entity<Buffer>,
+        _cursor_position: language::Anchor,
         cx: &App,
     ) -> bool {
-        if !self.copilot.read(cx).status().is_authorized() {
-            return false;
-        }
-
-        let buffer = buffer.read(cx);
-        let file = buffer.file();
-        let language = buffer.language_at(cursor_position);
-        let settings = all_language_settings(file, cx);
-        settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
+        self.copilot.read(cx).status().is_authorized()
     }
 
     fn refresh(
         &mut self,
+        _project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
@@ -205,7 +192,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
     fn discard(&mut self, cx: &mut Context<Self>) {
         let settings = AllLanguageSettings::get_global(cx);
 
-        let copilot_enabled = settings.inline_completions_enabled(None, None, cx);
+        let copilot_enabled = settings.show_inline_completions(None, cx);
 
         if !copilot_enabled {
             return;
@@ -255,6 +242,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             } else {
                 let position = cursor_position.bias_right(buffer);
                 Some(InlineCompletion {
+                    id: None,
                     edits: vec![(position..position, completion_text.into())],
                     edit_preview: None,
                 })
@@ -290,7 +278,10 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::future::Future;
-    use util::test::{marked_text_ranges_by, TextRangeMarker};
+    use util::{
+        path,
+        test::{marked_text_ranges_by, TextRangeMarker},
+    };
 
     #[gpui::test(iterations = 10)]
     async fn test_copilot(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -311,7 +302,7 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
         });
 
         cx.set_state(indoc! {"
@@ -341,7 +332,6 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.context_menu_visible());
-            assert!(!editor.context_menu_contains_inline_completion());
             assert!(!editor.has_active_inline_completion());
             // Since we have both, the copilot suggestion is not shown inline
             assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
@@ -394,12 +384,11 @@ mod tests {
             assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
         });
 
-        // Ensure existing inline completion is interpolated when inserting again.
+        // Ensure existing edit prediction is interpolated when inserting again.
         cx.simulate_keystroke("c");
         executor.run_until_parked();
         cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
-            assert!(!editor.context_menu_contains_inline_completion());
             assert!(editor.has_active_inline_completion());
             assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
@@ -419,7 +408,6 @@ mod tests {
         cx.update_editor(|editor, window, cx| {
             assert!(!editor.context_menu_visible());
             assert!(editor.has_active_inline_completion());
-            assert!(!editor.context_menu_contains_inline_completion());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
 
@@ -449,8 +437,8 @@ mod tests {
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
 
-            // AcceptInlineCompletion when there is an active suggestion inserts it.
-            editor.accept_inline_completion(&Default::default(), window, cx);
+            // AcceptEditPrediction when there is an active suggestion inserts it.
+            editor.accept_edit_prediction(&Default::default(), window, cx);
             assert!(!editor.has_active_inline_completion());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.copilot2\ntwo\nthree\n");
@@ -495,7 +483,7 @@ mod tests {
         );
 
         cx.update_editor(|editor, window, cx| {
-            editor.next_inline_completion(&Default::default(), window, cx)
+            editor.next_edit_prediction(&Default::default(), window, cx)
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
@@ -509,8 +497,8 @@ mod tests {
             assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
 
-            // Using AcceptInlineCompletion again accepts the suggestion.
-            editor.accept_inline_completion(&Default::default(), window, cx);
+            // Using AcceptEditPrediction again accepts the suggestion.
+            editor.accept_edit_prediction(&Default::default(), window, cx);
             assert!(!editor.has_active_inline_completion());
             assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
@@ -539,7 +527,7 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
         });
 
         // Setup the editor with a completion request.
@@ -663,7 +651,7 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
         });
 
         cx.set_state(indoc! {"
@@ -682,7 +670,7 @@ mod tests {
             vec![],
         );
         cx.update_editor(|editor, window, cx| {
-            editor.next_inline_completion(&Default::default(), window, cx)
+            editor.next_edit_prediction(&Default::default(), window, cx)
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
@@ -753,7 +741,7 @@ mod tests {
         let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         editor
             .update(cx, |editor, window, cx| {
-                editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
+                editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
             })
             .unwrap();
 
@@ -771,7 +759,7 @@ mod tests {
             editor.change_selections(None, window, cx, |s| {
                 s.select_ranges([Point::new(1, 5)..Point::new(1, 5)])
             });
-            editor.next_inline_completion(&Default::default(), window, cx);
+            editor.next_edit_prediction(&Default::default(), window, cx);
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         _ = editor.update(cx, |editor, _, cx| {
@@ -847,7 +835,7 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
         });
 
         cx.set_state(indoc! {"
@@ -875,7 +863,7 @@ mod tests {
             vec![],
         );
         cx.update_editor(|editor, window, cx| {
-            editor.next_inline_completion(&Default::default(), window, cx)
+            editor.next_edit_prediction(&Default::default(), window, cx)
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {
@@ -934,7 +922,6 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {
             assert!(editor.context_menu_visible());
-            assert!(!editor.context_menu_contains_inline_completion());
             assert!(!editor.has_active_inline_completion(),);
             assert_eq!(editor.text(cx), "one\ntwo.\nthree\n");
         });
@@ -944,7 +931,7 @@ mod tests {
     async fn test_copilot_disabled_globs(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         init_test(cx, |settings| {
             settings
-                .inline_completions
+                .edit_predictions
                 .get_or_insert(Default::default())
                 .disabled_globs = Some(vec![".env*".to_string()]);
         });
@@ -953,24 +940,24 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/test",
+            path!("/test"),
             json!({
                 ".env": "SECRET=something\n",
                 "README.md": "hello\nworld\nhow\nare\nyou\ntoday"
             }),
         )
         .await;
-        let project = Project::test(fs, ["/test".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
         let private_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/test/.env", cx)
+                project.open_local_buffer(path!("/test/.env"), cx)
             })
             .await
             .unwrap();
         let public_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/test/README.md", cx)
+                project.open_local_buffer(path!("/test/README.md"), cx)
             })
             .await
             .unwrap();
@@ -1006,7 +993,7 @@ mod tests {
         let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         editor
             .update(cx, |editor, window, cx| {
-                editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
+                editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
             })
             .unwrap();
 

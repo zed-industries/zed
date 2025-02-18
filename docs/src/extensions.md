@@ -6,4 +6,5 @@ Zed lets you add new functionality using user-defined extensions.
 - [Developing Extensions](./extensions/developing-extensions.md)
   - [Developing Language Extensions](./extensions/languages.md)
   - [Developing Themes](./extensions/themes.md)
+  - [Developing Icon Themes](./extensions/icon-themes.md)
   - [Developing Slash Commands](./extensions/slash-commands.md)

@@ -13,7 +13,7 @@ use crate::{
     Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix,
     Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    SUBPIXEL_VARIANTS,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -23,6 +23,7 @@ use futures::FutureExt;
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use parking_lot::RwLock;
+use raw_window_handle::{HandleError, HasWindowHandle};
 use refineable::Refineable;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -107,9 +108,9 @@ impl WindowInvalidator {
 
     pub fn invalidate_view(&self, entity: EntityId, cx: &mut App) -> bool {
         let mut inner = self.inner.borrow_mut();
+        inner.dirty_views.insert(entity);
         if inner.draw_phase == DrawPhase::None {
             inner.dirty = true;
-            inner.dirty_views.insert(entity);
             cx.push_effect(Effect::Notify { emitter: entity });
             true
         } else {
@@ -137,7 +138,7 @@ impl WindowInvalidator {
         self.inner.borrow_mut().dirty_views = views;
     }
 
-    pub fn not_painting(&self) -> bool {
+    pub fn not_drawing(&self) -> bool {
         self.inner.borrow().draw_phase == DrawPhase::None
     }
 
@@ -476,6 +477,7 @@ pub(crate) struct TooltipRequest {
 }
 
 pub(crate) struct DeferredDraw {
+    current_view: EntityId,
     priority: usize,
     parent_node: DispatchNodeId,
     element_id_stack: SmallVec<[ElementId; 32]>,
@@ -612,6 +614,7 @@ pub struct Window {
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
+    pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: Option<f32>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
@@ -895,6 +898,7 @@ impl Window {
             root: None,
             element_id_stack: SmallVec::default(),
             text_style_stack: Vec::new(),
+            rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
             element_opacity: None,
@@ -971,27 +975,6 @@ impl ContentMask<Pixels> {
 }
 
 impl Window {
-    /// Indicate that a view has changed, which will invoke any observers and also mark the window as dirty.
-    /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
-    /// Note that this method will always cause a redraw, the entire window is refreshed if view_id is None.
-    pub(crate) fn notify(
-        &mut self,
-        notify_effect: bool,
-        entity_id: Option<EntityId>,
-        cx: &mut App,
-    ) {
-        let Some(view_id) = entity_id else {
-            self.refresh();
-            return;
-        };
-
-        self.mark_view_dirty(view_id);
-
-        if notify_effect {
-            self.invalidator.invalidate_view(view_id, cx);
-        }
-    }
-
     fn mark_view_dirty(&mut self, view_id: EntityId) {
         // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
         // should already be dirty.
@@ -1054,7 +1037,7 @@ impl Window {
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn refresh(&mut self) {
-        if self.invalidator.not_painting() {
+        if self.invalidator.not_drawing() {
             self.refreshing = true;
             self.invalidator.set_dirty(true);
         }
@@ -1300,8 +1283,8 @@ impl Window {
     ///
     /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
     pub fn request_animation_frame(&self) {
-        let parent_id = self.parent_view_id();
-        self.on_next_frame(move |window, cx| window.notify(true, parent_id, cx));
+        let entity = self.current_view();
+        self.on_next_frame(move |_, cx| cx.notify(entity));
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
@@ -1534,6 +1517,7 @@ impl Window {
     pub fn draw(&mut self, cx: &mut App) {
         self.invalidate_entities();
         cx.entities.clear_accessed();
+        debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
 
@@ -1596,6 +1580,7 @@ impl Window {
                 .retain(&(), |listener| listener(&event, self, cx));
         }
 
+        debug_assert!(self.rendered_entity_stack.is_empty());
         self.record_entities_accessed(cx);
         self.reset_cursor_style(cx);
         self.refreshing = false;
@@ -1766,9 +1751,11 @@ impl Window {
 
             let prepaint_start = self.prepaint_index();
             if let Some(element) = deferred_draw.element.as_mut() {
-                self.with_absolute_element_offset(deferred_draw.absolute_offset, |window| {
-                    element.prepaint(window, cx)
-                });
+                self.with_rendered_view(deferred_draw.current_view, |window| {
+                    window.with_absolute_element_offset(deferred_draw.absolute_offset, |window| {
+                        element.prepaint(window, cx)
+                    });
+                })
             } else {
                 self.reuse_prepaint(deferred_draw.prepaint_range.clone());
             }
@@ -1799,7 +1786,9 @@ impl Window {
 
             let paint_start = self.paint_index();
             if let Some(element) = deferred_draw.element.as_mut() {
-                element.paint(self, cx);
+                self.with_rendered_view(deferred_draw.current_view, |window| {
+                    element.paint(window, cx);
+                })
             } else {
                 self.reuse_paint(deferred_draw.paint_range.clone());
             }
@@ -1857,6 +1846,7 @@ impl Window {
                 [range.start.deferred_draws_index..range.end.deferred_draws_index]
                 .iter()
                 .map(|deferred_draw| DeferredDraw {
+                    current_view: deferred_draw.current_view,
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
@@ -2074,14 +2064,14 @@ impl Window {
         let (task, is_first) = cx.fetch_asset::<A>(source);
         task.clone().now_or_never().or_else(|| {
             if is_first {
-                let parent_id = self.parent_view_id();
+                let entity = self.current_view();
                 self.spawn(cx, {
                     let task = task.clone();
                     |mut cx| async move {
                         task.await;
 
-                        cx.on_next_frame(move |window, cx| {
-                            window.notify(true, parent_id, cx);
+                        cx.on_next_frame(move |_, cx| {
+                            cx.notify(entity);
                         });
                     }
                 })
@@ -2263,6 +2253,7 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
         let parent_node = self.next_frame.dispatch_tree.active_node_id().unwrap();
         self.next_frame.deferred_draws.push(DeferredDraw {
+            current_view: self.current_view(),
             parent_node,
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
@@ -2570,12 +2561,11 @@ impl Window {
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
-        // Render the SVG at twice the size to get a higher quality result.
         let params = RenderSvgParams {
             path,
-            size: bounds
-                .size
-                .map(|pixels| DevicePixels::from((pixels.0 * 2.).ceil() as i32)),
+            size: bounds.size.map(|pixels| {
+                DevicePixels::from((pixels.0 * SMOOTH_SVG_SCALE_FACTOR).ceil() as i32)
+            }),
         };
 
         let Some(tile) =
@@ -2690,12 +2680,12 @@ impl Window {
         Ok(())
     }
 
-    #[must_use]
     /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
     /// layout is being requested, along with the layout ids of any children. This method is called during
     /// calls to the [`Element::request_layout`] trait method and enables any element to participate in layout.
     ///
     /// This method should only be called as part of the request_layout or prepaint phase of element drawing.
+    #[must_use]
     pub fn request_layout(
         &mut self,
         style: Style,
@@ -2826,9 +2816,21 @@ impl Window {
         self.next_frame.dispatch_tree.set_view_id(view_id);
     }
 
-    /// Get the last view id for the current element
-    pub fn parent_view_id(&self) -> Option<EntityId> {
-        self.next_frame.dispatch_tree.parent_view_id()
+    /// Get the entity ID for the currently rendering view
+    pub fn current_view(&self) -> EntityId {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        self.rendered_entity_stack.last().copied().unwrap()
+    }
+
+    pub(crate) fn with_rendered_view<R>(
+        &mut self,
+        id: EntityId,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.rendered_entity_stack.push(id);
+        let result = f(self);
+        self.rendered_entity_stack.pop();
+        result
     }
 
     /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
@@ -3676,6 +3678,18 @@ impl Window {
         dispatch_tree.bindings_for_action(action, &context_stack)
     }
 
+    /// Returns the key bindings for the given action in the given context.
+    pub fn bindings_for_action_in_context(
+        &self,
+        action: &dyn Action,
+        context: KeyContext,
+    ) -> Vec<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        dispatch_tree.bindings_for_action(action, &[context])
+    }
+
+    /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
+
     /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
     pub fn listener_for<V: Render, E>(
         &self,
@@ -3946,6 +3960,12 @@ impl AnyWindowHandle {
             .context("the type of the window's root view has changed")?;
 
         cx.read_window(&view, read)
+    }
+}
+
+impl HasWindowHandle for Window {
+    fn window_handle(&self) -> Result<raw_window_handle::WindowHandle<'_>, HandleError> {
+        self.platform_window.window_handle()
     }
 }
 

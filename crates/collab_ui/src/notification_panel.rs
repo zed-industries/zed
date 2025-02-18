@@ -110,13 +110,13 @@ impl NotificationPanel {
             })
             .detach();
 
-            let model = cx.entity().downgrade();
+            let entity = cx.entity().downgrade();
             let notification_list =
                 ListState::new(0, ListAlignment::Top, px(1000.), move |ix, window, cx| {
-                    model
+                    entity
                         .upgrade()
-                        .and_then(|model| {
-                            model.update(cx, |this, cx| this.render_notification(ix, window, cx))
+                        .and_then(|entity| {
+                            entity.update(cx, |this, cx| this.render_notification(ix, window, cx))
                         })
                         .unwrap_or_else(|| div().into_any())
                 });
@@ -323,9 +323,9 @@ impl NotificationPanel {
                                             .justify_end()
                                             .child(Button::new("decline", "Decline").on_click({
                                                 let notification = notification.clone();
-                                                let model = cx.entity().clone();
+                                                let entity = cx.entity().clone();
                                                 move |_, _, cx| {
-                                                    model.update(cx, |this, cx| {
+                                                    entity.update(cx, |this, cx| {
                                                         this.respond_to_notification(
                                                             notification.clone(),
                                                             false,
@@ -336,9 +336,9 @@ impl NotificationPanel {
                                             }))
                                             .child(Button::new("accept", "Accept").on_click({
                                                 let notification = notification.clone();
-                                                let model = cx.entity().clone();
+                                                let entity = cx.entity().clone();
                                                 move |_, _, cx| {
-                                                    model.update(cx, |this, cx| {
+                                                    entity.update(cx, |this, cx| {
                                                         this.respond_to_notification(
                                                             notification.clone(),
                                                             true,

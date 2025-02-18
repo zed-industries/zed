@@ -2,8 +2,9 @@ use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
 use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EntityId, Task};
-use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
-use language::{language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot};
+use inline_completion::{Direction, EditPredictionProvider, InlineCompletion};
+use language::{Anchor, Buffer, BufferSnapshot};
+use project::Project;
 use std::{
     ops::{AddAssign, Range},
     path::Path,
@@ -34,7 +35,7 @@ impl SupermavenCompletionProvider {
     }
 }
 
-// Computes the inline completion from the difference between the completion text.
+// Computes the edit prediction from the difference between the completion text.
 // this is defined by greedily matching the buffer text against the completion text, with any leftover buffer placed at the end.
 // for example, given the completion text "moo cows are cool" and the buffer text "cowsre pool", the completion state would be
 // the inlays "moo ", " a", and "cool" which will render as "[moo ]cows[ a]re [cool]pool" in the editor.
@@ -91,12 +92,13 @@ fn completion_from_diff(
     }
 
     InlineCompletion {
+        id: None,
         edits,
         edit_preview: None,
     }
 }
 
-impl InlineCompletionProvider for SupermavenCompletionProvider {
+impl EditPredictionProvider for SupermavenCompletionProvider {
     fn name() -> &'static str {
         "supermaven"
     }
@@ -109,20 +111,8 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         false
     }
 
-    fn show_completions_in_normal_mode() -> bool {
-        false
-    }
-
-    fn is_enabled(&self, buffer: &Entity<Buffer>, cursor_position: Anchor, cx: &App) -> bool {
-        if !self.supermaven.read(cx).is_enabled() {
-            return false;
-        }
-
-        let buffer = buffer.read(cx);
-        let file = buffer.file();
-        let language = buffer.language_at(cursor_position);
-        let settings = all_language_settings(file, cx);
-        settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
+    fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {
+        self.supermaven.read(cx).is_enabled()
     }
 
     fn is_refreshing(&self) -> bool {
@@ -131,6 +121,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
 
     fn refresh(
         &mut self,
+        _project: Option<Entity<Project>>,
         buffer_handle: Entity<Buffer>,
         cursor_position: Anchor,
         debounce: bool,

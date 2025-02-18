@@ -45,6 +45,7 @@
 - [Prompts](./assistant/prompting.md)
 - [Context Servers](./assistant/context-servers.md)
   - [Model Context Protocol](./assistant/model-context-protocol.md)
+- [Model Improvement](./model-improvement.md)
 
 # Extensions
 
@@ -53,6 +54,7 @@
 - [Developing Extensions](./extensions/developing-extensions.md)
 - [Language Extensions](./extensions/languages.md)
 - [Theme Extensions](./extensions/themes.md)
+- [Icon Theme Extensions](./extensions/icon-themes.md)
 - [Slash Command Extensions](./extensions/slash-commands.md)
 - [Context Server Extensions](./extensions/context-servers.md)
 

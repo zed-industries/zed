@@ -461,7 +461,7 @@ impl Item for ChannelView {
             .child(
                 Label::new(channel_name)
                     .color(params.text_color())
-                    .italic(params.preview),
+                    .when(params.preview, |this| this.italic()),
             )
             .when_some(status, |element, status| {
                 element.child(

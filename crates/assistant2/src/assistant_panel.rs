@@ -442,7 +442,7 @@ impl AssistantPanel {
 
     fn handle_assistant_configuration_event(
         &mut self,
-        _model: &Entity<AssistantConfiguration>,
+        _entity: &Entity<AssistantConfiguration>,
         event: &AssistantConfigurationEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -660,11 +660,11 @@ impl AssistantPanel {
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
                         PopoverMenu::new("assistant-toolbar-new-popover-menu")
-                            .trigger(
+                            .trigger_with_tooltip(
                                 IconButton::new("new", IconName::Plus)
                                     .icon_size(IconSize::Small)
-                                    .style(ButtonStyle::Subtle)
-                                    .tooltip(Tooltip::text("New…")),
+                                    .style(ButtonStyle::Subtle),
+                                Tooltip::text("New…"),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(self.new_item_context_menu_handle.clone())
@@ -677,11 +677,11 @@ impl AssistantPanel {
                     )
                     .child(
                         PopoverMenu::new("assistant-toolbar-history-popover-menu")
-                            .trigger(
+                            .trigger_with_tooltip(
                                 IconButton::new("open-history", IconName::HistoryRerun)
                                     .icon_size(IconSize::Small)
-                                    .style(ButtonStyle::Subtle)
-                                    .tooltip(Tooltip::text("History…")),
+                                    .style(ButtonStyle::Subtle),
+                                Tooltip::text("History…"),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(self.open_history_context_menu_handle.clone())
@@ -849,6 +849,7 @@ impl AssistantPanel {
                                     &OpenHistory,
                                     &self.focus_handle(cx),
                                     window,
+                                    cx
                                 ))
                                 .on_click(move |_event, window, cx| {
                                     window.dispatch_action(OpenHistory.boxed_clone(), cx);

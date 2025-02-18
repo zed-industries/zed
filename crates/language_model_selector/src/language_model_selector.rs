@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use feature_flags::ZedPro;
 use gpui::{
-    Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    Action, AnyElement, AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription, Task, WeakEntity,
 };
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
@@ -41,7 +41,9 @@ impl LanguageModelSelector {
         };
 
         let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
+            Picker::uniform_list(delegate, window, cx)
+                .show_scrollbar(true)
+                .max_height(Some(rems(20.).into()))
         });
 
         LanguageModelSelector {
@@ -115,20 +117,31 @@ impl Render for LanguageModelSelector {
 }
 
 #[derive(IntoElement)]
-pub struct LanguageModelSelectorPopoverMenu<T>
+pub struct LanguageModelSelectorPopoverMenu<T, TT>
 where
-    T: PopoverTrigger,
+    T: PopoverTrigger + ButtonCommon,
+    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
 {
     language_model_selector: Entity<LanguageModelSelector>,
     trigger: T,
+    tooltip: TT,
     handle: Option<PopoverMenuHandle<LanguageModelSelector>>,
 }
 
-impl<T: PopoverTrigger> LanguageModelSelectorPopoverMenu<T> {
-    pub fn new(language_model_selector: Entity<LanguageModelSelector>, trigger: T) -> Self {
+impl<T, TT> LanguageModelSelectorPopoverMenu<T, TT>
+where
+    T: PopoverTrigger + ButtonCommon,
+    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
+{
+    pub fn new(
+        language_model_selector: Entity<LanguageModelSelector>,
+        trigger: T,
+        tooltip: TT,
+    ) -> Self {
         Self {
             language_model_selector,
             trigger,
+            tooltip,
             handle: None,
         }
     }
@@ -139,13 +152,17 @@ impl<T: PopoverTrigger> LanguageModelSelectorPopoverMenu<T> {
     }
 }
 
-impl<T: PopoverTrigger> RenderOnce for LanguageModelSelectorPopoverMenu<T> {
+impl<T, TT> RenderOnce for LanguageModelSelectorPopoverMenu<T, TT>
+where
+    T: PopoverTrigger + ButtonCommon,
+    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
+{
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let language_model_selector = self.language_model_selector.clone();
 
         PopoverMenu::new("model-switcher")
             .menu(move |_window, _cx| Some(language_model_selector.clone()))
-            .trigger(self.trigger)
+            .trigger_with_tooltip(self.trigger, self.tooltip)
             .anchor(gpui::Corner::BottomRight)
             .when_some(self.handle.clone(), |menu, handle| menu.with_handle(handle))
             .offset(gpui::Point {
@@ -290,7 +307,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                     .color(Color::Muted)
                     .mt_1()
                     .mb_0p5()
-                    .ml_3()
+                    .ml_2()
                     .into_any_element(),
             )
         } else {
@@ -322,25 +339,34 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         let is_selected = Some(model_info.model.provider_id()) == active_provider_id
             && Some(model_info.model.id()) == active_model_id;
 
+        let model_icon_color = if is_selected {
+            Color::Accent
+        } else {
+            Color::Muted
+        };
+
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .start_slot(
-                    div().pr_0p5().child(
-                        Icon::new(model_info.icon)
-                            .color(Color::Muted)
-                            .size(IconSize::Medium),
-                    ),
+                    Icon::new(model_info.icon)
+                        .color(model_icon_color)
+                        .size(IconSize::Small),
                 )
                 .child(
                     h_flex()
                         .w_full()
                         .items_center()
                         .gap_1p5()
-                        .min_w(px(200.))
-                        .child(Label::new(model_info.model.name().0.clone()))
+                        .pl_0p5()
+                        .min_w(px(240.))
+                        .child(
+                            div().max_w_40().child(
+                                Label::new(model_info.model.name().0.clone()).text_ellipsis(),
+                            ),
+                        )
                         .child(
                             h_flex()
                                 .gap_0p5()

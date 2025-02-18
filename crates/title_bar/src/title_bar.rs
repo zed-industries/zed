@@ -9,7 +9,9 @@ mod stories;
 use crate::application_menu::ApplicationMenu;
 
 #[cfg(not(target_os = "macos"))]
-use crate::application_menu::{NavigateApplicationMenuInDirection, OpenApplicationMenu};
+use crate::application_menu::{
+    ActivateDirection, ActivateMenuLeft, ActivateMenuRight, OpenApplicationMenu,
+};
 
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
@@ -34,7 +36,7 @@ use ui::{
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
-use zed_predict_onboarding::ZedPredictBanner;
+use zeta::ZedPredictBanner;
 
 #[cfg(feature = "stories")]
 pub use stories::*;
@@ -78,22 +80,36 @@ pub fn init(cx: &mut App) {
         });
 
         #[cfg(not(target_os = "macos"))]
-        workspace.register_action(
-            |workspace, action: &NavigateApplicationMenuInDirection, window, cx| {
-                if let Some(titlebar) = workspace
-                    .titlebar_item()
-                    .and_then(|item| item.downcast::<TitleBar>().ok())
-                {
-                    titlebar.update(cx, |titlebar, cx| {
-                        if let Some(ref menu) = titlebar.application_menu {
-                            menu.update(cx, |menu, cx| {
-                                menu.navigate_menus_in_direction(action, window, cx)
-                            });
-                        }
-                    });
-                }
-            },
-        );
+        workspace.register_action(|workspace, _: &ActivateMenuRight, window, cx| {
+            if let Some(titlebar) = workspace
+                .titlebar_item()
+                .and_then(|item| item.downcast::<TitleBar>().ok())
+            {
+                titlebar.update(cx, |titlebar, cx| {
+                    if let Some(ref menu) = titlebar.application_menu {
+                        menu.update(cx, |menu, cx| {
+                            menu.navigate_menus_in_direction(ActivateDirection::Right, window, cx)
+                        });
+                    }
+                });
+            }
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        workspace.register_action(|workspace, _: &ActivateMenuLeft, window, cx| {
+            if let Some(titlebar) = workspace
+                .titlebar_item()
+                .and_then(|item| item.downcast::<TitleBar>().ok())
+            {
+                titlebar.update(cx, |titlebar, cx| {
+                    if let Some(ref menu) = titlebar.application_menu {
+                        menu.update(cx, |menu, cx| {
+                            menu.navigate_menus_in_direction(ActivateDirection::Left, window, cx)
+                        });
+                    }
+                });
+            }
+        });
     })
     .detach();
 }
@@ -162,6 +178,7 @@ impl Render for TitleBar {
                     .id("titlebar-content")
                     .flex()
                     .flex_row()
+                    .items_center()
                     .justify_between()
                     .w_full()
                     // Note: On Windows the title bar behavior is handled by the platform implementation.
@@ -268,7 +285,6 @@ impl TitleBar {
         let project = workspace.project().clone();
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
-        let fs = workspace.app_state().fs.clone();
         let active_call = ActiveCall::global(cx);
 
         let platform_style = PlatformStyle::platform();
@@ -296,15 +312,7 @@ impl TitleBar {
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
-        let zed_predict_banner = cx.new(|cx| {
-            ZedPredictBanner::new(
-                workspace.weak_handle(),
-                user_store.clone(),
-                client.clone(),
-                fs.clone(),
-                cx,
-            )
-        });
+        let zed_predict_banner = cx.new(ZedPredictBanner::new);
 
         Self {
             platform_style,
@@ -513,6 +521,7 @@ impl TitleBar {
         let branch_name = entry
             .as_ref()
             .and_then(|entry| entry.branch())
+            .map(|branch| branch.name.clone())
             .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
         Some(
             Button::new("project_branch_trigger", branch_name)
@@ -522,7 +531,7 @@ impl TitleBar {
                 .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         "Recent Branches",
-                        Some(&zed_actions::branches::OpenRecent),
+                        Some(&zed_actions::git::Branch),
                         "Local branches only",
                         window,
                         cx,
@@ -530,7 +539,7 @@ impl TitleBar {
                 })
                 .on_click(move |_, window, cx| {
                     let _ = workspace.update(cx, |_this, cx| {
-                        window.dispatch_action(zed_actions::branches::OpenRecent.boxed_clone(), cx);
+                        window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
                     });
                 }),
         )
@@ -665,6 +674,10 @@ impl TitleBar {
                             "Themes…",
                             zed_actions::theme_selector::Toggle::default().boxed_clone(),
                         )
+                        .action(
+                            "Icon Themes…",
+                            zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
+                        )
                         .action("Extensions", zed_actions::Extensions.boxed_clone())
                         .separator()
                         .link(
@@ -678,7 +691,7 @@ impl TitleBar {
                     })
                     .into()
                 })
-                .trigger(
+                .trigger_with_tooltip(
                     ButtonLike::new("user-menu")
                         .child(
                             h_flex()
@@ -694,8 +707,8 @@ impl TitleBar {
                                         .color(Color::Muted),
                                 ),
                         )
-                        .style(ButtonStyle::Subtle)
-                        .tooltip(Tooltip::text("Toggle User Menu")),
+                        .style(ButtonStyle::Subtle),
+                    Tooltip::text("Toggle User Menu"),
                 )
                 .anchor(gpui::Corner::TopRight)
         } else {
@@ -707,6 +720,10 @@ impl TitleBar {
                             .action(
                                 "Themes…",
                                 zed_actions::theme_selector::Toggle::default().boxed_clone(),
+                            )
+                            .action(
+                                "Icon Themes…",
+                                zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                             )
                             .action("Extensions", zed_actions::Extensions.boxed_clone())
                             .separator()
@@ -720,10 +737,9 @@ impl TitleBar {
                     })
                     .into()
                 })
-                .trigger(
-                    IconButton::new("user-menu", IconName::ChevronDown)
-                        .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text("Toggle User Menu")),
+                .trigger_with_tooltip(
+                    IconButton::new("user-menu", IconName::ChevronDown).icon_size(IconSize::Small),
+                    Tooltip::text("Toggle User Menu"),
                 )
         }
     }

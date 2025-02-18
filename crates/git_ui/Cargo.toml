@@ -14,24 +14,35 @@ path = "src/git_ui.rs"
 
 [dependencies]
 anyhow.workspace = true
+buffer_diff.workspace = true
 collections.workspace = true
 db.workspace = true
 editor.workspace = true
+feature_flags.workspace = true
 futures.workspace = true
+fuzzy.workspace = true
 git.workspace = true
 gpui.workspace = true
+itertools.workspace = true
+language.workspace = true
 menu.workspace = true
+multi_buffer.workspace = true
+panel.workspace = true
+picker.workspace = true
+postage.workspace = true
 project.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+strum.workspace = true
 theme.workspace = true
+time.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
-picker.workspace = true
+zed_actions.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

@@ -92,8 +92,8 @@ impl ContextStrip {
         let active_item = workspace.read(cx).active_item(cx)?;
 
         let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
-        let active_buffer_model = editor.buffer().read(cx).as_singleton()?;
-        let active_buffer = active_buffer_model.read(cx);
+        let active_buffer_entity = editor.buffer().read(cx).as_singleton()?;
+        let active_buffer = active_buffer_entity.read(cx);
 
         let path = active_buffer.file()?.path();
 
@@ -115,7 +115,7 @@ impl ContextStrip {
 
         Some(SuggestedContext::File {
             name,
-            buffer: active_buffer_model.downgrade(),
+            buffer: active_buffer_entity.downgrade(),
             icon_path,
         })
     }
@@ -393,9 +393,9 @@ impl Render for ContextStrip {
             .on_action(cx.listener(Self::remove_focused_context))
             .on_action(cx.listener(Self::accept_suggested_context))
             .on_children_prepainted({
-                let model = cx.entity().downgrade();
+                let entity = cx.entity().downgrade();
                 move |children_bounds, _window, cx| {
-                    model
+                    entity
                         .update(cx, |this, _| {
                             this.children_bounds = Some(children_bounds);
                         })
@@ -411,22 +411,22 @@ impl Render for ContextStrip {
 
                         Some(context_picker.clone())
                     })
-                    .trigger(
+                    .trigger_with_tooltip(
                         IconButton::new("add-context", IconName::Plus)
                             .icon_size(IconSize::Small)
-                            .style(ui::ButtonStyle::Filled)
-                            .tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |window, cx| {
-                                    Tooltip::for_action_in(
-                                        "Add Context",
-                                        &ToggleContextPicker,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                }
-                            }),
+                            .style(ui::ButtonStyle::Filled),
+                        {
+                            let focus_handle = focus_handle.clone();
+                            move |window, cx| {
+                                Tooltip::for_action_in(
+                                    "Add Context",
+                                    &ToggleContextPicker,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        },
                     )
                     .attach(gpui::Corner::TopLeft)
                     .anchor(gpui::Corner::BottomLeft)
@@ -453,6 +453,7 @@ impl Render for ContextStrip {
                                     &ToggleContextPicker,
                                     &focus_handle,
                                     window,
+                                    cx,
                                 )
                                 .map(|binding| binding.into_any_element()),
                             ),

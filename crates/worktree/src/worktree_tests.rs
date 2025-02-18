@@ -1,6 +1,6 @@
 use crate::{
-    worktree_settings::WorktreeSettings, Entry, EntryKind, Event, PathChange, Snapshot, Worktree,
-    WorktreeModelHandle,
+    worktree_settings::WorktreeSettings, Entry, EntryKind, Event, PathChange, Snapshot,
+    WorkDirectory, Worktree, WorktreeModelHandle,
 };
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
@@ -24,6 +24,7 @@ use std::{
     mem,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use util::{test::TempTree, ResultExt};
 
@@ -1504,6 +1505,7 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
         &[(Path::new("b/c.txt"), StatusCode::Modified.index())],
     );
     cx.executor().run_until_parked();
+    cx.executor().advance_clock(Duration::from_secs(1));
 
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
@@ -2156,7 +2158,13 @@ const CONFLICT: FileStatus = FileStatus::Unmerged(UnmergedStatus {
     second_head: UnmergedStatusCode::Updated,
 });
 
+// NOTE:
+// This test always fails on Windows, because on Windows, unlike on Unix, you can't rename
+// a directory which some program has already open.
+// This is a limitation of the Windows.
+// See: https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
 #[gpui::test]
+#[cfg_attr(target_os = "windows", ignore)]
 async fn test_rename_work_directory(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -2184,7 +2192,7 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
     let repo = git_init(&root_path.join("projects/project1"));
     git_add("a", &repo);
     git_commit("init", &repo);
-    std::fs::write(root_path.join("projects/project1/a"), "aa").ok();
+    std::fs::write(root_path.join("projects/project1/a"), "aa").unwrap();
 
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
@@ -2194,7 +2202,10 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
     cx.read(|cx| {
         let tree = tree.read(cx);
         let repo = tree.repositories().iter().next().unwrap();
-        assert_eq!(repo.path.as_ref(), Path::new("projects/project1"));
+        assert_eq!(
+            repo.work_directory,
+            WorkDirectory::in_project("projects/project1")
+        );
         assert_eq!(
             tree.status_for_file(Path::new("projects/project1/a")),
             Some(StatusCode::Modified.worktree()),
@@ -2209,13 +2220,16 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
         root_path.join("projects/project1"),
         root_path.join("projects/project2"),
     )
-    .ok();
+    .unwrap();
     tree.flush_fs_events(cx).await;
 
     cx.read(|cx| {
         let tree = tree.read(cx);
         let repo = tree.repositories().iter().next().unwrap();
-        assert_eq!(repo.path.as_ref(), Path::new("projects/project2"));
+        assert_eq!(
+            repo.work_directory,
+            WorkDirectory::in_project("projects/project2")
+        );
         assert_eq!(
             tree.status_for_file(Path::new("projects/project2/a")),
             Some(StatusCode::Modified.worktree()),
@@ -2269,12 +2283,15 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
         assert!(tree.repository_for_path("c.txt".as_ref()).is_none());
 
         let repo = tree.repository_for_path("dir1/src/b.txt".as_ref()).unwrap();
-        assert_eq!(repo.path.as_ref(), Path::new("dir1"));
+        assert_eq!(repo.work_directory, WorkDirectory::in_project("dir1"));
 
         let repo = tree
             .repository_for_path("dir1/deps/dep1/src/a.txt".as_ref())
             .unwrap();
-        assert_eq!(repo.path.as_ref(), Path::new("dir1/deps/dep1"));
+        assert_eq!(
+            repo.work_directory,
+            WorkDirectory::in_project("dir1/deps/dep1")
+        );
 
         let entries = tree.files(false, 0);
 
@@ -2283,7 +2300,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
             .map(|(entry, repo)| {
                 (
                     entry.path.as_ref(),
-                    repo.map(|repo| repo.path.to_path_buf()),
+                    repo.map(|repo| repo.work_directory.clone()),
                 )
             })
             .collect::<Vec<_>>();
@@ -2294,9 +2311,12 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
                 (Path::new("c.txt"), None),
                 (
                     Path::new("dir1/deps/dep1/src/a.txt"),
-                    Some(Path::new("dir1/deps/dep1").into())
+                    Some(WorkDirectory::in_project("dir1/deps/dep1"))
                 ),
-                (Path::new("dir1/src/b.txt"), Some(Path::new("dir1").into())),
+                (
+                    Path::new("dir1/src/b.txt"),
+                    Some(WorkDirectory::in_project("dir1"))
+                ),
             ]
         );
     });
@@ -2335,7 +2355,13 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
     });
 }
 
+// NOTE:
+// This test always fails on Windows, because on Windows, unlike on Unix, you can't rename
+// a directory which some program has already open.
+// This is a limitation of the Windows.
+// See: https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
 #[gpui::test]
+#[cfg_attr(target_os = "windows", ignore)]
 async fn test_file_status(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -2396,8 +2422,10 @@ async fn test_file_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(snapshot.repositories().iter().count(), 1);
         let repo_entry = snapshot.repositories().iter().next().unwrap();
-        assert_eq!(repo_entry.path.as_ref(), Path::new("project"));
-        assert!(repo_entry.location_in_repo.is_none());
+        assert_eq!(
+            repo_entry.work_directory,
+            WorkDirectory::in_project("project")
+        );
 
         assert_eq!(
             snapshot.status_for_file(project_path.join(B_TXT)),
@@ -2748,15 +2776,14 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(snapshot.repositories().iter().count(), 1);
         let repo = snapshot.repositories().iter().next().unwrap();
-        // Path is blank because the working directory of
-        // the git repository is located at the root of the project
-        assert_eq!(repo.path.as_ref(), Path::new(""));
-
-        // This is the missing path between the root of the project (sub-folder-2) and its
-        // location relative to the root of the repository.
         assert_eq!(
-            repo.location_in_repo,
-            Some(Arc::from(Path::new("sub-folder-1/sub-folder-2")))
+            repo.work_directory.canonicalize(),
+            WorkDirectory::AboveProject {
+                absolute_path: Arc::from(root.path().join("my-repo").canonicalize().unwrap()),
+                location_in_repo: Arc::from(Path::new(util::separator!(
+                    "sub-folder-1/sub-folder-2"
+                )))
+            }
         );
 
         assert_eq!(snapshot.status_for_file("c.txt"), None);

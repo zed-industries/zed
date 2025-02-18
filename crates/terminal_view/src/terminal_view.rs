@@ -257,7 +257,13 @@ impl TerminalView {
                         .action("Inline Assist", Box::new(InlineAssist::default()))
                 })
                 .separator()
-                .action("Close", Box::new(CloseActiveItem { save_intent: None }))
+                .action(
+                    "Close",
+                    Box::new(CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: true,
+                    }),
+                )
         });
 
         window.focus(&context_menu.focus_handle(cx));
@@ -1333,6 +1339,10 @@ impl Item for TerminalView {
     }
 
     fn has_conflict(&self, _cx: &App) -> bool {
+        false
+    }
+
+    fn can_save_as(&self, _cx: &App) -> bool {
         false
     }
 

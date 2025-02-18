@@ -34,7 +34,7 @@ use project::project_settings::ProjectSettings;
 use recent_projects::{open_ssh_project, SshSettings};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
-use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
+use settings::{watch_config_file, Settings, SettingsStore};
 use simplelog::ConfigBuilder;
 use std::{
     env,
@@ -52,8 +52,9 @@ use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, derive_paths_with_position, handle_cli_connection,
-    handle_keymap_file_changes, handle_settings_changed, initialize_workspace,
-    inline_completion_registry, open_paths_with_positions, OpenListener, OpenRequest,
+    handle_keymap_file_changes, handle_settings_changed, handle_settings_file_changes,
+    initialize_workspace, inline_completion_registry, open_paths_with_positions, OpenListener,
+    OpenRequest,
 };
 
 #[cfg(unix)]
@@ -188,9 +189,12 @@ fn main() {
     let session_id = Uuid::new_v4().to_string();
     let session = app.background_executor().block(Session::new());
     let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
+    let app_commit_sha =
+        option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha(commit_sha.to_string()));
 
     reliability::init_panic_hook(
         app_version,
+        app_commit_sha.clone(),
         system_id.as_ref().map(|id| id.to_string()),
         installation_id.as_ref().map(|id| id.to_string()),
         session_id.clone(),
@@ -281,8 +285,8 @@ fn main() {
     app.run(move |cx| {
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
-        if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
-            AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
+        if let Some(app_commit_sha) = app_commit_sha {
+            AppCommitSha::set_global(app_commit_sha, cx);
         }
         settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
@@ -376,14 +380,14 @@ fn main() {
         if let (Some(system_id), Some(installation_id)) = (&system_id, &installation_id) {
             match (&system_id, &installation_id) {
                 (IdType::New(_), IdType::New(_)) => {
-                    telemetry.report_app_event("first open".to_string());
-                    telemetry.report_app_event("first open for release channel".to_string());
+                    telemetry::event!("App First Opened");
+                    telemetry::event!("App First Opened For Release Channel");
                 }
                 (IdType::Existing(_), IdType::New(_)) => {
-                    telemetry.report_app_event("first open for release channel".to_string());
+                    telemetry::event!("App First Opened For Release Channel");
                 }
                 (_, IdType::Existing(_)) => {
-                    telemetry.report_app_event("open".to_string());
+                    telemetry::event!("App Opened");
                 }
             }
         }
@@ -439,7 +443,6 @@ fn main() {
         inline_completion_registry::init(
             app_state.client.clone(),
             app_state.user_store.clone(),
-            app_state.fs.clone(),
             cx,
         );
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
@@ -485,9 +488,10 @@ fn main() {
         tab_switcher::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
-        project_panel::init(Assets, cx);
+        project_panel::init(cx);
         git_ui::git_panel::init(cx);
-        outline_panel::init(Assets, cx);
+        outline_panel::init(cx);
+        component_preview::init(cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
@@ -503,7 +507,6 @@ fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);
-        vcs_menu::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
         welcome::init(cx);
@@ -552,7 +555,6 @@ fn main() {
         load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);
         watch_languages(fs.clone(), app_state.languages.clone(), cx);
-        watch_file_types(fs.clone(), cx);
 
         cx.set_menus(app_menus());
         initialize_workspace(app_state.clone(), prompt_builder, cx);
@@ -1155,35 +1157,3 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
 
 #[cfg(not(debug_assertions))]
 fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>, _cx: &mut App) {}
-
-#[cfg(debug_assertions)]
-fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut App) {
-    use std::time::Duration;
-
-    use file_icons::FileIcons;
-    use gpui::UpdateGlobal;
-
-    let path = {
-        let p = Path::new("assets").join(file_icons::FILE_TYPES_ASSET);
-        let Ok(full_path) = p.canonicalize() else {
-            return;
-        };
-        full_path
-    };
-
-    cx.spawn(|cx| async move {
-        let (mut events, _) = fs.watch(path.as_path(), Duration::from_millis(100)).await;
-        while (events.next().await).is_some() {
-            cx.update(|cx| {
-                FileIcons::update_global(cx, |file_types, _cx| {
-                    *file_types = file_icons::FileIcons::new(Assets);
-                });
-            })
-            .ok();
-        }
-    })
-    .detach()
-}
-
-#[cfg(not(debug_assertions))]
-fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut App) {}

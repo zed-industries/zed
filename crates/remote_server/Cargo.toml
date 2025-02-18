@@ -77,7 +77,7 @@ node_runtime = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 remote = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features=["test-support"] }
-
+unindent.workspace = true
 serde_json.workspace = true
 
 [build-dependencies]

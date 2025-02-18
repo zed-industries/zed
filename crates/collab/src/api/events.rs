@@ -495,6 +495,10 @@ fn for_snowflake(
     body.events.into_iter().flat_map(move |event| {
         let timestamp =
             first_event_at + Duration::milliseconds(event.milliseconds_since_first_event);
+        // We will need to double check, but I believe all of the events that
+        // are being transformed here are now migrated over to use the
+        // telemetry::event! macro, as of this commit so this code can go away
+        // when we feel enough users have upgraded past this point.
         let (event_type, mut event_properties) = match &event.event {
             Event::Editor(e) => (
                 match e.operation.as_str() {
@@ -506,7 +510,7 @@ fn for_snowflake(
             ),
             Event::InlineCompletion(e) => (
                 format!(
-                    "Inline Completion {}",
+                    "Edit Prediction {}",
                     if e.suggestion_accepted {
                         "Accepted"
                     } else {
@@ -516,7 +520,7 @@ fn for_snowflake(
                 serde_json::to_value(e).unwrap(),
             ),
             Event::InlineCompletionRating(e) => (
-                "Inline Completion Rated".to_string(),
+                "Edit Prediction Rated".to_string(),
                 serde_json::to_value(e).unwrap(),
             ),
             Event::Call(e) => {

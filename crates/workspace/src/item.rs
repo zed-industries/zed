@@ -276,6 +276,9 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn can_save(&self, _cx: &App) -> bool {
         false
     }
+    fn can_save_as(&self, _: &App) -> bool {
+        false
+    }
     fn save(
         &mut self,
         _format: bool,
@@ -477,6 +480,7 @@ pub trait ItemHandle: 'static + Send {
     fn has_deleted_file(&self, cx: &App) -> bool;
     fn has_conflict(&self, cx: &App) -> bool;
     fn can_save(&self, cx: &App) -> bool;
+    fn can_save_as(&self, cx: &App) -> bool;
     fn save(
         &self,
         format: bool,
@@ -890,6 +894,10 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.read(cx).can_save(cx)
     }
 
+    fn can_save_as(&self, cx: &App) -> bool {
+        self.read(cx).can_save_as(cx)
+    }
+
     fn save(
         &self,
         format: bool,
@@ -1257,6 +1265,19 @@ pub mod test {
                 is_dirty: false,
             })
         }
+
+        pub fn new_dirty(id: u64, path: &str, cx: &mut App) -> Entity<Self> {
+            let entry_id = Some(ProjectEntryId::from_proto(id));
+            let project_path = Some(ProjectPath {
+                worktree_id: WorktreeId::from_usize(0),
+                path: Path::new(path).into(),
+            });
+            cx.new(|_| Self {
+                entry_id,
+                project_path,
+                is_dirty: true,
+            })
+        }
     }
 
     impl TestItem {
@@ -1455,15 +1476,26 @@ pub mod test {
                     .all(|item| item.read(cx).entry_id.is_some())
         }
 
+        fn can_save_as(&self, _cx: &App) -> bool {
+            self.is_singleton
+        }
+
         fn save(
             &mut self,
             _: bool,
             _: Entity<Project>,
             _window: &mut Window,
-            _: &mut Context<Self>,
+            cx: &mut Context<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.save_count += 1;
             self.is_dirty = false;
+            for item in &self.project_items {
+                item.update(cx, |item, _| {
+                    if item.is_dirty {
+                        item.is_dirty = false;
+                    }
+                })
+            }
             Task::ready(Ok(()))
         }
 
@@ -1504,8 +1536,8 @@ pub mod test {
             _window: &mut Window,
             cx: &mut App,
         ) -> Task<anyhow::Result<Entity<Self>>> {
-            let model = cx.new(|cx| Self::new_deserialized(workspace_id, cx));
-            Task::ready(Ok(model))
+            let entity = cx.new(|cx| Self::new_deserialized(workspace_id, cx));
+            Task::ready(Ok(entity))
         }
 
         fn cleanup(

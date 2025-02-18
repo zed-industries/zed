@@ -239,14 +239,14 @@ impl CollabPanel {
             )
             .detach();
 
-            let model = cx.entity().downgrade();
+            let entity = cx.entity().downgrade();
             let list_state = ListState::new(
                 0,
                 gpui::ListAlignment::Top,
                 px(1000.),
                 move |ix, window, cx| {
-                    if let Some(model) = model.upgrade() {
-                        model.update(cx, |this, cx| this.render_list_entry(ix, window, cx))
+                    if let Some(entity) = entity.upgrade() {
+                        entity.update(cx, |this, cx| this.render_list_entry(ix, window, cx))
                     } else {
                         div().into_any()
                     }

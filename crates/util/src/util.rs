@@ -28,6 +28,8 @@ use unicase::UniCase;
 use anyhow::{anyhow, Context as _};
 
 pub use take_until::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use util_macros::{separator, uri};
 
 #[macro_export]
 macro_rules! debug_panic {
@@ -38,6 +40,50 @@ macro_rules! debug_panic {
             let backtrace = std::backtrace::Backtrace::capture();
             log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
         }
+    };
+}
+
+/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
+/// the separator from `/` to `\`.
+/// But on non-Windows platforms, it will return the path literal as is.
+///
+/// # Examples
+/// ```rust
+/// use util::path;
+///
+/// let path = path!("/Users/user/file.txt");
+/// #[cfg(target_os = "windows")]
+/// assert_eq!(path, "C:\\Users\\user\\file.txt");
+/// #[cfg(not(target_os = "windows"))]
+/// assert_eq!(path, "/Users/user/file.txt");
+/// ```
+#[cfg(all(any(test, feature = "test-support"), target_os = "windows"))]
+#[macro_export]
+macro_rules! path {
+    ($path:literal) => {
+        concat!("C:", util::separator!($path))
+    };
+}
+
+/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
+/// the separator from `/` to `\`.
+/// But on non-Windows platforms, it will return the path literal as is.
+///
+/// # Examples
+/// ```rust
+/// use util::path;
+///
+/// let path = path!("/Users/user/file.txt");
+/// #[cfg(target_os = "windows")]
+/// assert_eq!(path, "C:\\Users\\user\\file.txt");
+/// #[cfg(not(target_os = "windows"))]
+/// assert_eq!(path, "/Users/user/file.txt");
+/// ```
+#[cfg(all(any(test, feature = "test-support"), not(target_os = "windows")))]
+#[macro_export]
+macro_rules! path {
+    ($path:literal) => {
+        $path
     };
 }
 
@@ -738,6 +784,28 @@ impl Ord for NumericPrefixWithSuffix<'_> {
 impl<'a> PartialOrd for NumericPrefixWithSuffix<'a> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+/// Capitalizes the first character of a string.
+///
+/// This function takes a string slice as input and returns a new `String` with the first character
+/// capitalized.
+///
+/// # Examples
+///
+/// ```
+/// use util::capitalize;
+///
+/// assert_eq!(capitalize("hello"), "Hello");
+/// assert_eq!(capitalize("WORLD"), "WORLD");
+/// assert_eq!(capitalize(""), "");
+/// ```
+pub fn capitalize(str: &str) -> String {
+    let mut chars = str.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
     }
 }
 

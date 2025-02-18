@@ -8,6 +8,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use assistant_context_editor::ContextStore;
 use assistant_slash_command::SlashCommandWorkingSet;
+use buffer_diff::{assert_hunks, DiffHunkSecondaryStatus, DiffHunkStatus};
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
@@ -2558,13 +2559,27 @@ async fn test_git_diff_base_change(
 
     let project_remote = client_b.join_remote_project(project_id, cx_b).await;
 
-    let diff_base = "
+    let staged_text = "
         one
         three
     "
     .unindent();
 
-    let new_diff_base = "
+    let committed_text = "
+        one
+        TWO
+        three
+    "
+    .unindent();
+
+    let new_committed_text = "
+        one
+        TWO_HUNDRED
+        three
+    "
+    .unindent();
+
+    let new_staged_text = "
         one
         two
     "
@@ -2572,7 +2587,11 @@ async fn test_git_diff_base_change(
 
     client_a.fs().set_index_for_repo(
         Path::new("/dir/.git"),
-        &[(Path::new("a.txt"), diff_base.clone())],
+        &[("a.txt".into(), staged_text.clone())],
+    );
+    client_a.fs().set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("a.txt".into(), committed_text.clone())],
     );
 
     // Create the buffer
@@ -2580,26 +2599,26 @@ async fn test_git_diff_base_change(
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
-    let change_set_local_a = project_local
+    let local_unstaged_diff_a = project_local
         .update(cx_a, |p, cx| {
-            p.open_unstaged_changes(buffer_local_a.clone(), cx)
+            p.open_unstaged_diff(buffer_local_a.clone(), cx)
         })
         .await
         .unwrap();
 
     // Wait for it to catch up to the new diff
     executor.run_until_parked();
-    change_set_local_a.read_with(cx_a, |change_set, cx| {
+    local_unstaged_diff_a.read_with(cx_a, |diff, cx| {
         let buffer = buffer_local_a.read(cx);
         assert_eq!(
-            change_set.base_text_string().as_deref(),
-            Some(diff_base.as_str())
+            diff.base_text_string().as_deref(),
+            Some(staged_text.as_str())
         );
-        git::diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
-            &diff_base,
-            &[(1..2, "", "two\n")],
+            &diff.base_text_string().unwrap(),
+            &[(1..2, "", "two\n", DiffHunkStatus::added())],
         );
     });
 
@@ -2608,73 +2627,123 @@ async fn test_git_diff_base_change(
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
-    let change_set_remote_a = project_remote
+    let remote_unstaged_diff_a = project_remote
         .update(cx_b, |p, cx| {
-            p.open_unstaged_changes(buffer_remote_a.clone(), cx)
+            p.open_unstaged_diff(buffer_remote_a.clone(), cx)
         })
         .await
         .unwrap();
 
     // Wait remote buffer to catch up to the new diff
     executor.run_until_parked();
-    change_set_remote_a.read_with(cx_b, |change_set, cx| {
+    remote_unstaged_diff_a.read_with(cx_b, |diff, cx| {
         let buffer = buffer_remote_a.read(cx);
         assert_eq!(
-            change_set.base_text_string().as_deref(),
-            Some(diff_base.as_str())
+            diff.base_text_string().as_deref(),
+            Some(staged_text.as_str())
         );
-        git::diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
-            &diff_base,
-            &[(1..2, "", "two\n")],
+            &diff.base_text_string().unwrap(),
+            &[(1..2, "", "two\n", DiffHunkStatus::added())],
         );
     });
 
-    // Update the staged text of the open buffer
+    // Open uncommitted changes on the guest, without opening them on the host first
+    let remote_uncommitted_diff_a = project_remote
+        .update(cx_b, |p, cx| {
+            p.open_uncommitted_diff(buffer_remote_a.clone(), cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+    remote_uncommitted_diff_a.read_with(cx_b, |diff, cx| {
+        let buffer = buffer_remote_a.read(cx);
+        assert_eq!(
+            diff.base_text_string().as_deref(),
+            Some(committed_text.as_str())
+        );
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
+            buffer,
+            &diff.base_text_string().unwrap(),
+            &[(
+                1..2,
+                "TWO\n",
+                "two\n",
+                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::HasSecondaryHunk),
+            )],
+        );
+    });
+
+    // Update the index text of the open buffer
     client_a.fs().set_index_for_repo(
         Path::new("/dir/.git"),
-        &[(Path::new("a.txt"), new_diff_base.clone())],
+        &[("a.txt".into(), new_staged_text.clone())],
+    );
+    client_a.fs().set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("a.txt".into(), new_committed_text.clone())],
     );
 
     // Wait for buffer_local_a to receive it
     executor.run_until_parked();
-    change_set_local_a.read_with(cx_a, |change_set, cx| {
+    local_unstaged_diff_a.read_with(cx_a, |diff, cx| {
         let buffer = buffer_local_a.read(cx);
         assert_eq!(
-            change_set.base_text_string().as_deref(),
-            Some(new_diff_base.as_str())
+            diff.base_text_string().as_deref(),
+            Some(new_staged_text.as_str())
         );
-        git::diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
-            &new_diff_base,
-            &[(2..3, "", "three\n")],
+            &diff.base_text_string().unwrap(),
+            &[(2..3, "", "three\n", DiffHunkStatus::added())],
         );
     });
 
-    change_set_remote_a.read_with(cx_b, |change_set, cx| {
+    remote_unstaged_diff_a.read_with(cx_b, |diff, cx| {
         let buffer = buffer_remote_a.read(cx);
         assert_eq!(
-            change_set.base_text_string().as_deref(),
-            Some(new_diff_base.as_str())
+            diff.base_text_string().as_deref(),
+            Some(new_staged_text.as_str())
         );
-        git::diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
-            &new_diff_base,
-            &[(2..3, "", "three\n")],
+            &diff.base_text_string().unwrap(),
+            &[(2..3, "", "three\n", DiffHunkStatus::added())],
+        );
+    });
+
+    remote_uncommitted_diff_a.read_with(cx_b, |diff, cx| {
+        let buffer = buffer_remote_a.read(cx);
+        assert_eq!(
+            diff.base_text_string().as_deref(),
+            Some(new_committed_text.as_str())
+        );
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
+            buffer,
+            &diff.base_text_string().unwrap(),
+            &[(
+                1..2,
+                "TWO_HUNDRED\n",
+                "two\n",
+                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk),
+            )],
         );
     });
 
     // Nested git dir
-    let diff_base = "
+    let staged_text = "
         one
         three
     "
     .unindent();
 
-    let new_diff_base = "
+    let new_staged_text = "
         one
         two
     "
@@ -2682,7 +2751,7 @@ async fn test_git_diff_base_change(
 
     client_a.fs().set_index_for_repo(
         Path::new("/dir/sub/.git"),
-        &[(Path::new("b.txt"), diff_base.clone())],
+        &[("b.txt".into(), staged_text.clone())],
     );
 
     // Create the buffer
@@ -2690,26 +2759,26 @@ async fn test_git_diff_base_change(
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "sub/b.txt"), cx))
         .await
         .unwrap();
-    let change_set_local_b = project_local
+    let local_unstaged_diff_b = project_local
         .update(cx_a, |p, cx| {
-            p.open_unstaged_changes(buffer_local_b.clone(), cx)
+            p.open_unstaged_diff(buffer_local_b.clone(), cx)
         })
         .await
         .unwrap();
 
     // Wait for it to catch up to the new diff
     executor.run_until_parked();
-    change_set_local_b.read_with(cx_a, |change_set, cx| {
+    local_unstaged_diff_b.read_with(cx_a, |diff, cx| {
         let buffer = buffer_local_b.read(cx);
         assert_eq!(
-            change_set.base_text_string().as_deref(),
-            Some(diff_base.as_str())
+            diff.base_text_string().as_deref(),
+            Some(staged_text.as_str())
         );
-        git::diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
-            &diff_base,
-            &[(1..2, "", "two\n")],
+            &diff.base_text_string().unwrap(),
+            &[(1..2, "", "two\n", DiffHunkStatus::added())],
         );
     });
 
@@ -2718,61 +2787,61 @@ async fn test_git_diff_base_change(
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "sub/b.txt"), cx))
         .await
         .unwrap();
-    let change_set_remote_b = project_remote
+    let remote_unstaged_diff_b = project_remote
         .update(cx_b, |p, cx| {
-            p.open_unstaged_changes(buffer_remote_b.clone(), cx)
+            p.open_unstaged_diff(buffer_remote_b.clone(), cx)
         })
         .await
         .unwrap();
 
     executor.run_until_parked();
-    change_set_remote_b.read_with(cx_b, |change_set, cx| {
+    remote_unstaged_diff_b.read_with(cx_b, |diff, cx| {
         let buffer = buffer_remote_b.read(cx);
         assert_eq!(
-            change_set.base_text_string().as_deref(),
-            Some(diff_base.as_str())
+            diff.base_text_string().as_deref(),
+            Some(staged_text.as_str())
         );
-        git::diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
-            &diff_base,
-            &[(1..2, "", "two\n")],
+            &staged_text,
+            &[(1..2, "", "two\n", DiffHunkStatus::added())],
         );
     });
 
-    // Update the staged text
+    // Updatet the staged text
     client_a.fs().set_index_for_repo(
         Path::new("/dir/sub/.git"),
-        &[(Path::new("b.txt"), new_diff_base.clone())],
+        &[("b.txt".into(), new_staged_text.clone())],
     );
 
     // Wait for buffer_local_b to receive it
     executor.run_until_parked();
-    change_set_local_b.read_with(cx_a, |change_set, cx| {
+    local_unstaged_diff_b.read_with(cx_a, |diff, cx| {
         let buffer = buffer_local_b.read(cx);
         assert_eq!(
-            change_set.base_text_string().as_deref(),
-            Some(new_diff_base.as_str())
+            diff.base_text_string().as_deref(),
+            Some(new_staged_text.as_str())
         );
-        git::diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
-            &new_diff_base,
-            &[(2..3, "", "three\n")],
+            &new_staged_text,
+            &[(2..3, "", "three\n", DiffHunkStatus::added())],
         );
     });
 
-    change_set_remote_b.read_with(cx_b, |change_set, cx| {
+    remote_unstaged_diff_b.read_with(cx_b, |diff, cx| {
         let buffer = buffer_remote_b.read(cx);
         assert_eq!(
-            change_set.base_text_string().as_deref(),
-            Some(new_diff_base.as_str())
+            diff.base_text_string().as_deref(),
+            Some(new_staged_text.as_str())
         );
-        git::diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+        assert_hunks(
+            diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
-            &new_diff_base,
-            &[(2..3, "", "three\n")],
+            &new_staged_text,
+            &[(2..3, "", "three\n", DiffHunkStatus::added())],
         );
     });
 }
@@ -2826,7 +2895,10 @@ async fn test_git_branch_name(
         assert_eq!(worktrees.len(), 1);
         let worktree = worktrees[0].clone();
         let root_entry = worktree.read(cx).snapshot().root_git_entry().unwrap();
-        assert_eq!(root_entry.branch(), branch_name.map(Into::into));
+        assert_eq!(
+            root_entry.branch().map(|branch| branch.name.to_string()),
+            branch_name
+        );
     }
 
     // Smoke test branch reading
@@ -4366,15 +4438,14 @@ async fn test_formatting_buffer(
         .await
         .unwrap();
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
-    let lsp_store_b = project_b.update(cx_b, |p, _| p.lsp_store());
 
     let buffer_b = project_b
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
         .await
         .unwrap();
 
-    let _handle = lsp_store_b.update(cx_b, |lsp_store, cx| {
-        lsp_store.register_buffer_with_language_servers(&buffer_b, cx)
+    let _handle = project_b.update(cx_b, |project, cx| {
+        project.register_buffer_with_language_servers(&buffer_b, cx)
     });
     let fake_language_server = fake_language_servers.next().await.unwrap();
     fake_language_server.handle_request::<lsp::request::Formatting, _, _>(|_, _| async move {
@@ -6714,7 +6785,7 @@ async fn test_remote_git_branches(
         })
     });
 
-    assert_eq!(host_branch.as_ref(), branches[2]);
+    assert_eq!(host_branch.name, branches[2]);
 
     // Also try creating a new branch
     cx_b.update(|cx| {
@@ -6735,5 +6806,5 @@ async fn test_remote_git_branches(
         })
     });
 
-    assert_eq!(host_branch.as_ref(), "totally-new-branch");
+    assert_eq!(host_branch.name, "totally-new-branch");
 }

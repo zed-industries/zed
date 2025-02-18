@@ -450,6 +450,10 @@ impl Rope {
         self.clip_point(Point::new(row, u32::MAX), Bias::Left)
             .column
     }
+
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        self.chunks.ptr_eq(&other.chunks)
+    }
 }
 
 impl<'a> From<&'a str> for Rope {
@@ -971,7 +975,10 @@ pub struct TextSummary {
     pub chars: usize,
     /// Length in UTF-16 code units
     pub len_utf16: OffsetUtf16,
-    /// A point representing the number of lines and the length of the last line
+    /// A point representing the number of lines and the length of the last line.
+    ///
+    /// In other words, it marks the point after the last byte in the text, (if
+    /// EOF was a character, this would be its position).
     pub lines: Point,
     /// How many `char`s are in the first line
     pub first_line_chars: u32,

@@ -1,6 +1,5 @@
 pub mod blame;
 pub mod commit;
-pub mod diff;
 mod hosting_provider;
 mod remote;
 pub mod repository;
@@ -38,9 +37,10 @@ actions!(
         // editor::RevertSelectedHunks
         StageAll,
         UnstageAll,
-        RevertAll,
-        CommitChanges,
-        CommitAllChanges,
+        DiscardTrackedChanges,
+        TrashUntrackedFiles,
+        Uncommit,
+        Commit,
         ClearCommitMessage
     ]
 );
