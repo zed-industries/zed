@@ -12,11 +12,7 @@ pub struct ModuleList {
 }
 
 impl ModuleList {
-    pub fn new(
-        session: Entity<Session>,
-        client_id: SessionId,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(session: Entity<Session>, client_id: SessionId, cx: &mut Context<Self>) -> Self {
         let weak_entity = cx.weak_entity();
         let focus_handle = cx.focus_handle();
 
