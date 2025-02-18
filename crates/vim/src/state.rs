@@ -3,6 +3,7 @@ use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
 use crate::{UseSystemClipboard, Vim, VimSettings};
+use anyhow::Result;
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use db::sqlez_macros::sql;
@@ -11,7 +12,7 @@ use editor::{Anchor, ClipboardSelection, Editor, ToPoint};
 use gpui::{
     Action, App, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, Global, WeakEntity,
 };
-use language::{BufferId, Point};
+use language::{BufferId, Buffer, BufferEvent, Point};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
@@ -208,8 +209,63 @@ pub struct VimGlobals {
 
     pub focused_vim: Option<WeakEntity<Vim>>,
 
-    pub local_marks: HashMap<(WorkspaceId, Arc<Path>), HashMap<String, Vec<Point>>>,
-    pub global_marks: HashMap<WorkspaceId, HashMap<String, (Arc<Path>, Vec<Point>)>>,
+    pub marks: Hash<WorkspaceId, Entity<MarksState>>,
+}
+
+struct MarksState {
+    // this allows for buffers that are not files to have global marks and for storing anchors in general
+    pub loaded_marks: HashMap<BufferId, HashMap<String, Vec<Anchor>>>,
+    pub marks: HashMap<Arc<Path>, HashMap<String, Vec<Point>>>,
+    pub global_marks: HashMap<String, Arc<Path>>
+}
+
+impl MarksState {
+    pub fn on_buffer_loaded(&mut self, buffer_handle: &Entity<Buffer>, cx: &mut Context<Self>) {
+        let buffer = buffer_handle.read(cx);
+        let id = buffer.remote_id();
+        let Some(path) = buffer.file().map(|file| file.path().clone()) else {
+            return
+        };
+        if !self.marks.contains_key(&path) {
+            return
+        }
+        let snapshot = buffer.snapshot();
+        self.loaded_marks.insert(id, self.marks.get(&path).iter().map(|(name, points)| {
+            (name.clone(), points.iter().map(|p| snapshot.anchor_before(p)).collect())
+        }).collect());
+        cx.subscribe(buffer_handle, |buffer, event, cx| {
+            match event {
+                BufferEvent::Edited => {
+                    // recalculate marks for this buffer, and if they've changed update SQLite
+                }
+            }
+        });
+        cx.observe_release(buffer_handle, |buffer, cx| {
+            self.loaded_marks.remove(&id)
+        })
+    }
+
+    pub fn set_mark(&mut self, name: String, buffer_handle: &Entity<Buffer>, points: Vec<Anchor>, cx: &mut Context<Self>) {
+        // the catch here is we may need to subscribe to the buffer.
+
+    }
+
+    pub fn get_path_for_mark(&mut self, name: String) -> Option<Arc<Path>> {
+
+    }
+
+    pub fn get_mark(&mut self, name: String, entity: Entity<Buffer>) -> Vec<Anchor> {
+
+    }
+}
+
+enum MarkCollection {
+    Loaded {
+        anchor: HashMap<String, Vec<Anchor>>,
+        buffer: WeakEntity<Buffer>,
+        subscription: Subscription,
+    },
+    Unloaded(HashMap<String, Vec<Point>>),
 }
 
 impl Global for VimGlobals {}
@@ -265,7 +321,19 @@ impl VimGlobals {
                     g.load_global_marks(workspace_id, global_marks);
                 })
             })
-            .detach_and_log_err(cx)
+            .detach_and_log_err(cx);
+
+            let buffer_store = workspace.project().read(cx).buffer_store().clone();
+            cx.subscribe(&buffer_store, |this, _, event, cx| {
+                match event {
+                    project::BufferStoreEvent::BufferAdded(buffer) => {
+                        // if we have marks for this buffer, upgrade to anchors,
+                        // watch for changes, and when the buffer is closed, convert back
+
+                    }
+                }
+
+            }
         })
         .detach()
     }
@@ -444,25 +512,9 @@ impl VimGlobals {
                 .and_then(|map| map.insert(name.clone(), points));
         });
 
-        cx.spawn(|cx| {
-            let value = value.clone();
-            let name = name.clone();
-            async move {
-                cx.background_executor()
-                    .spawn(async move {
-                        let _ = DB
-                            .set_local_mark(
-                                workspace_id,
-                                name,
-                                path.into_os_string().into_vec(),
-                                value,
-                            )
-                            .log_err();
-                    })
-                    .await;
-            }
-        })
-        .detach()
+        cx.background_executor()
+            .spawn(DB.set_local_mark(workspace_id, name, path.into_os_string().into_vec(), value))
+            .detach_and_log_err(cx);
     }
 
     pub fn set_global_mark(editor: &Editor, name: String, positions: &Vec<Anchor>, cx: &mut App) {
@@ -510,25 +562,9 @@ impl VimGlobals {
                 .get_mut(&workspace_id.clone())
                 .and_then(|map| map.insert(name.clone(), (path.clone().into(), points)));
         });
-        cx.spawn(|cx| {
-            let value = value.clone();
-            let name = name.clone();
-            async move {
-                cx.background_executor()
-                    .spawn(async move {
-                        let _ = DB
-                            .set_global_mark(
-                                workspace_id,
-                                name,
-                                path.into_os_string().into_vec(),
-                                value,
-                            )
-                            .log_err();
-                    })
-                    .await;
-            }
-        })
-        .detach()
+        cx.background_executor()
+            .spawn(DB.set_global_mark(workspace_id, name, path.into_os_string().into_vec(), value))
+            .detach_and_log_err(cx);
     }
 
     fn load_local_marks(
@@ -797,13 +833,22 @@ define_connection! (
 );
 
 impl VimDb {
-    query! {
-        pub fn set_local_mark(workspace_id: WorkspaceId, mark_name: String, absolute_path: Vec<u8>, value: String) -> Result<()> {
-            INSERT OR REPLACE INTO vim_local_marks
-                (workspace_id, mark_name, absolute_path, value)
-            VALUES
-                (?, ?, ?, ?)
-        }
+    pub(crate) async fn set_local_mark(
+        &self,
+        workspace_id: WorkspaceId,
+        mark_name: String,
+        absolute_path: Vec<u8>,
+        value: String,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            conn.exec_bound(sql!(
+                INSERT OR REPLACE INTO vim_local_marks
+                    (workspace_id, mark_name, absolute_path, value)
+                VALUES
+                    (?, ?, ?, ?)
+            ))?((workspace_id, mark_name, absolute_path, value))
+        })
+        .await
     }
 
     query! {
@@ -813,11 +858,22 @@ impl VimDb {
         }
     }
 
-    query! {
-        pub fn set_global_mark(workspace_id: WorkspaceId, mark_name: String, absolute_path: Vec<u8>, value: String) -> Result<()> {
-            INSERT OR REPLACE INTO vim_global_marks (workspace_id, mark_name, absolute_path, value)
-            VALUES (?, ?, ?, ?)
-        }
+    pub(crate) async fn set_global_mark(
+        &self,
+        workspace_id: WorkspaceId,
+        mark_name: String,
+        absolute_path: Vec<u8>,
+        value: String,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            conn.exec_bound(sql!(
+                INSERT OR REPLACE INTO vim_global_marks
+                    (workspace_id, mark_name, absolute_path, value)
+                VALUES
+                    (?, ?, ?, ?)
+            ))?((workspace_id, mark_name, absolute_path, value))
+        })
+        .await
     }
 
     query! {

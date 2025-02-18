@@ -1,5 +1,6 @@
 use std::{ops::Range, sync::Arc};
 
+use anyhow::Ok;
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
@@ -103,7 +104,7 @@ impl Vim {
             }),
             "." => self.change_list.last().cloned(),
             m if m.starts_with(|c: char| c.is_digit(10)) => {
-                if let Some((path, _points)) = self.get_global_mark(text.to_string(), window, cx) {
+                if let Some((path, points)) = self.get_global_mark(text.to_string(), window, cx) {
                     if let Some(workspace) = self.workspace(window) {
                         workspace.update(cx, |workspace, cx| {
                             let Some(worktree) = workspace.worktrees(cx).next() else {
@@ -113,17 +114,37 @@ impl Vim {
                             let Some(path_str) = path.to_str() else {
                                 return;
                             };
+                            let task = workspace.open_path(
+                                (worktree_id, path_str),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            );
 
-                            workspace
-                                .open_path((worktree_id, path_str), None, true, window, cx)
-                                .detach();
+                            // cx.spawn(async move |_, mut cx| {
+                            //     let item = task.await?;
+
+                            //     if let Some(editor) = item.act_as::<Editor>(cx) {
+                            //         editor.update(&mut cx, |editor, cx| {
+                            //             editor.change_selections(
+                            //                 Some(Autoscroll::fit()),
+                            //                 window,
+                            //                 cx,
+                            //                 |s| {
+                            //                     s.select(selections);
+                            //                 },
+                            //             )
+                            //         })?;
+                            //     }
+                            // })
+                            // .detach_and_log_err(cx);
                         });
                     }
                 }
                 None
             }
             m if m.starts_with(|c: char| c.is_uppercase()) => {
-                let mut result: Option<Vec<Anchor>> = None;
                 if let Some((path, points)) = self.get_global_mark(text.to_string(), window, cx) {
                     if let Some(workspace) = self.workspace(window) {
                         workspace.update(cx, |workspace, cx| {
@@ -135,48 +156,42 @@ impl Vim {
                                 return;
                             };
 
-                            if let Some(editor) = workspace
-                                .active_item(cx)
-                                .and_then(|item| item.downcast::<Editor>())
-                            {
-                                let editor = editor.read(cx);
-                                if let Some(file) = editor
-                                    .buffer()
-                                    .read(cx)
-                                    .as_singleton()
-                                    .and_then(|buffer| buffer.read(cx).file())
+                            let task = workspace.open_path(
+                                (worktree_id, path_str),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            );
+                            cx.spawn_in(window, |_, mut cx| async move {
+                                let item = task.await?;
+
+                                if let Some(editor) =
+                                    cx.update(|_, cx| item.act_as::<Editor>(cx)).ok().flatten()
                                 {
-                                    if *file.path() == path {
-                                        // If we are already in the correct file => get the anchor
-                                        result = Some(
-                                            points
-                                                .iter()
-                                                .map(|point| {
-                                                    let snapshot =
-                                                        editor.buffer().read(cx).snapshot(cx);
-                                                    snapshot
-                                                        .anchor_before(point.to_offset(&snapshot))
-                                                })
-                                                .collect(),
-                                        );
-                                    } else {
-                                        // If we are in the wrong file => jump to the correct file
-                                        workspace
-                                            .open_path(
-                                                (worktree_id, path_str),
-                                                None,
-                                                true,
-                                                window,
-                                                cx,
-                                            )
-                                            .detach(); //TODO: Somehow get the editor handle for this
-                                    }
+                                    editor.update_in(&mut cx, |editor, window, cx| {
+                                        let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                                        editor.change_selections(
+                                            Some(Autoscroll::fit()),
+                                            window,
+                                            cx,
+                                            |s| {
+                                                s.select_anchor_ranges(points.iter().map(|p| {
+                                                    dbg!(p);
+                                                    let anchor = buffer_snapshot.anchor_before(*p);
+                                                    anchor..anchor
+                                                }));
+                                            },
+                                        )
+                                    })?;
                                 }
-                            }
+                                Ok(())
+                            })
+                            .detach_and_log_err(cx);
                         });
                     }
                 }
-                result
+                None
             }
             _ => self.get_local_mark(text.to_string(), window, cx), //self.marks.get(&*text).cloned(),
         };
