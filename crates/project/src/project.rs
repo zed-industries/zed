@@ -1304,6 +1304,7 @@ impl Project {
         }
     }
 
+<<<<<<< HEAD
     pub fn initial_send_breakpoints(
         &self,
         session_id: SessionId,
@@ -1339,6 +1340,8 @@ impl Project {
         })
     }
 
+=======
+>>>>>>> e1c7e1088b (Handle initialize event)
     pub fn start_debug_session(
         &mut self,
         config: DebugAdapterConfig,
@@ -1416,7 +1419,7 @@ impl Project {
                     .log_err();
             }
 
-            let mut tasks = Vec::new();
+            let mut tasks: Vec<Result<()>> = Vec::new();
 
             for (project_path, breakpoints) in &self.breakpoint_store.read(cx).breakpoints {
                 let Some((buffer, buffer_path)) = maybe!({
@@ -1435,26 +1438,27 @@ impl Project {
                     continue;
                 };
 
-                tasks.push(
-                    store.send_breakpoints(
-                        session_id,
-                        Arc::from(buffer_path),
-                        breakpoints
-                            .into_iter()
-                            .map(|breakpoint| breakpoint.to_source_breakpoint(buffer))
-                            .collect::<Vec<_>>(),
-                        store.ignore_breakpoints(&session_id, cx),
-                        false,
-                        cx,
-                    ),
-                );
+                // todo (debugger): Fix breakpoint stuff
+                // tasks.push(
+                //     store.send_breakpoints(
+                //         client_id,
+                //         Arc::from(buffer_path),
+                //         breakpoints
+                //             .into_iter()
+                //             .map(|breakpoint| breakpoint.to_source_breakpoint(buffer))
+                //             .collect::<Vec<_>>(),
+                //         store.ignore_breakpoints(&client_id, cx),
+                //         false,
+                //         cx,
+                //     ),
+                // );
             }
 
             tasks
         });
 
         cx.background_executor().spawn(async move {
-            try_join_all(tasks).await?;
+            // try_join_all(tasks).await?;
 
             Ok(())
         })
