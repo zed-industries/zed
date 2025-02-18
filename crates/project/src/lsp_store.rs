@@ -1986,13 +1986,21 @@ impl LocalLspStore {
 
         if let Some(version) = version {
             let buffer_id = buffer.read(cx).remote_id();
-            let snapshots = self
+            let snapshots = if let Some(snapshots) = self
                 .buffer_snapshots
                 .get_mut(&buffer_id)
                 .and_then(|m| m.get_mut(&server_id))
-                .ok_or_else(|| {
-                    anyhow!("no snapshots found for buffer {buffer_id} and server {server_id}")
-                })?;
+            {
+                snapshots
+            } else if version == 0 {
+                // Some language servers report version 0 even if the buffer hasn't been opened yet.
+                // We detect this case and treat it as if the version was `None`.
+                return Ok(buffer.read(cx).text_snapshot());
+            } else {
+                return Err(anyhow!(
+                    "no snapshots found for buffer {buffer_id} and server {server_id}"
+                ));
+            };
 
             let found_snapshot = snapshots
                     .binary_search_by_key(&version, |e| e.version)
