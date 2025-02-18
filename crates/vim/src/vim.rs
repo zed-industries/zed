@@ -44,7 +44,6 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{px, IntoElement, SharedString};
-use util::serde::{deserialize_enum_fromstr, deserialize_option_enum_fromstr};
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
 
