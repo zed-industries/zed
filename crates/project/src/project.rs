@@ -1304,41 +1304,6 @@ impl Project {
         }
     }
 
-    pub fn initial_send_breakpoints(
-        &self,
-        client_id: DebugAdapterClientId,
-        cx: &mut Context<Self>,
-    ) -> Task<()> {
-        let mut tasks = Vec::new();
-
-        for (abs_path, serialized_breakpoints) in self
-            .breakpoint_store()
-            .read_with(cx, |store, cx| store.all_breakpoints(true, cx))
-            .into_iter()
-            .filter(|(_, bps)| !bps.is_empty())
-        {
-            let source_breakpoints = serialized_breakpoints
-                .iter()
-                .map(|bp| bp.to_source_breakpoint())
-                .collect::<Vec<_>>();
-
-            tasks.push(self.dap_store.update(cx, |store, cx| {
-                store.send_breakpoints(
-                    client_id,
-                    abs_path,
-                    source_breakpoints,
-                    store.ignore_breakpoints(&client_id, cx),
-                    false,
-                    cx,
-                )
-            }));
-        }
-
-        cx.background_executor().spawn(async move {
-            join_all(tasks).await;
-        })
-    }
-
     pub fn start_debug_session(
         &mut self,
         config: DebugAdapterConfig,
@@ -1416,7 +1381,7 @@ impl Project {
                     .log_err();
             }
 
-            let mut tasks = Vec::new();
+            let mut tasks: Vec<Result<()>> = Vec::new();
 
             for (project_path, breakpoints) in &self.breakpoint_store.read(cx).breakpoints {
                 let Some((buffer, buffer_path)) = maybe!({
@@ -1435,26 +1400,27 @@ impl Project {
                     continue;
                 };
 
-                tasks.push(
-                    store.send_breakpoints(
-                        client_id,
-                        Arc::from(buffer_path),
-                        breakpoints
-                            .into_iter()
-                            .map(|breakpoint| breakpoint.to_source_breakpoint(buffer))
-                            .collect::<Vec<_>>(),
-                        store.ignore_breakpoints(&client_id, cx),
-                        false,
-                        cx,
-                    ),
-                );
+                // todo (debugger): Fix breakpoint stuff
+                // tasks.push(
+                //     store.send_breakpoints(
+                //         client_id,
+                //         Arc::from(buffer_path),
+                //         breakpoints
+                //             .into_iter()
+                //             .map(|breakpoint| breakpoint.to_source_breakpoint(buffer))
+                //             .collect::<Vec<_>>(),
+                //         store.ignore_breakpoints(&client_id, cx),
+                //         false,
+                //         cx,
+                //     ),
+                // );
             }
 
             tasks
         });
 
         cx.background_executor().spawn(async move {
-            try_join_all(tasks).await?;
+            // try_join_all(tasks).await?;
 
             Ok(())
         })

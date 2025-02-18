@@ -364,6 +364,7 @@ impl DapStore {
                         client_id,
                         remote.upstream_client.clone(),
                         remote.upstream_project_id,
+                        self.breakpoint_store.clone(),
                         ignore.unwrap_or(false),
                     )
                 }),
@@ -601,7 +602,7 @@ impl DapStore {
                         .update(cx, |store, cx| {
                             if let Some(session) = store.sessions.get(&client_id) {
                                 session.update(cx, |session, cx| {
-                                    session.handle_dap_message(message);
+                                    session.handle_dap_message(message, cx);
                                 });
                             }
                         })
@@ -1088,50 +1089,6 @@ impl DapStore {
         })
     }
 
-    pub fn send_breakpoints(
-        &self,
-        client_id: DebugAdapterClientId,
-        absolute_file_path: Arc<Path>,
-        mut breakpoints: Vec<SourceBreakpoint>,
-        ignore: bool,
-        source_changed: bool,
-        cx: &App,
-    ) -> Task<Result<()>> {
-        let Some(client) = self
-            .client_by_id(client_id)
-            .and_then(|client| client.read(cx).adapter_client())
-        else {
-            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
-        };
-
-        // Adjust breakpoints as our client declares that indices start at one.
-        breakpoints.iter_mut().for_each(|bp| bp.line += 1u64);
-
-        cx.background_executor().spawn(async move {
-            client
-                .request::<SetBreakpoints>(SetBreakpointsArguments {
-                    source: Source {
-                        path: Some(String::from(absolute_file_path.to_string_lossy())),
-                        name: absolute_file_path
-                            .file_name()
-                            .map(|name| name.to_string_lossy().to_string()),
-                        source_reference: None,
-                        presentation_hint: None,
-                        origin: None,
-                        sources: None,
-                        adapter_data: None,
-                        checksums: None,
-                    },
-                    breakpoints: Some(if ignore { Vec::default() } else { breakpoints }),
-                    source_modified: Some(source_changed),
-                    lines: None,
-                })
-                .await?;
-
-            Ok(())
-        })
-    }
-
     pub fn send_changed_breakpoints(
         &self,
         project_path: &ProjectPath,
@@ -1140,44 +1097,45 @@ impl DapStore {
         source_changed: bool,
         cx: &App,
     ) -> Task<Result<()>> {
-        let source_breakpoints = self
-            .breakpoint_store
-            .read(cx)
-            .breakpoints
-            .get(project_path)
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .map(|breakpoint| breakpoint.source_for_snapshot(buffer_snapshot.as_ref()))
-            .collect::<Vec<_>>();
+        todo!()
+        // let source_breakpoints = self
+        //     .breakpoint_store
+        //     .read(cx)
+        //     .breakpoints
+        //     .get(project_path)
+        //     .cloned()
+        //     .unwrap_or_default()
+        //     .iter()
+        //     .map(|breakpoint| breakpoint.source_for_snapshot(buffer_snapshot.as_ref()))
+        //     .collect::<Vec<_>>();
 
-        let mut tasks = Vec::new();
-        for (client_id, client) in self
-            .sessions
-            .iter()
-            .filter(|(_, client)| client.read(cx).adapter_client().is_some())
-        {
-            let client = client.read(cx);
-            let ignore_breakpoints = !client.breakpoints_enabled();
+        // let mut tasks = Vec::new();
+        // for (client_id, client) in self
+        //     .sessions
+        //     .iter()
+        //     .filter(|(_, client)| client.read(cx).adapter_client().is_some())
+        // {
+        //     let client = client.read(cx);
+        //     let ignore_breakpoints = !client.breakpoints_enabled();
 
-            tasks.push(self.send_breakpoints(
-                *client_id,
-                Arc::from(absolute_path.clone()),
-                source_breakpoints.clone(),
-                ignore_breakpoints,
-                source_changed,
-                cx,
-            ));
-        }
+        //     tasks.push(self.send_breakpoints(
+        //         *client_id,
+        //         Arc::from(absolute_path.clone()),
+        //         source_breakpoints.clone(),
+        //         ignore_breakpoints,
+        //         source_changed,
+        //         cx,
+        //     ));
+        // }
 
-        if tasks.is_empty() {
-            return Task::ready(Ok(()));
-        }
+        // if tasks.is_empty() {
+        //     return Task::ready(Ok(()));
+        // }
 
-        cx.background_executor().spawn(async move {
-            futures::future::join_all(tasks).await;
-            Ok(())
-        })
+        // cx.background_executor().spawn(async move {
+        //     futures::future::join_all(tasks).await;
+        //     Ok(())
+        // })
     }
 
     pub fn shared(
