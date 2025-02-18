@@ -1079,6 +1079,7 @@ impl SerializableItem for Editor {
                         cx.new(|cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
 
+                            editor.read_selections_from_db(item_id, workspace_id, window, cx);
                             editor.read_scroll_position_from_db(item_id, workspace_id, window, cx);
                             editor
                         })
@@ -1134,6 +1135,12 @@ impl SerializableItem for Editor {
                                     let mut editor =
                                         Editor::for_buffer(buffer, Some(project), window, cx);
 
+                                    editor.read_selections_from_db(
+                                        item_id,
+                                        workspace_id,
+                                        window,
+                                        cx,
+                                    );
                                     editor.read_scroll_position_from_db(
                                         item_id,
                                         workspace_id,
@@ -1152,6 +1159,7 @@ impl SerializableItem for Editor {
                         window.spawn(cx, |mut cx| async move {
                             let editor = open_by_abs_path?.await?.downcast::<Editor>().with_context(|| format!("Failed to downcast to Editor after opening abs path {abs_path:?}"))?;
                             editor.update_in(&mut cx, |editor, window, cx| {
+                                editor.read_selections_from_db(item_id, workspace_id, window, cx);
                                 editor.read_scroll_position_from_db(item_id, workspace_id, window, cx);
                             })?;
                             Ok(editor)
