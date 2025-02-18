@@ -522,17 +522,18 @@ impl Session {
                     .unwrap_or_default()
                 {
                     if let Some(adapter) = this.adapter_client() {
-                        cx.background_spawn(async move {
-                            adapter.request::<dap::requests::ConfigurationDone>(
-                                dap::ConfigurationDoneArguments,
-                            );
-                        })
-                    } else {
-                        Task::ready(())
+                        return cx.background_spawn(async move {
+                            adapter
+                                .request::<dap::requests::ConfigurationDone>(
+                                    dap::ConfigurationDoneArguments,
+                                )
+                                .await
+                                .log_err();
+                        });
                     }
-                } else {
-                    Task::ready(())
                 }
+
+                Task::ready(())
             })
         })
         .detach_and_log_err(cx);
