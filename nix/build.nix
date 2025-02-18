@@ -3,10 +3,10 @@
   crane,
   rustToolchain,
   fetchpatch,
-  clang,
   cmake,
   copyDesktopItems,
   curl,
+  clang,
   perl,
   pkg-config,
   protobuf,
@@ -64,9 +64,11 @@ let
 
     src = commonSrc;
 
+    gpu-lib = if withGLES then libglvnd else vulkan-loader;
+
     nativeBuildInputs =
       [
-        clang
+        # clang # todo: why?
         cmake
         copyDesktopItems
         curl
@@ -93,6 +95,7 @@ let
         alsa-lib
         libxkbcommon
         wayland
+        gpu-lib
         xorg.libxcb
       ]
       ++ lib.optionals stdenv.hostPlatform.isDarwin [
@@ -110,13 +113,14 @@ let
       };
       ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
       RELEASE_VERSION = version;
+      RUSTFLAGS = if withGLES then "--cfg gles" else "";
     };
   };
   cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 in
 craneLib.buildPackage (
   commonArgs
-  // rec {
+  // {
     inherit cargoArtifacts;
 
     patches =
@@ -146,14 +150,15 @@ craneLib.buildPackage (
       bash script/generate-licenses
     '';
 
+    # todo: verify that these are redundant? `wayland` is in `buildInputs`, `gpu-lib` is now too
+    # patchelf --add-rpath ${gpu-lib}/lib $out/libexec/*
+    # patchelf --add-rpath ${wayland}/lib $out/libexec/*
+    #
+    # todo: why is this gated on linux? (no node for macOS users? ☹️)
     postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
-      patchelf --add-rpath ${gpu-lib}/lib $out/libexec/*
-      patchelf --add-rpath ${wayland}/lib $out/libexec/*
       wrapProgram $out/libexec/zed-editor --suffix PATH : ${lib.makeBinPath [ nodejs_22 ]}
     '';
 
-    RUSTFLAGS = if withGLES then "--cfg gles" else "";
-    gpu-lib = if withGLES then libglvnd else vulkan-loader;
 
     preCheck = ''
       export HOME=$(mktemp -d);
