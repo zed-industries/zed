@@ -46,7 +46,6 @@ Name: "addcontextmenufiles"; Description: "{cm:AddContextMenuFiles,{#AppDisplayN
 Name: "addcontextmenufolders"; Description: "{cm:AddContextMenuFolders,{#AppDisplayName}}"; GroupDescription: "{cm:Other}"; Flags: unchecked; Check: not IsWindows11OrLater
 Name: "associatewithfiles"; Description: "{cm:AssociateWithFiles,{#AppDisplayName}}"; GroupDescription: "{cm:Other}"
 Name: "addtopath"; Description: "{cm:AddToPath}"; GroupDescription: "{cm:Other}"
-Name: "runcode"; Description: "{cm:RunAfter,{#AppDisplayName}}"; GroupDescription: "{cm:Other}"; Check: WizardSilent
 
 [Dirs]
 Name: "{app}"; AfterInstall: DisableAppDirInheritance
