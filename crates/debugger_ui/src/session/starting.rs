@@ -21,11 +21,13 @@ pub(crate) enum StartingEvent {
 }
 
 impl EventEmitter<StartingEvent> for StartingState {}
+
 impl StartingState {
     pub(crate) fn new(task: Task<Result<()>>, cx: &mut Context<Self>) -> Self {
         let _notify_parent = cx.spawn(move |this, mut cx| async move {
             task.await?;
-            this.update(&mut cx, |_, cx| cx.emit(StartingEvent::Finished(())));
+            this.update(&mut cx, |_, cx| cx.emit(StartingEvent::Finished(())))
+                .ok();
             Ok(())
         });
         Self {

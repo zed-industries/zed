@@ -41,7 +41,7 @@ pub struct RunningState {
     module_list: Entity<module_list::ModuleList>,
     active_thread_item: ThreadItem,
     _workspace: WeakEntity<Workspace>,
-    client_id: SessionId,
+    session_id: SessionId,
     variable_list: Entity<variable_list::VariableList>,
     _subscriptions: Vec<Subscription>,
     stack_frame_list: Entity<stack_frame_list::StackFrameList>,
@@ -380,7 +380,7 @@ impl RunningState {
             remote_id: None,
             stack_frame_list,
             loaded_source_list,
-            client_id,
+            session_id: client_id,
             show_console_indicator: false,
             active_thread_item: ThreadItem::Variables,
         }
@@ -425,7 +425,7 @@ impl RunningState {
     }
 
     pub fn client_id(&self) -> SessionId {
-        self.client_id
+        self.session_id
     }
 
     pub fn thread_id(&self) -> ThreadId {
