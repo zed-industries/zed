@@ -1,4 +1,4 @@
-mod project_panel_settings;
+pub mod project_panel_settings;
 mod utils;
 
 use anyhow::{anyhow, Context as _, Result};
@@ -55,7 +55,7 @@ use ui::{
     IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, ListItemSpacing, Scrollbar,
     ScrollbarState, Tooltip,
 };
-use util::{maybe, paths::compare_paths, ResultExt, TakeUntilExt, TryFutureExt};
+use util::{maybe, paths::compare_paths_with_sort_mode, ResultExt, TakeUntilExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyTaskExt},
@@ -1539,6 +1539,8 @@ impl ProjectPanel {
             .iter()
             .filter(|e| e.worktree_id == worktree_id)
             .collect::<HashSet<_>>();
+
+        let sort_mode = ProjectPanelSettings::get_global(cx).sort_mode;
         let latest_entry = marked_entries_in_worktree
             .iter()
             .max_by(|a, b| {
@@ -1546,9 +1548,11 @@ impl ProjectPanel {
                     worktree.entry_for_id(a.entry_id),
                     worktree.entry_for_id(b.entry_id),
                 ) {
-                    (Some(a), Some(b)) => {
-                        compare_paths((&a.path, a.is_file()), (&b.path, b.is_file()))
-                    }
+                    (Some(a), Some(b)) => compare_paths_with_sort_mode(
+                        (&a.path, a.is_file()),
+                        (&b.path, b.is_file()),
+                        sort_mode,
+                    ),
                     _ => cmp::Ordering::Equal,
                 }
             })

@@ -96,7 +96,7 @@ use terminals::Terminals;
 use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
 use util::{
-    paths::{compare_paths, SanitizedPath},
+    paths::{compare_paths_with_sort_mode, SanitizedPath, SortMode},
     ResultExt as _,
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
@@ -121,7 +121,7 @@ pub use lsp_store::{
     SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
 pub use toolchain_store::ToolchainStore;
-use util::paths::{compare_paths_with_sort_mode, SortMode};
+use util::paths::compare_paths;
 
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
 const MAX_SEARCH_RESULT_FILES: usize = 5_000;
@@ -3229,6 +3229,7 @@ impl Project {
             })
             .collect::<Vec<_>>();
         let (tx, rx) = smol::channel::unbounded();
+        // HERE
         buffers.sort_by(|a, b| match (a.read(cx).file(), b.read(cx).file()) {
             (None, None) => a.read(cx).remote_id().cmp(&b.read(cx).remote_id()),
             (None, Some(_)) => std::cmp::Ordering::Less,
@@ -4584,7 +4585,7 @@ pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>], sort_mode: SortM
         compare_paths_with_sort_mode(
             (&entry_a.path, entry_a.is_file()),
             (&entry_b.path, entry_b.is_file()),
-            sort_mode
+            sort_mode,
         )
     });
 }

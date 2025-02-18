@@ -4676,6 +4676,7 @@ dependencies = [
  "menu",
  "picker",
  "project",
+ "project_panel",
  "schemars",
  "serde",
  "serde_derive",
