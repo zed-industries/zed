@@ -15674,7 +15674,7 @@ fn snippet_completions(
                     documentation: snippet
                         .description
                         .clone()
-                        .map(CompletionDocumentation::SingleLine),
+                        .map(|description| CompletionDocumentation::SingleLine(description.into())),
                     lsp_completion: lsp::CompletionItem {
                         label: snippet.prefix.first().unwrap().clone(),
                         kind: Some(CompletionItemKind::SNIPPET),

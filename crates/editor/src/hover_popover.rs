@@ -358,8 +358,15 @@ fn show_hover(
                             },
                             ..Default::default()
                         };
-                        Markdown::new_text(text, markdown_style.clone(), None, None, window, cx)
-                            .open_url(open_markdown_url)
+                        Markdown::new_text(
+                            SharedString::new(text),
+                            markdown_style.clone(),
+                            None,
+                            None,
+                            window,
+                            cx,
+                        )
+                        .open_url(open_markdown_url)
                     })
                     .ok();
 
@@ -562,7 +569,7 @@ async fn parse_blocks(
     let rendered_block = cx
         .new_window_entity(|window, cx| {
             Markdown::new(
-                combined_text,
+                combined_text.into(),
                 hover_markdown_style(window, cx),
                 Some(language_registry.clone()),
                 fallback_language_name,

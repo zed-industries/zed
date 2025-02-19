@@ -121,7 +121,7 @@ impl SlashCommandCompletionProvider {
                         Some(project::Completion {
                             old_range: name_range.clone(),
                             documentation: Some(CompletionDocumentation::SingleLine(
-                                command.description(),
+                                command.description().into(),
                             )),
                             new_text,
                             label: command.label(cx),

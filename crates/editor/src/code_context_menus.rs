@@ -586,9 +586,7 @@ impl CompletionsMenu {
             .documentation
             .as_ref()?
         {
-            CompletionDocumentation::MultiLinePlainText(text) => {
-                div().child(SharedString::from(text.clone()))
-            }
+            CompletionDocumentation::MultiLinePlainText(text) => div().child(text.clone()),
             CompletionDocumentation::MultiLineMarkdown(parsed) if !parsed.is_empty() => {
                 let markdown = self.markdown_element.get_or_insert_with(|| {
                     cx.new(|cx| {
@@ -601,7 +599,7 @@ impl CompletionsMenu {
                             .language_at(self.initial_position, cx)
                             .map(|l| l.name().to_proto());
                         Markdown::new(
-                            String::new(),
+                            SharedString::default(),
                             hover_markdown_style(window, cx),
                             languages,
                             language,

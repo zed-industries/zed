@@ -48,7 +48,7 @@ impl Default for MarkdownStyle {
 }
 
 pub struct Markdown {
-    source: String,
+    source: SharedString,
     selection: Selection,
     pressed_link: Option<RenderedLink>,
     autoscroll_request: Option<usize>,
@@ -73,7 +73,7 @@ actions!(markdown, [Copy]);
 
 impl Markdown {
     pub fn new(
-        source: String,
+        source: SharedString,
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
         fallback_code_block_language: Option<String>,
@@ -114,7 +114,7 @@ impl Markdown {
     }
 
     pub fn new_text(
-        source: String,
+        source: SharedString,
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
         fallback_code_block_language: Option<String>,
@@ -149,11 +149,11 @@ impl Markdown {
     }
 
     pub fn append(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.source.push_str(text);
+        self.source = SharedString::new(self.source.to_string() + text);
         self.parse(window, cx);
     }
 
-    pub fn reset(&mut self, source: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn reset(&mut self, source: SharedString, window: &mut Window, cx: &mut Context<Self>) {
         if source == self.source() {
             return;
         }
@@ -188,20 +188,19 @@ impl Markdown {
             return;
         }
 
-        let text = self.source.clone();
+        let source = self.source.clone();
         let parse_text_only = self.options.parse_links_only;
         let language_registry = self.language_registry.clone();
         let fallback = self.fallback_code_block_language.clone();
         let parsed = cx.background_spawn(async move {
-            let text = SharedString::from(text);
             if parse_text_only {
                 return anyhow::Ok(ParsedMarkdown {
-                    events: Arc::from(parse_links_only(text.as_ref())),
-                    source: text,
+                    events: Arc::from(parse_links_only(source.as_ref())),
+                    source,
                     languages: HashMap::default(),
                 });
             }
-            let (events, language_names) = parse_markdown(&text);
+            let (events, language_names) = parse_markdown(&source);
             let mut languages = HashMap::with_capacity(language_names.len());
             for name in language_names {
                 if let Some(registry) = language_registry.as_ref() {
@@ -218,7 +217,7 @@ impl Markdown {
                 }
             }
             anyhow::Ok(ParsedMarkdown {
-                source: text,
+                source,
                 events: Arc::from(events),
                 languages,
             })

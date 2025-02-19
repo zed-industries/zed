@@ -26,7 +26,8 @@ use futures::{
 };
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, PromptLevel, Task, WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, PromptLevel, SharedString, Task,
+    WeakEntity,
 };
 use http_client::HttpClient;
 use itertools::Itertools as _;
@@ -4494,11 +4495,11 @@ impl LspStore {
         let documentation = if response.documentation.is_empty() {
             CompletionDocumentation::Undocumented
         } else if response.documentation_is_markdown {
-            CompletionDocumentation::MultiLineMarkdown(response.documentation)
+            CompletionDocumentation::MultiLineMarkdown(response.documentation.into())
         } else if response.documentation.lines().count() <= 1 {
-            CompletionDocumentation::SingleLine(response.documentation)
+            CompletionDocumentation::SingleLine(response.documentation.into())
         } else {
-            CompletionDocumentation::MultiLinePlainText(response.documentation)
+            CompletionDocumentation::MultiLinePlainText(response.documentation.into())
         };
 
         let mut completions = completions.borrow_mut();
@@ -8458,11 +8459,11 @@ pub enum CompletionDocumentation {
     /// There is no documentation for this completion.
     Undocumented,
     /// A single line of documentation.
-    SingleLine(String),
+    SingleLine(SharedString),
     /// Multiple lines of plain text documentation.
-    MultiLinePlainText(String),
+    MultiLinePlainText(SharedString),
     /// Markdown documentation.
-    MultiLineMarkdown(String),
+    MultiLineMarkdown(SharedString),
 }
 
 impl From<lsp::Documentation> for CompletionDocumentation {
@@ -8470,22 +8471,24 @@ impl From<lsp::Documentation> for CompletionDocumentation {
         match docs {
             lsp::Documentation::String(text) => {
                 if text.lines().count() <= 1 {
-                    CompletionDocumentation::SingleLine(text)
+                    CompletionDocumentation::SingleLine(text.into())
                 } else {
-                    CompletionDocumentation::MultiLinePlainText(text)
+                    CompletionDocumentation::MultiLinePlainText(text.into())
                 }
             }
 
             lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
                 lsp::MarkupKind::PlainText => {
                     if value.lines().count() <= 1 {
-                        CompletionDocumentation::SingleLine(value)
+                        CompletionDocumentation::SingleLine(value.into())
                     } else {
-                        CompletionDocumentation::MultiLinePlainText(value)
+                        CompletionDocumentation::MultiLinePlainText(value.into())
                     }
                 }
 
-                lsp::MarkupKind::Markdown => CompletionDocumentation::MultiLineMarkdown(value),
+                lsp::MarkupKind::Markdown => {
+                    CompletionDocumentation::MultiLineMarkdown(value.into())
+                }
             },
         }
     }

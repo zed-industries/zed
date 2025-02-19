@@ -89,7 +89,7 @@ pub fn main() {
                 };
 
                 MarkdownExample::new(
-                    MARKDOWN_EXAMPLE.to_string(),
+                    MARKDOWN_EXAMPLE.into(),
                     markdown_style,
                     language_registry,
                     window,
@@ -107,7 +107,7 @@ struct MarkdownExample {
 
 impl MarkdownExample {
     pub fn new(
-        text: String,
+        text: SharedString,
         style: MarkdownStyle,
         language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
