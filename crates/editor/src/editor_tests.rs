@@ -12239,7 +12239,6 @@ async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
         struct Row8;
         struct Row9;
         struct Row10;"#};
-    dbg!("here");
 
     // When addition hunks are not adjacent to carets, no hunk revert is performed
     assert_hunk_revert(
@@ -12279,7 +12278,6 @@ async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
         base_text,
         &mut cx,
     );
-    dbg!("here");
     // Same for selections
     assert_hunk_revert(
         indoc! {r#"struct Row;
@@ -12319,7 +12317,6 @@ async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
         &mut cx,
     );
 
-    dbg!("here");
     // When carets and selections intersect the addition hunks, those are reverted.
     // Adjacent carets got merged.
     assert_hunk_revert(
