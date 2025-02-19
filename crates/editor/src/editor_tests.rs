@@ -4321,7 +4321,24 @@ fn test_transpose(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_rewrap(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
+    init_test(cx, |settings| {
+        settings.languages.extend([
+            (
+                "Markdown".into(),
+                LanguageSettingsContent {
+                    allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
+                    ..Default::default()
+                },
+            ),
+            (
+                "Plain Text".into(),
+                LanguageSettingsContent {
+                    allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
+                    ..Default::default()
+                },
+            ),
+        ])
+    });
 
     let mut cx = EditorTestContext::new(cx).await;
 
