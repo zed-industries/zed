@@ -3,12 +3,14 @@ mod state;
 
 use crate::actions::ShowSignatureHelp;
 use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp};
-use gpui::{App, Context, Window};
-use language::markdown::parse_markdown;
+use gpui::{combine_highlights, App, Context, TextStyle, Window};
 use language::BufferSnapshot;
 use multi_buffer::{Anchor, ToOffset};
 use settings::Settings;
 use std::ops::Range;
+use text::Rope;
+use theme::ThemeSettings;
+use ui::{relative, ActiveTheme};
 
 pub use popover::SignatureHelpPopover;
 pub use state::SignatureHelpState;
@@ -168,65 +170,57 @@ impl Editor {
         else {
             return;
         };
+        let Some(lsp_store) = self.project.as_ref().map(|p| p.read(cx).lsp_store()) else {
+            return;
+        };
+        let task = lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.signature_help(&buffer, buffer_position, cx)
+        });
+        let language = self.language_at(position, cx);
 
         self.signature_help_state
             .set_task(cx.spawn_in(window, move |editor, mut cx| async move {
-                let signature_help = editor
-                    .update(&mut cx, |editor, cx| {
-                        let language = editor.language_at(position, cx);
-                        let project = editor.project.clone()?;
-                        let (markdown, language_registry) = {
-                            project.update(cx, |project, cx| {
-                                let language_registry = project.languages().clone();
-                                (
-                                    project.signature_help(&buffer, buffer_position, cx),
-                                    language_registry,
-                                )
-                            })
-                        };
-                        Some((markdown, language_registry, language))
-                    })
-                    .ok()
-                    .flatten();
-                let signature_help_popover = if let Some((
-                    signature_help_task,
-                    language_registry,
-                    language,
-                )) = signature_help
-                {
-                    // TODO allow multiple signature helps inside the same popover
-                    if let Some(mut signature_help) = signature_help_task.await.into_iter().next() {
-                        let mut parsed_content = parse_markdown(
-                            signature_help.markdown.as_str(),
-                            Some(&language_registry),
-                            language,
-                        )
-                        .await;
-                        parsed_content
-                            .highlights
-                            .append(&mut signature_help.highlights);
-                        Some(SignatureHelpPopover { parsed_content })
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
+                let signature_help = task.await;
                 editor
                     .update(&mut cx, |editor, cx| {
-                        let previous_popover = editor.signature_help_state.popover();
-                        if previous_popover != signature_help_popover.as_ref() {
-                            if let Some(signature_help_popover) = signature_help_popover {
-                                editor
-                                    .signature_help_state
-                                    .set_popover(signature_help_popover);
-                            } else {
-                                editor
-                                    .signature_help_state
-                                    .hide(SignatureHelpHiddenBy::AutoClose);
-                            }
-                            cx.notify();
+                        let Some(mut signature_help) = signature_help.into_iter().next() else {
+                            editor
+                                .signature_help_state
+                                .hide(SignatureHelpHiddenBy::AutoClose);
+                            return;
+                        };
+
+                        if let Some(language) = language {
+                            let text = Rope::from(signature_help.label.clone());
+                            let highlights = language
+                                .highlight_text(&text, 0..signature_help.label.len())
+                                .into_iter()
+                                .flat_map(|(range, highlight_id)| {
+                                    Some((range, highlight_id.style(&cx.theme().syntax())?))
+                                });
+                            signature_help.highlights =
+                                combine_highlights(signature_help.highlights, highlights).collect()
                         }
+                        let settings = ThemeSettings::get_global(cx);
+                        let text_style = TextStyle {
+                            color: cx.theme().colors().text,
+                            font_family: settings.buffer_font.family.clone(),
+                            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                            font_size: settings.buffer_font_size.into(),
+                            font_weight: settings.buffer_font.weight,
+                            line_height: relative(settings.buffer_line_height.value()),
+                            ..Default::default()
+                        };
+
+                        let signature_help_popover = SignatureHelpPopover {
+                            label: signature_help.label.into(),
+                            highlights: signature_help.highlights,
+                            style: text_style,
+                        };
+                        editor
+                            .signature_help_state
+                            .set_popover(signature_help_popover);
+                        cx.notify();
                     })
                     .ok();
             }));

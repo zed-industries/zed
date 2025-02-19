@@ -20,6 +20,7 @@ impl SignatureHelpState {
         self.task = None;
     }
 
+    #[cfg(test)]
     pub fn popover(&self) -> Option<&SignatureHelpPopover> {
         self.popover.as_ref()
     }

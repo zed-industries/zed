@@ -4764,7 +4764,7 @@ impl LspStore {
                     .await
                     .into_iter()
                     .flatten()
-                    .filter(|help| !help.markdown.is_empty())
+                    .filter(|help| !help.label.is_empty())
                     .collect::<Vec<_>>()
             })
         }

@@ -1,33 +1,21 @@
-use crate::{Editor, EditorStyle};
+use std::ops::Range;
+
+use crate::Editor;
 use gpui::{
-    div, AnyElement, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels,
-    Size, StatefulInteractiveElement, Styled, WeakEntity,
+    div, AnyElement, Context, HighlightStyle, InteractiveElement, IntoElement, MouseButton,
+    ParentElement, Pixels, Size, StatefulInteractiveElement, Styled, StyledText, TextStyle,
 };
-use language::ParsedMarkdown;
-use ui::StyledExt;
-use workspace::Workspace;
+use ui::{SharedString, StyledExt};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SignatureHelpPopover {
-    pub parsed_content: ParsedMarkdown,
-}
-
-impl PartialEq for SignatureHelpPopover {
-    fn eq(&self, other: &Self) -> bool {
-        let str_equality = self.parsed_content.text.as_str() == other.parsed_content.text.as_str();
-        let highlight_equality = self.parsed_content.highlights == other.parsed_content.highlights;
-        str_equality && highlight_equality
-    }
+    pub label: SharedString,
+    pub style: TextStyle,
+    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
 }
 
 impl SignatureHelpPopover {
-    pub fn render(
-        &mut self,
-        style: &EditorStyle,
-        max_size: Size<Pixels>,
-        workspace: Option<WeakEntity<Workspace>>,
-        cx: &mut Context<Editor>,
-    ) -> AnyElement {
+    pub fn render(&mut self, max_size: Size<Pixels>, cx: &mut Context<Editor>) -> AnyElement {
         div()
             .id("signature_help_popover")
             .elevation_2(cx)
@@ -36,13 +24,12 @@ impl SignatureHelpPopover {
             .max_h(max_size.height)
             .on_mouse_move(|_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(div().p_2().child(crate::render_parsed_markdown(
-                "signature_help_popover_content",
-                &self.parsed_content,
-                style,
-                workspace,
-                cx,
-            )))
+            .child(
+                div().px_2().child(
+                    StyledText::new(self.label.clone())
+                        .with_highlights(&self.style, self.highlights.iter().cloned()),
+                ),
+            )
             .into_any_element()
     }
 }

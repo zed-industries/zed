@@ -13416,7 +13416,7 @@ impl Editor {
 
     pub fn render_git_blame_inline(&self, window: &Window, cx: &App) -> bool {
         self.show_git_blame_inline
-            && (self.focus_handle.is_focused(window, cx)
+            && (self.focus_handle.is_focused(window)
                 || self
                     .git_blame_inline_tooltip
                     .as_ref()
