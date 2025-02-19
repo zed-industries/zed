@@ -945,11 +945,15 @@ and then another
         edits
             .into_iter()
             .map(|(mut old_range, new_text)| {
+                old_range.start += offset;
+                old_range.end += offset;
+
                 let prefix_len = common_prefix(
                     snapshot.chars_for_range(old_range.clone()),
                     new_text.chars(),
                 );
                 old_range.start += prefix_len;
+
                 let suffix_len = common_prefix(
                     snapshot.reversed_chars_for_range(old_range.clone()),
                     new_text[prefix_len..].chars().rev(),
@@ -1208,10 +1212,7 @@ impl Event {
                     writeln!(prompt, "User renamed {:?} to {:?}\n", old_path, new_path).unwrap();
                 }
 
-                let diff =
-                    similar::TextDiff::from_lines(&old_snapshot.text(), &new_snapshot.text())
-                        .unified_diff()
-                        .to_string();
+                let diff = language::unified_diff(&old_snapshot.text(), &new_snapshot.text());
                 if !diff.is_empty() {
                     write!(
                         prompt,

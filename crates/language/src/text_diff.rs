@@ -3,23 +3,50 @@ use imara_diff::{
     diff,
     intern::{InternedInput, Token},
     sources::lines_with_terminator,
-    Algorithm,
+    Algorithm, UnifiedDiffBuilder,
 };
 use std::{iter, ops::Range, sync::Arc};
 
 const MAX_WORD_DIFF_LEN: usize = 512;
 const MAX_WORD_DIFF_LINE_COUNT: usize = 8;
 
-/// Computes a diff between two strings.
+/// Computes a diff between two strings, returning a unified diff string.
+pub fn unified_diff(old_text: &str, new_text: &str) -> String {
+    let input = InternedInput::new(old_text, new_text);
+    diff(
+        Algorithm::Histogram,
+        &input,
+        UnifiedDiffBuilder::new(&input),
+    )
+}
+
+/// Computes a diff between two strings, returning a vector of old and new row
+/// ranges.
+pub fn line_diff(old_text: &str, new_text: &str) -> Vec<(Range<u32>, Range<u32>)> {
+    let mut edits = Vec::new();
+    let input = InternedInput::new(
+        lines_with_terminator(old_text),
+        lines_with_terminator(new_text),
+    );
+    diff_internal(&input, |_, _, old_rows, new_rows| {
+        edits.push((old_rows, new_rows));
+    });
+    edits
+}
+
+/// Computes a diff between two strings, returning a vector of edits.
 ///
-/// Performs word-level diffing within hunks that replace small numbers of lines.
+/// The edits are represented as tuples of byte ranges and replacement strings.
+///
+/// Internally, this function first performs a line-based diff, and then performs a second
+/// word-based diff within hunks that replace small numbers of lines.
 pub fn text_diff(old_text: &str, new_text: &str) -> Vec<(Range<usize>, Arc<str>)> {
-    text_diff_with_language_scope(old_text, new_text, None)
+    line_and_word_diff(old_text, new_text, None)
 }
 
 /// Computes a diff between two strings, using a specific language scope's
 /// word characters for word-level diffing.
-pub fn text_diff_with_language_scope(
+pub fn line_and_word_diff(
     old_text: &str,
     new_text: &str,
     language_scope: Option<LanguageScope>,
@@ -31,7 +58,6 @@ pub fn text_diff_with_language_scope(
         lines_with_terminator(old_text),
         lines_with_terminator(new_text),
     );
-
     diff_internal(
         &input,
         |old_byte_range, new_byte_range, old_rows, new_rows| {
@@ -57,7 +83,6 @@ pub fn text_diff_with_language_scope(
                         old_offset + old_byte_range.start..old_offset + old_byte_range.end;
                     let new_byte_range =
                         new_offset + new_byte_range.start..new_offset + new_byte_range.end;
-
                     let replacement_text = if new_byte_range.is_empty() {
                         empty.clone()
                     } else {
@@ -75,7 +100,6 @@ pub fn text_diff_with_language_scope(
             }
         },
     );
-
     edits
 }
 
