@@ -68,7 +68,7 @@ use std::{
 };
 use sum_tree::Bias;
 use text::BufferId;
-use theme::{ActiveTheme, Appearance, PlayerColor};
+use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
 use ui::{
     h_flex, prelude::*, ButtonLike, ButtonStyle, ContextMenu, IconButtonShape, KeyBinding, Tooltip,
     POPOVER_Y_PADDING,
@@ -3334,90 +3334,99 @@ impl EditorElement {
             &mut App,
         ) -> Vec<(CursorPopoverType, AnyElement, Size<Pixels>)>,
     ) -> Option<(Vec<(CursorPopoverType, Bounds<Pixels>)>, bool)> {
-        // If the max height won't fit below and there is more space above, put it above the line.
-        let bottom_y_when_flipped = target_position.y - line_height;
-        let available_above = bottom_y_when_flipped - text_hitbox.top();
-        let available_below = text_hitbox.bottom() - target_position.y;
-        let y_overflows_below = max_height > available_below;
-        let mut y_flipped = y_overflows_below && available_above > available_below;
-        let mut height = cmp::min(
-            max_height,
-            if y_flipped {
-                available_above
-            } else {
-                available_below
-            },
-        );
-
-        // If the min height doesn't fit within text bounds, instead fit within the window.
-        if height < min_height {
-            let available_above = bottom_y_when_flipped;
-            let available_below = viewport_bounds.bottom() - target_position.y;
-            if available_below > min_height {
-                y_flipped = false;
-                height = min_height;
-            } else if available_above > min_height {
-                y_flipped = true;
-                height = min_height;
-            } else if available_above > available_below {
-                y_flipped = true;
-                height = available_above;
-            } else {
-                y_flipped = false;
-                height = available_below;
-            }
-        }
-
-        let max_width_for_stable_x = viewport_bounds.right() - target_position.x;
-
-        // TODO: Use viewport_bounds.width as a max width so that it doesn't get clipped on the left
-        // for very narrow windows.
-        let popovers = make_sized_popovers(height, max_width_for_stable_x, y_flipped, window, cx);
-        if popovers.is_empty() {
-            return None;
-        }
-
-        let max_width = popovers
-            .iter()
-            .map(|(_, _, size)| size.width)
-            .max()
-            .unwrap_or_default();
-
-        let mut current_position = gpui::Point {
-            // Snap the right edge of the list to the right edge of the window if its horizontal bounds
-            // overflow. Include space for the scrollbar.
-            x: target_position
-                .x
-                .min((viewport_bounds.right() - max_width).max(Pixels::ZERO)),
-            y: if y_flipped {
-                bottom_y_when_flipped
-            } else {
-                target_position.y
-            },
+        let text_style = TextStyleRefinement {
+            line_height: Some(DefiniteLength::Fraction(
+                BufferLineHeight::Comfortable.value(),
+            )),
+            ..Default::default()
         };
-
-        let mut laid_out_popovers = popovers
-            .into_iter()
-            .map(|(popover_type, element, size)| {
+        window.with_text_style(Some(text_style), |window| {
+            // If the max height won't fit below and there is more space above, put it above the line.
+            let bottom_y_when_flipped = target_position.y - line_height;
+            let available_above = bottom_y_when_flipped - text_hitbox.top();
+            let available_below = text_hitbox.bottom() - target_position.y;
+            let y_overflows_below = max_height > available_below;
+            let mut y_flipped = y_overflows_below && available_above > available_below;
+            let mut height = cmp::min(
+                max_height,
                 if y_flipped {
-                    current_position.y -= size.height;
-                }
-                let position = current_position;
-                window.defer_draw(element, current_position, 1);
-                if !y_flipped {
-                    current_position.y += size.height + MENU_GAP;
+                    available_above
                 } else {
-                    current_position.y -= MENU_GAP;
+                    available_below
+                },
+            );
+
+            // If the min height doesn't fit within text bounds, instead fit within the window.
+            if height < min_height {
+                let available_above = bottom_y_when_flipped;
+                let available_below = viewport_bounds.bottom() - target_position.y;
+                if available_below > min_height {
+                    y_flipped = false;
+                    height = min_height;
+                } else if available_above > min_height {
+                    y_flipped = true;
+                    height = min_height;
+                } else if available_above > available_below {
+                    y_flipped = true;
+                    height = available_above;
+                } else {
+                    y_flipped = false;
+                    height = available_below;
                 }
-                (popover_type, Bounds::new(position, size))
-            })
-            .collect::<Vec<_>>();
+            }
 
-        if y_flipped {
-            laid_out_popovers.reverse();
-        }
+            let max_width_for_stable_x = viewport_bounds.right() - target_position.x;
 
-        Some((laid_out_popovers, y_flipped))
+            // TODO: Use viewport_bounds.width as a max width so that it doesn't get clipped on the left
+            // for very narrow windows.
+            let popovers =
+                make_sized_popovers(height, max_width_for_stable_x, y_flipped, window, cx);
+            if popovers.is_empty() {
+                return None;
+            }
+
+            let max_width = popovers
+                .iter()
+                .map(|(_, _, size)| size.width)
+                .max()
+                .unwrap_or_default();
+
+            let mut current_position = gpui::Point {
+                // Snap the right edge of the list to the right edge of the window if its horizontal bounds
+                // overflow. Include space for the scrollbar.
+                x: target_position
+                    .x
+                    .min((viewport_bounds.right() - max_width).max(Pixels::ZERO)),
+                y: if y_flipped {
+                    bottom_y_when_flipped
+                } else {
+                    target_position.y
+                },
+            };
+
+            let mut laid_out_popovers = popovers
+                .into_iter()
+                .map(|(popover_type, element, size)| {
+                    if y_flipped {
+                        current_position.y -= size.height;
+                    }
+                    let position = current_position;
+                    window.defer_draw(element, current_position, 1);
+                    if !y_flipped {
+                        current_position.y += size.height + MENU_GAP;
+                    } else {
+                        current_position.y -= MENU_GAP;
+                    }
+                    (popover_type, Bounds::new(position, size))
+                })
+                .collect::<Vec<_>>();
+
+            if y_flipped {
+                laid_out_popovers.reverse();
+            }
+
+            Some((laid_out_popovers, y_flipped))
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3978,25 +3987,33 @@ impl EditorElement {
             }
         })?;
 
-        let mut element = self.editor.update(cx, |editor, _| {
-            let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
-            let context_menu = mouse_context_menu.context_menu.clone();
+        let text_style = TextStyleRefinement {
+            line_height: Some(DefiniteLength::Fraction(
+                BufferLineHeight::Comfortable.value(),
+            )),
+            ..Default::default()
+        };
+        window.with_text_style(Some(text_style), |window| {
+            let mut element = self.editor.update(cx, |editor, _| {
+                let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
+                let context_menu = mouse_context_menu.context_menu.clone();
 
-            Some(
-                deferred(
-                    anchored()
-                        .position(position)
-                        .child(context_menu)
-                        .anchor(Corner::TopLeft)
-                        .snap_to_window_with_margin(px(8.)),
+                Some(
+                    deferred(
+                        anchored()
+                            .position(position)
+                            .child(context_menu)
+                            .anchor(Corner::TopLeft)
+                            .snap_to_window_with_margin(px(8.)),
+                    )
+                    .with_priority(1)
+                    .into_any(),
                 )
-                .with_priority(1)
-                .into_any(),
-            )
-        })?;
+            })?;
 
-        element.prepaint_as_root(position, AvailableSpace::min_size(), window, cx);
-        Some(element)
+            element.prepaint_as_root(position, AvailableSpace::min_size(), window, cx);
+            Some(element)
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
