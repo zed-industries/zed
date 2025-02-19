@@ -1513,7 +1513,7 @@ impl LspCommand for GetSignatureHelp {
         _: LanguageServerId,
         _: AsyncApp,
     ) -> Result<Self::Response> {
-        Ok(message.and_then(|message| SignatureHelp::new(message)))
+        Ok(message.and_then(SignatureHelp::new))
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
@@ -1571,7 +1571,7 @@ impl LspCommand for GetSignatureHelp {
         Ok(response
             .signature_help
             .map(proto_to_lsp_signature)
-            .and_then(|lsp_help| SignatureHelp::new(lsp_help)))
+            .and_then(SignatureHelp::new))
     }
 
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
