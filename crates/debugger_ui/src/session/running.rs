@@ -53,8 +53,9 @@ impl Render for RunningState {
         let thread_status = ThreadStatus::Running;
         let active_thread_item = &self.active_thread_item;
 
+        let threads = self.session.update(cx, |this, cx| this.threads(cx));
         let capabilities = self.capabilities(cx);
-
+        let state = cx.entity();
         h_flex()
             .key_context("DebugPanelItem")
             .track_focus(&self.focus_handle(cx))
@@ -236,12 +237,18 @@ impl Render for RunningState {
                                 DropdownMenu::new(
                                     "thread-list",
                                     "Threads",
-                                    ContextMenu::build(window, cx, |this, _, _| {
-                                        this.entry("Thread 1", None, |_, _| {}).entry(
-                                            "Thread 2",
-                                            None,
-                                            |_, _| {},
-                                        )
+                                    ContextMenu::build(window, cx, move |mut this, _, _| {
+                                        for (thread, status) in threads {
+                                            let state = state.clone();
+                                            let thread_id = thread.id;
+                                            this = this.entry(thread.name, None, move |_, cx| {
+                                                state.update(cx, |state, cx| {
+                                                    state.thread_id = ThreadId(thread_id);
+                                                    cx.notify();
+                                                });
+                                            });
+                                        }
+                                        this
                                     }),
                                 ),
                             )),

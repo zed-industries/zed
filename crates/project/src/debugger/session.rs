@@ -96,7 +96,7 @@ impl From<dap::StackFrame> for StackFrame {
     }
 }
 
-#[derive(Copy, Clone, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum ThreadStatus {
     #[default]
     Running,
