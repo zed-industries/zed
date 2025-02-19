@@ -15,3 +15,4 @@ doctest = false
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
+windows-core.workspace = true
