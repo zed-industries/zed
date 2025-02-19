@@ -130,16 +130,16 @@ pub(crate) struct TransportDelegate {
 
 impl Transport {
     #[cfg(any(test, feature = "test-support"))]
-    fn fake(args: DebugAdapterBinary) -> Self {
+    fn _fake(_args: DebugAdapterBinary) -> Self {
         todo!()
     }
 }
 
 impl TransportDelegate {
     #[cfg(any(test, feature = "test-support"))]
-    pub fn fake(args: DebugAdapterBinary) -> Self {
+    pub fn _fake(args: DebugAdapterBinary) -> Self {
         Self {
-            transport: Transport::fake(args),
+            transport: Transport::_fake(args),
             server_tx: Default::default(),
             log_handlers: Default::default(),
             current_requests: Default::default(),

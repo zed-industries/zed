@@ -258,9 +258,7 @@ impl DebugAdapterClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        adapters::FakeAdapter, client::DebugAdapterClient, debugger_settings::DebuggerSettings,
-    };
+    use crate::{client::DebugAdapterClient, debugger_settings::DebuggerSettings};
     use dap_types::{
         messages::Events,
         requests::{Initialize, Request, RunInTerminal},

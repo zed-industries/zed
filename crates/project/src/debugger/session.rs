@@ -389,6 +389,15 @@ impl ThreadStates {
             .copied()
             .or(self.global_state)
     }
+
+    fn any_thread_running(&self) -> bool {
+        self.global_state
+            .is_some_and(|state| state == ThreadStatus::Running)
+            || self
+                .known_thread_states
+                .values()
+                .any(|status| *status == ThreadStatus::Running)
+    }
 }
 
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
@@ -567,8 +576,8 @@ impl Session {
             modules: Vec::default(),
             loaded_sources: Vec::default(),
             threads: IndexMap::default(),
-            config: todo!(),
             _background_tasks: Vec::default(),
+            config: todo!(),
         }
     }
 
@@ -749,27 +758,9 @@ impl Session {
         }
     }
 
-    fn handle_start_debugging_request(&mut self, request: messages::Request) {}
+    fn _handle_start_debugging_request(&mut self, _request: messages::Request) {}
 
-    fn handle_run_in_terminal_request(&mut self, request: messages::Request) {}
-
-    pub(crate) fn handle_dap_message(&mut self, message: Message, cx: &mut Context<Self>) {
-        match message {
-            Message::Event(event) => {
-                self.handle_dap_event(event, cx);
-            }
-            Message::Request(request) => {
-                if StartDebugging::COMMAND == request.command {
-                    self.handle_start_debugging_request(request);
-                } else if RunInTerminal::COMMAND == request.command {
-                    self.handle_run_in_terminal_request(request);
-                } else {
-                    debug_assert!(false, "Encountered unexpected command type");
-                }
-            }
-            _ => unreachable!(),
-        }
-    }
+    fn _handle_run_in_terminal_request(&mut self, _request: messages::Request) {}
 
     pub(crate) fn _wait_for_request<R: DapCommand + PartialEq + Eq + Hash>(
         &self,
@@ -887,14 +878,17 @@ impl Session {
     }
 
     pub fn modules(&mut self, cx: &mut Context<Self>) -> &[Module] {
-        self.fetch(
-            dap_command::ModulesCommand,
-            |this, result, cx| {
-                this.modules = result.clone();
-                cx.notify();
-            },
-            cx,
-        );
+        if self.thread_states.any_thread_running() {
+            self.fetch(
+                dap_command::ModulesCommand,
+                |this, result, cx| {
+                    this.modules = result.clone();
+                    cx.notify();
+                },
+                cx,
+            );
+        }
+
         &self.modules
     }
 

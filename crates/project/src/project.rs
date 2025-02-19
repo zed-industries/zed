@@ -1090,12 +1090,8 @@ impl Project {
             bp_store
         })?;
 
-        let dap_store = cx.new(|cx| {
-            let mut dap_store =
-                DapStore::new_remote(remote_id, client.clone().into(), breakpoint_store.clone());
-
-            unimplemented!("dap_store.request_active_debug_sessions(cx)");
-            dap_store
+        let dap_store = cx.new(|_cx| {
+            DapStore::new_remote(remote_id, client.clone().into(), breakpoint_store.clone())
         })?;
 
         let lsp_store = cx.new(|cx| {

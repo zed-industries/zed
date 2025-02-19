@@ -1,5 +1,3 @@
-#[cfg(any(test, feature = "test-support"))]
-use crate::transport::FakeTransport;
 use ::fs::Fs;
 use anyhow::{anyhow, Context as _, Ok, Result};
 use async_compression::futures::bufread::GzipDecoder;
