@@ -357,7 +357,6 @@ gpui::actions!(
         ReverseLines,
         RevertFile,
         ReloadFile,
-        RevertSelectedHunks,
         Rewrap,
         ScrollCursorBottom,
         ScrollCursorCenter,

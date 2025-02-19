@@ -73,6 +73,7 @@ use futures::{
 };
 use fuzzy::StringMatchCandidate;
 
+use ::git::Restore;
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
@@ -7026,7 +7027,12 @@ impl Editor {
         })
     }
 
-    pub fn revert_file(&mut self, _: &RevertFile, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn revert_file(
+        &mut self,
+        _: &::git::RestoreFile,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let mut revert_changes = HashMap::default();
         let snapshot = self.snapshot(window, cx);
         for hunk in snapshot
@@ -7049,12 +7055,7 @@ impl Editor {
             .detach_and_notify_err(window, cx);
     }
 
-    pub fn revert_selected_hunks(
-        &mut self,
-        _: &RevertSelectedHunks,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn git_restore(&mut self, _: &Restore, window: &mut Window, cx: &mut Context<Self>) {
         let selections = self.selections.all(cx).into_iter().map(|s| s.range());
         self.revert_hunks_in_ranges(selections, window, cx);
     }

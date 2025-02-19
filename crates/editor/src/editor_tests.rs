@@ -12736,7 +12736,7 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
     editor.update_in(cx, |editor, window, cx| {
         assert_eq!(editor.text(cx), "Xaaa\nXbbb\nXccc\n\nXfff\nXggg\n\nXjjj\nXlll\nXmmm\nXnnn\n\nXqqq\nXrrr\n\nXuuu\nXvvv\nXwww\nXxxx\n\nX{{{\nX|||\n\nX\u{7f}\u{7f}\u{7f}");
         editor.select_all(&SelectAll, window, cx);
-        editor.revert_selected_hunks(&RevertSelectedHunks, window, cx);
+        editor.git_restore(&Default::default(), window, cx);
     });
     cx.executor().run_until_parked();
 
@@ -12762,7 +12762,7 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
         editor.change_selections(None, window, cx, |s| {
             s.select_ranges(Some(Point::new(0, 0)..Point::new(6, 0)));
         });
-        editor.revert_selected_hunks(&RevertSelectedHunks, window, cx);
+        editor.git_restore(&Default::default(), window, cx);
     });
 
     // Now, when all ranges selected belong to buffer_1, the revert should succeed,
@@ -16103,7 +16103,7 @@ fn assert_hunk_revert(
             .map(|hunk| hunk.status())
             .collect::<Vec<_>>();
 
-        editor.revert_selected_hunks(&RevertSelectedHunks, window, cx);
+        editor.git_restore(&Default::default(), window, cx);
         reverted_hunk_statuses
     });
     cx.executor().run_until_parked();
