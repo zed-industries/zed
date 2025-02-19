@@ -58,15 +58,15 @@ use gpui::{
 use itertools::Itertools;
 use language::{
     language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent, Capability,
-    CodeLabel, CompletionDocumentation, File as _, Language, LanguageName, LanguageRegistry,
-    PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction, Unclipped,
+    CodeLabel, File as _, Language, LanguageName, LanguageRegistry, PointUtf16, ToOffset,
+    ToPointUtf16, Toolchain, ToolchainList, Transaction, Unclipped,
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServerId,
     LanguageServerName, MessageActionItem,
 };
 use lsp_command::*;
-use lsp_store::{LspFormatTarget, OpenLspBufferHandle};
+use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;

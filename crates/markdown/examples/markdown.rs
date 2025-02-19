@@ -15,84 +15,12 @@ const MARKDOWN_EXAMPLE: &str = r#"
 ## Headings
 Headings are created by adding one or more `#` symbols before your heading text. The number of `#` you use will determine the size of the heading.
 
-```rust
-gpui::window::ViewContext
-impl<'a, V> ViewContext<'a, V>
-pub fn on_blur(&mut self, handle: &FocusHandle, listener: impl FnMut(&mut V, &mut iewContext<V>) + 'static) -> Subscription
-where
-    // Bounds from impl:
-    V: 'static,
 ```
+function a(b: T) {
 
-## Emphasis
-Emphasis can be added with italics or bold. *This text will be italic*. _This will also be italic_
-
-## Lists
-
-### Unordered Lists
-Unordered lists use asterisks `*`, plus `+`, or minus `-` as list markers.
-
-* Item 1
-* Item 2
-  * Item 2a
-  * Item 2b
-
-### Ordered Lists
-Ordered lists use numbers followed by a period.
-
-1. Item 1
-2. Item 2
-3. Item 3
-   1. Item 3a
-   2. Item 3b
-
-## Links
-Links are created using the format [http://zed.dev](https://zed.dev).
-
-They can also be detected automatically, for example https://zed.dev/blog.
-
-They may contain dollar signs:
-
-[https://svelte.dev/docs/svelte/$state](https://svelte.dev/docs/svelte/$state)
-
-https://svelte.dev/docs/svelte/$state
-
-## Images
-Images are like links, but with an exclamation mark `!` in front.
-
-```markdown
-![This is an image](/images/logo.png)
-```
-
-## Code
-Inline `code` can be wrapped with backticks `` ` ``.
-
-```markdown
-Inline `code` has `back-ticks around` it.
-```
-
-Code blocks can be created by indenting lines by four spaces or with triple backticks ```.
-
-```javascript
-function test() {
-  console.log("notice the blank line before this function?");
 }
 ```
 
-## Blockquotes
-Blockquotes are created with `>`.
-
-> This is a blockquote.
-
-## Horizontal Rules
-Horizontal rules are created using three or more asterisks `***`, dashes `---`, or underscores `___`.
-
-## Line breaks
-This is a
-\
-line break!
-
----
 
 Remember, markdown processors may have slight differences and extensions, so always refer to the specific documentation or guides relevant to your platform or editor for the best practices and additional features.
 "#;
@@ -161,7 +89,7 @@ pub fn main() {
                 };
 
                 MarkdownExample::new(
-                    MARKDOWN_EXAMPLE.to_string(),
+                    MARKDOWN_EXAMPLE.into(),
                     markdown_style,
                     language_registry,
                     window,
@@ -179,14 +107,22 @@ struct MarkdownExample {
 
 impl MarkdownExample {
     pub fn new(
-        text: String,
+        text: SharedString,
         style: MarkdownStyle,
         language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
-        let markdown =
-            cx.new(|cx| Markdown::new(text, style, Some(language_registry), None, window, cx));
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                text,
+                style,
+                Some(language_registry),
+                Some("TypeScript".to_string()),
+                window,
+                cx,
+            )
+        });
         Self { markdown }
     }
 }

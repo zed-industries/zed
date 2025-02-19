@@ -7,7 +7,6 @@ pub use crate::{
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     language_settings::{language_settings, LanguageSettings},
-    markdown::parse_markdown,
     outline::OutlineItem,
     syntax_map::{
         SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatch,
@@ -229,50 +228,6 @@ pub struct Diagnostic {
     pub is_unnecessary: bool,
     /// Data from language server that produced this diagnostic. Passed back to the LS when we request code actions for this diagnostic.
     pub data: Option<Value>,
-}
-
-/// TODO - move this into the `project` crate and make it private.
-pub async fn prepare_completion_documentation(
-    documentation: &lsp::Documentation,
-    language_registry: &Arc<LanguageRegistry>,
-    language: Option<Arc<Language>>,
-) -> CompletionDocumentation {
-    match documentation {
-        lsp::Documentation::String(text) => {
-            if text.lines().count() <= 1 {
-                CompletionDocumentation::SingleLine(text.clone())
-            } else {
-                CompletionDocumentation::MultiLinePlainText(text.clone())
-            }
-        }
-
-        lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
-            lsp::MarkupKind::PlainText => {
-                if value.lines().count() <= 1 {
-                    CompletionDocumentation::SingleLine(value.clone())
-                } else {
-                    CompletionDocumentation::MultiLinePlainText(value.clone())
-                }
-            }
-
-            lsp::MarkupKind::Markdown => {
-                let parsed = parse_markdown(value, Some(language_registry), language).await;
-                CompletionDocumentation::MultiLineMarkdown(parsed)
-            }
-        },
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum CompletionDocumentation {
-    /// There is no documentation for this completion.
-    Undocumented,
-    /// A single line of documentation.
-    SingleLine(String),
-    /// Multiple lines of plain text documentation.
-    MultiLinePlainText(String),
-    /// Markdown documentation.
-    MultiLineMarkdown(ParsedMarkdown),
 }
 
 /// An operation used to synchronize this buffer with its other replicas.

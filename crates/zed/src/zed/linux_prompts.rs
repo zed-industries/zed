@@ -1,7 +1,7 @@
 use gpui::{
     div, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     InteractiveElement, IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse,
-    Refineable, Render, RenderablePromptHandle, Styled, TextStyleRefinement, Window,
+    Refineable, Render, RenderablePromptHandle, SharedString, Styled, TextStyleRefinement, Window,
 };
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings;
@@ -48,7 +48,14 @@ pub fn fallback_prompt_renderer(
                         selection_background_color: { cx.theme().players().local().selection },
                         ..Default::default()
                     };
-                    Markdown::new(text.to_string(), markdown_style, None, None, window, cx)
+                    Markdown::new(
+                        SharedString::new(text),
+                        markdown_style,
+                        None,
+                        None,
+                        window,
+                        cx,
+                    )
                 })
             }),
         }

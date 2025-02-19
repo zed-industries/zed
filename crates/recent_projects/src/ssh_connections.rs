@@ -208,7 +208,7 @@ impl SshPrompt {
             ..Default::default()
         };
         let markdown =
-            cx.new(|cx| Markdown::new_text(prompt, markdown_style, None, None, window, cx));
+            cx.new(|cx| Markdown::new_text(prompt.into(), markdown_style, None, None, window, cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();
         window.focus(&self.editor.focus_handle(cx));

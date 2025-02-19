@@ -3426,9 +3426,11 @@ impl EditorElement {
                 available_within_viewport.right - px(1.),
                 MENU_ASIDE_MAX_WIDTH,
             );
-            let Some(mut aside) =
-                self.render_context_menu_aside(size(max_width, max_height - POPOVER_Y_PADDING), cx)
-            else {
+            let Some(mut aside) = self.render_context_menu_aside(
+                size(max_width, max_height - POPOVER_Y_PADDING),
+                window,
+                cx,
+            ) else {
                 return;
             };
             aside.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -3450,7 +3452,7 @@ impl EditorElement {
                     ),
                 ) - POPOVER_Y_PADDING,
             );
-            let Some(mut aside) = self.render_context_menu_aside(max_size, cx) else {
+            let Some(mut aside) = self.render_context_menu_aside(max_size, window, cx) else {
                 return;
             };
             let actual_size = aside.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -3491,7 +3493,7 @@ impl EditorElement {
 
         // Skip drawing if it doesn't fit anywhere.
         if let Some((aside, position)) = positioned_aside {
-            window.defer_draw(aside, position, 1);
+            window.defer_draw(aside, position, 2);
         }
     }
 
@@ -3512,14 +3514,14 @@ impl EditorElement {
     fn render_context_menu_aside(
         &self,
         max_size: Size<Pixels>,
-
+        window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
         if max_size.width < px(100.) || max_size.height < px(12.) {
             None
         } else {
             self.editor.update(cx, |editor, cx| {
-                editor.render_context_menu_aside(&self.style, max_size, cx)
+                editor.render_context_menu_aside(max_size, window, cx)
             })
         }
     }
