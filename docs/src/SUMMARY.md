@@ -7,6 +7,7 @@
 - [Linux](./linux.md)
 - [Windows](./windows.md)
 - [Telemetry](./telemetry.md)
+- [Workspace Persistence](./workspace-persistence.md)
 - [Additional Learning Materials](./additional-learning-materials.md)
 
 # Configuration
@@ -45,6 +46,7 @@
 - [Prompts](./assistant/prompting.md)
 - [Context Servers](./assistant/context-servers.md)
   - [Model Context Protocol](./assistant/model-context-protocol.md)
+- [Model Improvement](./model-improvement.md)
 
 # Extensions
 

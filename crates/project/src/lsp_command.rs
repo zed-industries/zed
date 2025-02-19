@@ -30,9 +30,7 @@ use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
 
-pub use signature_help::{
-    SignatureHelp, SIGNATURE_HELP_HIGHLIGHT_CURRENT, SIGNATURE_HELP_HIGHLIGHT_OVERLOAD,
-};
+pub use signature_help::SignatureHelp;
 
 pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOptions {
     lsp::FormattingOptions {
@@ -941,9 +939,11 @@ fn language_server_for_buffer(
 ) -> Result<(Arc<CachedLspAdapter>, Arc<LanguageServer>)> {
     lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store
-                .language_server_for_local_buffer(buffer.read(cx), server_id, cx)
-                .map(|(adapter, server)| (adapter.clone(), server.clone()))
+            buffer.update(cx, |buffer, cx| {
+                lsp_store
+                    .language_server_for_local_buffer(buffer, server_id, cx)
+                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
+            })
         })?
         .ok_or_else(|| anyhow!("no language server found for buffer"))
 }
@@ -1509,12 +1509,11 @@ impl LspCommand for GetSignatureHelp {
         self,
         message: Option<lsp::SignatureHelp>,
         _: Entity<LspStore>,
-        buffer: Entity<Buffer>,
+        _: Entity<Buffer>,
         _: LanguageServerId,
-        mut cx: AsyncApp,
+        _: AsyncApp,
     ) -> Result<Self::Response> {
-        let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
-        Ok(message.and_then(|message| SignatureHelp::new(message, language)))
+        Ok(message.and_then(SignatureHelp::new))
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
@@ -1566,14 +1565,13 @@ impl LspCommand for GetSignatureHelp {
         self,
         response: proto::GetSignatureHelpResponse,
         _: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> Result<Self::Response> {
-        let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
         Ok(response
             .signature_help
             .map(proto_to_lsp_signature)
-            .and_then(|lsp_help| SignatureHelp::new(lsp_help, language)))
+            .and_then(SignatureHelp::new))
     }
 
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {

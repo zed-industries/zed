@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{App, EntityId, EventEmitter, Subscription};
-use ui::{prelude::*, ButtonLike, IconButtonShape, Tooltip};
+use ui::{prelude::*, IconButtonShape, Tooltip};
 use workspace::item::{ItemEvent, ItemHandle};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 
@@ -133,24 +133,34 @@ impl Render for MultibufferHint {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .px_2()
+            .py_0p5()
             .justify_between()
-            .bg(cx.theme().status().info_background)
+            .bg(cx.theme().status().info_background.opacity(0.5))
+            .border_1()
+            .border_color(cx.theme().colors().border_variant)
             .rounded_md()
+            .overflow_hidden()
             .child(
                 h_flex()
-                    .gap_2()
-                    .child(Label::new(
-                        "Edit and save files directly in the results multibuffer!",
-                    ))
+                    .gap_0p5()
                     .child(
-                        ButtonLike::new("open_docs")
-                            .style(ButtonStyle::Transparent)
+                        h_flex()
+                            .gap_2()
                             .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(Label::new("Read more…"))
-                                    .child(Icon::new(IconName::ArrowUpRight).size(IconSize::Small)),
+                                Icon::new(IconName::Info)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
                             )
+                            .child(Label::new(
+                                "Edit and save files directly in the results multibuffer!",
+                            )),
+                    )
+                    .child(
+                        Button::new("open_docs", "Learn More")
+                            .icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
+                            .icon_position(IconPosition::End)
                             .on_click(move |_event, _, cx| {
                                 cx.open_url("https://zed.dev/docs/multibuffers")
                             }),
@@ -158,7 +168,6 @@ impl Render for MultibufferHint {
             )
             .child(
                 IconButton::new("dismiss", IconName::Close)
-                    .style(ButtonStyle::Transparent)
                     .shape(IconButtonShape::Square)
                     .icon_size(IconSize::Small)
                     .on_click(cx.listener(|this, _event, _, cx| {
@@ -167,7 +176,7 @@ impl Render for MultibufferHint {
                             ToolbarItemLocation::Hidden,
                         ))
                     }))
-                    .tooltip(Tooltip::text("Dismiss this hint")),
+                    .tooltip(Tooltip::text("Dismiss Hint")),
             )
             .into_any_element()
     }

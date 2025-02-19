@@ -1,13 +1,11 @@
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
-    markdown::ParsedMarkdown,
     proto, Grammar, Language, LanguageRegistry,
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     language_settings::{language_settings, LanguageSettings},
-    markdown::parse_markdown,
     outline::OutlineItem,
     syntax_map::{
         SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatch,
@@ -229,50 +227,6 @@ pub struct Diagnostic {
     pub is_unnecessary: bool,
     /// Data from language server that produced this diagnostic. Passed back to the LS when we request code actions for this diagnostic.
     pub data: Option<Value>,
-}
-
-/// TODO - move this into the `project` crate and make it private.
-pub async fn prepare_completion_documentation(
-    documentation: &lsp::Documentation,
-    language_registry: &Arc<LanguageRegistry>,
-    language: Option<Arc<Language>>,
-) -> CompletionDocumentation {
-    match documentation {
-        lsp::Documentation::String(text) => {
-            if text.lines().count() <= 1 {
-                CompletionDocumentation::SingleLine(text.clone())
-            } else {
-                CompletionDocumentation::MultiLinePlainText(text.clone())
-            }
-        }
-
-        lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
-            lsp::MarkupKind::PlainText => {
-                if value.lines().count() <= 1 {
-                    CompletionDocumentation::SingleLine(value.clone())
-                } else {
-                    CompletionDocumentation::MultiLinePlainText(value.clone())
-                }
-            }
-
-            lsp::MarkupKind::Markdown => {
-                let parsed = parse_markdown(value, Some(language_registry), language).await;
-                CompletionDocumentation::MultiLineMarkdown(parsed)
-            }
-        },
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum CompletionDocumentation {
-    /// There is no documentation for this completion.
-    Undocumented,
-    /// A single line of documentation.
-    SingleLine(String),
-    /// Multiple lines of plain text documentation.
-    MultiLinePlainText(String),
-    /// Markdown documentation.
-    MultiLineMarkdown(ParsedMarkdown),
 }
 
 /// An operation used to synchronize this buffer with its other replicas.
@@ -622,6 +576,41 @@ impl HighlightedText {
         gpui::StyledText::new(self.text.clone())
             .with_highlights(default_style, self.highlights.iter().cloned())
     }
+
+    /// Returns the first line without leading whitespace unless highlighted
+    /// and a boolean indicating if there are more lines after
+    pub fn first_line_preview(self) -> (Self, bool) {
+        let newline_ix = self.text.find('\n').unwrap_or(self.text.len());
+        let first_line = &self.text[..newline_ix];
+
+        // Trim leading whitespace, unless an edit starts prior to it.
+        let mut preview_start_ix = first_line.len() - first_line.trim_start().len();
+        if let Some((first_highlight_range, _)) = self.highlights.first() {
+            preview_start_ix = preview_start_ix.min(first_highlight_range.start);
+        }
+
+        let preview_text = &first_line[preview_start_ix..];
+        let preview_highlights = self
+            .highlights
+            .into_iter()
+            .take_while(|(range, _)| range.start < newline_ix)
+            .filter_map(|(mut range, highlight)| {
+                range.start = range.start.saturating_sub(preview_start_ix);
+                range.end = range.end.saturating_sub(preview_start_ix).min(newline_ix);
+                if range.is_empty() {
+                    None
+                } else {
+                    Some((range, highlight))
+                }
+            });
+
+        let preview = Self {
+            text: SharedString::new(preview_text),
+            highlights: preview_highlights.collect(),
+        };
+
+        (preview, self.text.len() > newline_ix)
+    }
 }
 
 impl HighlightedTextBuilder {
@@ -905,7 +894,7 @@ impl Buffer {
         }
 
         let text_operations = self.text.operations().clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let since = since.unwrap_or_default();
             operations.extend(
                 text_operations
@@ -1100,7 +1089,7 @@ impl Buffer {
         let old_snapshot = self.text.snapshot();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             if !edits.is_empty() {
                 if let Some(language) = language.clone() {
                     syntax_snapshot.reparse(&old_snapshot, registry.clone(), language);
@@ -1464,7 +1453,7 @@ impl Buffer {
         let mut syntax_snapshot = syntax_map.snapshot();
         drop(syntax_map);
 
-        let parse_task = cx.background_executor().spawn({
+        let parse_task = cx.background_spawn({
             let language = language.clone();
             let language_registry = language_registry.clone();
             async move {
@@ -1543,7 +1532,7 @@ impl Buffer {
 
     fn request_autoindent(&mut self, cx: &mut Context<Self>) {
         if let Some(indent_sizes) = self.compute_autoindents() {
-            let indent_sizes = cx.background_executor().spawn(indent_sizes);
+            let indent_sizes = cx.background_spawn(indent_sizes);
             match cx
                 .background_executor()
                 .block_with_timeout(Duration::from_micros(500), indent_sizes)
@@ -1872,7 +1861,7 @@ impl Buffer {
         let old_text = self.as_rope().clone();
         let line_ending = self.line_ending();
         let base_version = self.version();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let ranges = trailing_whitespace_ranges(&old_text);
             let empty = Arc::<str>::from("");
             Diff {
@@ -2769,10 +2758,12 @@ impl Deref for Buffer {
 }
 
 impl BufferSnapshot {
-    /// Returns [`IndentSize`] for a given line that respects user settings and /// language preferences.
+    /// Returns [`IndentSize`] for a given line that respects user settings and
+    /// language preferences.
     pub fn indent_size_for_line(&self, row: u32) -> IndentSize {
         indent_size_for_line(self, row)
     }
+
     /// Returns [`IndentSize`] for a given position that respects user settings
     /// and language preferences.
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &App) -> IndentSize {
@@ -2880,7 +2871,7 @@ impl BufferSnapshot {
 
         let mut error_ranges = Vec::<Range<Point>>::new();
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
-            Some(&grammar.error_query)
+            grammar.error_query.as_ref()
         });
         while let Some(mat) = matches.peek() {
             let node = mat.captures[0].node;

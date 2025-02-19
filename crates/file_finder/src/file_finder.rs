@@ -33,7 +33,7 @@ use std::{
 };
 use text::Point;
 use ui::{
-    prelude::*, ContextMenu, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, PopoverMenu,
+    prelude::*, ContextMenu, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenu,
     PopoverMenuHandle,
 };
 use util::{paths::PathWithPosition, post_inc, ResultExt};
@@ -126,7 +126,7 @@ impl FileFinder {
                 let abs_path = abs_path?;
                 if project.is_local() {
                     let fs = fs.clone();
-                    Some(cx.background_executor().spawn(async move {
+                    Some(cx.background_spawn(async move {
                         if fs.is_file(&abs_path).await {
                             Some(FoundPath::new(project_path, Some(abs_path)))
                         } else {
@@ -1301,11 +1301,7 @@ impl PickerDelegate for FileFinderDelegate {
         )
     }
 
-    fn render_footer(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Option<AnyElement> {
+    fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         let context = self.focus_handle.clone();
         Some(
             h_flex()
@@ -1316,11 +1312,9 @@ impl PickerDelegate for FileFinderDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    Button::new("open-selection", "Open")
-                        .key_binding(KeyBinding::for_action(&menu::Confirm, window))
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
-                        }),
+                    Button::new("open-selection", "Open").on_click(|_, window, cx| {
+                        window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                    }),
                 )
                 .child(
                     PopoverMenu::new("menu-popover")
@@ -1328,13 +1322,8 @@ impl PickerDelegate for FileFinderDelegate {
                         .attach(gpui::Corner::TopRight)
                         .anchor(gpui::Corner::BottomRight)
                         .trigger(
-                            Button::new("actions-trigger", "Split Options")
-                                .selected_label_color(Color::Accent)
-                                .key_binding(KeyBinding::for_action_in(
-                                    &ToggleMenu,
-                                    &context,
-                                    window,
-                                )),
+                            Button::new("actions-trigger", "Split…")
+                                .selected_label_color(Color::Accent),
                         )
                         .menu({
                             move |window, cx| {

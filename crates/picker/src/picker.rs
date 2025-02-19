@@ -3,14 +3,17 @@ use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, App, ClickEvent,
     Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Length,
-    ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render, ScrollStrategy, Task,
-    UniformListScrollHandle, Window,
+    ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render, ScrollHandle, ScrollStrategy,
+    Stateful, Task, UniformListScrollHandle, Window,
 };
 use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
-use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing};
+use ui::{
+    prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing, Scrollbar, ScrollbarState,
+};
+use util::ResultExt;
 use workspace::ModalView;
 
 mod head;
@@ -46,7 +49,13 @@ pub struct Picker<D: PickerDelegate> {
     confirm_on_update: Option<bool>,
     width: Option<Length>,
     max_height: Option<Length>,
-
+    focus_handle: FocusHandle,
+    /// An external control to display a scrollbar in the `Picker`.
+    show_scrollbar: bool,
+    /// An internal state that controls whether to show the scrollbar based on the user's focus.
+    scrollbar_visibility: bool,
+    scrollbar_state: ScrollbarState,
+    hide_scrollbar_task: Option<Task<()>>,
     /// Whether the `Picker` is rendered as a self-contained modal.
     ///
     /// Set this to `false` when rendering the `Picker` as part of a larger modal.
@@ -256,15 +265,31 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let element_container = Self::create_element_container(container, cx);
+        let scrollbar_state = match &element_container {
+            ElementContainer::UniformList(scroll_handle) => {
+                ScrollbarState::new(scroll_handle.clone())
+            }
+            ElementContainer::List(_) => {
+                // todo smit: implement for list
+                ScrollbarState::new(ScrollHandle::new())
+            }
+        };
+        let focus_handle = cx.focus_handle();
         let mut this = Self {
             delegate,
             head,
-            element_container: Self::create_element_container(container, cx),
+            element_container,
             pending_update_matches: None,
             confirm_on_update: None,
             width: None,
             max_height: Some(rems(18.).into()),
+            focus_handle,
+            show_scrollbar: false,
+            scrollbar_visibility: true,
+            scrollbar_state,
             is_modal: true,
+            hide_scrollbar_task: None,
         };
         this.update_matches("".to_string(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
@@ -309,6 +334,11 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn max_height(mut self, max_height: Option<gpui::Length>) -> Self {
         self.max_height = max_height;
+        self
+    }
+
+    pub fn show_scrollbar(mut self, show_scrollbar: bool) -> Self {
+        self.show_scrollbar = show_scrollbar;
         self
     }
 
@@ -642,6 +672,7 @@ impl<D: PickerDelegate> Picker<D> {
         } else {
             ListSizingBehavior::Auto
         };
+
         match &self.element_container {
             ElementContainer::UniformList(scroll_handle) => uniform_list(
                 cx.entity().clone(),
@@ -675,6 +706,67 @@ impl<D: PickerDelegate> Picker<D> {
             }
         }
     }
+
+    fn hide_scrollbar(&mut self, cx: &mut Context<Self>) {
+        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
+        self.hide_scrollbar_task = Some(cx.spawn(|panel, mut cx| async move {
+            cx.background_executor()
+                .timer(SCROLLBAR_SHOW_INTERVAL)
+                .await;
+            panel
+                .update(&mut cx, |panel, cx| {
+                    panel.scrollbar_visibility = false;
+                    cx.notify();
+                })
+                .log_err();
+        }))
+    }
+
+    fn render_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        if !self.show_scrollbar
+            || !(self.scrollbar_visibility || self.scrollbar_state.is_dragging())
+        {
+            return None;
+        }
+        Some(
+            div()
+                .occlude()
+                .id("picker-scroll")
+                .h_full()
+                .absolute()
+                .right_1()
+                .top_1()
+                .bottom_0()
+                .w(px(12.))
+                .cursor_default()
+                .on_mouse_move(cx.listener(|_, _, _window, cx| {
+                    cx.notify();
+                    cx.stop_propagation()
+                }))
+                .on_hover(|_, _window, cx| {
+                    cx.stop_propagation();
+                })
+                .on_any_mouse_down(|_, _window, cx| {
+                    cx.stop_propagation();
+                })
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|picker, _, window, cx| {
+                        if !picker.scrollbar_state.is_dragging()
+                            && !picker.focus_handle.contains_focused(window, cx)
+                        {
+                            picker.hide_scrollbar(cx);
+                            cx.notify();
+                        }
+                        cx.stop_propagation();
+                    }),
+                )
+                .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
+                    cx.notify();
+                }))
+                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
+        )
+    }
 }
 
 impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
@@ -683,7 +775,6 @@ impl<D: PickerDelegate> ModalView for Picker<D> {}
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editor_position = self.delegate.editor_position();
-
         v_flex()
             .key_context("Picker")
             .size_full()
@@ -716,11 +807,25 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .when(self.delegate.match_count() > 0, |el| {
                 el.child(
                     v_flex()
+                        .id("element-container")
+                        .relative()
                         .flex_grow()
                         .when_some(self.max_height, |div, max_h| div.max_h(max_h))
                         .overflow_hidden()
                         .children(self.delegate.render_header(window, cx))
-                        .child(self.render_element_container(cx)),
+                        .child(self.render_element_container(cx))
+                        .on_hover(cx.listener(|this, hovered, window, cx| {
+                            if *hovered {
+                                this.scrollbar_visibility = true;
+                                this.hide_scrollbar_task.take();
+                                cx.notify();
+                            } else if !this.focus_handle.contains_focused(window, cx) {
+                                this.hide_scrollbar(cx);
+                            }
+                        }))
+                        .when_some(self.render_scrollbar(cx), |div, scrollbar| {
+                            div.child(scrollbar)
+                        }),
                 )
             })
             .when(self.delegate.match_count() == 0, |el| {
