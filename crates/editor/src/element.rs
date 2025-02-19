@@ -2116,13 +2116,10 @@ impl EditorElement {
                     .get(&display_row)
                     .unwrap_or(&non_relative_number);
                 write!(&mut line_number, "{number}").unwrap();
-                if matches!(
-                    row_info.diff_status,
-                    Some(DiffHunkStatus {
-                        kind: DiffHunkStatusKind::Deleted,
-                        ..
-                    })
-                ) {
+                if row_info
+                    .diff_status
+                    .is_some_and(|status| status.is_deleted())
+                {
                     return None;
                 }
 
@@ -4141,19 +4138,11 @@ impl EditorElement {
                 if row_infos[row_ix].diff_status.is_none() {
                     continue;
                 }
-                if matches!(
-                    row_infos[row_ix].diff_status,
-                    Some(DiffHunkStatus {
-                        kind: DiffHunkStatusKind::Added,
-                        ..
-                    })
-                ) && !matches!(
-                    *status,
-                    DiffHunkStatus {
-                        kind: DiffHunkStatusKind::Added,
-                        ..
-                    }
-                ) {
+                if row_infos[row_ix]
+                    .diff_status
+                    .is_some_and(|status| status.is_added())
+                    && !status.is_added()
+                {
                     continue;
                 }
                 if active_positions

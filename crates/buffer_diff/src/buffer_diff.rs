@@ -963,8 +963,37 @@ impl DiffHunkStatus {
         self.kind == DiffHunkStatusKind::Deleted
     }
 
+    pub fn is_added(&self) -> bool {
+        self.kind == DiffHunkStatusKind::Added
+    }
+
+    pub fn is_modified(&self) -> bool {
+        self.kind == DiffHunkStatusKind::Modified
+    }
+
+    pub fn added(secondary: DiffHunkSecondaryStatus) -> Self {
+        Self {
+            kind: DiffHunkStatusKind::Added,
+            secondary,
+        }
+    }
+
+    pub fn modified(secondary: DiffHunkSecondaryStatus) -> Self {
+        Self {
+            kind: DiffHunkStatusKind::Modified,
+            secondary,
+        }
+    }
+
+    pub fn deleted(secondary: DiffHunkSecondaryStatus) -> Self {
+        Self {
+            kind: DiffHunkStatusKind::Deleted,
+            secondary,
+        }
+    }
+
     #[cfg(any(test, feature = "test-support"))]
-    pub fn deleted() -> Self {
+    pub fn deleted_none() -> Self {
         Self {
             kind: DiffHunkStatusKind::Deleted,
             secondary: DiffHunkSecondaryStatus::None,
@@ -972,7 +1001,7 @@ impl DiffHunkStatus {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn added() -> Self {
+    pub fn added_none() -> Self {
         Self {
             kind: DiffHunkStatusKind::Added,
             secondary: DiffHunkSecondaryStatus::None,
@@ -980,7 +1009,7 @@ impl DiffHunkStatus {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn modified() -> Self {
+    pub fn modified_none() -> Self {
         Self {
             kind: DiffHunkStatusKind::Modified,
             secondary: DiffHunkSecondaryStatus::None,
@@ -1061,7 +1090,7 @@ mod tests {
             diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, None),
             &buffer,
             &diff_base,
-            &[(1..2, "two\n", "HELLO\n", DiffHunkStatus::modified())],
+            &[(1..2, "two\n", "HELLO\n", DiffHunkStatus::modified_none())],
         );
 
         buffer.edit([(0..0, "point five\n")]);
@@ -1071,8 +1100,8 @@ mod tests {
             &buffer,
             &diff_base,
             &[
-                (0..1, "", "point five\n", DiffHunkStatus::added()),
-                (2..3, "two\n", "HELLO\n", DiffHunkStatus::modified()),
+                (0..1, "", "point five\n", DiffHunkStatus::added_none()),
+                (2..3, "two\n", "HELLO\n", DiffHunkStatus::modified_none()),
             ],
         );
 
@@ -1135,24 +1164,18 @@ mod tests {
         let uncommitted_diff = BufferDiff::build_sync(buffer.clone(), head_text.clone(), cx);
 
         let expected_hunks = vec![
-            (2..3, "two\n", "TWO\n", DiffHunkStatus::modified()),
+            (2..3, "two\n", "TWO\n", DiffHunkStatus::modified_none()),
             (
                 4..6,
                 "four\nfive\n",
                 "FOUR\nFIVE\n",
-                DiffHunkStatus {
-                    kind: DiffHunkStatusKind::Modified,
-                    secondary: DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk,
-                },
+                DiffHunkStatus::modified(DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk),
             ),
             (
                 7..8,
                 "seven\n",
                 "SEVEN\n",
-                DiffHunkStatus {
-                    kind: DiffHunkStatusKind::Modified,
-                    secondary: DiffHunkSecondaryStatus::HasSecondaryHunk,
-                },
+                DiffHunkStatus::modified(DiffHunkSecondaryStatus::HasSecondaryHunk),
             ),
         ];
 
@@ -1228,9 +1251,9 @@ mod tests {
             &buffer,
             &diff_base,
             &[
-                (6..7, "", "HELLO\n", DiffHunkStatus::added()),
-                (9..10, "six\n", "SIXTEEN\n", DiffHunkStatus::modified()),
-                (12..13, "", "WORLD\n", DiffHunkStatus::added()),
+                (6..7, "", "HELLO\n", DiffHunkStatus::added_none()),
+                (9..10, "six\n", "SIXTEEN\n", DiffHunkStatus::modified_none()),
+                (12..13, "", "WORLD\n", DiffHunkStatus::added_none()),
             ],
         );
     }

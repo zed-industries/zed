@@ -6218,10 +6218,9 @@ where
                     excerpt,
                     has_trailing_newline: *has_trailing_newline,
                     is_main_buffer: false,
-                    diff_hunk_status: Some(DiffHunkStatus {
-                        kind: DiffHunkStatusKind::Deleted,
-                        secondary: hunk_info.hunk_secondary_status,
-                    }),
+                    diff_hunk_status: Some(DiffHunkStatus::deleted(
+                        hunk_info.hunk_secondary_status,
+                    )),
                     buffer_range: buffer_start..buffer_end,
                     range: start..end,
                 });
@@ -6264,10 +6263,8 @@ where
                     excerpt,
                     has_trailing_newline,
                     is_main_buffer: true,
-                    diff_hunk_status: inserted_hunk_info.map(|info| DiffHunkStatus {
-                        kind: DiffHunkStatusKind::Added,
-                        secondary: info.hunk_secondary_status,
-                    }),
+                    diff_hunk_status: inserted_hunk_info
+                        .map(|info| DiffHunkStatus::added(info.hunk_secondary_status)),
                     buffer_range: buffer_start..buffer_end,
                     range: start..end,
                 })

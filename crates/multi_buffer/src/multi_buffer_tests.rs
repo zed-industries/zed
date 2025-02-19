@@ -1325,13 +1325,13 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
             .map(|info| (info.buffer_row, info.diff_status))
             .collect::<Vec<_>>(),
         vec![
-            (Some(0), Some(DiffHunkStatus::added())),
+            (Some(0), Some(DiffHunkStatus::added_none())),
             (Some(1), None),
-            (Some(1), Some(DiffHunkStatus::deleted())),
-            (Some(2), Some(DiffHunkStatus::added())),
+            (Some(1), Some(DiffHunkStatus::deleted_none())),
+            (Some(2), Some(DiffHunkStatus::added_none())),
             (Some(3), None),
-            (Some(3), Some(DiffHunkStatus::deleted())),
-            (Some(4), Some(DiffHunkStatus::deleted())),
+            (Some(3), Some(DiffHunkStatus::deleted_none())),
+            (Some(4), Some(DiffHunkStatus::deleted_none())),
             (Some(4), None),
             (Some(5), None)
         ]
@@ -2279,10 +2279,7 @@ impl ReferenceMultibuffer {
                             buffer_start: Some(
                                 base_buffer.offset_to_point(hunk.diff_base_byte_range.start),
                             ),
-                            status: Some(DiffHunkStatus {
-                                kind: DiffHunkStatusKind::Deleted,
-                                secondary: hunk.secondary_status,
-                            }),
+                            status: Some(DiffHunkStatus::deleted(hunk.secondary_status)),
                         });
                     }
 
@@ -2297,10 +2294,7 @@ impl ReferenceMultibuffer {
                         buffer_id: Some(buffer.remote_id()),
                         range: len..text.len(),
                         buffer_start: Some(buffer.offset_to_point(offset)),
-                        status: Some(DiffHunkStatus {
-                            kind: DiffHunkStatusKind::Added,
-                            secondary: hunk.secondary_status,
-                        }),
+                        status: Some(DiffHunkStatus::added(hunk.secondary_status)),
                     });
                     offset = hunk_range.end;
                 }
@@ -2671,13 +2665,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             expected_row_infos
                 .into_iter()
                 .filter_map(|info| {
-                    if matches!(
-                        info.diff_status,
-                        Some(DiffHunkStatus {
-                            kind: DiffHunkStatusKind::Deleted,
-                            ..
-                        })
-                    ) {
+                    if info.diff_status.is_some_and(|status| status.is_deleted()) {
                         None
                     } else {
                         info.buffer_row
