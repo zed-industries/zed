@@ -79,6 +79,7 @@ use util::{RangeExt, ResultExt};
 use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
+const MIN_SCROLL_THUMB_SIZE: f32 = 25.;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DisplayDiffHunk {
@@ -1383,17 +1384,21 @@ impl EditorElement {
                     if text_units_per_page.horizontal >= total_text_units_x {
                         return None;
                     }
-
-                    let thumb_percent =
-                        (text_units_per_page.horizontal / total_text_units_x).min(1.);
-
-                    Some(track_bounds_x.size.width * thumb_percent)
+                    if track_bounds_x.size.width < px(MIN_SCROLL_THUMB_SIZE) {
+                        return Some(track_bounds_x.size.width);
+                    }
+                    let thumb_size = track_bounds_x.size.width
+                        * (text_units_per_page.horizontal / total_text_units_x);
+                    Some(thumb_size.clamp(px(MIN_SCROLL_THUMB_SIZE), track_bounds_x.size.width))
                 }),
             total_text_units.vertical.zip(track_bounds.vertical).map(
                 |(total_text_units_y, track_bounds_y)| {
-                    let thumb_percent = (text_units_per_page.vertical / total_text_units_y).min(1.);
-
-                    track_bounds_y.size.height * thumb_percent
+                    if track_bounds_y.size.height < px(MIN_SCROLL_THUMB_SIZE) {
+                        return track_bounds_y.size.height;
+                    }
+                    let thumb_size = track_bounds_y.size.height
+                        * (text_units_per_page.vertical / total_text_units_y);
+                    thumb_size.clamp(px(MIN_SCROLL_THUMB_SIZE), track_bounds_y.size.height)
                 },
             ),
         );
