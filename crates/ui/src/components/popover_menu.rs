@@ -178,6 +178,7 @@ impl<M: ManagedView> PopoverMenu<M> {
         self
     }
 
+    /// This method prevents the trigger button tooltip from being seen when the menu is open.
     pub fn trigger_with_tooltip<T: PopoverTrigger + ButtonCommon>(
         mut self,
         t: T,
