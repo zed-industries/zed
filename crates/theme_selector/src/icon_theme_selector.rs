@@ -299,7 +299,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                         }),
                 )
                 .child(
-                    Button::new("more-iconthemes", "Install Icon Themes").on_click(
+                    Button::new("more-icon-themes", "Install Icon Themes").on_click(
                         move |_event, window, cx| {
                             window.dispatch_action(Box::new(Extensions), cx);
                         },
