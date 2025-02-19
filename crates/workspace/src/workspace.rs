@@ -2015,14 +2015,13 @@ impl Workspace {
 
                 if remaining_dirty_items.len() > 1 {
                     let answer = workspace.update_in(&mut cx, |_, window, cx| {
-                        let (prompt, detail) = Pane::file_names_for_prompt(
+                        let detail = Pane::file_names_for_prompt(
                             &mut remaining_dirty_items.iter().map(|(_, handle)| handle),
-                            remaining_dirty_items.len(),
                             cx,
                         );
                         window.prompt(
                             PromptLevel::Warning,
-                            &prompt,
+                            &"Do you want to save all changes in the following files?",
                             Some(&detail),
                             &["Save all", "Discard all", "Cancel"],
                             cx,
@@ -2697,7 +2696,6 @@ impl Workspace {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn add_item(
         &mut self,
         pane: Entity<Pane>,
@@ -4339,8 +4337,7 @@ impl Workspace {
             self.update_active_view_for_followers(window, cx);
 
             if let Some(database_id) = self.database_id {
-                cx.background_executor()
-                    .spawn(persistence::DB.update_timestamp(database_id))
+                cx.background_spawn(persistence::DB.update_timestamp(database_id))
                     .detach();
             }
         } else {
@@ -4628,8 +4625,7 @@ impl Workspace {
                 if let Ok(Some(task)) = this.update_in(cx, |workspace, window, cx| {
                     item.serialize(workspace, false, window, cx)
                 }) {
-                    cx.background_executor()
-                        .spawn(async move { task.await.log_err() })
+                    cx.background_spawn(async move { task.await.log_err() })
                         .detach();
                 }
             }
@@ -4967,8 +4963,7 @@ impl Workspace {
     ) {
         self.centered_layout = !self.centered_layout;
         if let Some(database_id) = self.database_id() {
-            cx.background_executor()
-                .spawn(DB.set_centered_layout(database_id, self.centered_layout))
+            cx.background_spawn(DB.set_centered_layout(database_id, self.centered_layout))
                 .detach_and_log_err(cx);
         }
         cx.notify();
@@ -6225,7 +6220,7 @@ fn serialize_ssh_project(
         Option<SerializedWorkspace>,
     )>,
 > {
-    cx.background_executor().spawn(async move {
+    cx.background_spawn(async move {
         let serialized_ssh_project = persistence::DB
             .get_or_create_ssh_project(
                 connection_options.host.clone(),

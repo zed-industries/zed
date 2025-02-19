@@ -36,7 +36,6 @@ pub struct ContextStrip {
 }
 
 impl ContextStrip {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
@@ -453,6 +452,7 @@ impl Render for ContextStrip {
                                     &ToggleContextPicker,
                                     &focus_handle,
                                     window,
+                                    cx,
                                 )
                                 .map(|binding| binding.into_any_element()),
                             ),

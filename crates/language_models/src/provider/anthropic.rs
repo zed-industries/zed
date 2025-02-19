@@ -10,8 +10,8 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    LanguageModel, LanguageModelCacheConfiguration, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
@@ -105,34 +105,38 @@ impl State {
         self.api_key.is_some()
     }
 
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         if self.is_authenticated() {
-            Task::ready(Ok(()))
-        } else {
-            let api_url = AllLanguageModelSettings::get_global(cx)
-                .anthropic
-                .api_url
-                .clone();
-
-            cx.spawn(|this, mut cx| async move {
-                let (api_key, from_env) = if let Ok(api_key) = std::env::var(ANTHROPIC_API_KEY_VAR)
-                {
-                    (api_key, true)
-                } else {
-                    let (_, api_key) = cx
-                        .update(|cx| cx.read_credentials(&api_url))?
-                        .await?
-                        .ok_or_else(|| anyhow!("credentials not found"))?;
-                    (String::from_utf8(api_key)?, false)
-                };
-
-                this.update(&mut cx, |this, cx| {
-                    this.api_key = Some(api_key);
-                    this.api_key_from_env = from_env;
-                    cx.notify();
-                })
-            })
+            return Task::ready(Ok(()));
         }
+
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .anthropic
+            .api_url
+            .clone();
+
+        cx.spawn(|this, mut cx| async move {
+            let (api_key, from_env) = if let Ok(api_key) = std::env::var(ANTHROPIC_API_KEY_VAR) {
+                (api_key, true)
+            } else {
+                let (_, api_key) = cx
+                    .update(|cx| cx.read_credentials(&api_url))?
+                    .await?
+                    .ok_or(AuthenticateError::CredentialsNotFound)?;
+                (
+                    String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
+                    false,
+                )
+            };
+
+            this.update(&mut cx, |this, cx| {
+                this.api_key = Some(api_key);
+                this.api_key_from_env = from_env;
+                cx.notify();
+            })?;
+
+            Ok(())
+        })
     }
 }
 
@@ -226,7 +230,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         self.state.read(cx).is_authenticated()
     }
 
-    fn authenticate(&self, cx: &mut App) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
@@ -252,54 +256,53 @@ pub fn count_anthropic_tokens(
     request: LanguageModelRequest,
     cx: &App,
 ) -> BoxFuture<'static, Result<usize>> {
-    cx.background_executor()
-        .spawn(async move {
-            let messages = request.messages;
-            let mut tokens_from_images = 0;
-            let mut string_messages = Vec::with_capacity(messages.len());
+    cx.background_spawn(async move {
+        let messages = request.messages;
+        let mut tokens_from_images = 0;
+        let mut string_messages = Vec::with_capacity(messages.len());
 
-            for message in messages {
-                use language_model::MessageContent;
+        for message in messages {
+            use language_model::MessageContent;
 
-                let mut string_contents = String::new();
+            let mut string_contents = String::new();
 
-                for content in message.content {
-                    match content {
-                        MessageContent::Text(text) => {
-                            string_contents.push_str(&text);
-                        }
-                        MessageContent::Image(image) => {
-                            tokens_from_images += image.estimate_tokens();
-                        }
-                        MessageContent::ToolUse(_tool_use) => {
-                            // TODO: Estimate token usage from tool uses.
-                        }
-                        MessageContent::ToolResult(tool_result) => {
-                            string_contents.push_str(&tool_result.content);
-                        }
+            for content in message.content {
+                match content {
+                    MessageContent::Text(text) => {
+                        string_contents.push_str(&text);
                     }
-                }
-
-                if !string_contents.is_empty() {
-                    string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
-                        role: match message.role {
-                            Role::User => "user".into(),
-                            Role::Assistant => "assistant".into(),
-                            Role::System => "system".into(),
-                        },
-                        content: Some(string_contents),
-                        name: None,
-                        function_call: None,
-                    });
+                    MessageContent::Image(image) => {
+                        tokens_from_images += image.estimate_tokens();
+                    }
+                    MessageContent::ToolUse(_tool_use) => {
+                        // TODO: Estimate token usage from tool uses.
+                    }
+                    MessageContent::ToolResult(tool_result) => {
+                        string_contents.push_str(&tool_result.content);
+                    }
                 }
             }
 
-            // Tiktoken doesn't yet support these models, so we manually use the
-            // same tokenizer as GPT-4.
-            tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
-                .map(|tokens| tokens + tokens_from_images)
-        })
-        .boxed()
+            if !string_contents.is_empty() {
+                string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
+                    role: match message.role {
+                        Role::User => "user".into(),
+                        Role::Assistant => "assistant".into(),
+                        Role::System => "system".into(),
+                    },
+                    content: Some(string_contents),
+                    name: None,
+                    function_call: None,
+                });
+            }
+        }
+
+        // Tiktoken doesn't yet support these models, so we manually use the
+        // same tokenizer as GPT-4.
+        tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
+            .map(|tokens| tokens + tokens_from_images)
+    })
+    .boxed()
 }
 
 impl AnthropicModel {

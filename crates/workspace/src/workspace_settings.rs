@@ -71,7 +71,7 @@ impl CloseWindowWhenNoItems {
     }
 }
 
-#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RestoreOnStartupBehavior {
     /// Always start with an empty editor

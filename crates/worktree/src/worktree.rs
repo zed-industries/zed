@@ -576,6 +576,7 @@ pub struct LocalRepositoryEntry {
     /// Absolute path to the .git file, if we're in a git worktree.
     pub(crate) dot_git_worktree_abs_path: Option<Arc<Path>>,
     pub current_merge_head_shas: Vec<String>,
+    pub merge_message: Option<String>,
 }
 
 impl sum_tree::Item for LocalRepositoryEntry {
@@ -790,23 +791,22 @@ impl Worktree {
 
             // Apply updates to a separate snapshot in a background task, then
             // send them to a foreground task which updates the model.
-            cx.background_executor()
-                .spawn(async move {
-                    while let Some(update) = background_updates_rx.next().await {
+            cx.background_spawn(async move {
+                while let Some(update) = background_updates_rx.next().await {
+                    {
+                        let mut lock = background_snapshot.lock();
+                        if let Err(error) = lock
+                            .0
+                            .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
                         {
-                            let mut lock = background_snapshot.lock();
-                            if let Err(error) = lock
-                                .0
-                                .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
-                            {
-                                log::error!("error applying worktree update: {}", error);
-                            }
-                            lock.1.push(update);
+                            log::error!("error applying worktree update: {}", error);
                         }
-                        snapshot_updated_tx.send(()).await.ok();
+                        lock.1.push(update);
                     }
-                })
-                .detach();
+                    snapshot_updated_tx.send(()).await.ok();
+                }
+            })
+            .detach();
 
             // On the foreground task, update to the latest snapshot and notify
             // any update observer of all updates that led to that snapshot.
@@ -990,7 +990,7 @@ impl Worktree {
             Worktree::Local(this) => {
                 let path = Arc::from(path);
                 let snapshot = this.snapshot();
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     if let Some(repo) = snapshot.repository_for_path(&path) {
                         if let Some(repo_path) = repo.relativize(&path).log_err() {
                             if let Some(git_repo) =
@@ -1014,7 +1014,7 @@ impl Worktree {
             Worktree::Local(this) => {
                 let path = Arc::from(path);
                 let snapshot = this.snapshot();
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     if let Some(repo) = snapshot.repository_for_path(&path) {
                         if let Some(repo_path) = repo.relativize(&path).log_err() {
                             if let Some(git_repo) =
@@ -1430,7 +1430,7 @@ impl LocalWorktree {
         let git_hosting_provider_registry = GitHostingProviderRegistry::try_global(cx);
         let settings = self.settings.clone();
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
-        let background_scanner = cx.background_executor().spawn({
+        let background_scanner = cx.background_spawn({
             let abs_path = snapshot.abs_path.as_path().to_path_buf();
             let background = cx.background_executor().clone();
             async move {
@@ -1667,7 +1667,7 @@ impl LocalWorktree {
         let is_private = self.is_path_private(path.as_ref());
 
         let worktree = cx.weak_entity();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let abs_path = abs_path?;
             let content = fs.load_bytes(&abs_path).await?;
 
@@ -1773,7 +1773,7 @@ impl LocalWorktree {
         let path_excluded = self.settings.is_path_excluded(&abs_path);
         let fs = self.fs.clone();
         let task_abs_path = abs_path.clone();
-        let write = cx.background_executor().spawn(async move {
+        let write = cx.background_spawn(async move {
             if is_dir {
                 fs.create_dir(&task_abs_path)
                     .await
@@ -1837,7 +1837,7 @@ impl LocalWorktree {
             return Task::ready(Err(anyhow!("invalid path {path:?}")));
         };
 
-        let write = cx.background_executor().spawn({
+        let write = cx.background_spawn({
             let fs = fs.clone();
             let abs_path = abs_path.clone();
             async move { fs.save(&abs_path, &text, line_ending).await }
@@ -1889,7 +1889,7 @@ impl LocalWorktree {
         let abs_path = self.absolutize(&entry.path);
         let fs = self.fs.clone();
 
-        let delete = cx.background_executor().spawn(async move {
+        let delete = cx.background_spawn(async move {
             if entry.is_file() {
                 if trash {
                     fs.trash_file(&abs_path?, Default::default()).await?;
@@ -1963,7 +1963,7 @@ impl LocalWorktree {
         let abs_path = abs_new_path.clone();
         let fs = self.fs.clone();
         let case_sensitive = self.fs_case_sensitive;
-        let rename = cx.background_executor().spawn(async move {
+        let rename = cx.background_spawn(async move {
             let abs_old_path = abs_old_path?;
             let abs_new_path = abs_new_path;
 
@@ -2032,7 +2032,7 @@ impl LocalWorktree {
             };
         let abs_new_path = self.absolutize(&new_path);
         let fs = self.fs.clone();
-        let copy = cx.background_executor().spawn(async move {
+        let copy = cx.background_spawn(async move {
             copy_recursive(
                 fs.as_ref(),
                 &abs_old_path?,
@@ -2084,27 +2084,26 @@ impl LocalWorktree {
             .collect::<Vec<_>>();
 
         cx.spawn(|this, cx| async move {
-            cx.background_executor()
-                .spawn(async move {
-                    for (source, target) in paths {
-                        copy_recursive(
-                            fs.as_ref(),
-                            &source,
-                            &target,
-                            fs::CopyOptions {
-                                overwrite: overwrite_existing_files,
-                                ..Default::default()
-                            },
-                        )
-                        .await
-                        .with_context(|| {
-                            anyhow!("Failed to copy file from {source:?} to {target:?}")
-                        })?;
-                    }
-                    Ok::<(), anyhow::Error>(())
-                })
-                .await
-                .log_err();
+            cx.background_spawn(async move {
+                for (source, target) in paths {
+                    copy_recursive(
+                        fs.as_ref(),
+                        &source,
+                        &target,
+                        fs::CopyOptions {
+                            overwrite: overwrite_existing_files,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .with_context(|| {
+                        anyhow!("Failed to copy file from {source:?} to {target:?}")
+                    })?;
+                }
+                Ok::<(), anyhow::Error>(())
+            })
+            .await
+            .log_err();
             let mut refresh = cx.read_entity(
                 &this.upgrade().with_context(|| "Dropped worktree")?,
                 |this, _| {
@@ -2116,13 +2115,12 @@ impl LocalWorktree {
                 },
             )??;
 
-            cx.background_executor()
-                .spawn(async move {
-                    refresh.next().await;
-                    Ok::<(), anyhow::Error>(())
-                })
-                .await
-                .log_err();
+            cx.background_spawn(async move {
+                refresh.next().await;
+                Ok::<(), anyhow::Error>(())
+            })
+            .await
+            .log_err();
 
             let this = this.upgrade().with_context(|| "Dropped worktree")?;
             cx.read_entity(&this, |this, _| {
@@ -2141,7 +2139,7 @@ impl LocalWorktree {
     ) -> Option<Task<Result<()>>> {
         let path = self.entry_for_id(entry_id)?.path.clone();
         let mut refresh = self.refresh_entries_for_paths(vec![path]);
-        Some(cx.background_executor().spawn(async move {
+        Some(cx.background_spawn(async move {
             refresh.next().await;
             Ok(())
         }))
@@ -2154,7 +2152,7 @@ impl LocalWorktree {
     ) -> Option<Task<Result<()>>> {
         let path = self.entry_for_id(entry_id).unwrap().path.clone();
         let mut rx = self.add_path_prefix_to_scan(path.clone());
-        Some(cx.background_executor().spawn(async move {
+        Some(cx.background_spawn(async move {
             rx.next().await;
             Ok(())
         }))
@@ -2228,7 +2226,7 @@ impl LocalWorktree {
             .ok();
 
         let worktree_id = cx.entity_id().as_u64();
-        let _maintain_remote_snapshot = cx.background_executor().spawn(async move {
+        let _maintain_remote_snapshot = cx.background_spawn(async move {
             let mut is_first = true;
             while let Some((snapshot, entry_changes, repo_changes)) = snapshots_rx.next().await {
                 let update = if is_first {
@@ -3524,6 +3522,7 @@ impl BackgroundScannerState {
             dot_git_dir_abs_path: actual_dot_git_dir_abs_path.into(),
             dot_git_worktree_abs_path,
             current_merge_head_shas: Default::default(),
+            merge_message: None,
         };
 
         self.snapshot
@@ -3717,16 +3716,14 @@ impl language::LocalFile for File {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         let abs_path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
-        cx.background_executor()
-            .spawn(async move { fs.load(&abs_path?).await })
+        cx.background_spawn(async move { fs.load(&abs_path?).await })
     }
 
     fn load_bytes(&self, cx: &App) -> Task<Result<Vec<u8>>> {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         let abs_path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
-        cx.background_executor()
-            .spawn(async move { fs.load_bytes(&abs_path?).await })
+        cx.background_spawn(async move { fs.load_bytes(&abs_path?).await })
     }
 }
 
@@ -5491,6 +5488,10 @@ impl BackgroundScanner {
                     &local_repository.work_directory_id,
                     |entry| {
                         entry.current_merge_head_shas = merge_head_shas;
+                        entry.merge_message = std::fs::read_to_string(
+                            local_repository.dot_git_dir_abs_path.join("MERGE_MSG"),
+                        )
+                        .ok();
                         entry.status_scan_id += 1;
                     },
                 );

@@ -15,6 +15,7 @@ path = "src/language_model_selector.rs"
 feature_flags.workspace = true
 gpui.workspace = true
 language_model.workspace = true
+log.workspace = true
 picker.workspace = true
 proto.workspace = true
 ui.workspace = true

@@ -66,6 +66,7 @@ pub fn init(
     cx: &mut App,
 ) {
     AssistantSettings::register(cx);
+    thread_store::init(cx);
     assistant_panel::init(cx);
 
     inline_assistant::init(

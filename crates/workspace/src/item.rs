@@ -276,6 +276,9 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn can_save(&self, _cx: &App) -> bool {
         false
     }
+    fn can_save_as(&self, _: &App) -> bool {
+        false
+    }
     fn save(
         &mut self,
         _format: bool,
@@ -477,6 +480,7 @@ pub trait ItemHandle: 'static + Send {
     fn has_deleted_file(&self, cx: &App) -> bool;
     fn has_conflict(&self, cx: &App) -> bool;
     fn can_save(&self, cx: &App) -> bool;
+    fn can_save_as(&self, cx: &App) -> bool;
     fn save(
         &self,
         format: bool,
@@ -888,6 +892,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn can_save(&self, cx: &App) -> bool {
         self.read(cx).can_save(cx)
+    }
+
+    fn can_save_as(&self, cx: &App) -> bool {
+        self.read(cx).can_save_as(cx)
     }
 
     fn save(
@@ -1466,6 +1474,10 @@ pub mod test {
                     .project_items
                     .iter()
                     .all(|item| item.read(cx).entry_id.is_some())
+        }
+
+        fn can_save_as(&self, _cx: &App) -> bool {
+            self.is_singleton
         }
 
         fn save(

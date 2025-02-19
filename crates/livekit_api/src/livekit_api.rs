@@ -1,4 +1,6 @@
-use crate::{proto, token};
+pub mod proto;
+pub mod token;
+
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use prost::Message;

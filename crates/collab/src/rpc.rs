@@ -691,7 +691,6 @@ impl Server {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn handle_connection(
         self: &Arc<Self>,
         connection: Connection,
@@ -1075,7 +1074,6 @@ pub fn routes(server: Arc<Server>) -> Router<(), Body> {
         .layer(Extension(server))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn handle_websocket_request(
     TypedHeader(ProtocolVersion(protocol_version)): TypedHeader<ProtocolVersion>,
     app_version_header: Option<TypedHeader<AppVersionHeader>>,
@@ -1545,7 +1543,7 @@ async fn set_room_participant_role(
             .update_participant(
                 livekit_room.clone(),
                 request.user_id.to_string(),
-                livekit_server::proto::ParticipantPermission {
+                livekit_api::proto::ParticipantPermission {
                     can_subscribe: true,
                     can_publish,
                     can_publish_data: can_publish,

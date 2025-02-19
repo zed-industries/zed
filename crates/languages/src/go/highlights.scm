@@ -1,3 +1,5 @@
+(identifier) @variable
+
 (type_identifier) @type
 (field_identifier) @variable.member
 

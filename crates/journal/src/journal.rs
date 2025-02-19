@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
 use editor::scroll::Autoscroll;
 use editor::Editor;
-use gpui::{actions, App, Context, Window};
+use gpui::{actions, App, AppContext as _, Context, Window};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -87,7 +87,7 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
     let now = now.time();
     let entry_heading = heading_entry(now, &settings.hour_format);
 
-    let create_entry = cx.background_executor().spawn(async move {
+    let create_entry = cx.background_spawn(async move {
         std::fs::create_dir_all(month_dir)?;
         OpenOptions::new()
             .create(true)

@@ -218,6 +218,7 @@
       "cmd-s": "workspace::Save",
       "cmd->": "assistant::QuoteSelection",
       "cmd-<": "assistant::InsertIntoEditor",
+      "cmd-alt-/": "assistant::ToggleModelSelector",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",
@@ -784,14 +785,7 @@
     }
   },
   {
-    "context": "FileFinder",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd": "file_finder::ToggleMenu"
-    }
-  },
-  {
-    "context": "FileFinder && !menu_open",
+    "context": "FileFinder || (FileFinder > Picker > Editor) || (FileFinder > Picker > menu)",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-shift-p": "file_finder::SelectPrev",
@@ -799,16 +793,6 @@
       "cmd-k": "pane::SplitUp",
       "cmd-h": "pane::SplitLeft",
       "cmd-l": "pane::SplitRight"
-    }
-  },
-  {
-    "context": "FileFinder && menu_open",
-    "use_key_equivalents": true,
-    "bindings": {
-      "j": "pane::SplitDown",
-      "k": "pane::SplitUp",
-      "h": "pane::SplitLeft",
-      "l": "pane::SplitRight"
     }
   },
   {
