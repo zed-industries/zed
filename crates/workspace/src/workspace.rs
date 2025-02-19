@@ -1804,6 +1804,7 @@ impl Workspace {
     }
 
     pub fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
+        println!("workspace::close_window");
         let prepare = self.prepare_to_close(CloseIntent::CloseWindow, window, cx);
         cx.spawn_in(window, |_, mut cx| async move {
             if prepare.await? {

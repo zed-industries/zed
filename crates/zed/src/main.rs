@@ -169,6 +169,7 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 }
 
 fn main() {
+    println!("FIRST THINGS FIRST");
     menu::init();
     zed_actions::init();
 
@@ -616,6 +617,7 @@ fn main() {
 }
 
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {
+    dbg!("got open request!", &request);
     if let Some(connection) = request.cli_connection {
         let app_state = app_state.clone();
         cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))

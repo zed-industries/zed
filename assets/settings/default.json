@@ -126,6 +126,13 @@
   //  3. Never close the window
   //         "when_closing_with_no_tabs": "keep_window_open",
   "when_closing_with_no_tabs": "platform_default",
+  // What to do when the last window is closed.
+  // May take 2 values:
+  //  1. Use the current platform's convention
+  //         "on_last_window_closed": "platform_default"
+  //  2. Always quit the application
+  //         "on_last_window_closed": "quit_app",
+  "on_last_window_closed": "platform_default",
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,

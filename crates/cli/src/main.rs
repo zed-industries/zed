@@ -121,7 +121,7 @@ fn main() -> Result<()> {
     // Intercept version designators
     #[cfg(target_os = "macos")]
     if let Some(channel) = std::env::args().nth(1).filter(|arg| arg.starts_with("--")) {
-        // When the first argument is a name of a release channel, we're gonna spawn off a cli of that version, with trailing args passed along.
+        //When the first argument is a name of a release channel, we're gonna spawn off a cli of that version, with trailing args passed along.
         use std::str::FromStr as _;
 
         if let Ok(channel) = release_channel::ReleaseChannel::from_str(&channel[2..]) {
@@ -133,6 +133,7 @@ fn main() -> Result<()> {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let args = flatpak::set_bin_if_no_escape(args);
 
+    // impl InstalledApp -> For debug
     let app = Detect::detect(args.zed.as_deref()).context("Bundle detection")?;
 
     if args.version {
@@ -548,6 +549,61 @@ mod windows {
         }
     }
 }
+
+// mod debug_launcher {
+//     use std::{
+//         env, io,
+//         os::unix::net::UnixDatagram,
+//         path::{Path, PathBuf},
+//         process::ExitStatus,
+//     };
+
+//     use crate::{Detect, InstalledApp};
+
+//     struct DebugCliLauncher(PathBuf);
+
+//     impl Detect {
+//         pub fn detect(path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
+//             let path = if let Some(path) = path {
+//                 path.to_path_buf().canonicalize()?
+//             } else {
+//                 // Remind the user to build zed
+//                 let path = Path::new("./target/debug/zed").to_path_buf();
+//                 assert!(
+//                     path.exists(),
+//                     "You need to have a `target/debug/zed` directory; run `cargo build` first!"
+//                 );
+
+//                 path
+//             };
+
+//             Ok(DebugCliLauncher(path))
+//         }
+//     }
+
+//     impl InstalledApp for DebugCliLauncher {
+//         fn zed_version_string(&self) -> String {
+//             "Zed Debug".to_string()
+//         }
+
+//         fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
+//             let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL));
+//             let sock = UnixDatagram::unbound()?;
+//             if sock.connect(&sock_path).is_err() {
+//                 self.boot_background(ipc_url)?;
+//             } else {
+//                 sock.send(ipc_url.as_bytes())?;
+//             }
+//             Ok(())
+//         }
+
+//         fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
+//             std::process::Command::new(self.0.clone())
+//                 .arg(ipc_url)
+//                 .status()
+//         }
+//     }
+// }
 
 #[cfg(target_os = "macos")]
 mod mac_os {
