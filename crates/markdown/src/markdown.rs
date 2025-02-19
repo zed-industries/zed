@@ -201,9 +201,9 @@ impl Markdown {
                     languages: HashMap::default(),
                 });
             }
-            let (events, langauge_names) = parse_markdown(&text);
-            let mut languages = HashMap::with_capacity(langauge_names.len());
-            for name in langauge_names {
+            let (events, language_names) = parse_markdown(&text);
+            let mut languages = HashMap::with_capacity(language_names.len());
+            for name in language_names {
                 if let Some(registry) = language_registry.as_ref() {
                     let language = if !name.is_empty() {
                         registry.language_for_name(&name)
