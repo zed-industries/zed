@@ -2273,7 +2273,7 @@ impl Render for GitPanel {
             .child(if has_entries {
                 v_flex()
                     .size_full()
-                    .child(self.render_panel_header(window, cx))
+                    .children(self.render_panel_header(window, cx))
                     .child(self.render_entries(has_write_access, window, cx))
                     .children(self.render_previous_commit(cx))
                     .child(self.render_commit_editor(window, cx))
