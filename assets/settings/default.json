@@ -716,6 +716,15 @@
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
   "preferred_line_length": 80,
+  // Whether to allow `editor::Rewrap` to rewrap anywhere, not just in comments or textual languages
+  // (Markdown, Plain Text).
+  //
+  // The default rewrap behavior is intended to prevent rewrapping code in such a way that it
+  // becomes syntactically invalid. Enabling this will remove that safeguard, so only enable it if
+  // you are okay with that behavior.
+  //
+  // Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
+  "rewrap_anywhere": false,
   // Whether to indent lines using tab characters, as opposed to multiple
   // spaces.
   "hard_tabs": false,

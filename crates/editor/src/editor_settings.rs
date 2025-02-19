@@ -36,6 +36,19 @@ pub struct EditorSettings {
     pub search: SearchSettings,
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
+    /// Whether to allow `editor::Rewrap` to rewrap anywhere, not just in
+    /// comments or textual languages (Markdown, Plain Text).
+    ///
+    /// The default rewrap behavior is intended to prevent rewrapping code in
+    /// such a way that it becomes syntactically invalid. Enabling this will
+    /// remove that safeguard, so only enable it if you are okay with that
+    /// behavior.
+    ///
+    /// Note: This setting has no effect in Vim mode, as rewrap is already
+    /// allowed everywhere.
+    ///
+    /// This should almost certainly **never** be enabled by default.
+    pub rewrap_anywhere: bool,
     pub jupyter: Jupyter,
 }
 
@@ -377,6 +390,20 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub show_signature_help_after_edits: Option<bool>,
+
+    /// Whether to allow `editor::Rewrap` to rewrap anywhere, not just in
+    /// comments or textual languages (Markdown, Plain Text).
+    ///
+    /// The default rewrap behavior is intended to prevent rewrapping code in
+    /// such a way that it becomes syntactically invalid. Enabling this will
+    /// remove that safeguard, so only enable it if you are okay with that
+    /// behavior.
+    ///
+    /// Note: This setting has no effect in Vim mode, as rewrap is already
+    /// allowed everywhere.
+    ///
+    /// Default: false
+    pub rewrap_anywhere: Option<bool>,
 
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,
