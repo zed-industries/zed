@@ -2,7 +2,7 @@ use crate::{
     display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
     RowExt,
 };
-use buffer_diff::DiffHunkStatus;
+use buffer_diff::DiffHunkStatusKind;
 use collections::BTreeMap;
 use futures::Future;
 
@@ -470,10 +470,10 @@ pub fn assert_state_with_diff(
         .split('\n')
         .zip(line_infos)
         .map(|(line, info)| {
-            let mut marker = match info.diff_status {
-                Some(DiffHunkStatus::Added(_)) => "+ ",
-                Some(DiffHunkStatus::Removed(_)) => "- ",
-                Some(DiffHunkStatus::Modified(_)) => unreachable!(),
+            let mut marker = match info.diff_status.map(|status| status.kind) {
+                Some(DiffHunkStatusKind::Added) => "+ ",
+                Some(DiffHunkStatusKind::Deleted) => "- ",
+                Some(DiffHunkStatusKind::Modified) => unreachable!(),
                 None => {
                     if has_diff {
                         "  "
