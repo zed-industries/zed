@@ -397,6 +397,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::Commit>)
             .add_request_handler(forward_read_only_project_request::<proto::GitShow>)
             .add_request_handler(forward_read_only_project_request::<proto::GitReset>)
+            .add_request_handler(forward_read_only_project_request::<proto::GitCheckoutFiles>)
             .add_request_handler(forward_mutating_project_request::<proto::SetIndexText>)
             .add_request_handler(forward_mutating_project_request::<proto::OpenCommitMessageBuffer>)
             .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
@@ -1544,7 +1545,7 @@ async fn set_room_participant_role(
             .update_participant(
                 livekit_room.clone(),
                 request.user_id.to_string(),
-                livekit_server::proto::ParticipantPermission {
+                livekit_api::proto::ParticipantPermission {
                     can_subscribe: true,
                     can_publish,
                     can_publish_data: can_publish,

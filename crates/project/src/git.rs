@@ -11,8 +11,8 @@ use git::{
     status::{GitSummary, TrackedSummary},
 };
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-    WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription,
+    Task, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
 use rpc::proto::{git_reset, ToProto};
@@ -40,6 +40,7 @@ pub struct Repository {
     pub worktree_id: WorktreeId,
     pub repository_entry: RepositoryEntry,
     pub git_repo: GitRepo,
+    pub merge_message: Option<String>,
     update_sender: mpsc::UnboundedSender<(Message, oneshot::Sender<Result<()>>)>,
 }
 
@@ -64,6 +65,11 @@ pub enum Message {
         repo: GitRepo,
         commit: SharedString,
         reset_mode: ResetMode,
+    },
+    CheckoutFiles {
+        repo: GitRepo,
+        commit: SharedString,
+        paths: Vec<RepoPath>,
     },
     Stage(GitRepo, Vec<RepoPath>),
     Unstage(GitRepo, Vec<RepoPath>),
@@ -106,6 +112,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_commit);
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
+        client.add_entity_request_handler(Self::handle_checkout_files);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
         client.add_entity_request_handler(Self::handle_set_index_text);
     }
@@ -121,8 +128,6 @@ impl GitStore {
         event: &WorktreeStoreEvent,
         cx: &mut Context<'_, Self>,
     ) {
-        // TODO inspect the event
-
         let mut new_repositories = Vec::new();
         let mut new_active_index = None;
         let this = cx.weak_entity();
@@ -134,22 +139,29 @@ impl GitStore {
                 worktree.update(cx, |worktree, cx| {
                     let snapshot = worktree.snapshot();
                     for repo in snapshot.repositories().iter() {
-                        let git_repo = worktree
+                        let git_data = worktree
                             .as_local()
                             .and_then(|local_worktree| local_worktree.get_local_repo(repo))
-                            .map(|local_repo| local_repo.repo().clone())
-                            .map(GitRepo::Local)
+                            .map(|local_repo| {
+                                (
+                                    GitRepo::Local(local_repo.repo().clone()),
+                                    local_repo.merge_message.clone(),
+                                )
+                            })
                             .or_else(|| {
                                 let client = client.clone()?;
                                 let project_id = project_id?;
-                                Some(GitRepo::Remote {
-                                    project_id,
-                                    client,
-                                    worktree_id: worktree.id(),
-                                    work_directory_id: repo.work_directory_id(),
-                                })
+                                Some((
+                                    GitRepo::Remote {
+                                        project_id,
+                                        client,
+                                        worktree_id: worktree.id(),
+                                        work_directory_id: repo.work_directory_id(),
+                                    },
+                                    None,
+                                ))
                             });
-                        let Some(git_repo) = git_repo else {
+                        let Some((git_repo, merge_message)) = git_data else {
                             continue;
                         };
                         let worktree_id = worktree.id();
@@ -165,10 +177,24 @@ impl GitStore {
                             if self.active_index == Some(index) {
                                 new_active_index = Some(new_repositories.len());
                             }
-                            // Update the statuses but keep everything else.
+                            // Update the statuses and merge message but keep everything else.
                             let existing_handle = handle.clone();
-                            existing_handle.update(cx, |existing_handle, _| {
+                            existing_handle.update(cx, |existing_handle, cx| {
                                 existing_handle.repository_entry = repo.clone();
+                                if matches!(git_repo, GitRepo::Local { .. })
+                                    && existing_handle.merge_message != merge_message
+                                {
+                                    if let (Some(merge_message), Some(buffer)) =
+                                        (&merge_message, &existing_handle.commit_message_buffer)
+                                    {
+                                        buffer.update(cx, |buffer, cx| {
+                                            if buffer.is_empty() {
+                                                buffer.set_text(merge_message.as_str(), cx);
+                                            }
+                                        })
+                                    }
+                                    existing_handle.merge_message = merge_message;
+                                }
                             });
                             existing_handle
                         } else {
@@ -178,6 +204,7 @@ impl GitStore {
                                 repository_entry: repo.clone(),
                                 git_repo,
                                 update_sender: self.update_sender.clone(),
+                                merge_message,
                                 commit_message_buffer: None,
                             })
                         };
@@ -215,10 +242,7 @@ impl GitStore {
             mpsc::unbounded::<(Message, oneshot::Sender<Result<()>>)>();
         cx.spawn(|_, cx| async move {
             while let Some((msg, respond)) = update_receiver.next().await {
-                let result = cx
-                    .background_executor()
-                    .spawn(Self::process_git_msg(msg))
-                    .await;
+                let result = cx.background_spawn(Self::process_git_msg(msg)).await;
                 respond.send(result).ok();
             }
         })
@@ -276,6 +300,36 @@ impl GitStore {
                                     ResetMode::Soft => git_reset::ResetMode::Soft.into(),
                                     ResetMode::Mixed => git_reset::ResetMode::Mixed.into(),
                                 },
+                            })
+                            .await?;
+                    }
+                }
+                Ok(())
+            }
+
+            Message::CheckoutFiles {
+                repo,
+                commit,
+                paths,
+            } => {
+                match repo {
+                    GitRepo::Local(repo) => repo.checkout_files(&commit, &paths)?,
+                    GitRepo::Remote {
+                        project_id,
+                        client,
+                        worktree_id,
+                        work_directory_id,
+                    } => {
+                        client
+                            .request(proto::GitCheckoutFiles {
+                                project_id: project_id.0,
+                                worktree_id: worktree_id.to_proto(),
+                                work_directory_id: work_directory_id.to_proto(),
+                                commit: commit.into(),
+                                paths: paths
+                                    .into_iter()
+                                    .map(|p| p.to_string_lossy().to_string())
+                                    .collect(),
                             })
                             .await?;
                     }
@@ -502,6 +556,30 @@ impl GitStore {
         Ok(proto::Ack {})
     }
 
+    async fn handle_checkout_files(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCheckoutFiles>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+        let paths = envelope
+            .payload
+            .paths
+            .iter()
+            .map(|s| RepoPath::from_str(s))
+            .collect();
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.checkout_files(&envelope.payload.commit, paths)
+            })?
+            .await??;
+        Ok(proto::Ack {})
+    }
+
     async fn handle_open_commit_message_buffer(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::OpenCommitMessageBuffer>,
@@ -693,6 +771,7 @@ impl Repository {
         buffer_store: Entity<BufferStore>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
+        let merge_message = self.merge_message.clone();
         cx.spawn(|repository, mut cx| async move {
             let buffer = buffer_store
                 .update(&mut cx, |buffer_store, cx| buffer_store.create_buffer(cx))?
@@ -705,11 +784,37 @@ impl Repository {
                 })?;
             }
 
+            if let Some(merge_message) = merge_message {
+                buffer.update(&mut cx, |buffer, cx| {
+                    buffer.set_text(merge_message.as_str(), cx)
+                })?;
+            }
+
             repository.update(&mut cx, |repository, _| {
                 repository.commit_message_buffer = Some(buffer.clone());
             })?;
             Ok(buffer)
         })
+    }
+
+    pub fn checkout_files(
+        &self,
+        commit: &str,
+        paths: Vec<RepoPath>,
+    ) -> oneshot::Receiver<Result<()>> {
+        let (result_tx, result_rx) = futures::channel::oneshot::channel();
+        let commit = commit.to_string().into();
+        self.update_sender
+            .unbounded_send((
+                Message::CheckoutFiles {
+                    repo: self.git_repo.clone(),
+                    commit,
+                    paths,
+                },
+                result_tx,
+            ))
+            .ok();
+        result_rx
     }
 
     pub fn reset(&self, commit: &str, reset_mode: ResetMode) -> oneshot::Receiver<Result<()>> {
@@ -733,15 +838,14 @@ impl Repository {
         match self.git_repo.clone() {
             GitRepo::Local(git_repository) => {
                 let commit = commit.to_string();
-                cx.background_executor()
-                    .spawn(async move { git_repository.show(&commit) })
+                cx.background_spawn(async move { git_repository.show(&commit) })
             }
             GitRepo::Remote {
                 project_id,
                 client,
                 worktree_id,
                 work_directory_id,
-            } => cx.background_executor().spawn(async move {
+            } => cx.background_spawn(async move {
                 let resp = client
                     .request(proto::GitShow {
                         project_id: project_id.0,

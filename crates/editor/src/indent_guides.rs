@@ -1,7 +1,7 @@
 use std::{ops::Range, time::Duration};
 
 use collections::HashSet;
-use gpui::{App, Context, Task, Window};
+use gpui::{App, AppContext as _, Context, Task, Window};
 use language::language_settings::language_settings;
 use multi_buffer::{IndentGuide, MultiBufferRow};
 use text::{LineIndent, Point};
@@ -102,9 +102,7 @@ impl Editor {
 
             let snapshot = snapshot.clone();
 
-            let task = cx
-                .background_executor()
-                .spawn(resolve_indented_range(snapshot, cursor_row));
+            let task = cx.background_spawn(resolve_indented_range(snapshot, cursor_row));
 
             // Try to resolve the indent in a short amount of time, otherwise move it to a background task.
             match cx
@@ -115,7 +113,7 @@ impl Editor {
                 Err(future) => {
                     state.pending_refresh =
                         Some(cx.spawn_in(window, |editor, mut cx| async move {
-                            let result = cx.background_executor().spawn(future).await;
+                            let result = cx.background_spawn(future).await;
                             editor
                                 .update(&mut cx, |editor, _| {
                                     editor.active_indent_guides_state.active_indent_range = result;

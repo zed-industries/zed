@@ -28,6 +28,7 @@ http_client.workspace = true
 language_model.workspace = true
 lmstudio = { workspace = true, features = ["schemars"] }
 menu.workspace = true
+mistral = { workspace = true, features = ["schemars"] }
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 project.workspace = true

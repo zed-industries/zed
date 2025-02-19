@@ -14,10 +14,21 @@ else
 fi
 
 echo "Generating cargo licenses"
+
+stderr_file=$(mktemp)
+
 cargo about generate \
     --fail \
     -c script/licenses/zed-licenses.toml \
     script/licenses/template.csv.hbs \
+    2> >(tee "$stderr_file") \
     | awk 'NR==1{print;next} NF{print | "sort"}' \
     > $OUTPUT_FILE
-echo "Completed. See $OUTPUT_FILE"
+
+# Check that there are no warnings.
+if echo "$about_stderr" | grep -v "\[WARN\]" > /dev/null; then
+    echo "Error: License check failed - warnings found" >&2
+    exit 1
+fi
+
+echo "generate-licenses-csv completed. See $OUTPUT_FILE"

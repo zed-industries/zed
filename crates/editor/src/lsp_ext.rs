@@ -21,7 +21,6 @@ where
     let Some(project) = &editor.project else {
         return None;
     };
-    let multibuffer = editor.buffer().read(cx);
     let mut language_servers_for = HashMap::default();
     editor
         .selections
@@ -29,29 +28,21 @@ where
         .iter()
         .filter(|selection| selection.start == selection.end)
         .filter_map(|selection| Some((selection.start.buffer_id?, selection.start)))
-        .filter_map(|(buffer_id, trigger_anchor)| {
-            let buffer = multibuffer.buffer(buffer_id)?;
+        .find_map(|(buffer_id, trigger_anchor)| {
+            let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
             let server_id = *match language_servers_for.entry(buffer_id) {
                 Entry::Occupied(occupied_entry) => occupied_entry.into_mut(),
                 Entry::Vacant(vacant_entry) => {
-                    let language_server_id = project
-                        .read(cx)
-                        .language_servers_for_local_buffer(buffer.read(cx), cx)
-                        .find_map(|(adapter, server)| {
-                            if adapter.name.0.as_ref() == language_server_name {
-                                Some(server.server_id())
-                            } else {
-                                None
-                            }
-                        });
+                    let language_server_id = buffer.update(cx, |buffer, cx| {
+                        project.update(cx, |project, cx| {
+                            project.language_server_id_for_name(buffer, language_server_name, cx)
+                        })
+                    });
                     vacant_entry.insert(language_server_id)
                 }
             }
             .as_ref()?;
 
-            Some((buffer, trigger_anchor, server_id))
-        })
-        .find_map(|(buffer, trigger_anchor, server_id)| {
             let language = buffer.read(cx).language_at(trigger_anchor.text_anchor)?;
             if !filter_language(&language) {
                 return None;

@@ -73,7 +73,7 @@ impl ZedPredictModal {
     }
 
     fn inline_completions_doc(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/docs/configuring-zed#inline-completions");
+        cx.open_url("https://zed.dev/docs/configuring-zed#disabled-globs");
         cx.notify();
 
         onboarding_event!("Docs Link Clicked");

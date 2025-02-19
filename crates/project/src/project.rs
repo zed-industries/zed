@@ -9,6 +9,7 @@ pub mod lsp_ext_command;
 pub mod lsp_store;
 pub mod prettier_store;
 pub mod project_settings;
+mod project_tree;
 pub mod search;
 mod task_inventory;
 pub mod task_store;
@@ -56,17 +57,16 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent,
-    CachedLspAdapter, Capability, CodeLabel, CompletionDocumentation, File as _, Language,
-    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList,
-    Transaction, Unclipped,
+    language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent, Capability,
+    CodeLabel, File as _, Language, LanguageName, LanguageRegistry, PointUtf16, ToOffset,
+    ToPointUtf16, Toolchain, ToolchainList, Transaction, Unclipped,
 };
 use lsp::{
-    CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer,
-    LanguageServerId, LanguageServerName, MessageActionItem,
+    CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServerId,
+    LanguageServerName, MessageActionItem,
 };
 use lsp_command::*;
-use lsp_store::LspFormatTarget;
+use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
@@ -481,6 +481,7 @@ pub struct DocumentHighlight {
 pub struct Symbol {
     pub language_server_name: LanguageServerName,
     pub source_worktree_id: WorktreeId,
+    pub source_language_server_id: LanguageServerId,
     pub path: ProjectPath,
     pub label: CodeLabel,
     pub name: String,
@@ -561,7 +562,7 @@ impl DirectoryLister {
             }
             DirectoryLister::Local(fs) => {
                 let fs = fs.clone();
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     let mut results = vec![];
                     let expanded = shellexpand::tilde(&path);
                     let query = Path::new(expanded.as_ref());
@@ -1163,13 +1164,12 @@ impl Project {
                 .read(cx)
                 .shutdown_processes(Some(proto::ShutdownRemoteServer {}));
 
-            cx.background_executor()
-                .spawn(async move {
-                    if let Some(shutdown) = shutdown {
-                        shutdown.await;
-                    }
-                })
-                .detach()
+            cx.background_spawn(async move {
+                if let Some(shutdown) = shutdown {
+                    shutdown.await;
+                }
+            })
+            .detach()
         }
 
         match &self.client_state {
@@ -1970,7 +1970,7 @@ impl Project {
     pub fn open_buffer(
         &mut self,
         path: impl Into<ProjectPath>,
-        cx: &mut Context<Self>,
+        cx: &mut App,
     ) -> Task<Result<Entity<Buffer>>> {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
@@ -1988,13 +1988,22 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<(Entity<Buffer>, lsp_store::OpenLspBufferHandle)>> {
         let buffer = self.open_buffer(path, cx);
-        let lsp_store = self.lsp_store().clone();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let buffer = buffer.await?;
-            let handle = lsp_store.update(&mut cx, |lsp_store, cx| {
-                lsp_store.register_buffer_with_language_servers(&buffer, cx)
+            let handle = this.update(&mut cx, |project, cx| {
+                project.register_buffer_with_language_servers(&buffer, cx)
             })?;
             Ok((buffer, handle))
+        })
+    }
+
+    pub fn register_buffer_with_language_servers(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> OpenLspBufferHandle {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.register_buffer_with_language_servers(&buffer, false, cx)
         })
     }
 
@@ -2616,7 +2625,7 @@ impl Project {
 
     pub fn restart_language_servers_for_buffers(
         &mut self,
-        buffers: impl IntoIterator<Item = Entity<Buffer>>,
+        buffers: Vec<Entity<Buffer>>,
         cx: &mut Context<Self>,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
@@ -3129,7 +3138,7 @@ impl Project {
                     let buffer = buffer.clone();
                     let query = query.clone();
                     let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
-                    chunk_results.push(cx.background_executor().spawn(async move {
+                    chunk_results.push(cx.background_spawn(async move {
                         let ranges = query
                             .search(&snapshot, None)
                             .await
@@ -3368,7 +3377,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Option<ResolvedPath>> {
         let resolve_task = self.resolve_abs_path(path, cx);
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let resolved_path = resolve_task.await;
             resolved_path.filter(|path| path.is_file())
         })
@@ -3382,7 +3391,7 @@ impl Project {
         if self.is_local() {
             let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
             let fs = self.fs.clone();
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 let path = expanded.as_path();
                 let metadata = fs.metadata(path).await.ok().flatten();
 
@@ -3400,7 +3409,7 @@ impl Project {
                     project_id: SSH_PROJECT_ID,
                     path: request_path.to_proto(),
                 });
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 let response = request.await.log_err()?;
                 if response.exists {
                     Some(ResolvedPath::AbsPath {
@@ -3481,7 +3490,7 @@ impl Project {
             };
 
             let response = session.read(cx).proto_client().request(request);
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 let response = response.await?;
                 Ok(response.entries.into_iter().map(PathBuf::from).collect())
             })
@@ -3897,8 +3906,7 @@ impl Project {
             if let Some(remote_id) = this.remote_id() {
                 let mut payload = envelope.payload.clone();
                 payload.project_id = remote_id;
-                cx.background_executor()
-                    .spawn(this.client.request(payload))
+                cx.background_spawn(this.client.request(payload))
                     .detach_and_log_err(cx);
             }
             this.buffer_store.clone()
@@ -3915,8 +3923,7 @@ impl Project {
             if let Some(ssh) = &this.ssh_client {
                 let mut payload = envelope.payload.clone();
                 payload.project_id = SSH_PROJECT_ID;
-                cx.background_executor()
-                    .spawn(ssh.read(cx).proto_client().request(payload))
+                cx.background_spawn(ssh.read(cx).proto_client().request(payload))
                     .detach_and_log_err(cx);
             }
             this.buffer_store.clone()
@@ -4137,7 +4144,7 @@ impl Project {
                         if let Some(buffer) = this.buffer_for_id(buffer_id, cx) {
                             let operations =
                                 buffer.read(cx).serialize_ops(Some(remote_version), cx);
-                            cx.background_executor().spawn(async move {
+                            cx.background_spawn(async move {
                                 let operations = operations.await;
                                 for chunk in split_operations(operations) {
                                     client
@@ -4160,12 +4167,11 @@ impl Project {
             // Any incomplete buffers have open requests waiting. Request that the host sends
             // creates these buffers for us again to unblock any waiting futures.
             for id in incomplete_buffer_ids {
-                cx.background_executor()
-                    .spawn(client.request(proto::OpenBufferById {
-                        project_id,
-                        id: id.into(),
-                    }))
-                    .detach();
+                cx.background_spawn(client.request(proto::OpenBufferById {
+                    project_id,
+                    id: id.into(),
+                }))
+                .detach();
             }
 
             futures::future::join_all(send_updates_for_buffers)
@@ -4228,14 +4234,43 @@ impl Project {
         self.lsp_store.read(cx).supplementary_language_servers()
     }
 
-    pub fn language_servers_for_local_buffer<'a>(
-        &'a self,
-        buffer: &'a Buffer,
-        cx: &'a App,
-    ) -> impl Iterator<Item = (&'a Arc<CachedLspAdapter>, &'a Arc<LanguageServer>)> {
-        self.lsp_store
-            .read(cx)
-            .language_servers_for_local_buffer(buffer, cx)
+    pub fn any_language_server_supports_inlay_hints(&self, buffer: &Buffer, cx: &mut App) -> bool {
+        self.lsp_store.update(cx, |this, cx| {
+            this.language_servers_for_local_buffer(buffer, cx)
+                .any(
+                    |(_, server)| match server.capabilities().inlay_hint_provider {
+                        Some(lsp::OneOf::Left(enabled)) => enabled,
+                        Some(lsp::OneOf::Right(_)) => true,
+                        None => false,
+                    },
+                )
+        })
+    }
+
+    pub fn language_server_id_for_name(
+        &self,
+        buffer: &Buffer,
+        name: &str,
+        cx: &mut App,
+    ) -> Option<LanguageServerId> {
+        self.lsp_store.update(cx, |this, cx| {
+            this.language_servers_for_local_buffer(buffer, cx)
+                .find_map(|(adapter, server)| {
+                    if adapter.name.0 == name {
+                        Some(server.server_id())
+                    } else {
+                        None
+                    }
+                })
+        })
+    }
+
+    pub fn has_language_servers_for(&self, buffer: &Buffer, cx: &mut App) -> bool {
+        self.lsp_store.update(cx, |this, cx| {
+            this.language_servers_for_local_buffer(buffer, cx)
+                .next()
+                .is_some()
+        })
     }
 
     pub fn buffer_store(&self) -> &Entity<BufferStore> {

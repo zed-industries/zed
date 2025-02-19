@@ -4,7 +4,7 @@ use backtrace::{self, Backtrace};
 use chrono::Utc;
 use client::{telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{App, SemanticVersion};
+use gpui::{App, AppContext as _, SemanticVersion};
 use http_client::{self, HttpClient, HttpClientWithUrl, HttpRequestExt, Method};
 use paths::{crashes_dir, crashes_retired_dir};
 use project::Project;
@@ -205,35 +205,34 @@ pub fn init(
             ssh_client.update(cx, |client, cx| {
                 if TelemetrySettings::get_global(cx).diagnostics {
                     let request = client.proto_client().request(proto::GetPanicFiles {});
-                    cx.background_executor()
-                        .spawn(async move {
-                            let panic_files = request.await?;
-                            for file in panic_files.file_contents {
-                                let panic: Option<Panic> = serde_json::from_str(&file)
-                                    .log_err()
-                                    .or_else(|| {
-                                        file.lines()
-                                            .next()
-                                            .and_then(|line| serde_json::from_str(line).ok())
-                                    })
-                                    .unwrap_or_else(|| {
-                                        log::error!("failed to deserialize panic file {:?}", file);
-                                        None
-                                    });
+                    cx.background_spawn(async move {
+                        let panic_files = request.await?;
+                        for file in panic_files.file_contents {
+                            let panic: Option<Panic> = serde_json::from_str(&file)
+                                .log_err()
+                                .or_else(|| {
+                                    file.lines()
+                                        .next()
+                                        .and_then(|line| serde_json::from_str(line).ok())
+                                })
+                                .unwrap_or_else(|| {
+                                    log::error!("failed to deserialize panic file {:?}", file);
+                                    None
+                                });
 
-                                if let Some(mut panic) = panic {
-                                    panic.session_id = session_id.clone();
-                                    panic.system_id = system_id.clone();
-                                    panic.installation_id = installation_id.clone();
+                            if let Some(mut panic) = panic {
+                                panic.session_id = session_id.clone();
+                                panic.system_id = system_id.clone();
+                                panic.installation_id = installation_id.clone();
 
-                                    upload_panic(&http_client, &panic_report_url, panic, &mut None)
-                                        .await?;
-                                }
+                                upload_panic(&http_client, &panic_report_url, panic, &mut None)
+                                    .await?;
                             }
+                        }
 
-                            anyhow::Ok(())
-                        })
-                        .detach_and_log_err(cx);
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
                 }
             })
         }
@@ -450,18 +449,17 @@ fn upload_panics_and_crashes(
     cx: &App,
 ) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
-    cx.background_executor()
-        .spawn(async move {
-            let most_recent_panic =
-                upload_previous_panics(http.clone(), &panic_report_url, telemetry_settings)
-                    .await
-                    .log_err()
-                    .flatten();
-            upload_previous_crashes(http, most_recent_panic, installation_id, telemetry_settings)
+    cx.background_spawn(async move {
+        let most_recent_panic =
+            upload_previous_panics(http.clone(), &panic_report_url, telemetry_settings)
                 .await
                 .log_err()
-        })
-        .detach()
+                .flatten();
+        upload_previous_crashes(http, most_recent_panic, installation_id, telemetry_settings)
+            .await
+            .log_err()
+    })
+    .detach()
 }
 
 /// Uploads panics via `zed.dev`.
