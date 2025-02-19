@@ -4781,15 +4781,6 @@ impl Editor {
             self.clear_background_highlights::<SelectedTextHighlight>(cx);
             return;
         }
-        if self.selections.count() != 1 || self.selections.line_mode {
-            self.clear_background_highlights::<SelectedTextHighlight>(cx);
-            return;
-        }
-        let selection = self.selections.newest::<Point>(cx);
-        if selection.is_empty() || selection.start.row != selection.end.row {
-            self.clear_background_highlights::<SelectedTextHighlight>(cx);
-            return;
-        }
         let debounce = EditorSettings::get_global(cx).selection_highlight_debounce;
         self.selection_highlight_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
             cx.background_executor()
@@ -4797,12 +4788,16 @@ impl Editor {
                 .await;
             let Some(Some(matches_task)) = editor
                 .update_in(&mut cx, |editor, _, cx| {
-                    let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let new_selection = editor.selections.newest::<Point>(cx);
-                    if selection != new_selection {
+                    if editor.selections.count() != 1 || editor.selections.line_mode {
                         editor.clear_background_highlights::<SelectedTextHighlight>(cx);
                         return None;
                     }
+                    let selection = editor.selections.newest::<Point>(cx);
+                    if selection.is_empty() || selection.start.row != selection.end.row {
+                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                        return None;
+                    }
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
                     Some(cx.background_spawn(async move {
                         let mut ranges = Vec::new();
                         let buffer_ranges =
