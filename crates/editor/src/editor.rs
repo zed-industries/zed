@@ -5901,20 +5901,18 @@ impl Editor {
         window: &mut Window,
         cx: &App,
     ) -> Option<Div> {
-        let bg_color = Self::edit_prediction_line_popover_bg_color(cx);
-
         let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
 
         let result = h_flex()
-            .gap_1()
-            .border_1()
-            .rounded_lg()
-            .shadow_sm()
-            .bg(bg_color)
-            .border_color(cx.theme().colors().text_accent.opacity(0.4))
             .py_0p5()
             .pl_1()
             .pr(padding_right)
+            .gap_1()
+            .rounded(px(6.))
+            .border_1()
+            .bg(Self::edit_prediction_line_popover_bg_color(cx))
+            .border_color(Self::edit_prediction_callout_popover_border_color(cx))
+            .shadow_sm()
             .children(self.render_edit_prediction_accept_keybind(window, cx))
             .child(Label::new(label).size(LabelSize::Small))
             .when_some(icon, |element, icon| {
@@ -5932,6 +5930,12 @@ impl Editor {
         let accent_color = cx.theme().colors().text_accent;
         let editor_bg_color = cx.theme().colors().editor_background;
         editor_bg_color.blend(accent_color.opacity(0.1))
+    }
+
+    fn edit_prediction_callout_popover_border_color(cx: &App) -> Hsla {
+        let accent_color = cx.theme().colors().text_accent;
+        let editor_bg_color = cx.theme().colors().editor_background;
+        editor_bg_color.blend(accent_color.opacity(0.6))
     }
 
     fn render_edit_prediction_cursor_popover(
@@ -6006,10 +6010,11 @@ impl Editor {
                         h_flex()
                             .px_2()
                             .py_1()
+                            .gap_2()
                             .elevation_2(cx)
                             .border_color(cx.theme().colors().border)
+                            .rounded(px(6.))
                             .rounded_tl(px(0.))
-                            .gap_2()
                             .child(
                                 if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
                                     Icon::new(IconName::ZedPredictDown)
