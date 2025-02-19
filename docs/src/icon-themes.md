@@ -1,10 +1,10 @@
 # Icon Themes
 
-Zed comes by default with a light and dark icon theme, with more icon themes available as extensions.
+Zed comes with a built-in icon theme, with more icon themes available as extensions.
 
 ## Selecting an Icon Theme
 
-See what icon themes are installed and preview them via the Icon Theme Selector, which you can open from the command palette with "icon theme selector: Toggle".
+See what icon themes are installed and preview them via the Icon Theme Selector, which you can open from the command palette with "icon theme selector: toggle".
 
 Navigating through the icon theme list by moving up and down will change the icon theme in real time and hitting enter will save it to your settings file.
 
@@ -14,16 +14,16 @@ More icon themes are available from the Extensions page, which you can access vi
 
 ## Configuring Icon Themes
 
-Your selected icon theme is stored in your settings file. You can open your settings file from the command palette with "zed: Open Settings" (bound to `cmd-,` on macOS and `ctrl-,` on Linux).
+Your selected icon theme is stored in your settings file. You can open your settings file from the command palette with "zed: open settings" (bound to `cmd-,` on macOS and `ctrl-,` on Linux).
 
-By default, Zed maintains two icon themes: one for light mode and one for dark mode. You can set the mode to `"light"` or `"dark"` to ignore the current system mode.
+Just like with themes, Zed allows for configuring different icon themes for light and dark mode. You can set the mode to `"light"` or `"dark"` to ignore the current system mode.
 
 ```json
 {
   "icon_theme": {
     "mode": "system",
-    "light": "Zed (Default)",
-    "dark": "Zed (Default)"
+    "light": "Light Icon Theme",
+    "dark": "Dark Icon Theme"
   }
 }
 ```
