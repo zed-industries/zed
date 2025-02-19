@@ -46,7 +46,7 @@ if command -v rustup >/dev/null 2>&1; then
 fi
 
 # Generate the licenses first, so they can be baked into the binaries
-script/generate-licenses
+# script/generate-licenses
 
 if "$rustup_installed"; then
     rustup target add "$remote_server_triple"

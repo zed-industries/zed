@@ -55,7 +55,7 @@
       });
 
       devShells = forAllSystems (pkgs: {
-        default = pkgs.callPackage ./nix/shell.nix {};
+        default = pkgs.callPackage ./nix/shell.nix { };
       });
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);

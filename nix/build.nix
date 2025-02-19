@@ -2,6 +2,7 @@
   lib,
   crane,
   rustToolchain,
+  rustPlatform,
   fetchpatch,
   cmake,
   copyDesktopItems,
@@ -30,6 +31,7 @@
   cargo-bundle,
   git,
   apple-sdk_15,
+  darwin,
   darwinMinVersionHook,
   makeWrapper,
   nodejs_22,
@@ -58,17 +60,18 @@ let
     filter = includeFilter;
     name = "source";
   };
+  gpu-lib = if withGLES then libglvnd else vulkan-loader;
   commonArgs = rec {
     pname = "zed-editor";
     version = "nightly";
 
     src = commonSrc;
 
-    gpu-lib = if withGLES then libglvnd else vulkan-loader;
-
     nativeBuildInputs =
       [
-        # clang # todo: why?
+        # TODO: use pkgs.clangStdenv or ignore cargo config?
+        # also make it linux only since darwin stdenv has clang by default
+        clang
         cmake
         copyDesktopItems
         curl
@@ -76,6 +79,7 @@ let
         pkg-config
         protobuf
         cargo-about
+        rustPlatform.bindgenHook
       ]
       ++ lib.optionals stdenv.hostPlatform.isLinux [ makeWrapper ]
       ++ lib.optionals stdenv.hostPlatform.isDarwin [ cargo-bundle ];
@@ -85,6 +89,8 @@ let
         curl
         fontconfig
         freetype
+        # TODO: need staticlib of this for linking the musl remote server.
+        # should make it a separate derivation/flake output
         libgit2
         openssl
         sqlite
@@ -100,6 +106,7 @@ let
       ]
       ++ lib.optionals stdenv.hostPlatform.isDarwin [
         apple-sdk_15
+        darwin.apple_sdk.frameworks.System
         (darwinMinVersionHook "10.15")
       ];
 
@@ -114,6 +121,14 @@ let
       ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
       RELEASE_VERSION = version;
       RUSTFLAGS = if withGLES then "--cfg gles" else "";
+
+      # TODO: why are these not handled by the linker given that they're in buildInputs?
+      NIX_LDFLAGS = "-rpath ${
+        lib.makeLibraryPath [
+          vulkan-loader
+          wayland
+        ]
+      }";
     };
   };
   cargoArtifacts = craneLib.buildDepsOnly commonArgs;
@@ -123,25 +138,14 @@ craneLib.buildPackage (
   // {
     inherit cargoArtifacts;
 
-    patches =
-      [
-        # Zed uses cargo-install to install cargo-about during the script execution.
-        # We provide cargo-about ourselves and can skip this step.
-        # Until https://github.com/zed-industries/zed/issues/19971 is fixed,
-        # we also skip any crate for which the license cannot be determined.
-        (fetchpatch {
-          url = "https://raw.githubusercontent.com/NixOS/nixpkgs/1fd02d90c6c097f91349df35da62d36c19359ba7/pkgs/by-name/ze/zed-editor/0001-generate-licenses.patch";
-          hash = "sha256-cLgqLDXW1JtQ2OQFLd5UolAjfy7bMoTw40lEx2jA2pk=";
-        })
-      ]
-      ++ lib.optionals stdenv.hostPlatform.isDarwin [
-        # Livekit requires Swift 6
-        # We need this until livekit-rust sdk is used
-        (fetchpatch {
-          url = "https://raw.githubusercontent.com/NixOS/nixpkgs/1fd02d90c6c097f91349df35da62d36c19359ba7/pkgs/by-name/ze/zed-editor/0002-disable-livekit-darwin.patch";
-          hash = "sha256-whZ7RaXv8hrVzWAveU3qiBnZSrvGNEHTuyNhxgMIo5w=";
-        })
-      ];
+    patches = lib.optionals stdenv.hostPlatform.isDarwin [
+      # Livekit requires Swift 6
+      # We need this until livekit-rust sdk is used
+      # (fetchpatch {
+      #   url = "https://raw.githubusercontent.com/NixOS/nixpkgs/1fd02d90c6c097f91349df35da62d36c19359ba7/pkgs/by-name/ze/zed-editor/0002-disable-livekit-darwin.patch";
+      #   hash = "sha256-whZ7RaXv8hrVzWAveU3qiBnZSrvGNEHTuyNhxgMIo5w=";
+      # })
+    ];
 
     cargoExtraArgs = "--package=zed --package=cli --features=gpui/runtime_shaders";
 
@@ -150,15 +154,10 @@ craneLib.buildPackage (
       bash script/generate-licenses
     '';
 
-    # todo: verify that these are redundant? `wayland` is in `buildInputs`, `gpu-lib` is now too
-    # patchelf --add-rpath ${gpu-lib}/lib $out/libexec/*
-    # patchelf --add-rpath ${wayland}/lib $out/libexec/*
-    #
-    # todo: why is this gated on linux? (no node for macOS users? ☹️)
+    # todo: why isn't this also done on macOS?
     postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
       wrapProgram $out/libexec/zed-editor --suffix PATH : ${lib.makeBinPath [ nodejs_22 ]}
     '';
-
 
     preCheck = ''
       export HOME=$(mktemp -d);
@@ -168,7 +167,7 @@ craneLib.buildPackage (
       "-- "
       + lib.concatStringsSep " " (
         [
-          # Flaky: unreliably fails on certain hosts (including Hydra)
+          # Flakey: unreliably fails on certain hosts (including Hydra)
           "--skip=zed::tests::test_window_edit_state_restoring_enabled"
         ]
         ++ lib.optionals stdenv.hostPlatform.isLinux [
@@ -177,6 +176,7 @@ craneLib.buildPackage (
         ]
       );
 
+    # TODO: override the cargo-bundle package with our fork, get rid of this
     installPhase =
       if stdenv.hostPlatform.isDarwin then
         ''
@@ -211,7 +211,7 @@ craneLib.buildPackage (
 
           # Physical location of the CLI must be inside the app bundle as this is used
           # to determine which app to start
-          ln -s $out/Applications/Zed.app/Contents/MacOS/cli $out/bin/zed
+          ln -s "$out/Applications/Zed Nightly.app/Contents/MacOS/cli" $out/bin/zed
 
           runHook postInstall
         ''
@@ -223,19 +223,19 @@ craneLib.buildPackage (
           cp target/release/zed $out/libexec/zed-editor
           cp target/release/cli $out/bin/zed
 
-          install -D ${commonSrc}/crates/zed/resources/app-icon@2x.png $out/share/icons/hicolor/1024x1024@2x/apps/zed.png
-          install -D ${commonSrc}/crates/zed/resources/app-icon.png $out/share/icons/hicolor/512x512/apps/zed.png
+          install -D ${commonSrc}/crates/zed/resources/app-icon-nightly@2x.png $out/share/icons/hicolor/1024x1024@2x/apps/zed.png
+          install -D ${commonSrc}/crates/zed/resources/app-icon-nightly.png $out/share/icons/hicolor/512x512/apps/zed.png
 
-          # extracted from https://github.com/zed-industries/zed/blob/v0.141.2/script/bundle-linux (envsubst)
-          # and https://github.com/zed-industries/zed/blob/v0.141.2/script/install.sh (final desktop file name)
+          # extracted from ../scripts/bundle-linux (envsubst) and
+          # ../scripts/install.sh (final desktop file name)
           (
             export DO_STARTUP_NOTIFY="true"
             export APP_CLI="zed"
             export APP_ICON="zed"
-            export APP_NAME="Zed"
+            export APP_NAME="Zed Nightly"
             export APP_ARGS="%U"
             mkdir -p "$out/share/applications"
-            ${lib.getExe envsubst} < "crates/zed/resources/zed.desktop.in" > "$out/share/applications/dev.zed.Zed.desktop"
+            ${lib.getExe envsubst} < "crates/zed/resources/zed.desktop.in" > "$out/share/applications/dev.zed.Zed-Nightly.desktop"
           )
 
           runHook postInstall

@@ -18,7 +18,7 @@ echo -n "" > "$OUTPUT_FILE"
     echo -e "\n# ###### CODE LICENSES ######\n"
 } >> "$OUTPUT_FILE"
 
-if ! cargo about --version | grep "cargo-about v$CARGO_ABOUT_VERSION" > /dev/null; then
+if ! cargo about --version | grep "cargo-about $CARGO_ABOUT_VERSION" > /dev/null; then
   echo "Installing cargo-about@^$CARGO_ABOUT_VERSION..."
   cargo install "cargo-about@^$CARGO_ABOUT_VERSION"
 else
@@ -26,12 +26,13 @@ else
 fi
 
 echo "Generating cargo licenses"
-
+set -x
 cargo about generate \
     --fail \
-    --offline \
+    --frozen \
     -c script/licenses/zed-licenses.toml \
     "$TEMPLATE_FILE" >> "$OUTPUT_FILE"
+set +x
 
 sed -i.bak 's/&quot;/"/g' "$OUTPUT_FILE"
 sed -i.bak 's/&#x27;/'\''/g' "$OUTPUT_FILE" # The ` '\'' ` thing ends the string, appends a single quote, and re-opens the string
