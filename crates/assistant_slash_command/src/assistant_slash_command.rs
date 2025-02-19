@@ -88,7 +88,7 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn accepts_arguments(&self) -> bool {
         self.requires_argument()
     }
-    #[allow(clippy::too_many_arguments)]
+
     fn run(
         self: Arc<Self>,
         arguments: &[String],

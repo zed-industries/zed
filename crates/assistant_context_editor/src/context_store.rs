@@ -265,19 +265,18 @@ impl ContextStore {
                     local_versions.push(context.version(cx).to_proto(context_id.clone()));
                     let client = this.client.clone();
                     let project_id = envelope.payload.project_id;
-                    cx.background_executor()
-                        .spawn(async move {
-                            let operations = operations.await;
-                            for operation in operations {
-                                client.send(proto::UpdateContext {
-                                    project_id,
-                                    context_id: context_id.to_proto(),
-                                    operation: Some(operation),
-                                })?;
-                            }
-                            anyhow::Ok(())
-                        })
-                        .detach_and_log_err(cx);
+                    cx.background_spawn(async move {
+                        let operations = operations.await;
+                        for operation in operations {
+                            client.send(proto::UpdateContext {
+                                project_id,
+                                context_id: context_id.to_proto(),
+                                operation: Some(operation),
+                            })?;
+                        }
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
                 }
             }
 
@@ -401,8 +400,7 @@ impl ContextStore {
                 )
             })?;
             let operations = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     context_proto
                         .operations
                         .into_iter()
@@ -436,7 +434,7 @@ impl ContextStore {
         let languages = self.languages.clone();
         let project = self.project.clone();
         let telemetry = self.telemetry.clone();
-        let load = cx.background_executor().spawn({
+        let load = cx.background_spawn({
             let path = path.clone();
             async move {
                 let saved_context = fs.load(&path).await?;
@@ -539,8 +537,7 @@ impl ContextStore {
                 )
             })?;
             let operations = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     context_proto
                         .operations
                         .into_iter()
@@ -693,7 +690,7 @@ impl ContextStore {
     pub fn search(&self, query: String, cx: &App) -> Task<Vec<SavedContextMetadata>> {
         let metadata = self.contexts_metadata.clone();
         let executor = cx.background_executor().clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             if query.is_empty() {
                 metadata
             } else {

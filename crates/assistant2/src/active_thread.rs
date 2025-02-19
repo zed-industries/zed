@@ -179,7 +179,7 @@ impl ActiveThread {
 
         let markdown = cx.new(|cx| {
             Markdown::new(
-                text,
+                text.into(),
                 markdown_style,
                 Some(self.language_registry.clone()),
                 None,

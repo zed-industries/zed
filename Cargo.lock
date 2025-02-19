@@ -6952,6 +6952,7 @@ dependencies = [
  "serde_json",
  "smol",
  "strum",
+ "thiserror 1.0.69",
  "ui",
  "util",
 ]
@@ -6963,6 +6964,7 @@ dependencies = [
  "feature_flags",
  "gpui",
  "language_model",
+ "log",
  "picker",
  "proto",
  "ui",
@@ -7651,7 +7653,6 @@ dependencies = [
  "anyhow",
  "assets",
  "env_logger 0.11.6",
- "futures 0.3.31",
  "gpui",
  "language",
  "languages",
@@ -13482,6 +13483,7 @@ dependencies = [
  "serde_repr",
  "settings",
  "strum",
+ "thiserror 1.0.69",
  "util",
  "uuid",
 ]

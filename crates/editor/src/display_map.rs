@@ -113,7 +113,6 @@ pub struct DisplayMap {
 }
 
 impl DisplayMap {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         buffer: Entity<MultiBuffer>,
         font: Font,
@@ -2778,6 +2777,7 @@ pub mod tests {
     fn init_test(cx: &mut App, f: impl Fn(&mut AllLanguageSettingsContent)) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
+        workspace::init_settings(cx);
         language::init(cx);
         crate::init(cx);
         Project::init_settings(cx);

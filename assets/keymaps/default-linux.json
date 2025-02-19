@@ -767,28 +767,13 @@
     }
   },
   {
-    "context": "FileFinder",
-    "bindings": {
-      "ctrl": "file_finder::ToggleMenu"
-    }
-  },
-  {
-    "context": "FileFinder && !menu_open",
+    "context": "FileFinder || (FileFinder > Picker > Editor) || (FileFinder > Picker > menu)",
     "bindings": {
       "ctrl-shift-p": "file_finder::SelectPrev",
       "ctrl-j": "pane::SplitDown",
       "ctrl-k": "pane::SplitUp",
       "ctrl-h": "pane::SplitLeft",
       "ctrl-l": "pane::SplitRight"
-    }
-  },
-  {
-    "context": "FileFinder && menu_open",
-    "bindings": {
-      "j": "pane::SplitDown",
-      "k": "pane::SplitUp",
-      "h": "pane::SplitLeft",
-      "l": "pane::SplitRight"
     }
   },
   {

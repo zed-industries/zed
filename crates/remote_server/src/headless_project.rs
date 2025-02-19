@@ -240,8 +240,7 @@ impl HeadlessProject {
                 operation,
                 is_local: true,
             } => cx
-                .background_executor()
-                .spawn(self.session.request(proto::UpdateBuffer {
+                .background_spawn(self.session.request(proto::UpdateBuffer {
                     project_id: SSH_PROJECT_ID,
                     buffer_id: buffer.read(cx).remote_id().to_proto(),
                     operations: vec![serialize_operation(operation)],
@@ -302,15 +301,14 @@ impl HeadlessProject {
                     message: prompt.message.clone(),
                 });
                 let prompt = prompt.clone();
-                cx.background_executor()
-                    .spawn(async move {
-                        let response = request.await?;
-                        if let Some(action_response) = response.action_response {
-                            prompt.respond(action_response as usize).await;
-                        }
-                        anyhow::Ok(())
-                    })
-                    .detach();
+                cx.background_spawn(async move {
+                    let response = request.await?;
+                    if let Some(action_response) = response.action_response {
+                        prompt.respond(action_response as usize).await;
+                    }
+                    anyhow::Ok(())
+                })
+                .detach();
             }
             _ => {}
         }

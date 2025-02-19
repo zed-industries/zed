@@ -1,13 +1,14 @@
 use std::sync::Arc;
 use std::{fmt::Debug, path::Path};
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{App, AssetSource, Global, SharedString};
 use parking_lot::RwLock;
+use thiserror::Error;
 use util::ResultExt;
 
 use crate::{
@@ -25,6 +26,16 @@ pub struct ThemeMeta {
     pub appearance: Appearance,
 }
 
+/// An error indicating that the theme with the given name was not found.
+#[derive(Debug, Error, Clone)]
+#[error("theme not found: {0}")]
+pub struct ThemeNotFoundError(pub SharedString);
+
+/// An error indicating that the icon theme with the given name was not found.
+#[derive(Debug, Error, Clone)]
+#[error("icon theme not found: {0}")]
+pub struct IconThemeNotFoundError(pub SharedString);
+
 /// The global [`ThemeRegistry`].
 ///
 /// This newtype exists for obtaining a unique [`TypeId`](std::any::TypeId) when
@@ -39,6 +50,8 @@ impl Global for GlobalThemeRegistry {}
 struct ThemeRegistryState {
     themes: HashMap<SharedString, Arc<Theme>>,
     icon_themes: HashMap<SharedString, Arc<IconTheme>>,
+    /// Whether the extensions have been loaded yet.
+    extensions_loaded: bool,
 }
 
 /// The registry for themes.
@@ -71,6 +84,7 @@ impl ThemeRegistry {
             state: RwLock::new(ThemeRegistryState {
                 themes: HashMap::default(),
                 icon_themes: HashMap::default(),
+                extensions_loaded: false,
             }),
             assets,
         };
@@ -87,6 +101,16 @@ impl ThemeRegistry {
             .insert(default_icon_theme.name.clone(), default_icon_theme);
 
         registry
+    }
+
+    /// Returns whether the extensions have been loaded.
+    pub fn extensions_loaded(&self) -> bool {
+        self.state.read().extensions_loaded
+    }
+
+    /// Sets the flag indicating that the extensions have loaded.
+    pub fn set_extensions_loaded(&self) {
+        self.state.write().extensions_loaded = true;
     }
 
     fn insert_theme_families(&self, families: impl IntoIterator<Item = ThemeFamily>) {
@@ -145,12 +169,12 @@ impl ThemeRegistry {
     }
 
     /// Returns the theme with the given name.
-    pub fn get(&self, name: &str) -> Result<Arc<Theme>> {
+    pub fn get(&self, name: &str) -> Result<Arc<Theme>, ThemeNotFoundError> {
         self.state
             .read()
             .themes
             .get(name)
-            .ok_or_else(|| anyhow!("theme not found: {}", name))
+            .ok_or_else(|| ThemeNotFoundError(name.to_string().into()))
             .cloned()
     }
 
@@ -209,7 +233,7 @@ impl ThemeRegistry {
     }
 
     /// Returns the default icon theme.
-    pub fn default_icon_theme(&self) -> Result<Arc<IconTheme>> {
+    pub fn default_icon_theme(&self) -> Result<Arc<IconTheme>, IconThemeNotFoundError> {
         self.get_icon_theme(DEFAULT_ICON_THEME_NAME)
     }
 
@@ -227,12 +251,12 @@ impl ThemeRegistry {
     }
 
     /// Returns the icon theme with the specified name.
-    pub fn get_icon_theme(&self, name: &str) -> Result<Arc<IconTheme>> {
+    pub fn get_icon_theme(&self, name: &str) -> Result<Arc<IconTheme>, IconThemeNotFoundError> {
         self.state
             .read()
             .icon_themes
             .get(name)
-            .ok_or_else(|| anyhow!("icon theme not found: {name}"))
+            .ok_or_else(|| IconThemeNotFoundError(name.to_string().into()))
             .cloned()
     }
 

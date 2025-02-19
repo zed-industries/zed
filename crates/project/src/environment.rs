@@ -135,8 +135,7 @@ impl ProjectEnvironment {
 
         cx.spawn(|this, mut cx| async move {
             let (mut shell_env, error_message) = cx
-                .background_executor()
-                .spawn({
+                .background_spawn({
                     let worktree_abs_path = worktree_abs_path.clone();
                     async move {
                         load_worktree_shell_environment(&worktree_abs_path, &load_direnv).await
