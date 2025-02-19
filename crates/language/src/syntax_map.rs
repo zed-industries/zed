@@ -1569,7 +1569,7 @@ impl<'a> SyntaxLayer<'a> {
             let node_range = cursor.node().byte_range();
             if node_range.start <= range.start
                 && node_range.end >= range.end
-                && node_range.len() > range.len()
+                && node_range.len() >= range.len()
             {
                 break Some(cursor.node());
             }
