@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package 
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap2="http://schemas.microsoft.com/appx/manifest/uap/windows10/2"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
+  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  IgnorableNamespaces="uap uap2 uap3 rescap desktop desktop4 desktop5 desktop6 uap10 com">
+  <!-- TODO: Use Zed's signature here. -->
+  <Identity
+    Name="ZedIndusty.Zed.Nightly"
+    Publisher="CN=Junkui Zhang, O=Junkui Zhang, L=Wuhan, S=Hubei, C=CN"
+    Version="1.0.0.0" />
+  <Properties>
+    <DisplayName>Zed Editor Nightly</DisplayName>
+    <PublisherDisplayName>Zed Industy</PublisherDisplayName>
+    <!-- TODO: Use actual icon here. -->
+    <Logo>resources\logo_150x150.png</Logo>
+    <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
+    <desktop6:RegistryWriteVirtualization>disabled</desktop6:RegistryWriteVirtualization>
+    <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
+  </Properties>
+  <Resources>
+    <Resource Language="en-us" />
+    <Resource Language="zh-cn" />
+  </Resources>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19000.0" MaxVersionTested="10.0.22000.0" />
+  </Dependencies>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources"/>
+  </Capabilities>
+  <Applications>
+    <Application Id="ZedNightly"
+      Executable="Zed.exe"
+      uap10:TrustLevel="mediumIL"
+      uap10:RuntimeBehavior="win32App"> 
+    <!-- TODO: Use actual icon here. -->
+      <uap:VisualElements 
+        AppListEntry="none"
+        DisplayName="Zed Editor Nightly"
+        Description="Zed Editor Nightly explorer command injector"
+        BackgroundColor="transparent"
+        Square150x150Logo="resources\logo_150x150.png"
+        Square44x44Logo="resources\logo_70x70.png">
+      </uap:VisualElements>
+      <Extensions>
+        <desktop4:Extension Category="windows.fileExplorerContextMenus">
+          <desktop4:FileExplorerContextMenus>
+            <desktop5:ItemType Type="Directory">
+              <desktop5:Verb Id="OpenWithZedNightly" Clsid="6a1f6b13-3b82-48a1-9e06-7bb0a6d0bffd" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type="Directory\Background">
+              <desktop5:Verb Id="OpenWithZedNightly" Clsid="6a1f6b13-3b82-48a1-9e06-7bb0a6d0bffd" />
+            </desktop5:ItemType>
+            <desktop5:ItemType Type="*">
+              <desktop5:Verb Id="OpenWithZedNightly" Clsid="6a1f6b13-3b82-48a1-9e06-7bb0a6d0bffd" />
+            </desktop5:ItemType>
+          </desktop4:FileExplorerContextMenus>
+        </desktop4:Extension>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:SurrogateServer DisplayName="Zed Editor Nightly">
+              <com:Class Id="6a1f6b13-3b82-48a1-9e06-7bb0a6d0bffd" Path="zed_explorer_command_injector.dll" ThreadingModel="STA"/>
+            </com:SurrogateServer>
+          </com:ComServer>
+        </com:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+</Package>
