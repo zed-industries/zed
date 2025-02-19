@@ -81,11 +81,11 @@ use git::blame::GitBlame;
 use gpui::{
     div, impl_actions, point, prelude::*, pulsating_between, px, relative, size, Action, Animation,
     AnimationExt, AnyElement, App, AsyncWindowContext, AvailableSpace, Background, Bounds,
-    ClipboardEntry, ClipboardItem, Context, DispatchPhase, ElementId, Entity, EntityInputHandler,
+    ClipboardEntry, ClipboardItem, Context, DispatchPhase, Entity, EntityInputHandler,
     EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight, Global,
-    HighlightStyle, Hsla, InteractiveText, KeyContext, Modifiers, MouseButton, MouseDownEvent,
-    PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText, Subscription,
-    Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
+    HighlightStyle, Hsla, KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad,
+    ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText, Subscription, Task,
+    TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
     WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
@@ -98,7 +98,7 @@ pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
-    markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
+    point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CursorShape, Diagnostic, DiskState, EditPredictionsMode, EditPreview, HighlightedText,
     IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
     TransactionId, TreeSitterOptions,
@@ -213,72 +213,6 @@ const COLUMNAR_SELECTION_MODIFIERS: Modifiers = Modifiers {
     platform: false,
     function: false,
 };
-
-pub fn render_parsed_markdown(
-    element_id: impl Into<ElementId>,
-    parsed: &language::ParsedMarkdown,
-    editor_style: &EditorStyle,
-    workspace: Option<WeakEntity<Workspace>>,
-    cx: &mut App,
-) -> InteractiveText {
-    let code_span_background_color = cx
-        .theme()
-        .colors()
-        .editor_document_highlight_read_background;
-
-    let highlights = gpui::combine_highlights(
-        parsed.highlights.iter().filter_map(|(range, highlight)| {
-            let highlight = highlight.to_highlight_style(&editor_style.syntax)?;
-            Some((range.clone(), highlight))
-        }),
-        parsed
-            .regions
-            .iter()
-            .zip(&parsed.region_ranges)
-            .filter_map(|(region, range)| {
-                if region.code {
-                    Some((
-                        range.clone(),
-                        HighlightStyle {
-                            background_color: Some(code_span_background_color),
-                            ..Default::default()
-                        },
-                    ))
-                } else {
-                    None
-                }
-            }),
-    );
-
-    let mut links = Vec::new();
-    let mut link_ranges = Vec::new();
-    for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
-        if let Some(link) = region.link.clone() {
-            links.push(link);
-            link_ranges.push(range.clone());
-        }
-    }
-
-    InteractiveText::new(
-        element_id,
-        StyledText::new(parsed.text.clone()).with_highlights(&editor_style.text, highlights),
-    )
-    .on_click(
-        link_ranges,
-        move |clicked_range_ix, window, cx| match &links[clicked_range_ix] {
-            markdown::Link::Web { url } => cx.open_url(url),
-            markdown::Link::Path { path } => {
-                if let Some(workspace) = &workspace {
-                    _ = workspace.update(cx, |workspace, cx| {
-                        workspace
-                            .open_abs_path(path.clone(), false, window, cx)
-                            .detach();
-                    });
-                }
-            }
-        },
-    )
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InlayId {

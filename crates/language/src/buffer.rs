@@ -1,7 +1,6 @@
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
-    markdown::ParsedMarkdown,
     proto, Grammar, Language, LanguageRegistry,
 };
 use crate::{
