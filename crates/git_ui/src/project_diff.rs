@@ -19,7 +19,7 @@ use util::ResultExt as _;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     searchable::SearchableItemHandle,
-    ItemNavHistory, ToolbarItemLocation, Workspace,
+    ItemNavHistory, SerializableItem, ToolbarItemLocation, Workspace,
 };
 
 use crate::git_panel::{GitPanel, GitPanelAddon, GitStatusEntry};
@@ -30,7 +30,6 @@ pub(crate) struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
     project: Entity<Project>,
-    git_panel: Entity<GitPanel>,
     git_store: Entity<GitStore>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
@@ -61,6 +60,8 @@ impl ProjectDiff {
         cx.when_flag_enabled::<feature_flags::GitUiFeatureFlag>(window, |workspace, _, _cx| {
             workspace.register_action(Self::deploy);
         });
+
+        workspace::register_serializable_item::<ProjectDiff>(cx);
     }
 
     fn deploy(
@@ -84,15 +85,8 @@ impl ProjectDiff {
             existing
         } else {
             let workspace_handle = cx.entity();
-            let project_diff = cx.new(|cx| {
-                Self::new(
-                    workspace.project().clone(),
-                    workspace_handle,
-                    workspace.panel::<GitPanel>(cx).unwrap(),
-                    window,
-                    cx,
-                )
-            });
+            let project_diff =
+                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
             workspace.add_item_to_active_pane(
                 Box::new(project_diff.clone()),
                 None,
@@ -112,7 +106,6 @@ impl ProjectDiff {
     fn new(
         project: Entity<Project>,
         workspace: Entity<Workspace>,
-        git_panel: Entity<GitPanel>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -130,7 +123,7 @@ impl ProjectDiff {
             diff_display_editor.set_distinguish_unstaged_diff_hunks();
             diff_display_editor.set_expand_all_diff_hunks(cx);
             diff_display_editor.register_addon(GitPanelAddon {
-                git_panel: git_panel.clone(),
+                workspace: workspace.downgrade(),
             });
             diff_display_editor
         });
@@ -157,7 +150,6 @@ impl ProjectDiff {
         Self {
             project,
             git_store: git_store.clone(),
-            git_panel: git_panel.clone(),
             workspace: workspace.downgrade(),
             focus_handle,
             editor,
@@ -464,15 +456,7 @@ impl Item for ProjectDiff {
         Self: Sized,
     {
         let workspace = self.workspace.upgrade()?;
-        Some(cx.new(|cx| {
-            ProjectDiff::new(
-                self.project.clone(),
-                workspace,
-                self.git_panel.clone(),
-                window,
-                cx,
-            )
-        }))
+        Some(cx.new(|cx| ProjectDiff::new(self.project.clone(), workspace, window, cx)))
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
@@ -566,5 +550,51 @@ impl Render for ProjectDiff {
                 el.child(Label::new("No uncommitted changes"))
             })
             .when(!is_empty, |el| el.child(self.editor.clone()))
+    }
+}
+
+impl SerializableItem for ProjectDiff {
+    fn serialized_item_kind() -> &'static str {
+        "ProjectDiff"
+    }
+
+    fn cleanup(
+        _: workspace::WorkspaceId,
+        _: Vec<workspace::ItemId>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
+
+    fn deserialize(
+        _project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
+        _workspace_id: workspace::WorkspaceId,
+        _item_id: workspace::ItemId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
+        window.spawn(cx, |mut cx| async move {
+            workspace.update_in(&mut cx, |workspace, window, cx| {
+                let workspace_handle = cx.entity();
+                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx))
+            })
+        })
+    }
+
+    fn serialize(
+        &mut self,
+        _workspace: &mut Workspace,
+        _item_id: workspace::ItemId,
+        _closing: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        None
+    }
+
+    fn should_serialize(&self, _: &Self::Event) -> bool {
+        false
     }
 }
