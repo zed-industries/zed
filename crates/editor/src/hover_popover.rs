@@ -641,7 +641,7 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
                         let Some(fragment) = uri.fragment() else {
                             return anyhow::Ok(());
                         };
-                        let mut accum = 0 as u32;
+                        let mut accum = 0u32;
                         for c in fragment.chars() {
                             if c >= '0' && c <= '9' && accum < u32::MAX / 2 {
                                 accum *= 10;
