@@ -2203,6 +2203,7 @@ impl Editor {
             cx.emit(SearchEvent::ActiveMatchChanged)
         }
         if local
+            && self.is_singleton(cx)
             && WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
         {
             if let Some(workspace_id) = self.workspace.as_ref().and_then(|workspace| workspace.1) {
@@ -15063,7 +15064,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None {
+        if !self.is_singleton(cx)
+            || WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None
+        {
             return;
         }
         let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() else {
