@@ -1,7 +1,7 @@
 use crate::fallback_themes::zed_default_dark;
 use crate::{
-    Appearance, IconTheme, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent,
-    DEFAULT_ICON_THEME_NAME,
+    Appearance, IconTheme, IconThemeNotFoundError, SyntaxTheme, Theme, ThemeNotFoundError,
+    ThemeRegistry, ThemeStyleContent, DEFAULT_ICON_THEME_NAME,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -157,7 +157,11 @@ impl ThemeSettings {
             // If the selected theme doesn't exist, fall back to a default theme
             // based on the system appearance.
             let theme_registry = ThemeRegistry::global(cx);
-            if theme_registry.get(theme_name).ok().is_none() {
+            if let Err(err @ ThemeNotFoundError(_)) = theme_registry.get(theme_name) {
+                if theme_registry.extensions_loaded() {
+                    log::error!("{err}");
+                }
+
                 theme_name = Self::default_theme(*system_appearance);
             };
 
@@ -180,11 +184,13 @@ impl ThemeSettings {
 
             // If the selected icon theme doesn't exist, fall back to the default theme.
             let theme_registry = ThemeRegistry::global(cx);
-            if theme_registry
-                .get_icon_theme(icon_theme_name)
-                .ok()
-                .is_none()
+            if let Err(err @ IconThemeNotFoundError(_)) =
+                theme_registry.get_icon_theme(icon_theme_name)
             {
+                if theme_registry.extensions_loaded() {
+                    log::error!("{err}");
+                }
+
                 icon_theme_name = DEFAULT_ICON_THEME_NAME;
             };
 
@@ -578,9 +584,14 @@ impl ThemeSettings {
 
         let mut new_theme = None;
 
-        if let Some(theme) = themes.get(theme).log_err() {
-            self.active_theme = theme.clone();
-            new_theme = Some(theme);
+        match themes.get(theme) {
+            Ok(theme) => {
+                self.active_theme = theme.clone();
+                new_theme = Some(theme);
+            }
+            Err(err @ ThemeNotFoundError(_)) => {
+                log::error!("{err}");
+            }
         }
 
         self.apply_theme_overrides();
@@ -838,8 +849,15 @@ impl settings::Settings for ThemeSettings {
 
                 let theme_name = value.theme(*system_appearance);
 
-                if let Some(theme) = themes.get(theme_name).log_err() {
-                    this.active_theme = theme;
+                match themes.get(theme_name) {
+                    Ok(theme) => {
+                        this.active_theme = theme;
+                    }
+                    Err(err @ ThemeNotFoundError(_)) => {
+                        if themes.extensions_loaded() {
+                            log::error!("{err}");
+                        }
+                    }
                 }
             }
 
@@ -851,8 +869,15 @@ impl settings::Settings for ThemeSettings {
 
                 let icon_theme_name = value.icon_theme(*system_appearance);
 
-                if let Some(icon_theme) = themes.get_icon_theme(icon_theme_name).log_err() {
-                    this.active_icon_theme = icon_theme;
+                match themes.get_icon_theme(icon_theme_name) {
+                    Ok(icon_theme) => {
+                        this.active_icon_theme = icon_theme;
+                    }
+                    Err(err @ IconThemeNotFoundError(_)) => {
+                        if themes.extensions_loaded() {
+                            log::error!("{err}");
+                        }
+                    }
                 }
             }
 

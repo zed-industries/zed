@@ -529,7 +529,7 @@ pub mod simple_message_notification {
             v_flex()
                 .occlude()
                 .p_3()
-                .gap_3()
+                .gap_2()
                 .elevation_3(cx)
                 .child(
                     h_flex()

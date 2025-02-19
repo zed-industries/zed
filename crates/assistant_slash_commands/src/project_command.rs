@@ -130,49 +130,48 @@ impl SlashCommand for ProjectSlashCommand {
 
             let results = SemanticDb::load_results(results, &fs, &cx).await?;
 
-            cx.background_executor()
-                .spawn(async move {
-                    let mut output = "Project context:\n".to_string();
-                    let mut sections = Vec::new();
+            cx.background_spawn(async move {
+                let mut output = "Project context:\n".to_string();
+                let mut sections = Vec::new();
 
-                    for (ix, query) in search_queries.into_iter().enumerate() {
-                        let start_ix = output.len();
-                        writeln!(&mut output, "Results for {query}:").unwrap();
-                        let mut has_results = false;
-                        for result in &results {
-                            if result.query_index == ix {
-                                add_search_result_section(result, &mut output, &mut sections);
-                                has_results = true;
-                            }
-                        }
-                        if has_results {
-                            sections.push(SlashCommandOutputSection {
-                                range: start_ix..output.len(),
-                                icon: IconName::MagnifyingGlass,
-                                label: query.into(),
-                                metadata: None,
-                            });
-                            output.push('\n');
-                        } else {
-                            output.truncate(start_ix);
+                for (ix, query) in search_queries.into_iter().enumerate() {
+                    let start_ix = output.len();
+                    writeln!(&mut output, "Results for {query}:").unwrap();
+                    let mut has_results = false;
+                    for result in &results {
+                        if result.query_index == ix {
+                            add_search_result_section(result, &mut output, &mut sections);
+                            has_results = true;
                         }
                     }
-
-                    sections.push(SlashCommandOutputSection {
-                        range: 0..output.len(),
-                        icon: IconName::Book,
-                        label: "Project context".into(),
-                        metadata: None,
-                    });
-
-                    Ok(SlashCommandOutput {
-                        text: output,
-                        sections,
-                        run_commands_in_text: true,
+                    if has_results {
+                        sections.push(SlashCommandOutputSection {
+                            range: start_ix..output.len(),
+                            icon: IconName::MagnifyingGlass,
+                            label: query.into(),
+                            metadata: None,
+                        });
+                        output.push('\n');
+                    } else {
+                        output.truncate(start_ix);
                     }
-                    .to_event_stream())
-                })
-                .await
+                }
+
+                sections.push(SlashCommandOutputSection {
+                    range: 0..output.len(),
+                    icon: IconName::Book,
+                    label: "Project context".into(),
+                    metadata: None,
+                });
+
+                Ok(SlashCommandOutput {
+                    text: output,
+                    sections,
+                    run_commands_in_text: true,
+                }
+                .to_event_stream())
+            })
+            .await
         })
     }
 }

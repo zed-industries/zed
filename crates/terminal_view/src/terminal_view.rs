@@ -23,7 +23,7 @@ use terminal::{
     terminal_settings::{self, CursorShape, TerminalBlink, TerminalSettings, WorkingDirectory},
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown,
     ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskStatus, Terminal,
-    TerminalSize, ToggleViMode,
+    TerminalBounds, ToggleViMode,
 };
 use terminal_element::{is_blank, TerminalElement};
 use terminal_panel::TerminalPanel;
@@ -101,7 +101,7 @@ pub struct BlockProperties {
 pub struct BlockContext<'a, 'b> {
     pub window: &'a mut Window,
     pub context: &'b mut App,
-    pub dimensions: TerminalSize,
+    pub dimensions: TerminalBounds,
 }
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
@@ -258,7 +258,7 @@ impl TerminalView {
                 })
                 .separator()
                 .action(
-                    "Close",
+                    "Close Terminal Tab",
                     Box::new(CloseActiveItem {
                         save_intent: None,
                         close_pinned: true,
@@ -342,7 +342,7 @@ impl TerminalView {
             return Pixels::ZERO;
         };
 
-        let line_height = terminal.last_content().size.line_height;
+        let line_height = terminal.last_content().terminal_bounds.line_height;
         let mut terminal_lines = terminal.total_lines();
         let viewport_lines = terminal.viewport_lines();
         if terminal.total_lines() == terminal.viewport_lines() {
@@ -366,16 +366,11 @@ impl TerminalView {
         max_scroll_top_in_lines as f32 * line_height
     }
 
-    fn scroll_wheel(
-        &mut self,
-        event: &ScrollWheelEvent,
-        origin: gpui::Point<Pixels>,
-        cx: &mut Context<Self>,
-    ) {
+    fn scroll_wheel(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
         let terminal_content = self.terminal.read(cx).last_content();
 
         if self.block_below_cursor.is_some() && terminal_content.display_offset == 0 {
-            let line_height = terminal_content.size.line_height;
+            let line_height = terminal_content.terminal_bounds.line_height;
             let y_delta = event.delta.pixel_delta(line_height).y;
             if y_delta < Pixels::ZERO || self.scroll_top > Pixels::ZERO {
                 self.scroll_top = cmp::max(
@@ -387,8 +382,7 @@ impl TerminalView {
             }
         }
 
-        self.terminal
-            .update(cx, |term, _| term.scroll_wheel(event, origin));
+        self.terminal.update(cx, |term, _| term.scroll_wheel(event));
     }
 
     fn scroll_line_up(&mut self, _: &ScrollLineUp, _: &mut Window, cx: &mut Context<Self>) {
@@ -397,7 +391,7 @@ impl TerminalView {
             && terminal_content.display_offset == 0
             && self.scroll_top > Pixels::ZERO
         {
-            let line_height = terminal_content.size.line_height;
+            let line_height = terminal_content.terminal_bounds.line_height;
             self.scroll_top = cmp::max(self.scroll_top - line_height, Pixels::ZERO);
             return;
         }
@@ -411,7 +405,7 @@ impl TerminalView {
         if self.block_below_cursor.is_some() && terminal_content.display_offset == 0 {
             let max_scroll_top = self.max_scroll_top(cx);
             if self.scroll_top < max_scroll_top {
-                let line_height = terminal_content.size.line_height;
+                let line_height = terminal_content.terminal_bounds.line_height;
                 self.scroll_top = cmp::min(self.scroll_top + line_height, max_scroll_top);
             }
             return;
@@ -425,7 +419,12 @@ impl TerminalView {
         if self.scroll_top == Pixels::ZERO {
             self.terminal.update(cx, |term, _| term.scroll_page_up());
         } else {
-            let line_height = self.terminal.read(cx).last_content.size.line_height();
+            let line_height = self
+                .terminal
+                .read(cx)
+                .last_content
+                .terminal_bounds
+                .line_height();
             let visible_block_lines = (self.scroll_top / line_height) as usize;
             let viewport_lines = self.terminal.read(cx).viewport_lines();
             let visible_content_lines = viewport_lines - visible_block_lines;
@@ -866,7 +865,8 @@ fn subscribe_for_terminal_events(
                         }
                     }
                     None => false,
-                }
+                };
+                cx.notify()
             }
 
             Event::Open(maybe_navigation_target) => match maybe_navigation_target {
@@ -976,7 +976,7 @@ fn possible_open_paths_metadata(
     potential_paths: HashSet<PathBuf>,
     cx: &mut Context<TerminalView>,
 ) -> Task<Vec<(PathWithPosition, Metadata)>> {
-    cx.background_executor().spawn(async move {
+    cx.background_spawn(async move {
         let mut canonical_paths = HashSet::default();
         for path in potential_paths {
             if let Ok(canonical) = fs.canonicalize(&path).await {
@@ -1342,6 +1342,10 @@ impl Item for TerminalView {
         false
     }
 
+    fn can_save_as(&self, _cx: &App) -> bool {
+        false
+    }
+
     fn is_singleton(&self, _cx: &App) -> bool {
         true
     }
@@ -1374,9 +1378,12 @@ impl Item for TerminalView {
     ) {
         if self.terminal().read(cx).task().is_none() {
             if let Some((new_id, old_id)) = workspace.database_id().zip(self.workspace_id) {
-                cx.background_executor()
-                    .spawn(TERMINAL_DB.update_workspace_id(new_id, old_id, cx.entity_id().as_u64()))
-                    .detach();
+                cx.background_spawn(TERMINAL_DB.update_workspace_id(
+                    new_id,
+                    old_id,
+                    cx.entity_id().as_u64(),
+                ))
+                .detach();
             }
             self.workspace_id = workspace.database_id();
         }
@@ -1417,7 +1424,7 @@ impl SerializableItem for TerminalView {
         }
 
         if let Some((cwd, workspace_id)) = terminal.working_directory().zip(self.workspace_id) {
-            Some(cx.background_executor().spawn(async move {
+            Some(cx.background_spawn(async move {
                 TERMINAL_DB
                     .save_working_directory(item_id, workspace_id, cwd)
                     .await

@@ -390,6 +390,7 @@ impl Render for MessageEditor {
                                         &ChatMode,
                                         &focus_handle,
                                         window,
+                                        cx,
                                     )),
                             )
                             .child(h_flex().gap_1().child(self.model_selector.clone()).child(
@@ -419,6 +420,7 @@ impl Render for MessageEditor {
                                                         &editor::actions::Cancel,
                                                         &focus_handle,
                                                         window,
+                                                        cx,
                                                     )
                                                     .map(|binding| binding.into_any_element()),
                                                 ),
@@ -449,6 +451,7 @@ impl Render for MessageEditor {
                                                         &Chat,
                                                         &focus_handle,
                                                         window,
+                                                        cx,
                                                     )
                                                     .map(|binding| binding.into_any_element()),
                                                 ),

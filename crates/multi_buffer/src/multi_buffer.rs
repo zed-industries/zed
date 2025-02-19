@@ -13,7 +13,7 @@ use buffer_diff::{
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
-use gpui::{App, Context, Entity, EntityId, EventEmitter, Task};
+use gpui::{App, AppContext as _, Context, Entity, EntityId, EventEmitter, Task};
 use itertools::Itertools;
 use language::{
     language_settings::{language_settings, IndentGuideSettings, LanguageSettings},
@@ -50,9 +50,6 @@ use text::{
 };
 use theme::SyntaxTheme;
 use util::post_inc;
-
-#[cfg(any(test, feature = "test-support"))]
-use gpui::AppContext as _;
 
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
@@ -281,11 +278,26 @@ enum DiffTransform {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug)]
 struct DiffTransformHunkInfo {
     excerpt_id: ExcerptId,
     hunk_start_anchor: text::Anchor,
     hunk_secondary_status: DiffHunkSecondaryStatus,
+}
+
+impl Eq for DiffTransformHunkInfo {}
+
+impl PartialEq for DiffTransformHunkInfo {
+    fn eq(&self, other: &DiffTransformHunkInfo) -> bool {
+        self.excerpt_id == other.excerpt_id && self.hunk_start_anchor == other.hunk_start_anchor
+    }
+}
+
+impl std::hash::Hash for DiffTransformHunkInfo {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.excerpt_id.hash(state);
+        self.hunk_start_anchor.hash(state);
+    }
 }
 
 #[derive(Clone)]
@@ -1565,20 +1577,19 @@ impl MultiBuffer {
 
             buffer_ids.push(buffer_id);
 
-            cx.background_executor()
-                .spawn({
-                    let mut excerpt_ranges_tx = excerpt_ranges_tx.clone();
+            cx.background_spawn({
+                let mut excerpt_ranges_tx = excerpt_ranges_tx.clone();
 
-                    async move {
-                        let (excerpt_ranges, counts) =
-                            build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
-                        excerpt_ranges_tx
-                            .send((buffer_id, buffer.clone(), ranges, excerpt_ranges, counts))
-                            .await
-                            .ok();
-                    }
-                })
-                .detach()
+                async move {
+                    let (excerpt_ranges, counts) =
+                        build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
+                    excerpt_ranges_tx
+                        .send((buffer_id, buffer.clone(), ranges, excerpt_ranges, counts))
+                        .await
+                        .ok();
+                }
+            })
+            .detach()
         }
 
         cx.spawn(move |this, mut cx| async move {
@@ -2361,7 +2372,7 @@ impl MultiBuffer {
         self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], true, cx);
     }
 
-    pub fn all_diff_hunks_expanded(&mut self) -> bool {
+    pub fn all_diff_hunks_expanded(&self) -> bool {
         self.all_diff_hunks_expanded
     }
 
@@ -2401,6 +2412,9 @@ impl MultiBuffer {
         expand: bool,
         cx: &mut Context<Self>,
     ) {
+        if self.all_diff_hunks_expanded && !expand {
+            return;
+        }
         self.sync(cx);
         let mut snapshot = self.snapshot.borrow_mut();
         let mut excerpt_edits = Vec::new();
@@ -2986,7 +3000,7 @@ impl MultiBuffer {
                     let was_previously_expanded = old_expanded_hunks.contains(&hunk_info);
                     let should_expand_hunk = match &change_kind {
                         DiffChangeKind::DiffUpdated { base_changed: true } => {
-                            self.all_diff_hunks_expanded
+                            self.all_diff_hunks_expanded || was_previously_expanded
                         }
                         DiffChangeKind::ExpandOrCollapseHunks { expand } => {
                             let intersects = hunk_buffer_range.is_empty()

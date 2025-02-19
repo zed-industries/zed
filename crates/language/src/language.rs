@@ -19,7 +19,6 @@ mod toolchain;
 
 #[cfg(test)]
 pub mod buffer_tests;
-pub mod markdown;
 
 pub use crate::language_settings::EditPredictionsMode;
 use crate::language_settings::SoftWrap;
@@ -915,7 +914,7 @@ impl GrammarId {
 pub struct Grammar {
     id: GrammarId,
     pub ts_language: tree_sitter::Language,
-    pub(crate) error_query: Query,
+    pub(crate) error_query: Option<Query>,
     pub(crate) highlights_query: Option<Query>,
     pub(crate) brackets_config: Option<BracketConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
@@ -1070,7 +1069,7 @@ impl Language {
                     override_config: None,
                     redactions_config: None,
                     runnable_config: None,
-                    error_query: Query::new(&ts_language, "(ERROR) @error").unwrap(),
+                    error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
                     ts_language,
                     highlight_map: Default::default(),
                 })
@@ -1723,12 +1722,13 @@ impl Grammar {
                 .expect("incompatible grammar");
             let mut chunks = text.chunks_in_range(0..text.len());
             parser
-                .parse_with(
+                .parse_with_options(
                     &mut move |offset, _| {
                         chunks.seek(offset);
                         chunks.next().unwrap_or("").as_bytes()
                     },
                     old_tree.as_ref(),
+                    None,
                 )
                 .unwrap()
         })

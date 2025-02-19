@@ -16,7 +16,7 @@ use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
 use git::{DiscardTrackedChanges, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::*;
 use itertools::Itertools;
-use language::{markdown, Buffer, File, ParsedMarkdown};
+use language::{Buffer, File};
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use multi_buffer::ExcerptInfo;
 use panel::{panel_editor_container, panel_editor_style, panel_filled_button, PanelHeader};
@@ -337,7 +337,7 @@ impl GitPanel {
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
-        self.pending_serialization = cx.background_executor().spawn(
+        self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
@@ -1055,8 +1055,7 @@ impl GitPanel {
         let task = if self.has_staged_changes() {
             // Repository serializes all git operations, so we can just send a commit immediately
             let commit_task = active_repository.read(cx).commit(message.into(), None);
-            cx.background_executor()
-                .spawn(async move { commit_task.await? })
+            cx.background_spawn(async move { commit_task.await? })
         } else {
             let changed_files = self
                 .entries
@@ -1540,7 +1539,7 @@ impl GitPanel {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> Option<impl IntoElement> {
         let all_repositories = self
             .project
             .read(cx)
@@ -1555,17 +1554,21 @@ impl GitPanel {
                 .is_above_project()
         });
 
-        self.panel_header_container(window, cx).when(
-            all_repositories.len() > 1 || has_repo_above,
-            |el| {
-                el.child(
-                    Label::new("Repository")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(self.render_repository_selector(cx))
-            },
-        )
+        let has_visible_repo = all_repositories.len() > 0 || has_repo_above;
+
+        if has_visible_repo {
+            Some(
+                self.panel_header_container(window, cx)
+                    .child(
+                        Label::new("Repository")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(self.render_repository_selector(cx)),
+            )
+        } else {
+            None
+        }
     }
 
     pub fn render_repository_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1691,6 +1694,7 @@ impl GitPanel {
             .border_t_1()
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().editor_background)
+            .cursor_text()
             .on_click(cx.listener(move |_, _: &ClickEvent, window, _cx| {
                 window.focus(&editor_focus_handle);
             }))
@@ -2261,7 +2265,7 @@ impl Render for GitPanel {
             .size_full()
             .overflow_hidden()
             .bg(ElevationIndex::Surface.bg(cx))
-            .child(self.render_panel_header(window, cx))
+            .children(self.render_panel_header(window, cx))
             .child(if has_entries {
                 self.render_entries(has_write_access, window, cx)
                     .into_any_element()
@@ -2376,30 +2380,13 @@ impl GitPanelMessageTooltip {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        let workspace = git_panel.read(cx).workspace.clone();
         cx.new(|cx| {
             cx.spawn_in(window, |this, mut cx| async move {
-                let language_registry = workspace.update(&mut cx, |workspace, _cx| {
-                    workspace.app_state().languages.clone()
-                })?;
-
                 let details = git_panel
                     .update(&mut cx, |git_panel, cx| {
                         git_panel.load_commit_details(&sha, cx)
                     })?
                     .await?;
-
-                let mut parsed_message = ParsedMarkdown::default();
-                markdown::parse_markdown_block(
-                    &details.message,
-                    Some(&language_registry),
-                    None,
-                    &mut parsed_message.text,
-                    &mut parsed_message.highlights,
-                    &mut parsed_message.region_ranges,
-                    &mut parsed_message.regions,
-                )
-                .await;
 
                 let commit_details = editor::commit_tooltip::CommitDetails {
                     sha: details.sha.clone(),
@@ -2408,19 +2395,13 @@ impl GitPanelMessageTooltip {
                     commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
                     message: Some(editor::commit_tooltip::ParsedCommitMessage {
                         message: details.message.clone(),
-                        parsed_message,
                         ..Default::default()
                     }),
                 };
 
                 this.update_in(&mut cx, |this: &mut GitPanelMessageTooltip, window, cx| {
-                    this.commit_tooltip = Some(cx.new(move |cx| {
-                        CommitTooltip::new(
-                            commit_details,
-                            panel_editor_style(true, window, cx),
-                            Some(workspace),
-                        )
-                    }));
+                    this.commit_tooltip =
+                        Some(cx.new(move |cx| CommitTooltip::new(commit_details, window, cx)));
                     cx.notify();
                 })
             })

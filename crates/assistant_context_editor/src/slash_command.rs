@@ -4,10 +4,10 @@ pub use assistant_slash_command::SlashCommand;
 use assistant_slash_command::{AfterCompletion, SlashCommandLine, SlashCommandWorkingSet};
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{App, Context, Entity, Task, WeakEntity, Window};
-use language::{Anchor, Buffer, CompletionDocumentation, LanguageServerId, ToPoint};
+use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity, Window};
+use language::{Anchor, Buffer, LanguageServerId, ToPoint};
 use parking_lot::Mutex;
-use project::CompletionIntent;
+use project::{lsp_store::CompletionDocumentation, CompletionIntent};
 use rope::Point;
 use std::{
     cell::RefCell,
@@ -121,7 +121,7 @@ impl SlashCommandCompletionProvider {
                         Some(project::Completion {
                             old_range: name_range.clone(),
                             documentation: Some(CompletionDocumentation::SingleLine(
-                                command.description(),
+                                command.description().into(),
                             )),
                             new_text,
                             label: command.label(cx),
@@ -163,7 +163,7 @@ impl SlashCommandCompletionProvider {
             let editor = self.editor.clone();
             let workspace = self.workspace.clone();
             let arguments = arguments.to_vec();
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 Ok(completions
                     .await?
                     .into_iter()

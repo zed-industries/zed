@@ -9,7 +9,9 @@ import { IncomingWebhook } from "@slack/webhook";
 const SECTION_BLOCK_TEXT_LIMIT = 3000;
 
 async function main() {
-  const octokit = new Octokit({ auth: process.env["GITHUB_TOKEN"] });
+  const octokit = new Octokit({
+    auth: process.env["ISSUE_RESPONSE_GITHUB_TOKEN"],
+  });
 
   if (!process.env["SLACK_ISSUE_RESPONSE_WEBHOOK_URL"]) {
     throw new Error("SLACK_ISSUE_RESPONSE_WEBHOOK_URL is not set");
@@ -21,8 +23,9 @@ async function main() {
 
   const owner = "zed-industries";
   const repo = "zed";
-  const staff = await octokit.paginate(octokit.rest.orgs.listMembers, {
+  const staff = await octokit.paginate(octokit.rest.teams.listMembersInOrg, {
     org: owner,
+    team_slug: "staff",
     per_page: 100,
   });
   let staffHandles = staff.map((member) => member.login);
