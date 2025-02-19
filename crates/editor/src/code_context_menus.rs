@@ -608,6 +608,7 @@ impl CompletionsMenu {
                             window,
                             cx,
                         )
+                        .copy_code_block_buttons(false)
                         .open_url(open_markdown_url)
                     })
                 });
