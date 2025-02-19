@@ -5052,6 +5052,7 @@ name = "explorer_command_injector"
 version = "0.1.0"
 dependencies = [
  "windows 0.58.0",
+ "windows-core 0.58.0",
 ]
 
 [[package]]
