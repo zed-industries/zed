@@ -45,6 +45,12 @@
 
 ; Special identifiers
 
+(class_declaration
+  (class_body
+    (method_definition
+      name: (property_identifier) @constructor
+      (#eq? @constructor "constructor"))))
+
 ((identifier) @type
  (#match? @type "^[A-Z]"))
 (type_identifier) @type
