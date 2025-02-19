@@ -3,9 +3,10 @@ use crate::project_settings::ProjectSettings;
 use super::breakpoint_store::{self, BreakpointStore, BreakpointStoreEvent};
 use super::dap_command::{
     self, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand,
-    Initialize, Launch, LocalDapCommand, NextCommand, PauseCommand, RestartCommand,
-    RestartStackFrameCommand, ScopesCommand, SetVariableValueCommand, StepBackCommand, StepCommand,
-    StepInCommand, StepOutCommand, TerminateCommand, TerminateThreadsCommand, VariablesCommand,
+    Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, ModulesCommand, NextCommand,
+    PauseCommand, RestartCommand, RestartStackFrameCommand, ScopesCommand, SetVariableValueCommand,
+    StepBackCommand, StepCommand, StepInCommand, StepOutCommand, TerminateCommand,
+    TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
@@ -107,7 +108,6 @@ pub enum ThreadStatus {
 pub struct Thread {
     dap: dap::Thread,
     stack_frames: Vec<StackFrame>,
-    status: ThreadStatus,
     has_stopped: bool,
 }
 
@@ -116,7 +116,6 @@ impl From<dap::Thread> for Thread {
         Self {
             dap,
             stack_frames: vec![],
-            status: ThreadStatus::default(),
             has_stopped: false,
         }
     }
@@ -357,6 +356,45 @@ impl Mode {
     }
 }
 
+#[derive(Default)]
+struct ThreadStates {
+    global_state: Option<ThreadStatus>,
+    known_thread_states: IndexMap<ThreadId, ThreadStatus>,
+}
+
+impl ThreadStates {
+    fn all_threads_stopped(&mut self) {
+        self.global_state = Some(ThreadStatus::Stopped);
+        self.known_thread_states.clear();
+    }
+    fn all_threads_continued(&mut self) {
+        self.global_state = Some(ThreadStatus::Running);
+        self.known_thread_states.clear();
+    }
+    fn thread_stopped(&mut self, thread_id: ThreadId) {
+        self.known_thread_states
+            .insert(thread_id, ThreadStatus::Stopped);
+    }
+    fn thread_continued(&mut self, thread_id: ThreadId) {
+        self.known_thread_states
+            .insert(thread_id, ThreadStatus::Running);
+    }
+
+    fn thread_status(&self, thread_id: ThreadId) -> ThreadStatus {
+        self.thread_state(thread_id)
+            .unwrap_or(ThreadStatus::Running)
+    }
+
+    // stopped event (all_threads: true)
+    // thread event (reason: started) <- true state is running, but we'll think that it's stopped
+    fn thread_state(&self, thread_id: ThreadId) -> Option<ThreadStatus> {
+        self.known_thread_states
+            .get(&thread_id)
+            .copied()
+            .or(self.global_state)
+    }
+}
+
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
 pub struct Session {
     mode: Mode,
@@ -369,6 +407,7 @@ pub struct Session {
     loaded_sources: Vec<dap::Source>,
     threads: IndexMap<ThreadId, Thread>,
     requests: HashMap<RequestSlot, Shared<Task<Option<()>>>>,
+    thread_states: ThreadStates,
     _background_tasks: Vec<Task<()>>,
 }
 
@@ -499,6 +538,7 @@ impl Session {
                     breakpoint_store: breakpoints,
                     config,
                     capabilities,
+                    thread_states: ThreadStates::default(),
                     ignore_breakpoints: false,
                     requests: HashMap::default(),
                     modules: Vec::default(),
@@ -526,6 +566,7 @@ impl Session {
             capabilities: Capabilities::default(),
             breakpoint_store,
             ignore_breakpoints,
+            thread_states: ThreadStates::default(),
             requests: HashMap::default(),
             modules: Vec::default(),
             loaded_sources: Vec::default(),
@@ -658,19 +699,12 @@ impl Session {
 
         // todo(debugger): We should query for all threads here if we don't get a thread id
         // maybe in both cases too?
-        if let Some(thread_id) = event.thread_id {
-            self.threads.insert(
-                ThreadId(thread_id),
-                Thread {
-                    dap: dap::Thread {
-                        id: thread_id,
-                        name: "".into(),
-                    },
-                    stack_frames: vec![],
-                    status: ThreadStatus::Stopped,
-                    has_stopped: true,
-                },
-            );
+        if event.all_threads_stopped.unwrap_or_default() {
+            self.thread_states.all_threads_stopped();
+        } else if let Some(thread_id) = event.thread_id {
+            self.thread_states.thread_stopped(ThreadId(thread_id));
+        } else {
+            // TODO(debugger): all threads should be stopped
         }
     }
 
@@ -686,7 +720,16 @@ impl Session {
             Events::Continued(_event) => {}
             Events::Exited(_event) => {}
             Events::Terminated(_event) => {}
-            Events::Thread(_event) => {}
+            Events::Thread(event) => {
+                match event.reason {
+                    dap::ThreadEventReason::Started => {
+                        self.thread_states
+                            .thread_continued(ThreadId(event.thread_id));
+                    }
+                    _ => {}
+                }
+                self.invalidate_state(&ThreadsCommand.into());
+            }
             Events::Output(_event) => {}
             Events::Breakpoint(_) => {}
             Events::Module(_event) => {}
@@ -800,14 +843,18 @@ impl Session {
         )
     }
 
-    pub fn invalidate(&mut self, cx: &mut Context<Self>) {
+    fn invalidate_state(&mut self, key: &RequestSlot) {
+        self.requests.remove(&key);
+    }
+
+    fn invalidate(&mut self, cx: &mut Context<Self>) {
         self.requests.clear();
         self.modules.clear();
         self.loaded_sources.clear();
         cx.notify();
     }
 
-    pub fn threads(&mut self, cx: &mut Context<Self>) -> Vec<dap::Thread> {
+    pub fn threads(&mut self, cx: &mut Context<Self>) -> Vec<(dap::Thread, ThreadStatus)> {
         self.fetch(
             dap_command::ThreadsCommand,
             |this, result, cx| {
@@ -822,7 +869,12 @@ impl Session {
         );
         self.threads
             .values()
-            .map(|thread| thread.dap.clone())
+            .map(|thread| {
+                (
+                    thread.dap.clone(),
+                    self.thread_states.thread_status(ThreadId(thread.dap.id)),
+                )
+            })
             .collect()
     }
 
@@ -887,16 +939,8 @@ impl Session {
         self.ignore_breakpoints
     }
 
-    pub fn handle_module_event(&mut self, event: &dap::ModuleEvent, cx: &mut Context<Self>) {
-        match event.reason {
-            dap::ModuleEventReason::New => self.modules.push(event.module.clone()),
-            dap::ModuleEventReason::Changed => {
-                if let Some(module) = self.modules.iter_mut().find(|m| m.id == event.module.id) {
-                    *module = event.module.clone();
-                }
-            }
-            dap::ModuleEventReason::Removed => self.modules.retain(|m| m.id != event.module.id),
-        }
+    pub fn handle_module_event(&mut self, _event: &dap::ModuleEvent, cx: &mut Context<Self>) {
+        self.invalidate_state(&ModulesCommand.into());
         cx.notify();
     }
 
@@ -1121,45 +1165,15 @@ impl Session {
 
     pub fn handle_loaded_source_event(
         &mut self,
-        event: &dap::LoadedSourceEvent,
+        _: &dap::LoadedSourceEvent,
         cx: &mut Context<Self>,
     ) {
-        match event.reason {
-            dap::LoadedSourceEventReason::New => self.loaded_sources.push(event.source.clone()),
-            dap::LoadedSourceEventReason::Changed => {
-                let updated_source =
-                    if let Some(ref_id) = event.source.source_reference.filter(|&r| r != 0) {
-                        self.loaded_sources
-                            .iter_mut()
-                            .find(|s| s.source_reference == Some(ref_id))
-                    } else if let Some(path) = &event.source.path {
-                        self.loaded_sources
-                            .iter_mut()
-                            .find(|s| s.path.as_ref() == Some(path))
-                    } else {
-                        self.loaded_sources
-                            .iter_mut()
-                            .find(|s| s.name == event.source.name)
-                    };
-
-                if let Some(loaded_source) = updated_source {
-                    *loaded_source = event.source.clone();
-                }
-            }
-            dap::LoadedSourceEventReason::Removed => {
-                self.loaded_sources.retain(|source| *source != event.source)
-            }
-        }
+        self.invalidate_state(&LoadedSourcesCommand.into());
         cx.notify();
     }
 
     pub fn stack_frames(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) -> Vec<StackFrame> {
-        if self
-            .threads
-            .get(&thread_id)
-            .map(|thread| thread.status == ThreadStatus::Stopped)
-            .unwrap_or(false)
-        {
+        if self.thread_states.thread_status(thread_id) == ThreadStatus::Stopped {
             self.fetch(
                 super::dap_command::StackTraceCommand {
                     thread_id: thread_id.0,
