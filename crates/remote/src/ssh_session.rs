@@ -17,7 +17,7 @@ use futures::{
     select, select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
 use gpui::{
-    App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Global,
+    App, AppContext as _, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Global,
     SemanticVersion, Task, WeakEntity,
 };
 use itertools::Itertools;
@@ -1158,12 +1158,11 @@ impl SshRemoteClient {
                 c.connections.insert(
                     opts.clone(),
                     ConnectionPoolEntry::Connecting(
-                        cx.background_executor()
-                            .spawn({
-                                let connection = connection.clone();
-                                async move { Ok(connection.clone()) }
-                            })
-                            .shared(),
+                        cx.background_spawn({
+                            let connection = connection.clone();
+                            async move { Ok(connection.clone()) }
+                        })
+                        .shared(),
                     ),
                 );
             })
@@ -1280,6 +1279,7 @@ impl From<SshRemoteClient> for AnyProtoClient {
 
 #[async_trait(?Send)]
 trait RemoteConnection: Send + Sync {
+    #[allow(clippy::too_many_arguments)]
     fn start_proxy(
         &self,
         unique_identifier: String,
@@ -1358,7 +1358,7 @@ impl RemoteConnection for SshRemoteConnection {
             ))
             .output();
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let output = output.await?;
 
             if !output.status.success() {
@@ -1679,14 +1679,14 @@ impl SshRemoteConnection {
         let mut stderr_buffer = Vec::new();
         let mut stderr_offset = 0;
 
-        let stdin_task = cx.background_executor().spawn(async move {
+        let stdin_task = cx.background_spawn(async move {
             while let Some(outgoing) = outgoing_rx.next().await {
                 write_message(&mut child_stdin, &mut stdin_buffer, outgoing).await?;
             }
             anyhow::Ok(())
         });
 
-        let stdout_task = cx.background_executor().spawn({
+        let stdout_task = cx.background_spawn({
             let mut connection_activity_tx = connection_activity_tx.clone();
             async move {
                 loop {
@@ -1711,7 +1711,7 @@ impl SshRemoteConnection {
             }
         });
 
-        let stderr_task: Task<anyhow::Result<()>> = cx.background_executor().spawn(async move {
+        let stderr_task: Task<anyhow::Result<()>> = cx.background_spawn(async move {
             loop {
                 stderr_buffer.resize(stderr_offset + 1024, 0);
 
@@ -2449,7 +2449,7 @@ mod fake {
         },
         select_biased, FutureExt, SinkExt, StreamExt,
     };
-    use gpui::{App, AsyncApp, SemanticVersion, Task, TestAppContext};
+    use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task, TestAppContext};
     use release_channel::ReleaseChannel;
     use rpc::proto::Envelope;
 
@@ -2533,7 +2533,7 @@ mod fake {
                 &self.server_cx.get(cx),
             );
 
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 loop {
                     select_biased! {
                         server_to_client = server_outgoing_rx.next().fuse() => {

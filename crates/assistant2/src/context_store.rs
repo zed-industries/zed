@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::{self, future, Future, FutureExt};
-use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use language::Buffer;
 use project::{ProjectPath, Worktree};
 use rope::Rope;
@@ -456,9 +456,7 @@ fn collect_buffer_info_and_text(
     };
     // Important to collect version at the same time as content so that staleness logic is correct.
     let content = buffer.as_rope().clone();
-    let text_task = cx
-        .background_executor()
-        .spawn(async move { to_fenced_codeblock(&path, content) });
+    let text_task = cx.background_spawn(async move { to_fenced_codeblock(&path, content) });
     (buffer_info, text_task)
 }
 

@@ -38,7 +38,7 @@ use gpui::{
     InteractiveElement, IntoElement, Keystroke, Length, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
     ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    Subscription, TextRun, TextStyleRefinement, WeakEntity, Window,
+    Subscription, TextRun, TextStyleRefinement, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -68,16 +68,17 @@ use std::{
 };
 use sum_tree::Bias;
 use text::BufferId;
-use theme::{ActiveTheme, Appearance, PlayerColor};
+use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
 use ui::{
     h_flex, prelude::*, ButtonLike, ButtonStyle, ContextMenu, IconButtonShape, KeyBinding, Tooltip,
     POPOVER_Y_PADDING,
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::{debug_panic, RangeExt, ResultExt};
-use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
+use workspace::{item::Item, notifications::NotifyTaskExt};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
+const MIN_SCROLL_THUMB_SIZE: f32 = 25.;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DisplayDiffHunk {
@@ -930,6 +931,7 @@ impl EditorElement {
         cx.notify()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_selections(
         &self,
         start_anchor: Anchor,
@@ -1101,6 +1103,7 @@ impl EditorElement {
         cursors
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_visible_cursors(
         &self,
         snapshot: &EditorSnapshot,
@@ -1380,17 +1383,21 @@ impl EditorElement {
                     if text_units_per_page.horizontal >= total_text_units_x {
                         return None;
                     }
-
-                    let thumb_percent =
-                        (text_units_per_page.horizontal / total_text_units_x).min(1.);
-
-                    Some(track_bounds_x.size.width * thumb_percent)
+                    if track_bounds_x.size.width < px(MIN_SCROLL_THUMB_SIZE) {
+                        return Some(track_bounds_x.size.width);
+                    }
+                    let thumb_size = track_bounds_x.size.width
+                        * (text_units_per_page.horizontal / total_text_units_x);
+                    Some(thumb_size.clamp(px(MIN_SCROLL_THUMB_SIZE), track_bounds_x.size.width))
                 }),
             total_text_units.vertical.zip(track_bounds.vertical).map(
                 |(total_text_units_y, track_bounds_y)| {
-                    let thumb_percent = (text_units_per_page.vertical / total_text_units_y).min(1.);
-
-                    track_bounds_y.size.height * thumb_percent
+                    if track_bounds_y.size.height < px(MIN_SCROLL_THUMB_SIZE) {
+                        return track_bounds_y.size.height;
+                    }
+                    let thumb_size = track_bounds_y.size.height
+                        * (text_units_per_page.vertical / total_text_units_y);
+                    thumb_size.clamp(px(MIN_SCROLL_THUMB_SIZE), track_bounds_y.size.height)
                 },
             ),
         );
@@ -1450,6 +1457,7 @@ impl EditorElement {
         axis_pair(horizontal_scrollbar, vertical_scrollbar)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn prepaint_crease_toggles(
         &self,
         crease_toggles: &mut [Option<AnyElement>],
@@ -1484,6 +1492,7 @@ impl EditorElement {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn prepaint_crease_trailers(
         &self,
         trailers: Vec<Option<AnyElement>>,
@@ -1599,6 +1608,7 @@ impl EditorElement {
         display_hunks
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_inline_blame(
         &self,
         display_row: DisplayRow,
@@ -1618,13 +1628,6 @@ impl EditorElement {
         {
             return None;
         }
-
-        let workspace = self
-            .editor
-            .read(cx)
-            .workspace
-            .as_ref()
-            .map(|(w, _)| w.clone());
 
         let editor = self.editor.read(cx);
         let blame = editor.blame.clone()?;
@@ -1654,7 +1657,7 @@ impl EditorElement {
             .flatten()?;
 
         let mut element =
-            render_inline_blame_entry(&blame, blame_entry, &self.style, workspace, cx);
+            render_inline_blame_entry(self.editor.clone(), &blame, blame_entry, &self.style, cx);
 
         let start_y = content_origin.y
             + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
@@ -1685,6 +1688,7 @@ impl EditorElement {
         Some(element)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_blame_entries(
         &self,
         buffer_rows: &[RowInfo],
@@ -1753,6 +1757,7 @@ impl EditorElement {
         Some(shaped_lines)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_indent_guides(
         &self,
         content_origin: gpui::Point<Pixels>,
@@ -1870,6 +1875,7 @@ impl EditorElement {
         (offset_y, length)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_run_indicators(
         &self,
         line_height: Pixels,
@@ -1962,6 +1968,7 @@ impl EditorElement {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_code_actions_indicator(
         &self,
         line_height: Pixels,
@@ -2060,6 +2067,7 @@ impl EditorElement {
         relative_rows
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_line_numbers(
         &self,
         gutter_hitbox: Option<&Hitbox>,
@@ -2275,6 +2283,7 @@ impl EditorElement {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn prepaint_lines(
         &self,
         start_row: DisplayRow,
@@ -2301,6 +2310,7 @@ impl EditorElement {
         line_elements
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_block(
         &self,
         block: &Block,
@@ -2762,6 +2772,7 @@ impl EditorElement {
         }))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_blocks(
         &self,
         rows: Range<DisplayRow>,
@@ -2946,6 +2957,7 @@ impl EditorElement {
 
     /// Returns true if any of the blocks changed size since the previous frame. This will trigger
     /// a restart of rendering for the editor based on the new sizes.
+    #[allow(clippy::too_many_arguments)]
     fn layout_blocks(
         &self,
         blocks: &mut Vec<BlockLayout>,
@@ -2989,6 +3001,7 @@ impl EditorElement {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_sticky_buffer_header(
         &self,
         StickyHeaderExcerpt {
@@ -3063,6 +3076,7 @@ impl EditorElement {
         header
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_cursor_popovers(
         &self,
         line_height: Pixels,
@@ -3251,6 +3265,7 @@ impl EditorElement {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_gutter_menu(
         &self,
         line_height: Pixels,
@@ -3303,6 +3318,7 @@ impl EditorElement {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_popovers_above_or_below_line(
         &self,
         target_position: gpui::Point<Pixels>,
@@ -3321,92 +3337,102 @@ impl EditorElement {
             &mut App,
         ) -> Vec<(CursorPopoverType, AnyElement, Size<Pixels>)>,
     ) -> Option<(Vec<(CursorPopoverType, Bounds<Pixels>)>, bool)> {
-        // If the max height won't fit below and there is more space above, put it above the line.
-        let bottom_y_when_flipped = target_position.y - line_height;
-        let available_above = bottom_y_when_flipped - text_hitbox.top();
-        let available_below = text_hitbox.bottom() - target_position.y;
-        let y_overflows_below = max_height > available_below;
-        let mut y_flipped = y_overflows_below && available_above > available_below;
-        let mut height = cmp::min(
-            max_height,
-            if y_flipped {
-                available_above
-            } else {
-                available_below
-            },
-        );
-
-        // If the min height doesn't fit within text bounds, instead fit within the window.
-        if height < min_height {
-            let available_above = bottom_y_when_flipped;
-            let available_below = viewport_bounds.bottom() - target_position.y;
-            if available_below > min_height {
-                y_flipped = false;
-                height = min_height;
-            } else if available_above > min_height {
-                y_flipped = true;
-                height = min_height;
-            } else if available_above > available_below {
-                y_flipped = true;
-                height = available_above;
-            } else {
-                y_flipped = false;
-                height = available_below;
-            }
-        }
-
-        let max_width_for_stable_x = viewport_bounds.right() - target_position.x;
-
-        // TODO: Use viewport_bounds.width as a max width so that it doesn't get clipped on the left
-        // for very narrow windows.
-        let popovers = make_sized_popovers(height, max_width_for_stable_x, y_flipped, window, cx);
-        if popovers.is_empty() {
-            return None;
-        }
-
-        let max_width = popovers
-            .iter()
-            .map(|(_, _, size)| size.width)
-            .max()
-            .unwrap_or_default();
-
-        let mut current_position = gpui::Point {
-            // Snap the right edge of the list to the right edge of the window if its horizontal bounds
-            // overflow. Include space for the scrollbar.
-            x: target_position
-                .x
-                .min((viewport_bounds.right() - max_width).max(Pixels::ZERO)),
-            y: if y_flipped {
-                bottom_y_when_flipped
-            } else {
-                target_position.y
-            },
+        let text_style = TextStyleRefinement {
+            line_height: Some(DefiniteLength::Fraction(
+                BufferLineHeight::Comfortable.value(),
+            )),
+            ..Default::default()
         };
-
-        let mut laid_out_popovers = popovers
-            .into_iter()
-            .map(|(popover_type, element, size)| {
+        window.with_text_style(Some(text_style), |window| {
+            // If the max height won't fit below and there is more space above, put it above the line.
+            let bottom_y_when_flipped = target_position.y - line_height;
+            let available_above = bottom_y_when_flipped - text_hitbox.top();
+            let available_below = text_hitbox.bottom() - target_position.y;
+            let y_overflows_below = max_height > available_below;
+            let mut y_flipped = y_overflows_below && available_above > available_below;
+            let mut height = cmp::min(
+                max_height,
                 if y_flipped {
-                    current_position.y -= size.height;
-                }
-                let position = current_position;
-                window.defer_draw(element, current_position, 1);
-                if !y_flipped {
-                    current_position.y += size.height + MENU_GAP;
+                    available_above
                 } else {
-                    current_position.y -= MENU_GAP;
+                    available_below
+                },
+            );
+
+            // If the min height doesn't fit within text bounds, instead fit within the window.
+            if height < min_height {
+                let available_above = bottom_y_when_flipped;
+                let available_below = viewport_bounds.bottom() - target_position.y;
+                if available_below > min_height {
+                    y_flipped = false;
+                    height = min_height;
+                } else if available_above > min_height {
+                    y_flipped = true;
+                    height = min_height;
+                } else if available_above > available_below {
+                    y_flipped = true;
+                    height = available_above;
+                } else {
+                    y_flipped = false;
+                    height = available_below;
                 }
-                (popover_type, Bounds::new(position, size))
-            })
-            .collect::<Vec<_>>();
+            }
 
-        if y_flipped {
-            laid_out_popovers.reverse();
-        }
+            let max_width_for_stable_x = viewport_bounds.right() - target_position.x;
 
-        Some((laid_out_popovers, y_flipped))
+            // TODO: Use viewport_bounds.width as a max width so that it doesn't get clipped on the left
+            // for very narrow windows.
+            let popovers =
+                make_sized_popovers(height, max_width_for_stable_x, y_flipped, window, cx);
+            if popovers.is_empty() {
+                return None;
+            }
+
+            let max_width = popovers
+                .iter()
+                .map(|(_, _, size)| size.width)
+                .max()
+                .unwrap_or_default();
+
+            let mut current_position = gpui::Point {
+                // Snap the right edge of the list to the right edge of the window if its horizontal bounds
+                // overflow. Include space for the scrollbar.
+                x: target_position
+                    .x
+                    .min((viewport_bounds.right() - max_width).max(Pixels::ZERO)),
+                y: if y_flipped {
+                    bottom_y_when_flipped
+                } else {
+                    target_position.y
+                },
+            };
+
+            let mut laid_out_popovers = popovers
+                .into_iter()
+                .map(|(popover_type, element, size)| {
+                    if y_flipped {
+                        current_position.y -= size.height;
+                    }
+                    let position = current_position;
+                    window.defer_draw(element, current_position, 1);
+                    if !y_flipped {
+                        current_position.y += size.height + MENU_GAP;
+                    } else {
+                        current_position.y -= MENU_GAP;
+                    }
+                    (popover_type, Bounds::new(position, size))
+                })
+                .collect::<Vec<_>>();
+
+            if y_flipped {
+                laid_out_popovers.reverse();
+            }
+
+            Some((laid_out_popovers, y_flipped))
+        })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_context_menu_aside(
         &self,
         y_flipped: bool,
@@ -3428,9 +3454,11 @@ impl EditorElement {
                 available_within_viewport.right - px(1.),
                 MENU_ASIDE_MAX_WIDTH,
             );
-            let Some(mut aside) =
-                self.render_context_menu_aside(size(max_width, max_height - POPOVER_Y_PADDING), cx)
-            else {
+            let Some(mut aside) = self.render_context_menu_aside(
+                size(max_width, max_height - POPOVER_Y_PADDING),
+                window,
+                cx,
+            ) else {
                 return;
             };
             aside.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -3452,7 +3480,7 @@ impl EditorElement {
                     ),
                 ) - POPOVER_Y_PADDING,
             );
-            let Some(mut aside) = self.render_context_menu_aside(max_size, cx) else {
+            let Some(mut aside) = self.render_context_menu_aside(max_size, window, cx) else {
                 return;
             };
             let actual_size = aside.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -3493,7 +3521,7 @@ impl EditorElement {
 
         // Skip drawing if it doesn't fit anywhere.
         if let Some((aside, position)) = positioned_aside {
-            window.defer_draw(aside, position, 1);
+            window.defer_draw(aside, position, 2);
         }
     }
 
@@ -3514,18 +3542,19 @@ impl EditorElement {
     fn render_context_menu_aside(
         &self,
         max_size: Size<Pixels>,
-
+        window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
         if max_size.width < px(100.) || max_size.height < px(12.) {
             None
         } else {
             self.editor.update(cx, |editor, cx| {
-                editor.render_context_menu_aside(&self.style, max_size, cx)
+                editor.render_context_menu_aside(max_size, window, cx)
             })
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_edit_prediction_popover(
         &self,
         text_bounds: &Bounds<Pixels>,
@@ -3628,6 +3657,7 @@ impl EditorElement {
                         const POLE_WIDTH: Pixels = px(2.);
 
                         let mut element = v_flex()
+                            .items_end()
                             .child(
                                 editor
                                     .render_edit_prediction_line_popover("Jump", None, window, cx)?
@@ -3638,10 +3668,9 @@ impl EditorElement {
                             .child(
                                 div()
                                     .w(POLE_WIDTH)
-                                    .bg(cx.theme().colors().text_accent.opacity(0.8))
+                                    .bg(Editor::edit_prediction_callout_popover_border_color(cx))
                                     .h(line_height),
                             )
-                            .items_end()
                             .into_any();
 
                         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -3961,27 +3990,36 @@ impl EditorElement {
             }
         })?;
 
-        let mut element = self.editor.update(cx, |editor, _| {
-            let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
-            let context_menu = mouse_context_menu.context_menu.clone();
+        let text_style = TextStyleRefinement {
+            line_height: Some(DefiniteLength::Fraction(
+                BufferLineHeight::Comfortable.value(),
+            )),
+            ..Default::default()
+        };
+        window.with_text_style(Some(text_style), |window| {
+            let mut element = self.editor.update(cx, |editor, _| {
+                let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
+                let context_menu = mouse_context_menu.context_menu.clone();
 
-            Some(
-                deferred(
-                    anchored()
-                        .position(position)
-                        .child(context_menu)
-                        .anchor(Corner::TopLeft)
-                        .snap_to_window_with_margin(px(8.)),
+                Some(
+                    deferred(
+                        anchored()
+                            .position(position)
+                            .child(context_menu)
+                            .anchor(Corner::TopLeft)
+                            .snap_to_window_with_margin(px(8.)),
+                    )
+                    .with_priority(1)
+                    .into_any(),
                 )
-                .with_priority(1)
-                .into_any(),
-            )
-        })?;
+            })?;
 
-        element.prepaint_as_root(position, AvailableSpace::min_size(), window, cx);
-        Some(element)
+            element.prepaint_as_root(position, AvailableSpace::min_size(), window, cx);
+            Some(element)
+        })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_hover_popovers(
         &self,
         snapshot: &EditorSnapshot,
@@ -4098,6 +4136,7 @@ impl EditorElement {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_diff_hunk_controls(
         &self,
         row_range: Range<DisplayRow>,
@@ -4178,6 +4217,7 @@ impl EditorElement {
         controls
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_signature_help(
         &self,
         hitbox: &Hitbox,
@@ -4223,12 +4263,7 @@ impl EditorElement {
 
         let maybe_element = self.editor.update(cx, |editor, cx| {
             if let Some(popover) = editor.signature_help_state.popover_mut() {
-                let element = popover.render(
-                    &self.style,
-                    max_size,
-                    editor.workspace.as_ref().map(|(w, _)| w.clone()),
-                    cx,
-                );
+                let element = popover.render(max_size, cx);
                 Some(element)
             } else {
                 None
@@ -5264,8 +5299,7 @@ impl EditorElement {
                 Some(cx.spawn_in(window, |editor, mut cx| async move {
                     let scrollbar_size = scrollbar_layout.hitbox.size;
                     let scrollbar_markers = cx
-                        .background_executor()
-                        .spawn(async move {
+                        .background_spawn(async move {
                             let max_point = snapshot.display_snapshot.buffer_snapshot.max_point();
                             let mut marker_quads = Vec::new();
                             if scrollbar_settings.git_diff {
@@ -5415,6 +5449,7 @@ impl EditorElement {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn paint_highlighted_range(
         &self,
         range: Range<DisplayPoint>,
@@ -5829,6 +5864,7 @@ impl AcceptEditPredictionBinding {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prepaint_gutter_button(
     button: IconButton,
     row: DisplayRow,
@@ -5872,10 +5908,10 @@ fn prepaint_gutter_button(
 }
 
 fn render_inline_blame_entry(
+    editor: Entity<Editor>,
     blame: &gpui::Entity<GitBlame>,
     blame_entry: BlameEntry,
     style: &EditorStyle,
-    workspace: Option<WeakEntity<Workspace>>,
     cx: &mut App,
 ) -> AnyElement {
     let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
@@ -5891,11 +5927,8 @@ fn render_inline_blame_entry(
         }
         _ => format!("{}, {}", author, relative_timestamp),
     };
-
-    let details = blame.read(cx).details_for_entry(&blame_entry);
-
-    let tooltip =
-        cx.new(|_| CommitTooltip::blame_entry(blame_entry, details, style.clone(), workspace));
+    let blame = blame.clone();
+    let blame_entry = blame_entry.clone();
 
     h_flex()
         .id("inline-blame")
@@ -5906,7 +5939,15 @@ fn render_inline_blame_entry(
         .child(Icon::new(IconName::FileGit).color(Color::Hint))
         .child(text)
         .gap_2()
-        .hoverable_tooltip(move |_, _| tooltip.clone().into())
+        .hoverable_tooltip(move |window, cx| {
+            let details = blame.read(cx).details_for_entry(&blame_entry);
+            let tooltip =
+                cx.new(|cx| CommitTooltip::blame_entry(&blame_entry, details, window, cx));
+            editor.update(cx, |editor, _| {
+                editor.git_blame_inline_tooltip = Some(tooltip.downgrade())
+            });
+            tooltip.into()
+        })
         .into_any()
 }
 
@@ -5940,19 +5981,7 @@ fn render_blame_entry(
 
     let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
     let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
-
     let details = blame.read(cx).details_for_entry(&blame_entry);
-
-    let workspace = editor.read(cx).workspace.as_ref().map(|(w, _)| w.clone());
-
-    let tooltip = cx.new(|_| {
-        CommitTooltip::blame_entry(
-            blame_entry.clone(),
-            details.clone(),
-            style.clone(),
-            workspace,
-        )
-    });
 
     h_flex()
         .w_full()
@@ -5987,16 +6016,20 @@ fn render_blame_entry(
         })
         .hover(|style| style.bg(cx.theme().colors().element_hover))
         .when_some(
-            details.and_then(|details| details.permalink),
+            details
+                .as_ref()
+                .and_then(|details| details.permalink.clone()),
             |this, url| {
-                let url = url.clone();
                 this.cursor_pointer().on_click(move |_, _, cx| {
                     cx.stop_propagation();
                     cx.open_url(url.as_str())
                 })
             },
         )
-        .hoverable_tooltip(move |_, _| tooltip.clone().into())
+        .hoverable_tooltip(move |window, cx| {
+            cx.new(|cx| CommitTooltip::blame_entry(&blame_entry, details.clone(), window, cx))
+                .into()
+        })
         .into_any()
 }
 
@@ -6068,6 +6101,7 @@ impl fmt::Debug for LineFragment {
 }
 
 impl LineWithInvisibles {
+    #[allow(clippy::too_many_arguments)]
     fn from_chunks<'a>(
         chunks: impl Iterator<Item = HighlightedChunk<'a>>,
         editor_style: &EditorStyle,
@@ -6272,6 +6306,7 @@ impl LineWithInvisibles {
         layouts
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn prepaint(
         &mut self,
         line_height: Pixels,
@@ -6306,6 +6341,7 @@ impl LineWithInvisibles {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw(
         &self,
         layout: &EditorLayout,
@@ -6349,6 +6385,7 @@ impl LineWithInvisibles {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_invisibles(
         &self,
         selection_ranges: &[Range<DisplayPoint>],
@@ -7025,12 +7062,11 @@ impl Element for EditorElement {
                                     blame.blame_for_rows(&[row_infos], cx).next()
                                 })
                                 .flatten()?;
-                            let workspace = editor.workspace.as_ref().map(|(w, _)| w.to_owned());
                             let mut element = render_inline_blame_entry(
+                                self.editor.clone(),
                                 blame,
                                 blame_entry,
                                 &style,
-                                workspace,
                                 cx,
                             );
                             let inline_blame_padding = INLINE_BLAME_PADDING_EM_WIDTHS * em_advance;
@@ -7670,6 +7706,7 @@ struct ScrollbarRangeData {
 }
 
 impl ScrollbarRangeData {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         scrollbar_bounds: Bounds<Pixels>,
         letter_size: Size<Pixels>,

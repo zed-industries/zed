@@ -6875,7 +6875,6 @@ dependencies = [
  "parking_lot",
  "postage",
  "pretty_assertions",
- "pulldown-cmark 0.12.2",
  "rand 0.8.5",
  "regex",
  "rpc",
@@ -6951,6 +6950,7 @@ dependencies = [
  "serde_json",
  "smol",
  "strum",
+ "thiserror 1.0.69",
  "ui",
  "util",
 ]
@@ -6962,6 +6962,7 @@ dependencies = [
  "feature_flags",
  "gpui",
  "language_model",
+ "log",
  "picker",
  "proto",
  "ui",
@@ -7650,7 +7651,6 @@ dependencies = [
  "anyhow",
  "assets",
  "env_logger 0.11.6",
- "futures 0.3.31",
  "gpui",
  "language",
  "languages",
@@ -16663,7 +16663,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.175.0"
+version = "0.176.0"
 dependencies = [
  "activity_indicator",
  "anyhow",

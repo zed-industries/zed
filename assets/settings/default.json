@@ -204,6 +204,23 @@
   // Otherwise(when `true`), the closing characters are always skipped over and auto-removed
   // no matter how they were inserted.
   "always_treat_brackets_as_autoclosed": false,
+  // Controls where the `editor::Rewrap` action is allowed in the current language scope.
+  //
+  // This setting can take three values:
+  //
+  // 1. Only allow rewrapping in comments:
+  //    "in_comments"
+  // 2. Only allow rewrapping in the current selection(s):
+  //    "in_selections"
+  // 3. Allow rewrapping anywhere:
+  //    "anywhere"
+  //
+  // When using values other than `in_comments`, it is possible for the rewrapping to produce code
+  // that is syntactically invalid. Keep this in mind when selecting which behavior you would like
+  // to use.
+  //
+  // Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
+  "allow_rewrap": "in_comments",
   // Controls whether edit predictions are shown immediately (true)
   // or manually by triggering `editor::ShowEditPrediction` (false).
   "show_edit_predictions": true,
@@ -1103,6 +1120,7 @@
     "Markdown": {
       "format_on_save": "off",
       "use_on_type_format": false,
+      "allow_rewrap": "anywhere",
       "prettier": {
         "allowed": true
       }
@@ -1114,6 +1132,9 @@
         "plugins": ["@prettier/plugin-php"],
         "parser": "php"
       }
+    },
+    "Plain Text": {
+      "allow_rewrap": "anywhere"
     },
     "Ruby": {
       "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "..."]

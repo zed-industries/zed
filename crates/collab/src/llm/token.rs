@@ -33,6 +33,7 @@ pub struct LlmTokenClaims {
 const LLM_TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60);
 
 impl LlmTokenClaims {
+    #[allow(clippy::too_many_arguments)]
     pub fn create(
         user: &user::Model,
         is_staff: bool,
