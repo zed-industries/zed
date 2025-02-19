@@ -2019,7 +2019,7 @@ impl GitPanel {
         let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
             context_menu
                 .action("Stage File", ToggleStaged.boxed_clone())
-                .action(revert_title, git::RevertFile.boxed_clone())
+                .action(revert_title, git::RestoreFile.boxed_clone())
                 .separator()
                 .action("Open Diff", Confirm.boxed_clone())
                 .action("Open File", SecondaryConfirm.boxed_clone())

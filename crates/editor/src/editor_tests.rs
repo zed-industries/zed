@@ -14157,7 +14157,7 @@ async fn test_stage_and_unstage_added_file_hunk(
     cx.assert_index_text(None);
 
     cx.update_editor(|editor, window, cx| {
-        editor.toggle_staged_selected_diff_hunks(&ToggleStagedSelectedDiffHunks, window, cx);
+        editor.toggle_staged_selected_diff_hunks(&Default::default(), window, cx);
     });
     executor.run_until_parked();
     cx.assert_index_text(Some(&working_copy.replace("ˇ", "")));
@@ -14171,7 +14171,7 @@ async fn test_stage_and_unstage_added_file_hunk(
     );
 
     cx.update_editor(|editor, window, cx| {
-        editor.toggle_staged_selected_diff_hunks(&ToggleStagedSelectedDiffHunks, window, cx);
+        editor.toggle_staged_selected_diff_hunks(&Default::default(), window, cx);
     });
     executor.run_until_parked();
     cx.assert_index_text(None);

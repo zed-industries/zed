@@ -399,7 +399,6 @@ gpui::actions!(
         ToggleInlayHints,
         ToggleEditPrediction,
         ToggleLineNumbers,
-        ToggleStagedSelectedDiffHunks,
         SwapSelectionEnds,
         SetMark,
         ToggleRelativeLineNumbers,

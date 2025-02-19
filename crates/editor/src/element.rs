@@ -490,7 +490,7 @@ impl EditorElement {
         register_action(editor, window, Editor::unique_lines_case_sensitive);
         register_action(editor, window, Editor::accept_partial_inline_completion);
         register_action(editor, window, Editor::accept_edit_prediction);
-        register_action(editor, window, Editor::revert_file);
+        register_action(editor, window, Editor::restore_file);
         register_action(editor, window, Editor::git_restore);
         register_action(editor, window, Editor::apply_all_diff_hunks);
         register_action(editor, window, Editor::apply_selected_diff_hunks);
@@ -9016,9 +9016,11 @@ fn diff_hunk_controls(
                     let editor = editor.clone();
                     move |_event, window, cx| {
                         editor.update(cx, |editor, cx| {
-                            let snapshot = editor.snapshot(window, cx);
-                            let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
-                            editor.revert_hunks_in_ranges([point..point].into_iter(), window, cx);
+                            editor.restore_hunks_in_ranges(
+                                vec![hunk_range.start..hunk_range.start],
+                                window,
+                                cx,
+                            );
                         });
                     }
                 }),
