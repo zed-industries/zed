@@ -222,8 +222,7 @@ impl TerminalPanel {
         mut cx: AsyncWindowContext,
     ) -> Result<Entity<Self>> {
         let serialized_panel = cx
-            .background_executor()
-            .spawn(async move { KEY_VALUE_STORE.read_kvp(TERMINAL_PANEL_KEY) })
+            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(TERMINAL_PANEL_KEY) })
             .await
             .log_err()
             .flatten()
@@ -742,25 +741,24 @@ impl TerminalPanel {
                     ))
                 })
                 .ok()?;
-            cx.background_executor()
-                .spawn(
-                    async move {
-                        KEY_VALUE_STORE
-                            .write_kvp(
-                                TERMINAL_PANEL_KEY.into(),
-                                serde_json::to_string(&SerializedTerminalPanel {
-                                    items,
-                                    active_item_id: None,
-                                    height,
-                                    width,
-                                })?,
-                            )
-                            .await?;
-                        anyhow::Ok(())
-                    }
-                    .log_err(),
-                )
-                .await;
+            cx.background_spawn(
+                async move {
+                    KEY_VALUE_STORE
+                        .write_kvp(
+                            TERMINAL_PANEL_KEY.into(),
+                            serde_json::to_string(&SerializedTerminalPanel {
+                                items,
+                                active_item_id: None,
+                                height,
+                                width,
+                            })?,
+                        )
+                        .await?;
+                    anyhow::Ok(())
+                }
+                .log_err(),
+            )
+            .await;
             Some(())
         });
     }

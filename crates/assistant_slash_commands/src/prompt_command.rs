@@ -43,7 +43,7 @@ impl SlashCommand for PromptSlashCommand {
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let store = PromptStore::global(cx);
         let query = arguments.to_owned().join(" ");
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let prompts = store.await?.search(query).await;
             Ok(prompts
                 .into_iter()
@@ -77,7 +77,7 @@ impl SlashCommand for PromptSlashCommand {
 
         let store = PromptStore::global(cx);
         let title = SharedString::from(title.clone());
-        let prompt = cx.background_executor().spawn({
+        let prompt = cx.background_spawn({
             let title = title.clone();
             async move {
                 let store = store.await?;

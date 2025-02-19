@@ -13,7 +13,7 @@ use buffer_diff::{
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
-use gpui::{App, Context, Entity, EntityId, EventEmitter, Task};
+use gpui::{App, AppContext as _, Context, Entity, EntityId, EventEmitter, Task};
 use itertools::Itertools;
 use language::{
     language_settings::{language_settings, IndentGuideSettings, LanguageSettings},
@@ -50,9 +50,6 @@ use text::{
 };
 use theme::SyntaxTheme;
 use util::post_inc;
-
-#[cfg(any(test, feature = "test-support"))]
-use gpui::AppContext as _;
 
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
@@ -1580,20 +1577,19 @@ impl MultiBuffer {
 
             buffer_ids.push(buffer_id);
 
-            cx.background_executor()
-                .spawn({
-                    let mut excerpt_ranges_tx = excerpt_ranges_tx.clone();
+            cx.background_spawn({
+                let mut excerpt_ranges_tx = excerpt_ranges_tx.clone();
 
-                    async move {
-                        let (excerpt_ranges, counts) =
-                            build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
-                        excerpt_ranges_tx
-                            .send((buffer_id, buffer.clone(), ranges, excerpt_ranges, counts))
-                            .await
-                            .ok();
-                    }
-                })
-                .detach()
+                async move {
+                    let (excerpt_ranges, counts) =
+                        build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
+                    excerpt_ranges_tx
+                        .send((buffer_id, buffer.clone(), ranges, excerpt_ranges, counts))
+                        .await
+                        .ok();
+                }
+            })
+            .detach()
         }
 
         cx.spawn(move |this, mut cx| async move {

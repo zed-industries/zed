@@ -337,7 +337,7 @@ impl GitPanel {
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
-        self.pending_serialization = cx.background_executor().spawn(
+        self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
@@ -1055,8 +1055,7 @@ impl GitPanel {
         let task = if self.has_staged_changes() {
             // Repository serializes all git operations, so we can just send a commit immediately
             let commit_task = active_repository.read(cx).commit(message.into(), None);
-            cx.background_executor()
-                .spawn(async move { commit_task.await? })
+            cx.background_spawn(async move { commit_task.await? })
         } else {
             let changed_files = self
                 .entries

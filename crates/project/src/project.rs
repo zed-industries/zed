@@ -73,15 +73,15 @@ use gpui::{
 use itertools::Itertools;
 use language::{
     language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent, Capability,
-    CodeLabel, CompletionDocumentation, File as _, Language, LanguageName, LanguageRegistry,
-    PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction, Unclipped,
+    CodeLabel, File as _, Language, LanguageName, LanguageRegistry, PointUtf16, ToOffset,
+    ToPointUtf16, Toolchain, ToolchainList, Transaction, Unclipped,
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServerId,
     LanguageServerName, MessageActionItem,
 };
 use lsp_command::*;
-use lsp_store::{LspFormatTarget, OpenLspBufferHandle};
+use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
@@ -595,7 +595,7 @@ impl DirectoryLister {
             }
             DirectoryLister::Local(fs) => {
                 let fs = fs.clone();
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     let mut results = vec![];
                     let expanded = shellexpand::tilde(&path);
                     let query = Path::new(expanded.as_ref());
@@ -1275,13 +1275,12 @@ impl Project {
                 .read(cx)
                 .shutdown_processes(Some(proto::ShutdownRemoteServer {}));
 
-            cx.background_executor()
-                .spawn(async move {
-                    if let Some(shutdown) = shutdown {
-                        shutdown.await;
-                    }
-                })
-                .detach()
+            cx.background_spawn(async move {
+                if let Some(shutdown) = shutdown {
+                    shutdown.await;
+                }
+            })
+            .detach()
         }
 
         match &self.client_state {
@@ -3337,7 +3336,7 @@ impl Project {
                     let buffer = buffer.clone();
                     let query = query.clone();
                     let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
-                    chunk_results.push(cx.background_executor().spawn(async move {
+                    chunk_results.push(cx.background_spawn(async move {
                         let ranges = query
                             .search(&snapshot, None)
                             .await
@@ -3576,7 +3575,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Option<ResolvedPath>> {
         let resolve_task = self.resolve_abs_path(path, cx);
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let resolved_path = resolve_task.await;
             resolved_path.filter(|path| path.is_file())
         })
@@ -3590,7 +3589,7 @@ impl Project {
         if self.is_local() {
             let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
             let fs = self.fs.clone();
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 let path = expanded.as_path();
                 let metadata = fs.metadata(path).await.ok().flatten();
 
@@ -3608,7 +3607,7 @@ impl Project {
                     project_id: SSH_PROJECT_ID,
                     path: request_path.to_proto(),
                 });
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 let response = request.await.log_err()?;
                 if response.exists {
                     Some(ResolvedPath::AbsPath {
@@ -3689,7 +3688,7 @@ impl Project {
             };
 
             let response = session.read(cx).proto_client().request(request);
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 let response = response.await?;
                 Ok(response.entries.into_iter().map(PathBuf::from).collect())
             })
@@ -4128,8 +4127,7 @@ impl Project {
             if let Some(remote_id) = this.remote_id() {
                 let mut payload = envelope.payload.clone();
                 payload.project_id = remote_id;
-                cx.background_executor()
-                    .spawn(this.client.request(payload))
+                cx.background_spawn(this.client.request(payload))
                     .detach_and_log_err(cx);
             }
             this.buffer_store.clone()
@@ -4146,8 +4144,7 @@ impl Project {
             if let Some(ssh) = &this.ssh_client {
                 let mut payload = envelope.payload.clone();
                 payload.project_id = SSH_PROJECT_ID;
-                cx.background_executor()
-                    .spawn(ssh.read(cx).proto_client().request(payload))
+                cx.background_spawn(ssh.read(cx).proto_client().request(payload))
                     .detach_and_log_err(cx);
             }
             this.buffer_store.clone()
@@ -4368,7 +4365,7 @@ impl Project {
                         if let Some(buffer) = this.buffer_for_id(buffer_id, cx) {
                             let operations =
                                 buffer.read(cx).serialize_ops(Some(remote_version), cx);
-                            cx.background_executor().spawn(async move {
+                            cx.background_spawn(async move {
                                 let operations = operations.await;
                                 for chunk in split_operations(operations) {
                                     client
@@ -4391,12 +4388,11 @@ impl Project {
             // Any incomplete buffers have open requests waiting. Request that the host sends
             // creates these buffers for us again to unblock any waiting futures.
             for id in incomplete_buffer_ids {
-                cx.background_executor()
-                    .spawn(client.request(proto::OpenBufferById {
-                        project_id,
-                        id: id.into(),
-                    }))
-                    .detach();
+                cx.background_spawn(client.request(proto::OpenBufferById {
+                    project_id,
+                    id: id.into(),
+                }))
+                .detach();
             }
 
             futures::future::join_all(send_updates_for_buffers)

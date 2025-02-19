@@ -4,7 +4,7 @@ use git::{
     blame::{Blame, BlameEntry},
     parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid,
 };
-use gpui::{App, Context, Entity, Subscription, Task};
+use gpui::{App, AppContext as _, Context, Entity, Subscription, Task};
 use http_client::HttpClient;
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
 use multi_buffer::RowInfo;
@@ -360,8 +360,7 @@ impl GitBlame {
 
         self.task = cx.spawn(|this, mut cx| async move {
             let result = cx
-                .background_executor()
-                .spawn({
+                .background_spawn({
                     let snapshot = snapshot.clone();
                     async move {
                         let Some(Blame {
@@ -549,7 +548,7 @@ async fn parse_markdown(text: &str, language_registry: &Arc<LanguageRegistry>) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{AppContext as _, Context};
+    use gpui::Context;
     use language::{Point, Rope};
     use project::FakeFs;
     use rand::prelude::*;

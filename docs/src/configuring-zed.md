@@ -483,7 +483,7 @@ List of `string` values
 - Description: The debounce delay before querying highlights based on the selected text.
 
 - Setting: `selection_highlight_debounce`
-- Default: `75`
+- Default: `50`
 
 ## LSP Highlight Debounce
 

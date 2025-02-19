@@ -27,7 +27,8 @@ use futures::{
 };
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, PromptLevel, Task, WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, PromptLevel, SharedString, Task,
+    WeakEntity,
 };
 use http_client::HttpClient;
 use itertools::Itertools as _;
@@ -35,13 +36,12 @@ use language::{
     language_settings::{
         language_settings, FormatOnSave, Formatter, LanguageSettings, SelectedFormatter,
     },
-    markdown, point_to_lsp, prepare_completion_documentation,
+    point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter,
-    CodeLabel, CompletionDocumentation, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff,
-    File as _, Language, LanguageRegistry, LanguageToolchainStore, LocalFile, LspAdapter,
-    LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
-    Unclipped,
+    CodeLabel, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language,
+    LanguageRegistry, LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch,
+    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
     notification::DidRenameFiles, CodeActionKind, CompletionContext, DiagnosticSeverity,
@@ -2146,7 +2146,7 @@ impl LocalLspStore {
         cx: &mut Context<LspStore>,
     ) -> Task<Result<Vec<(Range<Anchor>, String)>>> {
         let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx);
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let snapshot = snapshot?;
             let mut lsp_edits = lsp_edits
                 .into_iter()
@@ -3295,16 +3295,15 @@ impl LspStore {
             }
         } else if let Some((upstream_client, upstream_project_id)) = self.upstream_client() {
             let buffer_id = buffer.read(cx).remote_id().to_proto();
-            cx.background_executor()
-                .spawn(async move {
-                    upstream_client
-                        .request(proto::RegisterBufferWithLanguageServers {
-                            project_id: upstream_project_id,
-                            buffer_id,
-                        })
-                        .await
-                })
-                .detach();
+            cx.background_spawn(async move {
+                upstream_client
+                    .request(proto::RegisterBufferWithLanguageServers {
+                        project_id: upstream_project_id,
+                        buffer_id,
+                    })
+                    .await
+            })
+            .detach();
         } else {
             panic!("oops!");
         }
@@ -4218,14 +4217,8 @@ impl LspStore {
             cx.foreground_executor().spawn(async move {
                 let completions = task.await?;
                 let mut result = Vec::new();
-                populate_labels_for_completions(
-                    completions,
-                    &language_registry,
-                    language,
-                    lsp_adapter,
-                    &mut result,
-                )
-                .await;
+                populate_labels_for_completions(completions, language, lsp_adapter, &mut result)
+                    .await;
                 Ok(result)
             })
         } else if let Some(local) = self.as_local() {
@@ -4274,7 +4267,6 @@ impl LspStore {
                     if let Ok(new_completions) = task.await {
                         populate_labels_for_completions(
                             new_completions,
-                            &language_registry,
                             language.clone(),
                             lsp_adapter,
                             &mut completions,
@@ -4298,7 +4290,6 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
         let client = self.upstream_client();
-        let language_registry = self.languages.clone();
 
         let buffer_id = buffer.read(cx).remote_id();
         let buffer_snapshot = buffer.read(cx).snapshot();
@@ -4316,7 +4307,6 @@ impl LspStore {
                         completions.clone(),
                         completion_index,
                         client.clone(),
-                        language_registry.clone(),
                     )
                     .await
                     .log_err()
@@ -4357,7 +4347,6 @@ impl LspStore {
                             &buffer_snapshot,
                             completions.clone(),
                             completion_index,
-                            language_registry.clone(),
                         )
                         .await
                         .log_err();
@@ -4433,22 +4422,14 @@ impl LspStore {
         snapshot: &BufferSnapshot,
         completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
-        language_registry: Arc<LanguageRegistry>,
     ) -> Result<()> {
         let completion_item = completions.borrow()[completion_index]
             .lsp_completion
             .clone();
-        if let Some(lsp_documentation) = completion_item.documentation.as_ref() {
-            let documentation = language::prepare_completion_documentation(
-                lsp_documentation,
-                &language_registry,
-                snapshot.language().cloned(),
-            )
-            .await;
-
+        if let Some(lsp_documentation) = completion_item.documentation.clone() {
             let mut completions = completions.borrow_mut();
             let completion = &mut completions[completion_index];
-            completion.documentation = Some(documentation);
+            completion.documentation = Some(lsp_documentation.into());
         } else {
             let mut completions = completions.borrow_mut();
             let completion = &mut completions[completion_index];
@@ -4501,7 +4482,6 @@ impl LspStore {
         completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
         client: AnyProtoClient,
-        language_registry: Arc<LanguageRegistry>,
     ) -> Result<()> {
         let lsp_completion = {
             let completion = &completions.borrow()[completion_index];
@@ -4528,14 +4508,11 @@ impl LspStore {
         let documentation = if response.documentation.is_empty() {
             CompletionDocumentation::Undocumented
         } else if response.documentation_is_markdown {
-            CompletionDocumentation::MultiLineMarkdown(
-                markdown::parse_markdown(&response.documentation, Some(&language_registry), None)
-                    .await,
-            )
+            CompletionDocumentation::MultiLineMarkdown(response.documentation.into())
         } else if response.documentation.lines().count() <= 1 {
-            CompletionDocumentation::SingleLine(response.documentation)
+            CompletionDocumentation::SingleLine(response.documentation.into())
         } else {
-            CompletionDocumentation::MultiLinePlainText(response.documentation)
+            CompletionDocumentation::MultiLinePlainText(response.documentation.into())
         };
 
         let mut completions = completions.borrow_mut();
@@ -6720,7 +6697,7 @@ impl LspStore {
                     return Err(anyhow!("No language server {id}"));
                 };
 
-                Ok(cx.background_executor().spawn(async move {
+                Ok(cx.background_spawn(async move {
                     let can_resolve = server
                         .capabilities()
                         .completion_provider
@@ -7388,9 +7365,7 @@ impl LspStore {
                     .map(|b| b.read(cx).remote_id().to_proto())
                     .collect(),
             });
-            cx.background_executor()
-                .spawn(request)
-                .detach_and_log_err(cx);
+            cx.background_spawn(request).detach_and_log_err(cx);
         } else {
             let Some(local) = self.as_local_mut() else {
                 return;
@@ -7419,9 +7394,7 @@ impl LspStore {
                 .collect::<Vec<_>>();
 
             cx.spawn(|this, mut cx| async move {
-                cx.background_executor()
-                    .spawn(futures::future::join_all(tasks))
-                    .await;
+                cx.background_spawn(futures::future::join_all(tasks)).await;
                 this.update(&mut cx, |this, cx| {
                     for buffer in buffers {
                         this.register_buffer_with_language_servers(&buffer, true, cx);
@@ -7750,9 +7723,7 @@ impl LspStore {
                     },
                 )),
             });
-            cx.background_executor()
-                .spawn(request)
-                .detach_and_log_err(cx);
+            cx.background_spawn(request).detach_and_log_err(cx);
         } else if let Some(local) = self.as_local() {
             let servers = buffers
                 .into_iter()
@@ -7808,9 +7779,7 @@ impl LspStore {
                     ),
                 ),
             });
-            cx.background_executor()
-                .spawn(request)
-                .detach_and_log_err(cx);
+            cx.background_spawn(request).detach_and_log_err(cx);
         }
     }
 
@@ -8082,7 +8051,6 @@ fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
 
 async fn populate_labels_for_completions(
     mut new_completions: Vec<CoreCompletion>,
-    language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
     lsp_adapter: Option<Arc<CachedLspAdapter>>,
     completions: &mut Vec<Completion>,
@@ -8107,8 +8075,8 @@ async fn populate_labels_for_completions(
         .zip(lsp_completions)
         .zip(labels.into_iter().chain(iter::repeat(None)))
     {
-        let documentation = if let Some(docs) = &lsp_completion.documentation {
-            Some(prepare_completion_documentation(docs, language_registry, language.clone()).await)
+        let documentation = if let Some(docs) = lsp_completion.documentation.clone() {
+            Some(docs.into())
         } else {
             None
         };
@@ -8495,6 +8463,46 @@ impl DiagnosticSummary {
             language_server_id: language_server_id.0 as u64,
             error_count: self.error_count as u32,
             warning_count: self.warning_count as u32,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum CompletionDocumentation {
+    /// There is no documentation for this completion.
+    Undocumented,
+    /// A single line of documentation.
+    SingleLine(SharedString),
+    /// Multiple lines of plain text documentation.
+    MultiLinePlainText(SharedString),
+    /// Markdown documentation.
+    MultiLineMarkdown(SharedString),
+}
+
+impl From<lsp::Documentation> for CompletionDocumentation {
+    fn from(docs: lsp::Documentation) -> Self {
+        match docs {
+            lsp::Documentation::String(text) => {
+                if text.lines().count() <= 1 {
+                    CompletionDocumentation::SingleLine(text.into())
+                } else {
+                    CompletionDocumentation::MultiLinePlainText(text.into())
+                }
+            }
+
+            lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
+                lsp::MarkupKind::PlainText => {
+                    if value.lines().count() <= 1 {
+                        CompletionDocumentation::SingleLine(value.into())
+                    } else {
+                        CompletionDocumentation::MultiLinePlainText(value.into())
+                    }
+                }
+
+                lsp::MarkupKind::Markdown => {
+                    CompletionDocumentation::MultiLineMarkdown(value.into())
+                }
+            },
         }
     }
 }
