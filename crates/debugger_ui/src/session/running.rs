@@ -586,9 +586,8 @@ impl RunningState {
     }
 
     pub fn toggle_ignore_breakpoints(&mut self, cx: &mut Context<Self>) {
-        self.session.update(cx, |session, cx| {
-            session.set_ignore_breakpoints(!session.breakpoints_enabled());
-        });
+        self.session
+            .update(cx, |session, cx| session.toggle_ignore_breakpoints(cx));
     }
 }
 

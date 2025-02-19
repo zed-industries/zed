@@ -4602,9 +4602,12 @@ impl Workspace {
         };
 
         if let Some(location) = location {
-            let breakpoint_lines = self
-                .project
-                .update(cx, |project, cx| project.serialize_breakpoints(cx));
+            let breakpoint_lines = self.project.update(cx, |project, cx| {
+                project
+                    .breakpoint_store()
+                    .read(cx)
+                    .serialize_breakpoints(cx)
+            });
 
             let center_group = build_serialized_pane_group(&self.center.root, window, cx);
             let docks = build_serialized_docks(self, window, cx);

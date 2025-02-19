@@ -644,8 +644,6 @@ impl Project {
         client.add_entity_request_handler(Self::handle_open_new_buffer);
         client.add_entity_message_handler(Self::handle_create_buffer_for_peer);
 
-        client.add_entity_message_handler(Self::handle_toggle_ignore_breakpoints);
-
         WorktreeStore::init(&client);
         BufferStore::init(&client);
         LspStore::init(&client);
@@ -1321,114 +1319,6 @@ impl Project {
             dap_store.new_session(config, worktree, cx)
         })
     }
-
-    pub fn serialize_breakpoints(
-        &self,
-        cx: &Context<Self>,
-    ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
-        self.breakpoint_store.read(cx).serialize_breakpoints(cx)
-    }
-
-    async fn handle_toggle_ignore_breakpoints(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::ToggleIgnoreBreakpoints>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |project, cx| {
-            // Only the host should handle this message because the host
-            // handles direct communication with the debugger servers.
-            if let Some((_, _)) = project.dap_store.read(cx).downstream_client() {
-                project
-                    .toggle_ignore_breakpoints(
-                        SessionId::from_proto(envelope.payload.client_id),
-                        cx,
-                    )
-                    .detach_and_log_err(cx);
-            }
-        })
-    }
-
-    pub fn toggle_ignore_breakpoints(
-        &self,
-        session_id: SessionId,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let tasks = self.dap_store.update(cx, |store, cx| {
-            if let Some((upstream_client, project_id)) = store.upstream_client() {
-                upstream_client
-                    .send(proto::ToggleIgnoreBreakpoints {
-                        client_id: session_id.to_proto(),
-                        project_id,
-                    })
-                    .log_err();
-
-                return Vec::new();
-            }
-
-            store.toggle_ignore_breakpoints(&session_id, cx);
-
-            if let Some((downstream_client, project_id)) = store.downstream_client() {
-                downstream_client
-                    .send(proto::IgnoreBreakpointState {
-                        session_id: session_id.to_proto(),
-                        project_id: *project_id,
-                        ignore: store.ignore_breakpoints(&session_id, cx),
-                    })
-                    .log_err();
-            }
-
-            let mut tasks: Vec<Result<()>> = Vec::new();
-
-            for (project_path, breakpoints) in &self.breakpoint_store.read(cx).breakpoints {
-                let Some((buffer, buffer_path)) = maybe!({
-                    let buffer = self
-                        .buffer_store
-                        .read_with(cx, |store, cx| store.get_by_path(&project_path, cx))?;
-
-                    let buffer = buffer.read(cx);
-                    let project_path = buffer.project_path(cx)?;
-                    let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
-                    Some((
-                        buffer,
-                        worktree.read(cx).absolutize(&project_path.path).ok()?,
-                    ))
-                }) else {
-                    continue;
-                };
-
-                // todo (debugger): Fix breakpoint stuff
-                // tasks.push(
-                //     store.send_breakpoints(
-                //         client_id,
-                //         Arc::from(buffer_path),
-                //         breakpoints
-                //             .into_iter()
-                //             .map(|breakpoint| breakpoint.to_source_breakpoint(buffer))
-                //             .collect::<Vec<_>>(),
-                //         store.ignore_breakpoints(&client_id, cx),
-                //         false,
-                //         cx,
-                //     ),
-                // );
-            }
-
-            tasks
-        });
-
-        cx.background_executor().spawn(async move {
-            // try_join_all(tasks).await?;
-
-            Ok(())
-        })
-    }
-
-    /// Toggles a breakpoint
-    ///
-    /// Also sends updated breakpoint information of one file to all active debug adapters
-    ///
-    /// This function is called whenever a breakpoint is toggled, and it doesn't need
-    /// to send breakpoints from closed files because those breakpoints can't change
-    /// without opening a buffer.
 
     #[cfg(any(test, feature = "test-support"))]
     pub async fn example(

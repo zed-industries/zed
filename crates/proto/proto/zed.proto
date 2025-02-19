@@ -2890,7 +2890,7 @@ message DapRestartStackFrameRequest {
 
 message ToggleIgnoreBreakpoints {
     uint64 project_id = 1;
-    uint64 client_id = 2;
+    uint32 session_id = 2;
 }
 
 message IgnoreBreakpointState {

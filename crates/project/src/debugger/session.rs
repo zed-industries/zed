@@ -23,7 +23,7 @@ use dap_adapters::build_adapter;
 use futures::channel::oneshot;
 use futures::{future::join_all, future::Shared, FutureExt};
 use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, Task};
-use rpc::AnyProtoClient;
+use rpc::{proto, AnyProtoClient};
 use serde_json::Value;
 use settings::Settings;
 use std::path::PathBuf;
@@ -761,12 +761,55 @@ impl Session {
         &self.modules
     }
 
-    pub fn set_ignore_breakpoints(&mut self, ignore: bool) {
-        self.ignore_breakpoints = ignore;
+    pub fn toggle_ignore_breakpoints(&mut self, cx: &App) -> Task<Result<()>> {
+        self.set_ignore_breakpoints(!self.ignore_breakpoints, cx)
     }
+
+    pub(crate) fn set_ignore_breakpoints(&mut self, ignore: bool, cx: &App) -> Task<Result<()>> {
+        if self.ignore_breakpoints == ignore {
+            return Task::ready(Err(anyhow!(
+                "Can't set ignore breakpoint to state it's already at"
+            )));
+        }
+
+        // todo(debugger): We need to propagate this change to downstream sessions and send a message to upstream sessions
+
+        self.ignore_breakpoints = ignore;
+        let mut tasks = Vec::new();
+
+        for (abs_path, serialized_breakpoints) in self
+            .breakpoint_store
+            .read_with(cx, |store, cx| store.all_breakpoints(true, cx))
+            .into_iter()
+        {
+            let source_breakpoints = if self.ignore_breakpoints {
+                serialized_breakpoints
+                    .iter()
+                    .map(|bp| bp.to_source_breakpoint())
+                    .collect::<Vec<_>>()
+            } else {
+                vec![]
+            };
+
+            tasks.push(self.send_breakpoints(
+                abs_path,
+                source_breakpoints,
+                self.ignore_breakpoints,
+                false,
+                cx,
+            ));
+        }
+
+        cx.background_executor().spawn(async move {
+            join_all(tasks).await;
+            Ok(())
+        })
+    }
+
     pub fn breakpoints_enabled(&self) -> bool {
         self.ignore_breakpoints
     }
+
     pub fn handle_module_event(&mut self, event: &dap::ModuleEvent, cx: &mut Context<Self>) {
         match event.reason {
             dap::ModuleEventReason::New => self.modules.push(event.module.clone()),
@@ -1034,25 +1077,33 @@ impl Session {
     }
 
     pub fn stack_frames(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) -> Vec<StackFrame> {
-        self.fetch(
-            super::dap_command::StackTraceCommand {
-                thread_id: thread_id.0,
-                start_frame: None,
-                levels: None,
-            },
-            move |this, stack_frames, cx| {
-                let entry = this.threads.entry(thread_id).and_modify(|thread| {
-                    thread.stack_frames = stack_frames.iter().cloned().map(From::from).collect();
-                });
-                debug_assert!(
-                    matches!(entry, indexmap::map::Entry::Occupied(_)),
-                    "Sent request for thread_id that doesn't exist"
-                );
+        if self
+            .threads
+            .get(&thread_id)
+            .map(|thread| thread.status == ThreadStatus::Stopped)
+            .unwrap_or(false)
+        {
+            self.fetch(
+                super::dap_command::StackTraceCommand {
+                    thread_id: thread_id.0,
+                    start_frame: None,
+                    levels: None,
+                },
+                move |this, stack_frames, cx| {
+                    let entry = this.threads.entry(thread_id).and_modify(|thread| {
+                        thread.stack_frames =
+                            stack_frames.iter().cloned().map(From::from).collect();
+                    });
+                    debug_assert!(
+                        matches!(entry, indexmap::map::Entry::Occupied(_)),
+                        "Sent request for thread_id that doesn't exist"
+                    );
 
-                cx.notify();
-            },
-            cx,
-        );
+                    cx.notify();
+                },
+                cx,
+            );
+        }
 
         self.threads
             .get(&thread_id)

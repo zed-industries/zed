@@ -451,41 +451,14 @@ impl DapStore {
         let session_id = SessionId::from_proto(envelope.payload.session_id);
 
         this.update(&mut cx, |this, cx| {
-            if let Some(client) = this.session_by_id(&session_id) {
-                client.update(cx, |client, cx| {
-                    client.set_ignore_breakpoints(envelope.payload.ignore)
+            if let Some(session) = this.session_by_id(&session_id) {
+                session.update(cx, |session, cx| {
+                    session.set_ignore_breakpoints(envelope.payload.ignore, cx)
                 });
             }
         })?;
 
         Ok(())
-    }
-
-    pub fn set_ignore_breakpoints(
-        &mut self,
-        session_id: &SessionId,
-        ignore: bool,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(session) = self.session_by_id(session_id) {
-            session.update(cx, |session, _| {
-                session.set_ignore_breakpoints(ignore);
-            });
-        }
-    }
-
-    pub fn ignore_breakpoints(&self, session_id: &SessionId, cx: &App) -> bool {
-        self.session_by_id(session_id)
-            .map(|client| client.read(cx).breakpoints_enabled())
-            .unwrap_or_default()
-    }
-
-    pub fn toggle_ignore_breakpoints(&mut self, session_id: &SessionId, cx: &mut Context<Self>) {
-        if let Some(client) = self.session_by_id(session_id) {
-            client.update(cx, |client, _| {
-                client.set_ignore_breakpoints(!client.breakpoints_enabled());
-            });
-        }
     }
 
     pub fn new_session(
