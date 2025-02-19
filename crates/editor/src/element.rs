@@ -18,10 +18,10 @@ use crate::{
     BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
     DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk,
-    GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlineCompletion,
-    JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, RevertSelectedHunks, RowExt,
-    RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap, StickyHeaderExcerpt,
-    ToPoint, ToggleFold, ToggleStagedSelectedDiffHunks, COLUMNAR_SELECTION_MODIFIERS,
+    GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
+    InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
+    RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection,
+    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS,
     CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
@@ -34,8 +34,8 @@ use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash,
     point, px, quad, relative, size, svg, transparent_black, Action, AnyElement, App,
     AvailableSpace, Axis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners,
-    CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable, FontId,
-    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
+    CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _,
+    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
     StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement, Window,
@@ -4188,16 +4188,13 @@ impl EditorElement {
                     let y = display_row_range.start.as_f32() * line_height
                         + text_hitbox.bounds.top()
                         - scroll_pixel_position.y;
-                    let x = text_hitbox.bounds.right()
-                        - rems(6.).to_pixels(window.rem_size())
-                        - px(33.);
+                    let x = text_hitbox.bounds.right() - px(100.);
 
                     let mut element = diff_hunk_controls(
                         display_row_range.start.0,
                         multi_buffer_range.clone(),
                         line_height,
                         &editor,
-                        window,
                         cx,
                     );
                     element.prepaint_as_root(
@@ -8942,13 +8939,8 @@ fn diff_hunk_controls(
     hunk_range: Range<Anchor>,
     line_height: Pixels,
     editor: &Entity<Editor>,
-    _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let stage = editor.update(cx, |editor, cx| {
-        let snapshot = editor.buffer.read(cx).snapshot(cx);
-        editor.has_stageable_diff_hunks_in_ranges(&[hunk_range.start..hunk_range.start], &snapshot)
-    });
     h_flex()
         .h(line_height)
         .mr_1()
@@ -8961,7 +8953,59 @@ fn diff_hunk_controls(
         .bg(cx.theme().colors().editor_background)
         .gap_1()
         .child(
-            IconButton::new(("discard-hunk", row as u64), IconName::Undo)
+            IconButton::new(("next-hunk", row as u64), IconName::ArrowDown)
+                .shape(IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                // .disabled(!has_multiple_hunks)
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |window, cx| {
+                        Tooltip::for_action_in("Next Hunk", &GoToHunk, &focus_handle, window, cx)
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            let snapshot = editor.snapshot(window, cx);
+                            let position = hunk_range.end.to_point(&snapshot.buffer_snapshot);
+                            editor.go_to_hunk_after_position(&snapshot, position, window, cx);
+                            editor.expand_selected_diff_hunks(cx);
+                        });
+                    }
+                }),
+        )
+        .child(
+            IconButton::new(("prev-hunk", row as u64), IconName::ArrowUp)
+                .shape(IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                // .disabled(!has_multiple_hunks)
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Previous Hunk",
+                            &GoToPrevHunk,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            let snapshot = editor.snapshot(window, cx);
+                            let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
+                            editor.go_to_hunk_before_position(&snapshot, point, window, cx);
+                            editor.expand_selected_diff_hunks(cx);
+                        });
+                    }
+                }),
+        )
+        .child(
+            IconButton::new("discard", IconName::Undo)
                 .shape(IconButtonShape::Square)
                 .icon_size(IconSize::Small)
                 .tooltip({
@@ -8982,59 +9026,10 @@ fn diff_hunk_controls(
                         editor.update(cx, |editor, cx| {
                             let snapshot = editor.snapshot(window, cx);
                             let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
-                            editor.discard_hunks_in_ranges([point..point].into_iter(), window, cx);
+                            editor.revert_hunks_in_ranges([point..point].into_iter(), window, cx);
                         });
                     }
                 }),
-        )
-        .child(
-            Button::new(("skip-hunk", row as u64), "Skip")
-                .label_size(LabelSize::Small)
-                .tooltip({
-                    let focus_handle = editor.focus_handle(cx);
-                    move |window, cx| {
-                        Tooltip::for_action_in("Skip Hunk", &GoToHunk, &focus_handle, window, cx)
-                    }
-                })
-                .on_click({
-                    let editor = editor.clone();
-                    move |_event, window, cx| {
-                        editor.update(cx, |editor, cx| {
-                            let snapshot = editor.snapshot(window, cx);
-                            let position = hunk_range.end.to_point(&snapshot.buffer_snapshot);
-                            editor.go_to_hunk_after_position(&snapshot, position, window, cx);
-                            editor.expand_selected_diff_hunks(cx);
-                        });
-                    }
-                }),
-        )
-        .child(
-            Button::new(
-                ("stage-unstage-hunk", row as u64),
-                if stage { "Stage" } else { "Unstage" },
-            )
-            .label_size(LabelSize::Small)
-            .tooltip({
-                let focus_handle = editor.focus_handle(cx);
-                move |window, cx| {
-                    Tooltip::for_action_in(
-                        if stage { "Stage Hunk" } else { "Unstage Hunk" },
-                        &ToggleStagedSelectedDiffHunks,
-                        &focus_handle,
-                        window,
-                        cx,
-                    )
-                }
-            })
-            .on_click({
-                let editor = editor.clone();
-                move |_event, _window, cx| {
-                    editor.update(cx, |editor, cx| {
-                        editor
-                            .stage_or_unstage_diff_hunks(&[hunk_range.start..hunk_range.start], cx);
-                    });
-                }
-            }),
         )
         .into_any_element()
 }

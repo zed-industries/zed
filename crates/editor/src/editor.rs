@@ -7056,10 +7056,10 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let selections = self.selections.all(cx).into_iter().map(|s| s.range());
-        self.discard_hunks_in_ranges(selections, window, cx);
+        self.revert_hunks_in_ranges(selections, window, cx);
     }
 
-    fn discard_hunks_in_ranges(
+    fn revert_hunks_in_ranges(
         &mut self,
         ranges: impl Iterator<Item = Range<Point>>,
         window: &mut Window,
