@@ -1539,7 +1539,7 @@ impl GitPanel {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> Option<impl IntoElement> {
         let all_repositories = self
             .project
             .read(cx)
@@ -1554,17 +1554,21 @@ impl GitPanel {
                 .is_above_project()
         });
 
-        self.panel_header_container(window, cx).when(
-            all_repositories.len() > 1 || has_repo_above,
-            |el| {
-                el.child(
-                    Label::new("Repository")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(self.render_repository_selector(cx))
-            },
-        )
+        let has_visible_repo = all_repositories.len() > 0 || has_repo_above;
+
+        if has_visible_repo {
+            Some(
+                self.panel_header_container(window, cx)
+                    .child(
+                        Label::new("Repository")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(self.render_repository_selector(cx)),
+            )
+        } else {
+            None
+        }
     }
 
     pub fn render_repository_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1690,6 +1694,7 @@ impl GitPanel {
             .border_t_1()
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().editor_background)
+            .cursor_text()
             .on_click(cx.listener(move |_, _: &ClickEvent, window, _cx| {
                 window.focus(&editor_focus_handle);
             }))
@@ -2260,7 +2265,7 @@ impl Render for GitPanel {
             .size_full()
             .overflow_hidden()
             .bg(ElevationIndex::Surface.bg(cx))
-            .child(self.render_panel_header(window, cx))
+            .children(self.render_panel_header(window, cx))
             .child(if has_entries {
                 self.render_entries(has_write_access, window, cx)
                     .into_any_element()

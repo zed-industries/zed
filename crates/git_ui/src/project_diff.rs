@@ -386,6 +386,10 @@ impl Focusable for ProjectDiff {
 impl Item for ProjectDiff {
     type Event = EditorEvent;
 
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
+        Some(Icon::new(IconName::GitBranch).color(Color::Muted))
+    }
+
     fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
