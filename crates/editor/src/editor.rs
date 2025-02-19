@@ -12713,10 +12713,13 @@ impl Editor {
             &buffer,
         );
 
-        let index_base = secondary_diff.base_text().map_or_else(
-            || Rope::from(""),
-            |snapshot| snapshot.text.as_rope().clone(),
-        );
+        let Some(index_base) = secondary_diff
+            .base_text()
+            .map(|snapshot| snapshot.text.as_rope().clone())
+        else {
+            log::debug!("no index base");
+            return;
+        };
         let index_buffer = cx.new(|cx| {
             Buffer::local_normalized(index_base.clone(), text::LineEnding::default(), cx)
         });
