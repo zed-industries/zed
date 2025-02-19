@@ -12721,7 +12721,10 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
         multibuffer
     });
 
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(multibuffer, window, cx));
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let (editor, cx) = cx
+        .add_window_view(|window, cx| build_editor_with_project(project, multibuffer, window, cx));
     editor.update_in(cx, |editor, _window, cx| {
         for (buffer, diff_base) in [
             (buffer_1.clone(), base_text_1),

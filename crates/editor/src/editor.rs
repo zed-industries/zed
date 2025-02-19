@@ -7051,20 +7051,19 @@ impl Editor {
         let ranges = buffer_ids
             .into_iter()
             .flat_map(|buffer_id| buffer.excerpt_ranges_for_buffer(buffer_id, cx))
-            .map(|range| range.to_anchors(&snapshot))
             .collect::<Vec<_>>();
 
         self.restore_hunks_in_ranges(ranges, window, cx);
     }
 
     pub fn git_restore(&mut self, _: &Restore, window: &mut Window, cx: &mut Context<Self>) {
-        let selections = self.selections.disjoint_anchor_ranges().collect();
+        let selections = self.selections.ranges(cx);
         self.restore_hunks_in_ranges(selections, window, cx);
     }
 
     fn restore_hunks_in_ranges(
         &mut self,
-        ranges: Vec<Range<Anchor>>,
+        ranges: Vec<Range<Point>>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
@@ -7075,7 +7074,9 @@ impl Editor {
         };
 
         let chunk_by = self
-            .diff_hunks_in_ranges(&ranges[..], &snapshot)
+            .snapshot(window, cx)
+            .hunks_for_ranges(ranges.into_iter())
+            .into_iter()
             .chunk_by(|hunk| hunk.buffer_id);
         for (buffer_id, hunks) in &chunk_by {
             let hunks = hunks.collect::<Vec<_>>();

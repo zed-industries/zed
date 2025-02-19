@@ -9018,11 +9018,9 @@ fn diff_hunk_controls(
                     let editor = editor.clone();
                     move |_event, window, cx| {
                         editor.update(cx, |editor, cx| {
-                            editor.restore_hunks_in_ranges(
-                                vec![hunk_range.start..hunk_range.start],
-                                window,
-                                cx,
-                            );
+                            let snapshot = editor.snapshot(window, cx);
+                            let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
+                            editor.restore_hunks_in_ranges(vec![point..point], window, cx);
                         });
                     }
                 }),
