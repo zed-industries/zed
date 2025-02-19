@@ -44,7 +44,7 @@ use rpc::{
 };
 use serde_json::Value;
 use settings::{Settings as _, WorktreeId};
-use smol::lock::Mutex;
+use smol::{lock::Mutex, stream::StreamExt};
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashSet},
@@ -86,6 +86,8 @@ pub struct LocalDapStore {
     environment: Entity<ProjectEnvironment>,
     language_registry: Arc<LanguageRegistry>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
+    start_debugging_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
+    _start_debugging_task: Task<()>,
 }
 
 impl LocalDapStore {
@@ -250,6 +252,29 @@ impl DapStore {
     ) -> Self {
         cx.on_app_quit(Self::shutdown_sessions).detach();
 
+        let (start_debugging_tx, mut message_rx) =
+            futures::channel::mpsc::unbounded::<(SessionId, Message)>();
+
+        let _start_debugging_task = cx.spawn(move |this, mut cx| async move {
+            while let Some((session_id, message)) = message_rx.next().await {
+                match message {
+                    Message::Request(request) => {
+                        this.update(&mut cx, |this, cx| {
+                            if request.command == StartDebugging::COMMAND {
+                                // this.sessions.get(1).update(|session, cx| {
+                                //     session.child(session_id, cx);
+                                // });
+
+                                // this.new_session(config, worktree, cx)
+                            } else if request.command == RunInTerminal::COMMAND {
+                                // spawn terminal
+                            }
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        });
         Self {
             mode: DapStoreMode::Local(LocalDapStore {
                 fs,
@@ -259,6 +284,8 @@ impl DapStore {
                 toolchain_store,
                 language_registry,
                 next_session_id: Default::default(),
+                start_debugging_tx,
+                _start_debugging_task,
             }),
             downstream_client: None,
             active_debug_line: None,
@@ -490,22 +517,7 @@ impl DapStore {
             session_id,
             delegate,
             config,
-            {
-                let weak_store = cx.weak_entity();
-
-                Box::new(move |message, cx| {
-                    weak_store
-                        .update(cx, |store, cx| {
-                            if let Some(session) = store.sessions.get(&session_id) {
-                                session.update(cx, |session, cx| {
-                                    session.handle_dap_message(message, cx);
-                                });
-                            }
-                        })
-                        .with_context(|| "Failed to process message from DAP server")
-                        .log_err();
-                })
-            },
+            local_store.start_debugging_tx.clone(),
             cx,
         );
 

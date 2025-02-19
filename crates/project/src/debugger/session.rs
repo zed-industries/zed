@@ -21,11 +21,13 @@ use dap::{
 };
 use dap_adapters::build_adapter;
 use futures::channel::oneshot;
+use futures::SinkExt;
 use futures::{future::join_all, future::Shared, FutureExt};
-use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, Task};
+use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, Task, WeakEntity};
 use rpc::{proto, AnyProtoClient};
 use serde_json::Value;
 use settings::Settings;
+use smol::stream::StreamExt;
 use std::path::PathBuf;
 use std::u64;
 use std::{
@@ -190,7 +192,8 @@ impl LocalMode {
         breakpoints: Entity<BreakpointStore>,
         disposition: DebugAdapterConfig,
         delegate: DapAdapterDelegate,
-        mut cx: AsyncApp,
+        messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
+        cx: AsyncApp,
     ) -> Task<Result<(Self, Capabilities)>> {
         cx.spawn(move |mut cx| async move {
             let adapter = build_adapter(&disposition.kind).await?;
@@ -232,19 +235,20 @@ impl LocalMode {
 
             let (initialized_tx, initialized_rx) = oneshot::channel();
             let mut initialized_tx = Some(initialized_tx);
-            let message_handler = Box::new(move |message, cx: &mut App| match message {
-                Message::Event(events) => {
-                    if let Events::Initialized(_) = *events {
-                        initialized_tx
-                            .take()
-                            .expect("To receive just one Initialized event")
-                            .send(())
-                            .ok();
-                    }
+            let message_handler = Box::new(move |message, _cx: &mut App| {
+                let Message::Event(event) = &message else {
+                    messages_tx.unbounded_send(message).ok();
+                    return;
+                };
+                if let Events::Initialized(_) = **event {
+                    initialized_tx
+                        .take()
+                        .expect("To receive just one Initialized event")
+                        .send(())
+                        .ok();
+                } else {
+                    messages_tx.unbounded_send(message).ok();
                 }
-
-                Message::Request(request) => todo!(),
-                _ => {}
             });
             let client = Arc::new(
                 DebugAdapterClient::start(session_id, binary, message_handler, cx.clone()).await?,
@@ -365,6 +369,7 @@ pub struct Session {
     loaded_sources: Vec<dap::Source>,
     threads: IndexMap<ThreadId, Thread>,
     requests: HashMap<RequestSlot, Shared<Task<Option<()>>>>,
+    _background_tasks: Vec<Task<()>>,
 }
 
 trait CacheableCommand: 'static + Send + Sync {
@@ -450,20 +455,41 @@ impl Session {
         session_id: SessionId,
         delegate: DapAdapterDelegate,
         config: DebugAdapterConfig,
-        message_handler: DapMessageHandler,
+        start_debugging_requests_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
+        let (message_tx, mut message_rx) = futures::channel::mpsc::unbounded();
+
         cx.spawn(move |mut cx| async move {
             let (mode, capabilities) = LocalMode::new(
                 session_id,
                 breakpoints.clone(),
                 config.clone(),
                 delegate,
+                message_tx,
                 cx.clone(),
             )
             .await?;
 
             cx.new(|cx| {
+                let _background_tasks =
+                    vec![cx.spawn(move |this: WeakEntity<Self>, mut cx| async move {
+                        while let Some(message) = message_rx.next().await {
+                            if let Message::Event(event) = message {
+                                let Ok(_) = this.update(&mut cx, |session, cx| {
+                                    session.handle_dap_event(event, cx);
+                                }) else {
+                                    break;
+                                };
+                            } else {
+                                let Ok(_) = start_debugging_requests_tx
+                                    .unbounded_send((session_id, message))
+                                else {
+                                    break;
+                                };
+                            }
+                        }
+                    })];
                 cx.subscribe(&breakpoints, Self::send_changed_breakpoints)
                     .detach();
 
@@ -478,6 +504,7 @@ impl Session {
                     modules: Vec::default(),
                     loaded_sources: Vec::default(),
                     threads: IndexMap::default(),
+                    _background_tasks,
                 }
             })
         })
@@ -504,6 +531,7 @@ impl Session {
             loaded_sources: Vec::default(),
             threads: IndexMap::default(),
             config: todo!(),
+            _background_tasks: Vec::default(),
         }
     }
 
@@ -623,40 +651,6 @@ impl Session {
         })
     }
 
-    fn handle_initialized_event(&mut self, caps: Option<Capabilities>, cx: &mut Context<Self>) {
-        if let Some(caps) = caps {
-            self.capabilities = caps;
-        }
-
-        let send_breakpoints = self.send_initial_breakpoints(cx);
-
-        cx.spawn(|this, mut cx| async move {
-            send_breakpoints.await;
-
-            this.update(&mut cx, |this, cx| {
-                if this
-                    .capabilities
-                    .supports_configuration_done_request
-                    .unwrap_or_default()
-                {
-                    if let Some(adapter) = this.adapter_client() {
-                        return cx.background_spawn(async move {
-                            adapter
-                                .request::<dap::requests::ConfigurationDone>(
-                                    dap::ConfigurationDoneArguments,
-                                )
-                                .await
-                                .log_err();
-                        });
-                    }
-                }
-
-                Task::ready(())
-            })
-        })
-        .detach_and_log_err(cx);
-    }
-
     fn handle_stopped_event(&mut self, event: StoppedEvent, cx: &mut Context<Self>) {
         // todo(debugger): We should see if we could only invalidate the thread that stopped
         // instead of everything right now
@@ -680,9 +674,14 @@ impl Session {
         }
     }
 
-    fn handle_dap_event(&mut self, event: Box<Events>, cx: &mut Context<Self>) {
+    pub(crate) fn handle_dap_event(&mut self, event: Box<Events>, cx: &mut Context<Self>) {
         match *event {
-            Events::Initialized(event) => self.handle_initialized_event(event, cx),
+            Events::Initialized(_) => {
+                debug_assert!(
+                    false,
+                    "Initialized event should have been handled in LocalMode"
+                );
+            }
             Events::Stopped(event) => self.handle_stopped_event(event, cx),
             Events::Continued(_event) => {}
             Events::Exited(_event) => {}
