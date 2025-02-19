@@ -786,13 +786,36 @@ jobs:
           # This exports RELEASE_CHANNEL into env (GITHUB_ENV)
           script/determine-release-channel.ps1
 
-      - name: Build Zed
+      - name: Build Zed and dll
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: |
           cargo build --release
           cp ".\target\release\zed.exe" ".\crates\zed\resources\windows\Zed.exe"
+          cargo build -p explorer_command_injector --release
+          cp ".\target\release\explorer_command_injector.dll" ".\crates\zed\resources\windows\explorer_command_injector.dll"
 
-      - name: Sign Zed binary
+      - name: Make appx for dll
+        run: |
+          mkdir -p ${{ env.ZED_WORKSPACE }}\windows -ErrorAction Ignore
+          $channel=$env:RELEASE_CHANNEL
+          switch ($channel) {
+          "stable" {
+              $manifestFile = ${{ env.ZED_WORKSPACE }}\crates\explorer_command_injector\AppxManifest.xml
+            }
+            "preview" {
+              $manifestFile = ${{ env.ZED_WORKSPACE }}\crates\explorer_command_injector\AppxManifest-Preview.xml
+            }
+            default {
+              $manifestFile = ${{ env.ZED_WORKSPACE }}\crates\explorer_command_injector\AppxManifest-Nightly.xml
+            }
+          }
+          cp $manifestFile ${{ env.ZED_WORKSPACE }}\windows\AppxManifest.xml
+          # Add makeAppx.exe to Path
+          $sdk = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64"
+          $env:Path += ';' + $sdk
+          makeAppx.exe pack /d "${{ env.ZED_WORKSPACE }}\windows" /p "${{ env.ZED_WORKSPACE }}\crates\zed\resources\windows\zed_explorer_command_injector.appx" /nv
+
+      - name: Sign Zed binary and dll
         uses: azure/trusted-signing-action@v0.5.1
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -802,7 +825,7 @@ jobs:
           trusted-signing-account-name: ${{ secrets.ACCOUNT_NAME }}
           certificate-profile-name: ${{ secrets.CERT_PROFILE_NAME }}
           files-folder: ${{ env.ZED_WORKSPACE }}\crates\zed\resources\windows
-          files-folder-filter: exe,dll
+          files-folder-filter: exe,dll,appx
 
       - name: Run Inno Setup
         env:
