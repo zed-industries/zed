@@ -61,8 +61,20 @@ impl Vim {
                 let mut original_positions: HashMap<_, _> = Default::default();
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
-                        let original_position = (selection.head(), selection.goal);
+                        let mut original_position = (selection.head(), selection.goal);
                         object.expand_selection(map, selection, around);
+                        // Move cursor to start for some objects
+                        if matches!(
+                            object,
+                            Object::Parentheses
+                                | Object::SquareBrackets
+                                | Object::CurlyBrackets
+                                | Object::AnyBrackets
+                                | Object::AngleBrackets
+                                | Object::Paragraph
+                        ) {
+                            original_position = (selection.start, selection.goal);
+                        }
                         original_positions.insert(selection.id, original_position);
                     });
                 });
