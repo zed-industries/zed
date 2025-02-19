@@ -510,7 +510,7 @@ fragment float4 path_sprite_fragment(
                                           min_filter::linear);
   float4 sample =
       atlas_texture.sample(atlas_texture_sampler, input.tile_position);
-  float mask = 1. - abs(1. - fmod(sample.r, 2.));
+  float mask = sample.r;
   PathSprite sprite = sprites[input.sprite_id];
   Background background = sprite.color;
   float4 color = fill_color(background, input.position.xy, sprite.bounds,
