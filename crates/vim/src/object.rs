@@ -1493,16 +1493,16 @@ fn surrounding_markers(
                     opening.end = new_start;
                 }
             }
-            // Handle trailing whitespace and newline
+            // Adjust closing.start to exclude trailing newline and whitespace
+            let mut last_non_whitespace = None;
             for (ch, offset) in map.reverse_buffer_chars_at(end_offset) {
-                if ch == '\n' {
-                    closing.start = offset;
-                    break;
-                }
                 if !ch.is_whitespace() {
+                    last_non_whitespace = Some(offset + ch.len_utf8());
                     break;
                 }
-                closing.start = offset;
+            }
+            if let Some(end) = last_non_whitespace {
+                closing.start = end;
             }
         }
     }
