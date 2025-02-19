@@ -39,10 +39,10 @@ extern "system" fn DllMain(
 }
 
 #[implement(IExplorerCommand)]
-struct ContextMenuHandler;
+struct ExplorerCommandInjector;
 
 #[allow(non_snake_case)]
-impl IExplorerCommand_Impl for ContextMenuHandler_Impl {
+impl IExplorerCommand_Impl for ExplorerCommandInjector_Impl {
     fn GetTitle(&self, _: Option<&IShellItemArray>) -> windows_core::Result<windows_core::PWSTR> {
         unsafe { SHStrDupW(windows::core::w!("Open with Zed")) }
     }
@@ -101,9 +101,9 @@ impl IExplorerCommand_Impl for ContextMenuHandler_Impl {
 }
 
 #[implement(IClassFactory)]
-struct CClassFactory;
+struct ExplorerCommandInjectorFactory;
 
-impl IClassFactory_Impl for CClassFactory_Impl {
+impl IClassFactory_Impl for ExplorerCommandInjectorFactory_Impl {
     fn CreateInstance(
         &self,
         punkouter: Option<&windows_core::IUnknown>,
@@ -114,7 +114,7 @@ impl IClassFactory_Impl for CClassFactory_Impl {
             *ppvobject = std::ptr::null_mut();
         }
         if punkouter.is_none() {
-            let factory: IExplorerCommand = ContextMenuHandler {}.into();
+            let factory: IExplorerCommand = ExplorerCommandInjector {}.into();
             let ret = unsafe { factory.query(riid, ppvobject).ok() };
             if ret.is_ok() {
                 unsafe {
@@ -132,7 +132,12 @@ impl IClassFactory_Impl for CClassFactory_Impl {
     }
 }
 
-const MODULE_ID: GUID = GUID::from_u128(0xF5EA5883_1DA8_4A05_864A_D5DE2D2B2854);
+#[cfg(feature = "stable")]
+const MODULE_ID: GUID = GUID::from_u128(0x6a1f6b13_3b82_48a1_9e06_7bb0a6d0bffd);
+#[cfg(feature = "preview")]
+const MODULE_ID: GUID = GUID::from_u128(0xaf8e85ea_fb20_4db2_93cf_56513c1ec697);
+#[cfg(feature = "nightly")]
+const MODULE_ID: GUID = GUID::from_u128(0x266f2cfe_1653_42af_b55c_fe3590c83871);
 
 #[no_mangle]
 extern "system" fn DllGetClassObject(
@@ -145,7 +150,7 @@ extern "system" fn DllGetClassObject(
     }
     let class_id = unsafe { *class_id };
     if class_id == MODULE_ID {
-        let instance: IClassFactory = CClassFactory {}.into();
+        let instance: IClassFactory = ExplorerCommandInjectorFactory {}.into();
         let ret = unsafe { instance.query(iid, out) };
         if ret.is_ok() {
             unsafe {
