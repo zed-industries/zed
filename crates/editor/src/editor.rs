@@ -12618,12 +12618,37 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
-        self.stage_or_unstage_diff_hunks(&ranges, cx);
+        let stage = self.has_stageable_diff_hunks_in_ranges(&ranges, &snapshot);
+        self.stage_or_unstage_diff_hunks(stage, &ranges, cx);
+    }
+
+    pub fn stage_and_next(
+        &mut self,
+        _: &::git::StageAndNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let head = self.selections.newest_anchor().head();
+        self.stage_or_unstage_diff_hunks(true, &[head..head], cx);
+        self.go_to_next_hunk(&Default::default(), window, cx);
+    }
+
+    pub fn unstage_and_next(
+        &mut self,
+        _: &::git::UnstageAndNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let head = self.selections.newest_anchor().head();
+        self.stage_or_unstage_diff_hunks(false, &[head..head], cx);
+        self.go_to_next_hunk(&Default::default(), window, cx);
     }
 
     pub fn stage_or_unstage_diff_hunks(
         &mut self,
+        stage: bool,
         ranges: &[Range<Anchor>],
         cx: &mut Context<Self>,
     ) {
@@ -12631,8 +12656,6 @@ impl Editor {
         let Some(project) = &self.project else {
             return;
         };
-
-        let stage = self.has_stageable_diff_hunks_in_ranges(ranges, &snapshot);
 
         let chunk_by = self
             .diff_hunks_in_ranges(&ranges, &snapshot)
