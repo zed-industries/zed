@@ -40,7 +40,6 @@ use clock::ReplicaId;
 
 use dap::{
     client::{DebugAdapterClient, SessionId},
-    debugger_settings::DebuggerSettings,
     messages::Message,
     DebugAdapterConfig,
 };
@@ -48,14 +47,14 @@ use dap::{
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
 use debugger::{
-    breakpoint_store::{BreakpointStore, BreakpointStoreEvent, SerializedBreakpoint},
+    breakpoint_store::BreakpointStore,
     dap_store::{DapStore, DapStoreEvent},
     session::Session,
 };
 pub use environment::ProjectEnvironment;
 use futures::{
     channel::mpsc::{self, UnboundedReceiver},
-    future::{join_all, try_join_all},
+    future::try_join_all,
     StreamExt,
 };
 pub use image_store::{ImageItem, ImageStore};

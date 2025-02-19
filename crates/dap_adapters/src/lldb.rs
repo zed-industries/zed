@@ -1,8 +1,7 @@
-use std::{collections::HashMap, ffi::OsStr, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use dap::transport::StdioTransport;
 use gpui::AsyncApp;
 use sysinfo::{Pid, Process};
 use task::{DebugAdapterConfig, DebugRequestType};

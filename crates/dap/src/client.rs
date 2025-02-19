@@ -1,5 +1,5 @@
 use crate::{
-    adapters::{DebugAdapter, DebugAdapterBinary, TcpArguments},
+    adapters::DebugAdapterBinary,
     transport::{IoKind, LogKind, TransportDelegate},
 };
 use anyhow::{anyhow, Result};
@@ -12,11 +12,7 @@ use gpui::{App, AsyncApp, BackgroundExecutor};
 use smol::channel::{Receiver, Sender};
 use std::{
     hash::Hash,
-    net::Ipv4Addr,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
 

@@ -14,7 +14,6 @@ use rpc::proto;
 use serde_json::Value;
 use util::ResultExt;
 
-use super::breakpoint_store::SerializedBreakpoint;
 pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     type Response: 'static + Send + std::fmt::Debug;
     type DapRequest: 'static + Send + dap::requests::Request;

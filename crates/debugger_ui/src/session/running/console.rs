@@ -2,8 +2,7 @@ use super::{
     stack_frame_list::{StackFrameList, StackFrameListEvent},
     variable_list::VariableList,
 };
-use anyhow::anyhow;
-use dap::{client::SessionId, OutputEvent, OutputEventGroup};
+use dap::{OutputEvent, OutputEventGroup};
 use editor::{
     display_map::{Crease, CreaseId},
     Anchor, CompletionProvider, Editor, EditorElement, EditorStyle, FoldPlaceholder,

@@ -1,8 +1,6 @@
-use std::{ffi::OsString, path::PathBuf, sync::Arc};
-
-use dap::transport::{StdioTransport, TcpTransport};
 use gpui::AsyncApp;
 use serde_json::Value;
+use std::{ffi::OsString, path::PathBuf};
 use task::DebugAdapterConfig;
 
 use crate::*;

@@ -1,8 +1,8 @@
 use dap::{DebugAdapterConfig, DebugRequestType};
 use gpui::{App, EventEmitter, FocusHandle, Focusable};
 use ui::{
-    div, h_flex, v_flex, Button, ButtonCommon, ButtonStyle, Clickable, Context, ContextMenu,
-    DropdownMenu, Element, InteractiveElement, ParentElement, Render, SharedString, Styled, Window,
+    h_flex, v_flex, Button, ButtonCommon, ButtonStyle, Clickable, Context, ContextMenu,
+    DropdownMenu, InteractiveElement, ParentElement, Render, SharedString, Styled, Window,
 };
 
 pub(super) struct InertState {
@@ -78,16 +78,16 @@ impl Render for InertState {
                                 cx.emit(InertEvent::Spawned {
                                     config: DebugAdapterConfig {
                                         label: "hard coded".into(),
-                                        kind: dap::DebugAdapterKind::Python(task::TCPHost {
+                                        kind: dap::DebugAdapterKind::Javascript(task::TCPHost {
                                             port: None,
                                             host: None,
                                             timeout: None,
                                         }),
                                         request: DebugRequestType::Launch,
                                         program: Some(
-                                            "/Users/hiro/Projects/repros/python-funsies/nested/file.py".into(),
+                                            "/Users/remcosmits/Documents/code/prettier-test/test.js".into(),
                                         ),
-                                        cwd: Some("/Users/hiro/Projects/repros/python-funsies/nested".into()),
+                                        cwd: Some("/Users/remcosmits/Documents/code/prettier-test".into()),
                                         initialize_args: None,
                                         supports_attach: false,
                                     },

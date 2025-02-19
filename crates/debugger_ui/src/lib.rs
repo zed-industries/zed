@@ -3,10 +3,7 @@ use debugger_panel::{DebugPanel, ToggleFocus};
 use gpui::App;
 use session::DebugSession;
 use settings::Settings;
-use workspace::{
-    Continue, Pause, Restart, ShutdownDebugAdapters, Start, StepBack, StepInto, StepOut, StepOver,
-    Stop, ToggleIgnoreBreakpoints, Workspace,
-};
+use workspace::{ShutdownDebugAdapters, Start, Workspace};
 
 pub mod attach_modal;
 pub mod debugger_panel;

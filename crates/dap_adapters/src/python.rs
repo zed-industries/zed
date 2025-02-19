@@ -1,7 +1,7 @@
 use crate::*;
 use dap::transport::TcpTransport;
 use gpui::AsyncApp;
-use std::{ffi::OsStr, net::Ipv4Addr, path::PathBuf, sync::Arc};
+use std::{ffi::OsStr, net::Ipv4Addr, path::PathBuf};
 
 pub(crate) struct PythonDebugAdapter {
     port: u16,

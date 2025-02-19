@@ -22,7 +22,6 @@ use std::{
     ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
 };
 use sysinfo::{Pid, Process};
 use task::DebugAdapterConfig;

@@ -6,36 +6,29 @@ use super::{
     //     RestartStackFrameCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
     //     TerminateCommand, TerminateThreadsCommand, VariablesCommand,
     // },
-    dap_command::DapCommand,
     session::{self, Session},
 };
-use crate::{
-    debugger, project_settings::ProjectSettings, DebugAdapterClientState, ProjectEnvironment,
-    ProjectPath,
-};
-use anyhow::{anyhow, bail, Context as _, Result};
+use crate::{debugger, ProjectEnvironment, ProjectPath};
+use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
-    adapters::{DapDelegate, DapStatus, DebugAdapter, DebugAdapterBinary, DebugAdapterName},
-    client::{DebugAdapterClient, SessionId},
+    adapters::{DapStatus, DebugAdapterName},
+    client::SessionId,
     messages::{Message, Response},
     requests::{
-        Attach, Completions, Evaluate, Initialize, Launch, Request as _, RunInTerminal,
-        SetBreakpoints, SetExpression, SetVariable, StartDebugging,
+        Completions, Evaluate, Request as _, RunInTerminal, SetExpression, SetVariable,
+        StartDebugging,
     },
-    AttachRequestArguments, Capabilities, CompletionItem, CompletionsArguments, ErrorResponse,
-    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, InitializeRequestArguments,
-    InitializeRequestArgumentsPathFormat, LaunchRequestArguments, SetBreakpointsArguments,
-    SetExpressionArguments, SetVariableArguments, Source, SourceBreakpoint,
-    StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
+    Capabilities, CompletionItem, CompletionsArguments, ErrorResponse, EvaluateArguments,
+    EvaluateArgumentsContext, EvaluateResponse, SetExpressionArguments, SetVariableArguments,
+    Source, StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
 };
-use dap_adapters::build_adapter;
 use fs::Fs;
 use futures::future::Shared;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
-use language::{BinaryStatus, BufferSnapshot, LanguageRegistry, LanguageToolchainStore};
+use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use rpc::{
@@ -43,14 +36,13 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
 };
 use serde_json::Value;
-use settings::{Settings as _, WorktreeId};
+use settings::WorktreeId;
 use smol::{lock::Mutex, stream::StreamExt};
 use std::{
     borrow::Borrow,
     collections::{BTreeMap, HashSet},
     ffi::OsStr,
-    hash::Hash,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{atomic::Ordering::SeqCst, Arc},
 };
 use std::{collections::VecDeque, sync::atomic::AtomicU32};

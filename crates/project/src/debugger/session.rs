@@ -1,6 +1,6 @@
 use crate::project_settings::ProjectSettings;
 
-use super::breakpoint_store::{self, BreakpointStore, BreakpointStoreEvent};
+use super::breakpoint_store::{BreakpointStore, BreakpointStoreEvent};
 use super::dap_command::{
     self, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand,
     Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, ModulesCommand, NextCommand,
@@ -12,7 +12,7 @@ use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
 use collections::{HashMap, IndexMap};
 use dap::adapters::{DapDelegate, DapStatus, DebugAdapterName};
-use dap::client::{DapMessageHandler, DebugAdapterClient, SessionId};
+use dap::client::{DebugAdapterClient, SessionId};
 use dap::requests::Request;
 use dap::{
     messages::{self, Events, Message},
@@ -22,10 +22,9 @@ use dap::{
 };
 use dap_adapters::build_adapter;
 use futures::channel::oneshot;
-use futures::SinkExt;
 use futures::{future::join_all, future::Shared, FutureExt};
 use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, Task, WeakEntity};
-use rpc::{proto, AnyProtoClient};
+use rpc::AnyProtoClient;
 use serde_json::Value;
 use settings::Settings;
 use smol::stream::StreamExt;

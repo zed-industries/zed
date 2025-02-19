@@ -2,32 +2,21 @@ mod inert;
 mod running;
 mod starting;
 
-use std::time::Duration;
-
-use crate::debugger_panel::{DebugPanel, DebugPanelEvent};
-
-use anyhow::anyhow;
-use dap::{
-    client::SessionId, debugger_settings::DebuggerSettings, Capabilities, ContinuedEvent,
-    LoadedSourceEvent, ModuleEvent, OutputEvent, OutputEventCategory, StoppedEvent, ThreadEvent,
-};
+use dap::client::SessionId;
 use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
 use inert::{InertEvent, InertState};
-use project::debugger::session::Session;
-use project::debugger::session::{ThreadId, ThreadStatus};
-
 use project::debugger::dap_store::DapStore;
+use project::debugger::session::ThreadId;
 use project::worktree_store::WorktreeStore;
 use project::Project;
 use rpc::proto::{self, PeerId};
 use running::RunningState;
-use settings::Settings;
 use starting::{StartingEvent, StartingState};
-use ui::{prelude::*, ContextMenu, DropdownMenu, Indicator, Tooltip};
+use ui::prelude::*;
 use workspace::{
-    item::{self, Item, ItemEvent},
+    item::{self, Item},
     FollowableItem, ViewId, Workspace,
 };
 

@@ -2,7 +2,7 @@ use adapters::latest_github_release;
 use dap::transport::TcpTransport;
 use gpui::AsyncApp;
 use regex::Regex;
-use std::{collections::HashMap, net::Ipv4Addr, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, net::Ipv4Addr, path::PathBuf};
 use sysinfo::{Pid, Process};
 use task::DebugRequestType;
 

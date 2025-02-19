@@ -4,32 +4,24 @@ mod module_list;
 mod stack_frame_list;
 mod variable_list;
 
+use super::{DebugPanelItemEvent, ThreadItem};
 use console::Console;
-use dap::{client::SessionId, debugger_settings::DebuggerSettings, Capabilities, ContinuedEvent};
-use gpui::{
-    AppContext, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
-};
+use dap::{client::SessionId, debugger_settings::DebuggerSettings, Capabilities};
+use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Subscription, WeakEntity};
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
 use project::debugger::session::{Session, ThreadId, ThreadStatus};
-use rpc::proto::{self, ViewId};
+use rpc::proto::ViewId;
 use settings::Settings;
 use stack_frame_list::{StackFrameList, StackFrameListEvent};
 use ui::{
     div, h_flex, v_flex, ActiveTheme, AnyElement, App, Button, ButtonCommon, Clickable, Color,
-    Context, ContextMenu, Disableable, DropdownMenu, Element, FluentBuilder, IconButton, IconName,
-    IconSize, Indicator, InteractiveElement, IntoElement, Label, LabelCommon, ParentElement,
-    Render, SharedString, StatefulInteractiveElement, Styled, Tooltip, Window,
+    Context, ContextMenu, Disableable, DropdownMenu, FluentBuilder, IconButton, IconName, IconSize,
+    Indicator, InteractiveElement, IntoElement, Label, LabelCommon, ParentElement, Render,
+    SharedString, StatefulInteractiveElement, Styled, Tooltip, Window,
 };
 use variable_list::VariableList;
-use workspace::{
-    item::{self, ItemEvent},
-    FollowableItem, Item, Workspace,
-};
-
-use crate::debugger_panel::{DebugPanel, DebugPanelEvent};
-
-use super::{DebugPanelItemEvent, ThreadItem};
+use workspace::{item::ItemEvent, Item, Workspace};
 
 pub struct RunningState {
     session: Entity<Session>,

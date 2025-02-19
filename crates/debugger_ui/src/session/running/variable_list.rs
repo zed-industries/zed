@@ -1,8 +1,6 @@
 use super::stack_frame_list::{StackFrameId, StackFrameList, StackFrameListEvent};
 use anyhow::{anyhow, Result};
-use dap::{
-    client::SessionId, proto_conversions::ProtoConversion, Scope, ScopePresentationHint, Variable,
-};
+use dap::{proto_conversions::ProtoConversion, Scope, ScopePresentationHint, Variable};
 use editor::{actions::SelectAll, Editor, EditorEvent};
 use gpui::{
     actions, anchored, deferred, list, AnyElement, ClipboardItem, Context, DismissEvent, Entity,

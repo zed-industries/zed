@@ -3,14 +3,11 @@ use std::time::Duration;
 use anyhow::Result;
 
 use gpui::{
-    percentage, Animation, AnimationExt, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, Transformation,
+    percentage, Animation, AnimationExt, Entity, EventEmitter, FocusHandle, Focusable, Task,
+    Transformation,
 };
 use project::debugger::session::Session;
-use ui::{
-    div, v_flex, Color, Context, Element, Icon, IconName, IconSize, IntoElement, ParentElement,
-    Render, Styled,
-};
+use ui::{v_flex, Color, Context, Icon, IconName, IntoElement, ParentElement, Render, Styled};
 
 pub(super) struct StartingState {
     focus_handle: FocusHandle,

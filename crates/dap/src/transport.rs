@@ -1,5 +1,4 @@
 use anyhow::{anyhow, bail, Context, Result};
-use async_trait::async_trait;
 use dap_types::{
     messages::{Message, Response},
     ErrorResponse,
@@ -16,14 +15,13 @@ use smol::{
     process::Child,
 };
 use std::{
-    any::Any,
     collections::HashMap,
     net::{Ipv4Addr, SocketAddrV4},
     process::Stdio,
     sync::Arc,
     time::Duration,
 };
-use task::{DebugAdapterKind, TCPHost};
+use task::TCPHost;
 use util::ResultExt as _;
 
 use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};

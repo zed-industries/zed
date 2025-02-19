@@ -1,7 +1,7 @@
 use adapters::latest_github_release;
 use dap::{adapters::TcpArguments, transport::TcpTransport};
 use gpui::AsyncApp;
-use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
+use std::{net::Ipv4Addr, path::PathBuf};
 
 use crate::*;
 

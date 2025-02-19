@@ -1,5 +1,5 @@
 use dap::{
-    client::{DebugAdapterClient, SessionId},
+    client::SessionId,
     debugger_settings::DebuggerSettings,
     transport::{IoKind, LogKind},
 };

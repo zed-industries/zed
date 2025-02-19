@@ -1,40 +1,23 @@
-use crate::{attach_modal::AttachModal, session::DebugSession};
+use crate::session::DebugSession;
 use anyhow::Result;
-use collections::{BTreeMap, HashMap};
 use command_palette_hooks::CommandPaletteFilter;
 use dap::{
-    client::SessionId,
-    debugger_settings::DebuggerSettings,
-    messages::{Events, Message},
-    requests::{Request, RunInTerminal, StartDebugging},
-    Capabilities, CapabilitiesEvent, ContinuedEvent, ErrorResponse, ExitedEvent, LoadedSourceEvent,
-    ModuleEvent, OutputEvent, RunInTerminalRequestArguments, RunInTerminalResponse, StoppedEvent,
-    TerminatedEvent, ThreadEvent, ThreadEventReason,
+    client::SessionId, debugger_settings::DebuggerSettings, ContinuedEvent, LoadedSourceEvent,
+    ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
 };
 use gpui::{
     actions, Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
     Focusable, Subscription, Task, WeakEntity,
 };
-use project::{
-    debugger::{
-        dap_store::{DapStore, DapStoreEvent},
-        session::ThreadId,
-    },
-    terminals::TerminalKind,
-    Project,
-};
-use rpc::proto::{self, UpdateDebugAdapter};
-use serde_json::Value;
+use project::Project;
+use rpc::proto::{self};
 use settings::Settings;
-use std::{any::TypeId, collections::VecDeque, path::PathBuf, u64};
-use task::DebugRequestType;
-use terminal_view::terminal_panel::TerminalPanel;
+use std::any::TypeId;
 use ui::prelude::*;
-use util::ResultExt as _;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    pane, Continue, Disconnect, Pane, Pause, Restart, Start, StepBack, StepInto, StepOut, StepOver,
-    Stop, ToggleIgnoreBreakpoints, Workspace,
+    pane, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto, StepOut, StepOver, Stop,
+    ToggleIgnoreBreakpoints, Workspace,
 };
 
 pub enum DebugPanelEvent {
