@@ -29,8 +29,8 @@ use gpui::{
 use http_client::{HttpClient, Method};
 use input_excerpt::excerpt_for_cursor_position;
 use language::{
-    Anchor, Buffer, BufferSnapshot, CharClassifier, CharKind, EditPreview, OffsetRangeExt,
-    ToOffset, ToPoint,
+    text_diff, Anchor, Buffer, BufferSnapshot, CharClassifier, CharKind, EditPreview,
+    OffsetRangeExt, ToOffset, ToPoint,
 };
 use language_models::LlmApiToken;
 use postage::watch;
@@ -941,47 +941,7 @@ and then another
             tokens
         }
 
-        let old_tokens = tokenize(&old_text);
-        let new_tokens = tokenize(new_text);
-
-        let diff = similar::TextDiffConfig::default()
-            .algorithm(similar::Algorithm::Patience)
-            .diff_slices(&old_tokens, &new_tokens);
-        let mut edits: Vec<(Range<usize>, String)> = Vec::new();
-        let mut old_start = offset;
-        for change in diff.iter_all_changes() {
-            let value = change.value();
-            match change.tag() {
-                similar::ChangeTag::Equal => {
-                    old_start += value.len();
-                }
-                similar::ChangeTag::Delete => {
-                    let old_end = old_start + value.len();
-                    if let Some((last_old_range, _)) = edits.last_mut() {
-                        if last_old_range.end == old_start {
-                            last_old_range.end = old_end;
-                        } else {
-                            edits.push((old_start..old_end, String::new()));
-                        }
-                    } else {
-                        edits.push((old_start..old_end, String::new()));
-                    }
-                    old_start = old_end;
-                }
-                similar::ChangeTag::Insert => {
-                    if let Some((last_old_range, last_new_text)) = edits.last_mut() {
-                        if last_old_range.end == old_start {
-                            last_new_text.push_str(value);
-                        } else {
-                            edits.push((old_start..old_start, value.into()));
-                        }
-                    } else {
-                        edits.push((old_start..old_start, value.into()));
-                    }
-                }
-            }
-        }
-
+        let edits = text_diff(&old_text, &new_text);
         edits
             .into_iter()
             .map(|(mut old_range, new_text)| {
