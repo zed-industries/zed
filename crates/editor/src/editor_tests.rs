@@ -21,17 +21,14 @@ use language::{
     BracketPairConfig,
     Capability::ReadWrite,
     FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName,
-    Override, ParsedMarkdown, Point,
+    Override, Point,
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use multi_buffer::IndentGuide;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
+use project::project_settings::{LspSettings, ProjectSettings};
 use project::FakeFs;
-use project::{
-    lsp_command::SIGNATURE_HELP_HIGHLIGHT_CURRENT,
-    project_settings::{LspSettings, ProjectSettings},
-};
 use serde_json::{self, json};
 use std::{cell::RefCell, future::Future, rc::Rc, time::Instant};
 use std::{
@@ -8118,12 +8115,10 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
 
     cx.editor(|editor, _, _| {
         let signature_help_state = editor.signature_help_state.popover().cloned();
-        assert!(signature_help_state.is_some());
-        let ParsedMarkdown {
-            text, highlights, ..
-        } = signature_help_state.unwrap().parsed_content;
-        assert_eq!(text, "param1: u8, param2: u8");
-        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
+        assert_eq!(
+            signature_help_state.unwrap().label,
+            "param1: u8, param2: u8"
+        );
     });
 }
 
@@ -8291,11 +8286,10 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui:
     cx.update_editor(|editor, _, _| {
         let signature_help_state = editor.signature_help_state.popover().cloned();
         assert!(signature_help_state.is_some());
-        let ParsedMarkdown {
-            text, highlights, ..
-        } = signature_help_state.unwrap().parsed_content;
-        assert_eq!(text, "param1: u8, param2: u8");
-        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
+        assert_eq!(
+            signature_help_state.unwrap().label,
+            "param1: u8, param2: u8"
+        );
         editor.signature_help_state = SignatureHelpState::default();
     });
 
@@ -8333,11 +8327,10 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui:
     cx.editor(|editor, _, _| {
         let signature_help_state = editor.signature_help_state.popover().cloned();
         assert!(signature_help_state.is_some());
-        let ParsedMarkdown {
-            text, highlights, ..
-        } = signature_help_state.unwrap().parsed_content;
-        assert_eq!(text, "param1: u8, param2: u8");
-        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
+        assert_eq!(
+            signature_help_state.unwrap().label,
+            "param1: u8, param2: u8"
+        );
     });
 }
 
@@ -8395,11 +8388,10 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
     cx.editor(|editor, _, _| {
         let signature_help_state = editor.signature_help_state.popover().cloned();
         assert!(signature_help_state.is_some());
-        let ParsedMarkdown {
-            text, highlights, ..
-        } = signature_help_state.unwrap().parsed_content;
-        assert_eq!(text, "param1: u8, param2: u8");
-        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
+        assert_eq!(
+            signature_help_state.unwrap().label,
+            "param1: u8, param2: u8"
+        );
     });
 
     // When exiting outside from inside the brackets, `signature_help` is closed.

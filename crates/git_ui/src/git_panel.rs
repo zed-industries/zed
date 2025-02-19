@@ -16,7 +16,7 @@ use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
 use git::{DiscardTrackedChanges, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::*;
 use itertools::Itertools;
-use language::{markdown, Buffer, File, ParsedMarkdown};
+use language::{Buffer, File};
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use multi_buffer::ExcerptInfo;
 use panel::{panel_editor_container, panel_editor_style, panel_filled_button, PanelHeader};
@@ -2380,30 +2380,13 @@ impl GitPanelMessageTooltip {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        let workspace = git_panel.read(cx).workspace.clone();
         cx.new(|cx| {
             cx.spawn_in(window, |this, mut cx| async move {
-                let language_registry = workspace.update(&mut cx, |workspace, _cx| {
-                    workspace.app_state().languages.clone()
-                })?;
-
                 let details = git_panel
                     .update(&mut cx, |git_panel, cx| {
                         git_panel.load_commit_details(&sha, cx)
                     })?
                     .await?;
-
-                let mut parsed_message = ParsedMarkdown::default();
-                markdown::parse_markdown_block(
-                    &details.message,
-                    Some(&language_registry),
-                    None,
-                    &mut parsed_message.text,
-                    &mut parsed_message.highlights,
-                    &mut parsed_message.region_ranges,
-                    &mut parsed_message.regions,
-                )
-                .await;
 
                 let commit_details = editor::commit_tooltip::CommitDetails {
                     sha: details.sha.clone(),
@@ -2412,19 +2395,13 @@ impl GitPanelMessageTooltip {
                     commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
                     message: Some(editor::commit_tooltip::ParsedCommitMessage {
                         message: details.message.clone(),
-                        parsed_message,
                         ..Default::default()
                     }),
                 };
 
                 this.update_in(&mut cx, |this: &mut GitPanelMessageTooltip, window, cx| {
-                    this.commit_tooltip = Some(cx.new(move |cx| {
-                        CommitTooltip::new(
-                            commit_details,
-                            panel_editor_style(true, window, cx),
-                            Some(workspace),
-                        )
-                    }));
+                    this.commit_tooltip =
+                        Some(cx.new(move |cx| CommitTooltip::new(commit_details, window, cx)));
                     cx.notify();
                 })
             })
