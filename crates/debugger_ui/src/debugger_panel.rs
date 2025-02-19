@@ -265,6 +265,7 @@ impl DebugPanel {
                 self.pane.update(cx, |pane, cx| {
                     pane.add_item(Box::new(session_item), true, true, None, window, cx);
                     window.focus(&pane.focus_handle(cx));
+                    cx.notify();
                 });
             }
             _ => {}

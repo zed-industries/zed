@@ -705,10 +705,6 @@ impl Session {
     }
 
     fn handle_stopped_event(&mut self, event: StoppedEvent, cx: &mut Context<Self>) {
-        // todo(debugger): We should see if we could only invalidate the thread that stopped
-        // instead of everything right now
-        self.invalidate(cx);
-
         // todo(debugger): We should query for all threads here if we don't get a thread id
         // maybe in both cases too?
         if event.all_threads_stopped.unwrap_or_default() {
@@ -718,6 +714,10 @@ impl Session {
         } else {
             // TODO(debugger): all threads should be stopped
         }
+
+        // todo(debugger): We should see if we could only invalidate the thread that stopped
+        // instead of everything right now.
+        self.invalidate(cx);
     }
 
     pub(crate) fn handle_dap_event(&mut self, event: Box<Events>, cx: &mut Context<Self>) {
@@ -851,6 +851,7 @@ impl Session {
         self.requests.remove(&key);
     }
 
+    /// This function should be called after changing state not before
     fn invalidate(&mut self, cx: &mut Context<Self>) {
         self.requests.clear();
         self.modules.clear();
@@ -887,7 +888,7 @@ impl Session {
     }
 
     pub fn modules(&mut self, cx: &mut Context<Self>) -> &[Module] {
-        if self.thread_states.any_thread_running() {
+        if !self.thread_states.any_thread_running() {
             self.fetch(
                 dap_command::ModulesCommand,
                 |this, result, cx| {
