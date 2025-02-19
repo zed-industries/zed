@@ -98,7 +98,9 @@ use inline_completion::{EditPredictionProvider, InlineCompletionProviderHandle};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
-    language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
+    language_settings::{
+        self, all_language_settings, language_settings, InlayHintSettings, RewrapBehavior,
+    },
     point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CursorShape, Diagnostic, DiskState, EditPredictionsMode, EditPreview, HighlightedText,
     IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
@@ -7061,10 +7063,10 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let selections = self.selections.all(cx).into_iter().map(|s| s.range());
-        self.discard_hunks_in_ranges(selections, window, cx);
+        self.revert_hunks_in_ranges(selections, window, cx);
     }
 
-    fn discard_hunks_in_ranges(
+    fn revert_hunks_in_ranges(
         &mut self,
         ranges: impl Iterator<Item = Range<Point>>,
         window: &mut Window,
@@ -7751,17 +7753,6 @@ impl Editor {
                 continue;
             }
 
-            let mut should_rewrap = is_vim_mode == IsVimMode::Yes;
-
-            if let Some(language_scope) = buffer.language_scope_at(selection.head()) {
-                match language_scope.language_name().as_ref() {
-                    "Markdown" | "Plain Text" => {
-                        should_rewrap = true;
-                    }
-                    _ => {}
-                }
-            }
-
             let tab_size = buffer.settings_at(selection.head(), cx).tab_size;
 
             // Since not all lines in the selection may be at the same indent
@@ -7792,6 +7783,7 @@ impl Editor {
 
             let mut line_prefix = indent_size.chars().collect::<String>();
 
+            let mut inside_comment = false;
             if let Some(comment_prefix) =
                 buffer
                     .language_scope_at(selection.head())
@@ -7804,9 +7796,17 @@ impl Editor {
                     })
             {
                 line_prefix.push_str(&comment_prefix);
-                should_rewrap = true;
+                inside_comment = true;
             }
 
+            let language_settings = buffer.settings_at(selection.head(), cx);
+            let allow_rewrap_based_on_language = match language_settings.allow_rewrap {
+                RewrapBehavior::InComments => inside_comment,
+                RewrapBehavior::InSelections => !selection.is_empty(),
+                RewrapBehavior::Anywhere => true,
+            };
+
+            let should_rewrap = is_vim_mode == IsVimMode::Yes || allow_rewrap_based_on_language;
             if !should_rewrap {
                 continue;
             }
