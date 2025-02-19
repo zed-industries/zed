@@ -4801,10 +4801,8 @@ impl Editor {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     Some(cx.background_spawn(async move {
                         let mut ranges = Vec::new();
-                        let buffer_ranges =
-                            vec![buffer.anchor_before(0)..buffer.anchor_after(buffer.len())];
                         let query = buffer.text_for_range(selection.range()).collect::<String>();
-                        for range in buffer_ranges {
+                        for range in [buffer.anchor_before(0)..buffer.anchor_after(buffer.len())] {
                             for (search_buffer, search_range, excerpt_id) in
                                 buffer.range_to_buffer_ranges(range)
                             {
