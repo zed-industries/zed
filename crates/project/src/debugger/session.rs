@@ -222,8 +222,9 @@ impl LocalMode {
                             .ok();
                     }
                 }
-                Message::Response(response) => {}
+
                 Message::Request(request) => todo!(),
+                _ => {}
             });
             let client = Arc::new(
                 DebugAdapterClient::start(session_id, binary, message_handler, cx.clone()).await?,
@@ -240,12 +241,22 @@ impl LocalMode {
 
             let raw = adapter.request_args(&disposition);
 
-            let launch = this
-                .request(Launch { raw }, cx.background_executor().clone())
-                .await?;
-            let _ = initialized_rx.await?;
-            this.request(ConfigurationDone, cx.background_executor().clone())
-                .await?;
+            // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
+            let launch = this.request(Launch { raw }, cx.background_executor().clone());
+            let that = this.clone();
+            let configuration_sequence = async move {
+                let _ = initialized_rx.await?;
+                if capabilities
+                    .supports_configuration_done_request
+                    .unwrap_or_default()
+                {
+                    that.request(ConfigurationDone, cx.background_executor().clone())
+                        .await?;
+                }
+
+                anyhow::Result::<_, anyhow::Error>::Ok(())
+            };
+            let _ = futures::future::join(configuration_sequence, launch).await;
 
             Ok((this, capabilities))
         })
