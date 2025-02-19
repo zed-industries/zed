@@ -168,12 +168,29 @@ struct LocalMode {
 enum ReverseRequest {
     RunInTerminal(),
 }
+
+fn client_source(abs_path: &Path) -> dap::Source {
+    dap::Source {
+        name: abs_path
+            .file_name()
+            .map(|filename| filename.to_string_lossy().to_string()),
+        path: Some(abs_path.to_string_lossy().to_string()),
+        source_reference: None,
+        presentation_hint: None,
+        origin: None,
+        sources: None,
+        adapter_data: None,
+        checksums: None,
+    }
+}
+
 impl LocalMode {
     fn new(
         session_id: SessionId,
+        breakpoints: Entity<BreakpointStore>,
         disposition: DebugAdapterConfig,
         delegate: DapAdapterDelegate,
-        cx: AsyncApp,
+        mut cx: AsyncApp,
     ) -> Task<Result<(Self, Capabilities)>> {
         cx.spawn(move |mut cx| async move {
             let adapter = build_adapter(&disposition.kind).await?;
@@ -247,8 +264,29 @@ impl LocalMode {
             // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
             let launch = this.request(Launch { raw }, cx.background_executor().clone());
             let that = this.clone();
+            let breakpoints =
+                breakpoints.update(&mut cx, |this, cx| this.all_breakpoints(true, cx))?;
+
             let configuration_sequence = async move {
                 let _ = initialized_rx.await?;
+
+                let mut breakpoint_tasks = Vec::new();
+                for (path, breakpoints) in breakpoints {
+                    breakpoint_tasks.push(
+                        that.request(
+                            dap_command::SetBreakpoints {
+                                source: client_source(&path),
+                                breakpoints: breakpoints
+                                    .iter()
+                                    .map(|breakpoint| breakpoint.to_source_breakpoint())
+                                    .collect(),
+                            },
+                            cx.background_executor().clone(),
+                        ),
+                    );
+                }
+                let _ = futures::future::join_all(breakpoint_tasks).await;
+
                 if capabilities
                     .supports_configuration_done_request
                     .unwrap_or_default()
@@ -418,9 +456,9 @@ impl Session {
         cx.spawn(move |mut cx| async move {
             let (mode, capabilities) = LocalMode::new(
                 session_id,
+                breakpoints.clone(),
                 config.clone(),
                 delegate,
-                // message_handler,
                 cx.clone(),
             )
             .await?;

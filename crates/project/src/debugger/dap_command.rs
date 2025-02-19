@@ -6,12 +6,15 @@ use dap::{
     proto_conversions::ProtoConversion,
     requests::{Continue, Next},
     Capabilities, ContinueArguments, InitializeRequestArguments,
-    InitializeRequestArgumentsPathFormat, NextArguments, SetVariableResponse, StepInArguments,
-    StepOutArguments, SteppingGranularity, ValueFormat, Variable, VariablesArgumentsFilter,
+    InitializeRequestArgumentsPathFormat, NextArguments, SetVariableResponse, SourceBreakpoint,
+    StepInArguments, StepOutArguments, SteppingGranularity, ValueFormat, Variable,
+    VariablesArgumentsFilter,
 };
 use rpc::proto;
 use serde_json::Value;
 use util::ResultExt;
+
+use super::breakpoint_store::SerializedBreakpoint;
 pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     type Response: 'static + Send + std::fmt::Debug;
     type DapRequest: 'static + Send + dap::requests::Request;
@@ -1639,5 +1642,32 @@ impl LocalDapCommand for Launch {
         message: <Self::DapRequest as dap::requests::Request>::Response,
     ) -> Result<Self::Response> {
         Ok(message)
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub(super) struct SetBreakpoints {
+    pub(super) source: dap::Source,
+    pub(super) breakpoints: Vec<SourceBreakpoint>,
+}
+
+impl LocalDapCommand for SetBreakpoints {
+    type Response = Vec<dap::Breakpoint>;
+    type DapRequest = dap::requests::SetBreakpoints;
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::SetBreakpointsArguments {
+            lines: None,
+            source_modified: None,
+            source: self.source.clone(),
+            breakpoints: Some(self.breakpoints.clone()),
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message.breakpoints)
     }
 }
