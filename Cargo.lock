@@ -6960,14 +6960,13 @@ dependencies = [
 name = "language_model_selector"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "feature_flags",
  "gpui",
  "language_model",
+ "log",
  "picker",
  "proto",
  "ui",
- "util",
  "workspace",
  "zed_actions",
 ]

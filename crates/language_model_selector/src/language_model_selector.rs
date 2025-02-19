@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
-use anyhow::Context as _;
 use feature_flags::ZedPro;
 use gpui::{
     Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Subscription, Task, WeakEntity,
 };
-use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
+use language_model::{
+    AuthenticateError, LanguageModel, LanguageModelAvailability, LanguageModelRegistry,
+};
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
-use util::ResultExt as _;
 use workspace::ShowConfiguration;
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
@@ -94,12 +94,19 @@ impl LanguageModelSelector {
 
         cx.spawn(|_cx| async move {
             for (provider_name, authenticate_task) in authenticate_all_providers {
-                authenticate_task
-                    .await
-                    .with_context(|| {
-                        format!("Failed to authenticate provider: {}", provider_name.0)
-                    })
-                    .log_err();
+                if let Err(err) = authenticate_task.await {
+                    if matches!(err, AuthenticateError::CredentialsNotFound) {
+                        // Since we're authenticating these providers in the
+                        // background for the purposes of populating the
+                        // language selector, we don't care about providers
+                        // where the credentials are not found.
+                    } else {
+                        log::error!(
+                            "Failed to authenticate provider: {}: {err}",
+                            provider_name.0
+                        );
+                    }
+                }
             }
         })
     }
