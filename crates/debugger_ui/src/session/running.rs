@@ -42,7 +42,11 @@ pub struct RunningState {
 
 impl Render for RunningState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let thread_status = ThreadStatus::Running;
+        let thread_status = self
+            .thread_id
+            .map(|thread_id| self.session.read(cx).thread_status(thread_id))
+            .unwrap_or(ThreadStatus::Exited);
+
         let active_thread_item = &self.active_thread_item;
 
         let threads = self.session.update(cx, |this, cx| this.threads(cx));

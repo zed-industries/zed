@@ -861,6 +861,10 @@ impl Session {
         cx.notify();
     }
 
+    pub fn thread_status(&self, thread_id: ThreadId) -> ThreadStatus {
+        self.thread_states.thread_status(thread_id)
+    }
+
     pub fn threads(&mut self, cx: &mut Context<Self>) -> Vec<(dap::Thread, ThreadStatus)> {
         self.fetch(
             dap_command::ThreadsCommand,
