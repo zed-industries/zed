@@ -917,8 +917,8 @@ mod tests {
             vec![
                 (Path::new("test_dirs"), false),
                 (Path::new("test_dirs/File-1.txt"), true),
-                (Path::new("test_dirs/File-2.txt"), true),
                 (Path::new("test_dirs/file-10.txt"), true),
+                (Path::new("test_dirs/File-2.txt"), true),
                 (Path::new("test_dirs/file-20.txt"), true),
             ]
         );
@@ -931,8 +931,8 @@ mod tests {
             vec![
                 (Path::new("test_dirs"), false),
                 (Path::new("test_dirs/File-1.txt"), true),
-                (Path::new("test_dirs/file-10.txt"), true),
                 (Path::new("test_dirs/File-2.txt"), true),
+                (Path::new("test_dirs/file-10.txt"), true),
                 (Path::new("test_dirs/file-20.txt"), true),
             ]
         );
