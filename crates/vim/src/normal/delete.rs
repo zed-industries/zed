@@ -1,4 +1,4 @@
-use crate::{motion::Motion, object::Object, state::Mode, Vim};
+use crate::{motion::Motion, object::Object, Vim};
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
