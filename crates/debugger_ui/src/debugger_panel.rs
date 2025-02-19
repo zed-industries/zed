@@ -71,6 +71,7 @@ impl DebugPanel {
     ) -> Entity<Self> {
         cx.new(|cx| {
             let project = workspace.project().clone();
+            let weak_workspace = workspace.weak_handle();
             let pane = cx.new(|cx| {
                 let mut pane = Pane::new(
                     workspace.weak_handle(),
@@ -88,8 +89,10 @@ impl DebugPanel {
                 pane.set_close_pane_if_empty(true, cx);
                 pane.set_render_tab_bar_buttons(cx, {
                     let project = project.clone();
+                    let weak_workspace = weak_workspace.clone();
                     move |_, _, cx| {
                         let project = project.clone();
+                        let weak_workspace = weak_workspace.clone();
                         (
                             None,
                             Some(
@@ -101,6 +104,8 @@ impl DebugPanel {
                                                 pane.add_item(
                                                     Box::new(DebugSession::inert(
                                                         project.clone(),
+                                                        weak_workspace.clone(),
+                                                        window,
                                                         cx,
                                                     )),
                                                     false,
@@ -117,7 +122,12 @@ impl DebugPanel {
                     }
                 });
                 pane.add_item(
-                    Box::new(DebugSession::inert(project.clone(), cx)),
+                    Box::new(DebugSession::inert(
+                        project.clone(),
+                        weak_workspace.clone(),
+                        window,
+                        cx,
+                    )),
                     false,
                     false,
                     None,
@@ -341,7 +351,12 @@ impl Panel for DebugPanel {
             // todo: We need to revisit it when we start adding stopped items to pane (as that'll cause us to add two items).
             self.pane.update(cx, |this, cx| {
                 this.add_item(
-                    Box::new(DebugSession::inert(project, cx)),
+                    Box::new(DebugSession::inert(
+                        project,
+                        self.workspace.clone(),
+                        window,
+                        cx,
+                    )),
                     false,
                     false,
                     None,

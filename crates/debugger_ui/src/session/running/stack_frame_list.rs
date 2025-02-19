@@ -42,7 +42,6 @@ impl StackFrameList {
         workspace: WeakEntity<Workspace>,
         session: Entity<Session>,
         thread_id: ThreadId,
-        _window: &Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let weak_entity = cx.weak_entity();

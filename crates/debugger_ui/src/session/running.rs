@@ -319,18 +319,15 @@ impl RunningState {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         session: Entity<Session>,
-        session_id: SessionId,
         thread_id: ThreadId,
-        debug_panel: &Entity<DebugPanel>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-
-        let stack_frame_list = cx.new(|cx| {
-            StackFrameList::new(workspace.clone(), session.clone(), thread_id, window, cx)
-        });
+        let session_id = session.read(cx).session_id();
+        let stack_frame_list =
+            cx.new(|cx| StackFrameList::new(workspace.clone(), session.clone(), thread_id, cx));
 
         let variable_list =
             cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));
@@ -418,10 +415,6 @@ impl RunningState {
 
     pub fn session_id(&self) -> SessionId {
         self.session_id
-    }
-
-    pub fn thread_id(&self) -> ThreadId {
-        self.thread_id
     }
 
     #[cfg(any(test, feature = "test-support"))]

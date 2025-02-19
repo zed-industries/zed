@@ -165,6 +165,9 @@ struct LocalMode {
     client: Arc<DebugAdapterClient>,
 }
 
+enum ReverseRequest {
+    RunInTerminal(),
+}
 impl LocalMode {
     fn new(
         session_id: SessionId,
@@ -459,6 +462,10 @@ impl Session {
             threads: IndexMap::default(),
             config: todo!(),
         }
+    }
+
+    pub fn session_id(&self) -> SessionId {
+        self.id
     }
 
     pub fn capabilities(&self) -> &Capabilities {
