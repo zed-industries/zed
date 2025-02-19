@@ -210,8 +210,8 @@
   //
   // 1. Only allow rewrapping in comments:
   //    "in_comments"
-  // 2. Only allow rewrapping in the current selection:
-  //    "in_selection"
+  // 2. Only allow rewrapping in the current selection(s):
+  //    "in_selections"
   // 3. Allow rewrapping anywhere:
   //    "anywhere"
   //

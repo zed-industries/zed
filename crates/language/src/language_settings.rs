@@ -448,7 +448,7 @@ pub enum RewrapBehavior {
     #[default]
     InComments,
     /// Only rewrap within the current selection(s).
-    InSelection,
+    InSelections,
     /// Allow rewrapping anywhere.
     Anywhere,
 }

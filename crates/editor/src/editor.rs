@@ -7795,7 +7795,7 @@ impl Editor {
             let language_settings = buffer.settings_at(selection.head(), cx);
             let allow_rewrap_based_on_language = match language_settings.allow_rewrap {
                 RewrapBehavior::InComments => inside_comment,
-                RewrapBehavior::InSelection => !selection.is_empty(),
+                RewrapBehavior::InSelections => !selection.is_empty(),
                 RewrapBehavior::Anywhere => true,
             };
 
