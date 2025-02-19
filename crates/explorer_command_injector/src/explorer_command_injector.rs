@@ -6,12 +6,14 @@ use windows::{
     core::implement,
     Win32::{
         Foundation::{
-            GetLastError, BOOL, ERROR_INSUFFICIENT_BUFFER, E_FAIL, E_INVALIDARG, E_NOTIMPL,
-            HINSTANCE, MAX_PATH,
+            GetLastError, BOOL, CLASS_E_CLASSNOTAVAILABLE, ERROR_INSUFFICIENT_BUFFER, E_FAIL,
+            E_INVALIDARG, E_NOTIMPL, HINSTANCE, MAX_PATH,
         },
         Globalization::u_strlen,
         System::{
-            Com::IBindCtx, LibraryLoader::GetModuleFileNameW, SystemServices::DLL_PROCESS_ATTACH,
+            Com::{IBindCtx, IClassFactory, IClassFactory_Impl},
+            LibraryLoader::GetModuleFileNameW,
+            SystemServices::DLL_PROCESS_ATTACH,
         },
         UI::Shell::{
             IEnumExplorerCommand, IExplorerCommand, IExplorerCommand_Impl, IShellItemArray,
@@ -19,7 +21,7 @@ use windows::{
         },
     },
 };
-use windows_core::{GUID, HSTRING};
+use windows_core::{Interface, GUID, HRESULT, HSTRING};
 
 static mut DLL_INSTANCE: HINSTANCE = HINSTANCE(std::ptr::null_mut());
 
@@ -95,6 +97,64 @@ impl IExplorerCommand_Impl for ContextMenuHandler_Impl {
 
     fn EnumSubCommands(&self) -> windows_core::Result<IEnumExplorerCommand> {
         Err(E_NOTIMPL.into())
+    }
+}
+
+#[implement(IClassFactory)]
+struct CClassFactory;
+
+impl IClassFactory_Impl for CClassFactory_Impl {
+    fn CreateInstance(
+        &self,
+        punkouter: Option<&windows_core::IUnknown>,
+        riid: *const windows_core::GUID,
+        ppvobject: *mut *mut core::ffi::c_void,
+    ) -> windows_core::Result<()> {
+        unsafe {
+            *ppvobject = std::ptr::null_mut();
+        }
+        if punkouter.is_none() {
+            let factory: IExplorerCommand = ContextMenuHandler {}.into();
+            let ret = unsafe { factory.query(riid, ppvobject).ok() };
+            if ret.is_ok() {
+                unsafe {
+                    *ppvobject = factory.into_raw();
+                }
+            }
+            ret
+        } else {
+            Err(E_INVALIDARG.into())
+        }
+    }
+
+    fn LockServer(&self, _: BOOL) -> windows_core::Result<()> {
+        Ok(())
+    }
+}
+
+const MODULE_ID: GUID = GUID::from_u128(0xF5EA5883_1DA8_4A05_864A_D5DE2D2B2854);
+
+#[no_mangle]
+extern "system" fn DllGetClassObject(
+    class_id: *const GUID,
+    iid: *const GUID,
+    out: *mut *mut std::ffi::c_void,
+) -> HRESULT {
+    unsafe {
+        *out = std::ptr::null_mut();
+    }
+    let class_id = unsafe { *class_id };
+    if class_id == MODULE_ID {
+        let instance: IClassFactory = CClassFactory {}.into();
+        let ret = unsafe { instance.query(iid, out) };
+        if ret.is_ok() {
+            unsafe {
+                *out = instance.into_raw();
+            }
+        }
+        ret
+    } else {
+        CLASS_E_CLASSNOTAVAILABLE
     }
 }
 
