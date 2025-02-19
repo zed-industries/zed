@@ -1,6 +1,6 @@
 use crate::project_settings::ProjectSettings;
 
-use super::breakpoint_store::{self, BreakpointStore};
+use super::breakpoint_store::{self, BreakpointStore, BreakpointStoreEvent};
 use super::dap_command::{
     self, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand,
     Initialize, Launch, LocalDapCommand, NextCommand, PauseCommand, RestartCommand,
@@ -425,17 +425,22 @@ impl Session {
             )
             .await?;
 
-            cx.new(|_| Self {
-                mode: Mode::Local(mode),
-                id: session_id,
-                breakpoint_store: breakpoints,
-                config,
-                capabilities,
-                ignore_breakpoints: false,
-                requests: HashMap::default(),
-                modules: Vec::default(),
-                loaded_sources: Vec::default(),
-                threads: IndexMap::default(),
+            cx.new(|cx| {
+                cx.subscribe(&breakpoints, Self::send_changed_breakpoints)
+                    .detach();
+
+                Self {
+                    mode: Mode::Local(mode),
+                    id: session_id,
+                    breakpoint_store: breakpoints,
+                    config,
+                    capabilities,
+                    ignore_breakpoints: false,
+                    requests: HashMap::default(),
+                    modules: Vec::default(),
+                    loaded_sources: Vec::default(),
+                    threads: IndexMap::default(),
+                }
             })
         })
     }
@@ -473,6 +478,41 @@ impl Session {
     }
     pub fn configuration(&self) -> DebugAdapterConfig {
         self.config.clone()
+    }
+
+    fn send_changed_breakpoints(
+        &mut self,
+        _breakpoint_store: Entity<BreakpointStore>,
+        event: &BreakpointStoreEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let BreakpointStoreEvent::BreakpointsChanged {
+            project_path,
+            source_changed,
+        } = event;
+
+        // We still want to send an empty list of breakpoints to tell the dap server that there are no breakpoints
+        let Some((abs_path, breakpoints)) = self
+            .breakpoint_store
+            .read(cx)
+            .serialize_breakpoints_for_project_path(project_path, cx)
+        else {
+            return;
+        };
+
+        let source_breakpoints = breakpoints
+            .iter()
+            .map(|bp| bp.to_source_breakpoint())
+            .collect::<Vec<_>>();
+
+        self.send_breakpoints(
+            abs_path,
+            source_breakpoints,
+            self.ignore_breakpoints,
+            *source_changed,
+            cx,
+        )
+        .detach_and_log_err(cx);
     }
 
     fn send_initial_breakpoints(&self, cx: &App) -> Task<()> {

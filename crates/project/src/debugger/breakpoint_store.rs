@@ -424,7 +424,7 @@ impl BreakpointStore {
         })
     }
 
-    fn serialize_breakpoints_for_project_path(
+    pub(crate) fn serialize_breakpoints_for_project_path(
         &self,
         project_path: &ProjectPath,
         cx: &App,
