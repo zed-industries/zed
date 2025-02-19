@@ -1,5 +1,4 @@
 #![allow(missing_docs)]
-
 use gpui::{relative, CursorStyle, DefiniteLength, MouseButton};
 use gpui::{transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
 use smallvec::SmallVec;
@@ -115,7 +114,7 @@ impl From<ButtonStyle> for Color {
 }
 
 /// The visual appearance of a button.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Default)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ButtonStyle {
     /// A filled button with a solid background color. Provides emphasis versus
     /// the more common subtle button.
@@ -134,9 +133,6 @@ pub enum ButtonStyle {
     ///
     /// TODO: Better docs for this.
     Transparent,
-
-    /// When this is `active`, highlight the border and apply inner style.
-    HighlightBorder(Box<Self>),
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -157,22 +153,6 @@ pub(crate) struct ButtonLikeStyles {
     pub icon_color: Hsla,
 }
 
-impl ButtonLikeStyles {
-    pub fn default_with(cx: &mut App) -> Self {
-        Self {
-            background: Color::Default.color(cx),
-            border_color: Color::Default.color(cx),
-            label_color: Color::Default.color(cx),
-            icon_color: Color::Default.color(cx),
-        }
-    }
-
-    pub fn with_border_color(mut self, border_color: Hsla) -> Self {
-        self.border_color = border_color;
-        self
-    }
-}
-
 fn element_bg_from_elevation(elevation: Option<ElevationIndex>, cx: &mut App) -> Hsla {
     match elevation {
         Some(ElevationIndex::Background) => cx.theme().colors().element_background,
@@ -185,44 +165,50 @@ fn element_bg_from_elevation(elevation: Option<ElevationIndex>, cx: &mut App) ->
 
 impl ButtonStyle {
     pub(crate) fn enabled(
-        &self,
+        self,
         elevation: Option<ElevationIndex>,
+
         cx: &mut App,
     ) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: element_bg_from_elevation(elevation, cx),
                 border_color: transparent_black(),
-                ..ButtonLikeStyles::default_with(cx)
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Tinted(tint) => tint.button_like_style(cx),
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_background,
                 border_color: transparent_black(),
-                ..ButtonLikeStyles::default_with(cx)
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Transparent => ButtonLikeStyles {
                 background: transparent_black(),
                 border_color: transparent_black(),
-                ..ButtonLikeStyles::default_with(cx)
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
-            ButtonStyle::HighlightBorder(inner) => inner.enabled(elevation, cx),
         }
     }
 
     pub(crate) fn hovered(
-        &self,
+        self,
         elevation: Option<ElevationIndex>,
+
         cx: &mut App,
     ) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => {
                 let mut filled_background = element_bg_from_elevation(elevation, cx);
                 filled_background.fade_out(0.92);
+
                 ButtonLikeStyles {
                     background: filled_background,
                     border_color: transparent_black(),
-                    ..ButtonLikeStyles::default_with(cx)
+                    label_color: Color::Default.color(cx),
+                    icon_color: Color::Default.color(cx),
                 }
             }
             ButtonStyle::Tinted(tint) => {
@@ -234,7 +220,8 @@ impl ButtonStyle {
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_hover,
                 border_color: transparent_black(),
-                ..ButtonLikeStyles::default_with(cx)
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Transparent => ButtonLikeStyles {
                 background: transparent_black(),
@@ -244,48 +231,50 @@ impl ButtonStyle {
                 // TODO: These are not great
                 icon_color: Color::Muted.color(cx),
             },
-            ButtonStyle::HighlightBorder(inner) => inner.hovered(elevation, cx),
         }
     }
 
-    pub(crate) fn active(&self, cx: &mut App) -> ButtonLikeStyles {
+    pub(crate) fn active(self, cx: &mut App) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_active,
                 border_color: transparent_black(),
-                ..ButtonLikeStyles::default_with(cx)
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Tinted(tint) => tint.button_like_style(cx),
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_active,
                 border_color: transparent_black(),
-                ..ButtonLikeStyles::default_with(cx)
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Transparent => ButtonLikeStyles {
                 background: transparent_black(),
                 border_color: transparent_black(),
-                label_color: Color::Muted.color(cx), // TODO: These are not great
-                icon_color: Color::Muted.color(cx),  // TODO: These are not great
+                // TODO: These are not great
+                label_color: Color::Muted.color(cx),
+                // TODO: These are not great
+                icon_color: Color::Muted.color(cx),
             },
-            ButtonStyle::HighlightBorder(inner) => inner
-                .active(cx)
-                .with_border_color(cx.theme().colors().editor_foreground),
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn focused(&self, cx: &mut App) -> ButtonLikeStyles {
+    #[allow(unused)]
+    pub(crate) fn focused(self, window: &mut Window, cx: &mut App) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_background,
                 border_color: cx.theme().colors().border_focused,
-                ..ButtonLikeStyles::default_with(cx)
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Tinted(tint) => tint.button_like_style(cx),
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_background,
                 border_color: cx.theme().colors().border_focused,
-                ..ButtonLikeStyles::default_with(cx)
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
             },
             ButtonStyle::Transparent => ButtonLikeStyles {
                 background: transparent_black(),
@@ -293,12 +282,16 @@ impl ButtonStyle {
                 label_color: Color::Accent.color(cx),
                 icon_color: Color::Accent.color(cx),
             },
-            ButtonStyle::HighlightBorder(inner) => inner.focused(cx),
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn disabled(&self, cx: &mut App) -> ButtonLikeStyles {
+    #[allow(unused)]
+    pub(crate) fn disabled(
+        self,
+        elevation: Option<ElevationIndex>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_disabled,
@@ -319,7 +312,6 @@ impl ButtonStyle {
                 label_color: Color::Disabled.color(cx),
                 icon_color: Color::Disabled.color(cx),
             },
-            ButtonStyle::HighlightBorder(style) => style.disabled(cx),
         }
     }
 }
@@ -362,8 +354,7 @@ pub struct ButtonLike {
     pub(super) selected_style: Option<ButtonStyle>,
     pub(super) width: Option<DefiniteLength>,
     pub(super) height: Option<DefiniteLength>,
-    bordered: bool,
-    layer: Option<ElevationIndex>,
+    pub(super) layer: Option<ElevationIndex>,
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
@@ -383,24 +374,18 @@ impl ButtonLike {
             selected_style: None,
             width: None,
             height: None,
-            layer: None,
-            bordered: false,
             size: ButtonSize::Default,
             rounding: Some(ButtonLikeRounding::All),
             tooltip: None,
             children: SmallVec::new(),
             cursor_style: CursorStyle::PointingHand,
             on_click: None,
+            layer: None,
         }
     }
 
     pub fn new_rounded_left(id: impl Into<ElementId>) -> Self {
         Self::new(id).rounding(ButtonLikeRounding::Left)
-    }
-
-    pub fn bordered(mut self) -> Self {
-        self.bordered = true;
-        self
     }
 
     pub fn new_rounded_right(id: impl Into<ElementId>) -> Self {
@@ -538,11 +523,6 @@ impl RenderOnce for ButtonLike {
                 ButtonSize::None => this,
             })
             .bg(style.enabled(self.layer, cx).background)
-            .when(self.bordered, |this| this.border_1())
-            .when(self.selected, |this| {
-                let active = style.active(cx);
-                this.bg(active.background).border_color(active.border_color)
-            })
             .when(self.disabled, |this| this.cursor_not_allowed())
             .when(!self.disabled, |this| {
                 this.cursor_pointer()
