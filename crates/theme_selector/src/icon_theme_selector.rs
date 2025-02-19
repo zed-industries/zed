@@ -277,28 +277,33 @@ impl PickerDelegate for IconThemeSelectorDelegate {
 
     fn render_footer(
         &self,
-        _: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
         Some(
             h_flex()
-                .w_full()
                 .p_2()
+                .w_full()
+                .justify_between()
                 .gap_2()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
-                .child(Button::new("docs", "Icon Theme Docs").on_click(cx.listener(
-                    |_, _, _, cx| {
-                        cx.open_url("https://zed.dev/docs/themes");
-                    },
-                )))
-                .child(div().flex_grow())
                 .child(
-                    Button::new("more-themes", "Install Icon Themes").on_click(cx.listener({
-                        move |_, _, window, cx| {
+                    Button::new("docs", "View Icon Theme Docs")
+                        .icon(IconName::ArrowUpRight)
+                        .icon_position(IconPosition::End)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .on_click(|_event, _window, cx| {
+                            cx.open_url("https://zed.dev/docs/icon-themes");
+                        }),
+                )
+                .child(
+                    Button::new("more-iconthemes", "Install Icon Themes").on_click(
+                        move |_event, window, cx| {
                             window.dispatch_action(Box::new(Extensions), cx);
-                        }
-                    })),
+                        },
+                    ),
                 )
                 .into_any_element(),
         )
