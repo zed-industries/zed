@@ -481,11 +481,12 @@ impl DapStore {
             if let Some(session) = this.session_by_id(&session_id) {
                 session.update(cx, |session, cx| {
                     session.set_ignore_breakpoints(envelope.payload.ignore, cx)
-                });
+                })
+            } else {
+                Task::ready(Ok(()))
             }
-        })?;
-
-        Ok(())
+        })?
+        .await
     }
 
     pub fn new_session(
