@@ -204,6 +204,7 @@
   // Otherwise(when `true`), the closing characters are always skipped over and auto-removed
   // no matter how they were inserted.
   "always_treat_brackets_as_autoclosed": false,
+  "allow_rewrap": "in_comments",
   // Controls whether edit predictions are shown immediately (true)
   // or manually by triggering `editor::ShowEditPrediction` (false).
   "show_edit_predictions": true,
@@ -716,15 +717,6 @@
   // The column at which to soft-wrap lines, for buffers where soft-wrap
   // is enabled.
   "preferred_line_length": 80,
-  // Whether to allow `editor::Rewrap` to rewrap anywhere, not just in comments or textual languages
-  // (Markdown, Plain Text).
-  //
-  // The default rewrap behavior is intended to prevent rewrapping code in such a way that it
-  // becomes syntactically invalid. Enabling this will remove that safeguard, so only enable it if
-  // you are okay with that behavior.
-  //
-  // Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
-  "rewrap_anywhere": false,
   // Whether to indent lines using tab characters, as opposed to multiple
   // spaces.
   "hard_tabs": false,
@@ -1112,6 +1104,7 @@
     "Markdown": {
       "format_on_save": "off",
       "use_on_type_format": false,
+      "allow_rewrap": "anywhere",
       "prettier": {
         "allowed": true
       }
@@ -1123,6 +1116,9 @@
         "plugins": ["@prettier/plugin-php"],
         "parser": "php"
       }
+    },
+    "Plain Text": {
+      "allow_rewrap": "anywhere"
     },
     "Ruby": {
       "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "..."]
