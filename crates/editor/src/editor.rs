@@ -4782,6 +4782,15 @@ impl Editor {
             self.clear_background_highlights::<SelectedTextHighlight>(cx);
             return;
         }
+        if self.selections.count() != 1 || self.selections.line_mode {
+            self.clear_background_highlights::<SelectedTextHighlight>(cx);
+            return;
+        }
+        let selection = self.selections.newest::<Point>(cx);
+        if selection.is_empty() || selection.start.row != selection.end.row {
+            self.clear_background_highlights::<SelectedTextHighlight>(cx);
+            return;
+        }
         let debounce = EditorSettings::get_global(cx).selection_highlight_debounce;
         self.selection_highlight_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
             cx.background_executor()
@@ -4802,6 +4811,7 @@ impl Editor {
                     Some(cx.background_spawn(async move {
                         let mut ranges = Vec::new();
                         let query = buffer.text_for_range(selection.range()).collect::<String>();
+                        let selection_anchors = selection.range().to_anchors(&buffer);
                         for range in [buffer.anchor_before(0)..buffer.anchor_after(buffer.len())] {
                             for (search_buffer, search_range, excerpt_id) in
                                 buffer.range_to_buffer_ranges(range)
@@ -4820,17 +4830,22 @@ impl Editor {
                                     .search(search_buffer, Some(search_range.clone()))
                                     .await
                                     .into_iter()
-                                    .map(|match_range| {
-                                        let start = search_buffer
-                                            .anchor_after(search_range.start + match_range.start);
-                                        let end = search_buffer
-                                            .anchor_before(search_range.start + match_range.end);
-                                        Anchor::range_in_buffer(
-                                            excerpt_id,
-                                            search_buffer.remote_id(),
-                                            start..end,
-                                        )
-                                    }),
+                                    .filter_map(
+                                        |match_range| {
+                                            let start = search_buffer.anchor_after(
+                                                search_range.start + match_range.start,
+                                            );
+                                            let end = search_buffer.anchor_before(
+                                                search_range.start + match_range.end,
+                                            );
+                                            let range = Anchor::range_in_buffer(
+                                                excerpt_id,
+                                                search_buffer.remote_id(),
+                                                start..end,
+                                            );
+                                            (range != selection_anchors).then_some(range)
+                                        },
+                                    ),
                                 );
                             }
                         }
