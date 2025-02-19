@@ -393,6 +393,7 @@ impl LanguageServer {
         Ok(server)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new_internal<Stdin, Stdout, Stderr, F>(
         server_id: LanguageServerId,
         server_name: LanguageServerName,
