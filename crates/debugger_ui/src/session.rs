@@ -135,15 +135,8 @@ impl DebugSession {
             return;
         };
 
-        let mode = cx.new(|cx| {
-            RunningState::new(
-                session.clone(),
-                ThreadId(1),
-                self.workspace.clone(),
-                window,
-                cx,
-            )
-        });
+        let mode =
+            cx.new(|cx| RunningState::new(session.clone(), self.workspace.clone(), window, cx));
 
         self.mode = DebugSessionState::Running(mode);
     }

@@ -78,14 +78,14 @@ impl Render for InertState {
                                 cx.emit(InertEvent::Spawned {
                                     config: DebugAdapterConfig {
                                         label: "hard coded".into(),
-                                        kind: dap::DebugAdapterKind::Javascript(task::TCPHost {
+                                        kind: dap::DebugAdapterKind::Python(task::TCPHost {
                                             port: None,
                                             host: None,
                                             timeout: None,
                                         }),
                                         request: DebugRequestType::Launch,
                                         program: Some(
-                                            "/Users/remcosmits/Documents/code/prettier-test/test.js".into(),
+                                            "/Users/remcosmits/Documents/code/prettier-test/test.py".into(),
                                         ),
                                         cwd: Some("/Users/remcosmits/Documents/code/prettier-test".into()),
                                         initialize_args: None,

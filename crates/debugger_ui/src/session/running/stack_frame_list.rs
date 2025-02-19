@@ -21,7 +21,7 @@ pub enum StackFrameListEvent {
 
 pub struct StackFrameList {
     list: ListState,
-    thread_id: ThreadId,
+    thread_id: Option<ThreadId>,
     focus_handle: FocusHandle,
     _subscription: Subscription,
     session: Entity<Session>,
@@ -41,7 +41,6 @@ impl StackFrameList {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         session: Entity<Session>,
-        thread_id: ThreadId,
         cx: &mut Context<Self>,
     ) -> Self {
         let weak_entity = cx.weak_entity();
@@ -62,10 +61,6 @@ impl StackFrameList {
         );
 
         let _subscription = cx.observe(&session, |stack_frame_list, state, cx| {
-            let _frame_len = state.update(cx, |state, cx| {
-                state.stack_frames(stack_frame_list.thread_id, cx).len()
-            });
-
             stack_frame_list.build_entries(cx);
         });
 
@@ -73,18 +68,18 @@ impl StackFrameList {
             list,
             session,
             workspace,
-            thread_id,
-
             focus_handle,
             _subscription,
+            thread_id: None,
             entries: Default::default(),
             _fetch_stack_frames_task: None,
             current_stack_frame_id: Default::default(),
         }
     }
 
-    pub(crate) fn thread_id(&self) -> ThreadId {
-        self.thread_id
+    pub(crate) fn set_thread_id(&mut self, thread_id: Option<ThreadId>, cx: &mut Context<Self>) {
+        self.thread_id = thread_id;
+        self.build_entries(cx);
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -93,8 +88,12 @@ impl StackFrameList {
     }
 
     pub fn stack_frames(&self, cx: &mut App) -> Vec<StackFrame> {
-        self.session
-            .update(cx, |this, cx| this.stack_frames(self.thread_id, cx))
+        self.thread_id
+            .map(|thread_id| {
+                self.session
+                    .update(cx, |this, cx| this.stack_frames(thread_id, cx))
+            })
+            .unwrap_or_default()
     }
 
     #[cfg(any(test, feature = "test-support"))]

@@ -15,17 +15,17 @@ use rpc::proto::ViewId;
 use settings::Settings;
 use stack_frame_list::{StackFrameList, StackFrameListEvent};
 use ui::{
-    div, h_flex, v_flex, ActiveTheme, AnyElement, App, Button, ButtonCommon, Clickable, Color,
-    Context, ContextMenu, Disableable, DropdownMenu, FluentBuilder, IconButton, IconName, IconSize,
-    Indicator, InteractiveElement, IntoElement, Label, LabelCommon, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, Styled, Tooltip, Window,
+    div, h_flex, v_flex, ActiveTheme, AnyElement, App, Button, ButtonCommon, Clickable, Context,
+    ContextMenu, Disableable, DropdownMenu, FluentBuilder, IconButton, IconName, IconSize,
+    Indicator, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, Tooltip, Window,
 };
 use variable_list::VariableList;
 use workspace::{item::ItemEvent, Item, Workspace};
 
 pub struct RunningState {
     session: Entity<Session>,
-    thread_id: ThreadId,
+    thread_id: Option<ThreadId>,
     console: Entity<console::Console>,
     focus_handle: FocusHandle,
     remote_id: Option<ViewId>,
@@ -238,8 +238,10 @@ impl Render for RunningState {
                                                 this =
                                                     this.entry(thread.name, None, move |_, cx| {
                                                         state.update(cx, |state, cx| {
-                                                            state.thread_id = ThreadId(thread_id);
-                                                            cx.notify();
+                                                            state.select_thread(
+                                                                ThreadId(thread_id),
+                                                                cx,
+                                                            );
                                                         });
                                                     });
                                             }
@@ -320,10 +322,8 @@ impl Render for RunningState {
 }
 
 impl RunningState {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         session: Entity<Session>,
-        thread_id: ThreadId,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -331,7 +331,7 @@ impl RunningState {
         let focus_handle = cx.focus_handle();
         let session_id = session.read(cx).session_id();
         let stack_frame_list =
-            cx.new(|cx| StackFrameList::new(workspace.clone(), session.clone(), thread_id, cx));
+            cx.new(|cx| StackFrameList::new(workspace.clone(), session.clone(), cx));
 
         let variable_list =
             cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));
@@ -363,13 +363,12 @@ impl RunningState {
         Self {
             session,
             console,
-            thread_id,
             _workspace: workspace,
             module_list,
-
             focus_handle,
             variable_list,
             _subscriptions,
+            thread_id: None,
             remote_id: None,
             stack_frame_list,
             loaded_source_list,
@@ -456,6 +455,16 @@ impl RunningState {
         self.session().read(cx).capabilities().clone()
     }
 
+    fn select_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        self.thread_id = Some(thread_id);
+
+        self.stack_frame_list.update(cx, |stack_frame_list, cx| {
+            stack_frame_list.set_thread_id(self.thread_id, cx);
+        });
+
+        cx.notify();
+    }
+
     fn clear_highlights(&self, _cx: &mut Context<Self>) {
         // TODO(debugger): make this work again
         // if let Some((_, project_path, _)) = self.dap_store.read(cx).active_debug_line() {
@@ -528,40 +537,60 @@ impl RunningState {
     }
 
     pub fn continue_thread(&mut self, cx: &mut Context<Self>) {
+        let Some(thread_id) = self.thread_id else {
+            return;
+        };
+
         self.session().update(cx, |state, cx| {
-            state.continue_thread(self.thread_id, cx);
+            state.continue_thread(thread_id, cx);
         });
     }
 
     pub fn step_over(&mut self, cx: &mut Context<Self>) {
+        let Some(thread_id) = self.thread_id else {
+            return;
+        };
+
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
         self.session().update(cx, |state, cx| {
-            state.step_over(self.thread_id, granularity, cx);
+            state.step_over(thread_id, granularity, cx);
         });
     }
 
     pub fn step_in(&mut self, cx: &mut Context<Self>) {
+        let Some(thread_id) = self.thread_id else {
+            return;
+        };
+
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
         self.session().update(cx, |state, cx| {
-            state.step_in(self.thread_id, granularity, cx);
+            state.step_in(thread_id, granularity, cx);
         });
     }
 
     pub fn step_out(&mut self, cx: &mut Context<Self>) {
+        let Some(thread_id) = self.thread_id else {
+            return;
+        };
+
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
         self.session().update(cx, |state, cx| {
-            state.step_out(self.thread_id, granularity, cx);
+            state.step_out(thread_id, granularity, cx);
         });
     }
 
     pub fn step_back(&mut self, cx: &mut Context<Self>) {
+        let Some(thread_id) = self.thread_id else {
+            return;
+        };
+
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
         self.session().update(cx, |state, cx| {
-            state.step_back(self.thread_id, granularity, cx);
+            state.step_back(thread_id, granularity, cx);
         });
     }
 
@@ -572,14 +601,22 @@ impl RunningState {
     }
 
     pub fn pause_thread(&self, cx: &mut Context<Self>) {
+        let Some(thread_id) = self.thread_id else {
+            return;
+        };
+
         self.session().update(cx, |state, cx| {
-            state.pause_thread(self.thread_id, cx);
+            state.pause_thread(thread_id, cx);
         });
     }
 
     pub fn stop_thread(&self, cx: &mut Context<Self>) {
+        let Some(thread_id) = self.thread_id else {
+            return;
+        };
+
         self.session().update(cx, |state, cx| {
-            state.terminate_threads(Some(vec![self.thread_id; 1]), cx);
+            state.terminate_threads(Some(vec![thread_id; 1]), cx);
         });
     }
 
@@ -613,22 +650,11 @@ impl Item for RunningState {
         _window: &Window,
         cx: &App,
     ) -> AnyElement {
-        Label::new(format!("{} - Thread {}", todo!(), self.thread_id.0))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+        todo!()
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
-        Some(SharedString::from(format!(
-            "{} Thread {} - {:?}",
-            todo!(),
-            self.thread_id.0,
-            todo!("thread state"),
-        )))
+        todo!()
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
