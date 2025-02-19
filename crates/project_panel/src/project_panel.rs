@@ -544,8 +544,7 @@ impl ProjectPanel {
         mut cx: AsyncWindowContext,
     ) -> Result<Entity<Self>> {
         let serialized_panel = cx
-            .background_executor()
-            .spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
+            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
             .await
             .map_err(|e| anyhow!("Failed to load project panel: {}", e))
             .log_err()
@@ -627,7 +626,7 @@ impl ProjectPanel {
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
-        self.pending_serialization = cx.background_executor().spawn(
+        self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(

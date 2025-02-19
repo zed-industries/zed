@@ -940,6 +940,8 @@ impl LanguageRegistry {
         binary: lsp::LanguageServerBinary,
         cx: gpui::AsyncApp,
     ) -> Option<lsp::LanguageServer> {
+        use gpui::AppContext as _;
+
         let mut state = self.state.write();
         let fake_entry = state.fake_server_entries.get_mut(&name)?;
         let (server, mut fake_server) = lsp::FakeLanguageServer::new(
@@ -956,17 +958,16 @@ impl LanguageRegistry {
         }
 
         let tx = fake_entry.tx.clone();
-        cx.background_executor()
-            .spawn(async move {
-                if fake_server
-                    .try_receive_notification::<lsp::notification::Initialized>()
-                    .await
-                    .is_some()
-                {
-                    tx.unbounded_send(fake_server.clone()).ok();
-                }
-            })
-            .detach();
+        cx.background_spawn(async move {
+            if fake_server
+                .try_receive_notification::<lsp::notification::Initialized>()
+                .await
+                .is_some()
+            {
+                tx.unbounded_send(fake_server.clone()).ok();
+            }
+        })
+        .detach();
 
         Some(server)
     }

@@ -21,6 +21,7 @@ use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fmt;
 use std::{future::Future, sync::Arc};
+use thiserror::Error;
 use ui::IconName;
 
 pub const ZED_CLOUD_PROVIDER_ID: &str = "zed.dev";
@@ -231,6 +232,15 @@ pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
     fn description() -> String;
 }
 
+/// An error that occurred when trying to authenticate the language model provider.
+#[derive(Debug, Error)]
+pub enum AuthenticateError {
+    #[error("credentials not found")]
+    CredentialsNotFound,
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
 pub trait LanguageModelProvider: 'static {
     fn id(&self) -> LanguageModelProviderId;
     fn name(&self) -> LanguageModelProviderName;
@@ -240,7 +250,7 @@ pub trait LanguageModelProvider: 'static {
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>>;
     fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &App) {}
     fn is_authenticated(&self, cx: &App) -> bool;
-    fn authenticate(&self, cx: &mut App) -> Task<Result<()>>;
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
     fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView;
     fn must_accept_terms(&self, _cx: &App) -> bool {
         false

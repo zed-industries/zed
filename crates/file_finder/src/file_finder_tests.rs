@@ -384,6 +384,7 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
                 ProjectPanelOrdMatch(matches[1].clone()),
                 ProjectPanelOrdMatch(matches[3].clone()),
             ],
+            window,
             cx,
         );
 
@@ -398,6 +399,7 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
                 ProjectPanelOrdMatch(matches[2].clone()),
                 ProjectPanelOrdMatch(matches[3].clone()),
             ],
+            window,
             cx,
         );
 
@@ -492,12 +494,11 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
         let matches = collect_search_matches(picker).search_matches_only();
         assert_eq!(matches.len(), 1);
 
-        let (file_name, file_name_positions, full_path, full_path_positions) =
-            delegate.labels_for_path_match(&matches[0]);
-        assert_eq!(file_name, "the-file");
-        assert_eq!(file_name_positions, &[0, 1, 4]);
-        assert_eq!(full_path, "");
-        assert_eq!(full_path_positions, &[0; 0]);
+        let labels = delegate.labels_for_path_match(&matches[0]);
+        assert_eq!(labels.file_name, "the-file");
+        assert_eq!(labels.file_name_positions, &[0, 1, 4]);
+        assert_eq!(labels.path, "");
+        assert_eq!(labels.path_positions, &[0; 0]);
     });
 
     // Since the worktree root is a file, searching for its name followed by a slash does

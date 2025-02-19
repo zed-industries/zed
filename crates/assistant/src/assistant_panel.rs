@@ -20,7 +20,9 @@ use gpui::{
     Subscription, Task, UpdateGlobal, WeakEntity,
 };
 use language::LanguageRegistry;
-use language_model::{LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
+use language_model::{
+    AuthenticateError, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
+};
 use project::Project;
 use prompt_library::{open_prompt_library, PromptBuilder, PromptLibrary};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
@@ -1156,7 +1158,10 @@ impl AssistantPanel {
             .map_or(false, |provider| provider.is_authenticated(cx))
     }
 
-    fn authenticate(&mut self, cx: &mut Context<Self>) -> Option<Task<Result<()>>> {
+    fn authenticate(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<(), AuthenticateError>>> {
         LanguageModelRegistry::read_global(cx)
             .active_provider()
             .map_or(None, |provider| Some(provider.authenticate(cx)))
