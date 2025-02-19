@@ -120,7 +120,7 @@ impl Vim {
                 )
             }
         } else {
-            self.update_editor(window, cx, |_, editor, window, cx| {
+            self.update_editor(window, cx, |vim, editor, window, cx| {
                 let map = editor.snapshot(window, cx);
                 let mut ranges: Vec<Range<Anchor>> = Vec::new();
                 for mut anchor in anchors {
@@ -131,14 +131,74 @@ impl Vim {
                             .display_snapshot
                             .buffer_snapshot
                             .anchor_before(point.to_point(&map.display_snapshot));
+
+                        if vim.mode == Mode::Visual
+                            || vim.mode == Mode::VisualLine
+                            || vim.mode == Mode::VisualBlock
+                        {
+                            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                                s.move_with(|map, selection| {
+                                    let was_reversed = selection.reversed;
+                                    let mut current_head = selection.head();
+
+                                    // our motions assume the current character is after the cursor,
+                                    // but in (forward) visual mode the current character is just
+                                    // before the end of the selection.
+
+                                    // If the file ends with a newline (which is common) we don't do this.
+                                    // so that if you go to the end of such a file you can use "up" to go
+                                    // to the previous line and have it work somewhat as expected.
+                                    #[allow(clippy::nonminimal_bool)]
+                                    if !selection.reversed
+                                        && !selection.is_empty()
+                                        && !(selection.end.column() == 0
+                                            && selection.end == map.max_point())
+                                    {
+                                        current_head = movement::left(map, selection.end)
+                                    }
+
+                                    selection.set_head(point, SelectionGoal::None);
+
+                                    // ensure the current character is included in the selection.
+                                    if !selection.reversed {
+                                        let next_point = if vim.mode == Mode::VisualBlock {
+                                            movement::saturating_right(map, selection.end)
+                                        } else {
+                                            movement::right(map, selection.end)
+                                        };
+
+                                        if !(next_point.column() == 0
+                                            && next_point == map.max_point())
+                                        {
+                                            selection.end = next_point;
+                                        }
+                                    }
+
+                                    // vim always ensures the anchor character stays selected.
+                                    // if our selection has reversed, we need to move the opposite end
+                                    // to ensure the anchor is still selected.
+                                    if was_reversed && !selection.reversed {
+                                        selection.start = movement::left(map, selection.start);
+                                    } else if !was_reversed && selection.reversed {
+                                        selection.end = movement::right(map, selection.end);
+                                    }
+                                })
+                            });
+                        }
                     }
                     if ranges.last() != Some(&(anchor..anchor)) {
                         ranges.push(anchor..anchor);
                     }
                 }
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.select_anchor_ranges(ranges)
-                })
+
+                if vim.mode != Mode::Visual
+                    && vim.mode != Mode::VisualLine
+                    && vim.mode != Mode::VisualBlock
+                {
+                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                        s.select_anchor_ranges(ranges)
+                    })
+                }
             });
         }
     }
