@@ -5,7 +5,7 @@ set -euo pipefail
 check_license () {
     local dir="$1"
     local allowed_licenses=()
-    local agpl_crates=("crates/collab" "crates/livekit_api")
+    local agpl_crates=("crates/collab")
 
     local is_agpl=false
     for agpl_crate in "${agpl_crates[@]}"; do
