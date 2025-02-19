@@ -4,9 +4,9 @@ use git::{
     blame::{Blame, BlameEntry},
     parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid,
 };
-use gpui::{App, Context, Entity, Subscription, Task};
+use gpui::{App, AppContext as _, Context, Entity, Subscription, Task};
 use http_client::HttpClient;
-use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
+use language::{Bias, Buffer, BufferSnapshot, Edit};
 use multi_buffer::RowInfo;
 use project::{Project, ProjectItem};
 use smallvec::SmallVec;
@@ -229,6 +229,9 @@ impl GitBlame {
     }
 
     pub fn focus(&mut self, cx: &mut Context<Self>) {
+        if self.focused {
+            return;
+        }
         self.focused = true;
         if self.changed_while_blurred {
             self.changed_while_blurred = false;
@@ -355,13 +358,11 @@ impl GitBlame {
         let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
         let snapshot = self.buffer.read(cx).snapshot();
         let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
-        let languages = self.project.read(cx).languages().clone();
         let provider_registry = GitHostingProviderRegistry::default_global(cx);
 
         self.task = cx.spawn(|this, mut cx| async move {
             let result = cx
-                .background_executor()
-                .spawn({
+                .background_spawn({
                     let snapshot = snapshot.clone();
                     async move {
                         let Some(Blame {
@@ -380,7 +381,6 @@ impl GitBlame {
                             remote_url,
                             &permalinks,
                             provider_registry,
-                            &languages,
                         )
                         .await;
 
@@ -476,7 +476,6 @@ async fn parse_commit_messages(
     remote_url: Option<String>,
     deprecated_permalinks: &HashMap<Oid, Url>,
     provider_registry: Arc<GitHostingProviderRegistry>,
-    languages: &Arc<LanguageRegistry>,
 ) -> HashMap<Oid, ParsedCommitMessage> {
     let mut commit_details = HashMap::default();
 
@@ -485,8 +484,6 @@ async fn parse_commit_messages(
         .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
 
     for (oid, message) in messages {
-        let parsed_message = parse_markdown(&message, languages).await;
-
         let permalink = if let Some((provider, git_remote)) = parsed_remote_url.as_ref() {
             Some(provider.build_commit_permalink(
                 git_remote,
@@ -518,7 +515,6 @@ async fn parse_commit_messages(
             oid,
             ParsedCommitMessage {
                 message: message.into(),
-                parsed_message,
                 permalink,
                 remote,
                 pull_request,
@@ -529,27 +525,10 @@ async fn parse_commit_messages(
     commit_details
 }
 
-async fn parse_markdown(text: &str, language_registry: &Arc<LanguageRegistry>) -> ParsedMarkdown {
-    let mut parsed_message = ParsedMarkdown::default();
-
-    markdown::parse_markdown_block(
-        text,
-        Some(language_registry),
-        None,
-        &mut parsed_message.text,
-        &mut parsed_message.highlights,
-        &mut parsed_message.region_ranges,
-        &mut parsed_message.regions,
-    )
-    .await;
-
-    parsed_message
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{AppContext as _, Context};
+    use gpui::Context;
     use language::{Point, Rope};
     use project::FakeFs;
     use rand::prelude::*;

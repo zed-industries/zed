@@ -1,7 +1,7 @@
 use collections::{HashMap, HashSet};
 use git::diff::DiffHunkStatus;
 use gpui::{
-    Action, AppContext, Corner, CursorStyle, Focusable as _, Hsla, Model, MouseButton,
+    Action, AppContext as _, Corner, CursorStyle, Focusable as _, Hsla, Model, MouseButton,
     Subscription, Task,
 };
 use language::{Buffer, BufferId, Point};
@@ -372,7 +372,7 @@ impl Editor {
 
         self.diff_map
             .hunk_update_tasks
-            .insert(None, cx.background_executor().spawn(new_toggle_task));
+            .insert(None, cx.background_spawn(new_toggle_task));
     }
 
     pub(super) fn expand_diff_hunk(
@@ -1089,10 +1089,9 @@ impl Editor {
                 .ok();
         });
 
-        diff_map.hunk_update_tasks.insert(
-            Some(buffer_id),
-            cx.background_executor().spawn(new_sync_task),
-        );
+        diff_map
+            .hunk_update_tasks
+            .insert(Some(buffer_id), cx.background_spawn(new_sync_task));
     }
 
     fn go_to_subsequent_hunk(

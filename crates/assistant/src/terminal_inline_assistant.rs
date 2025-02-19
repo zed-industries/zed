@@ -662,6 +662,7 @@ impl Render for PromptEditor {
                                 cx,
                             )
                         },
+                        gpui::Corner::TopRight,
                     ))
                     .children(
                         if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
@@ -1150,7 +1151,7 @@ impl Codegen {
 
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
 
-                let task = cx.background_executor().spawn({
+                let task = cx.background_spawn({
                     let message_id = message_id.clone();
                     let executor = cx.background_executor().clone();
                     async move {

@@ -1,6 +1,6 @@
 use crate::Editor;
 
-use gpui::{App, Task as AsyncTask, Window};
+use gpui::{App, AppContext as _, Task as AsyncTask, Window};
 use project::Location;
 use task::{TaskContext, TaskVariables, VariableName};
 use text::{ToOffset, ToPoint};
@@ -88,7 +88,6 @@ pub fn task_context(
     };
     editor.update(cx, |editor, cx| {
         let context_task = task_context_with_editor(editor, window, cx);
-        cx.background_executor()
-            .spawn(async move { context_task.await.unwrap_or_default() })
+        cx.background_spawn(async move { context_task.await.unwrap_or_default() })
     })
 }

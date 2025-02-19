@@ -1,6 +1,6 @@
 use futures::{channel::oneshot, future::OptionFuture};
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
-use gpui::{App, AsyncApp, Context, Entity, EventEmitter};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter};
 use language::{Language, LanguageRegistry};
 use rope::Rope;
 use std::{cmp, future::Future, iter, ops::Range, sync::Arc};
@@ -29,10 +29,16 @@ struct BufferDiffInner {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DiffHunkStatus {
-    Added(DiffHunkSecondaryStatus),
-    Modified(DiffHunkSecondaryStatus),
-    Removed(DiffHunkSecondaryStatus),
+pub struct DiffHunkStatus {
+    pub kind: DiffHunkStatusKind,
+    pub secondary: DiffHunkSecondaryStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DiffHunkStatusKind {
+    Added,
+    Modified,
+    Deleted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -40,6 +46,16 @@ pub enum DiffHunkSecondaryStatus {
     HasSecondaryHunk,
     OverlapsWithSecondaryHunk,
     None,
+}
+
+impl DiffHunkSecondaryStatus {
+    pub fn is_secondary(&self) -> bool {
+        match self {
+            DiffHunkSecondaryStatus::HasSecondaryHunk => true,
+            DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => true,
+            DiffHunkSecondaryStatus::None => false,
+        }
+    }
 }
 
 /// A diff hunk resolved to rows in the buffer.
@@ -615,11 +631,9 @@ impl BufferDiff {
                 cx,
             )
         });
-        let base_text_snapshot = cx
-            .background_executor()
-            .spawn(OptionFuture::from(base_text_snapshot));
+        let base_text_snapshot = cx.background_spawn(OptionFuture::from(base_text_snapshot));
 
-        let hunks = cx.background_executor().spawn({
+        let hunks = cx.background_spawn({
             let buffer = buffer.clone();
             async move { compute_hunks(diff_base, buffer) }
         });
@@ -641,7 +655,7 @@ impl BufferDiff {
                 .clone()
                 .map(|buffer| buffer.as_rope().clone()),
         );
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             BufferDiffInner {
                 hunks: compute_hunks(diff_base, buffer),
                 base_text: diff_base_buffer,
@@ -929,34 +943,76 @@ impl BufferDiff {
 
 impl DiffHunk {
     pub fn status(&self) -> DiffHunkStatus {
-        if self.buffer_range.start == self.buffer_range.end {
-            DiffHunkStatus::Removed(self.secondary_status)
+        let kind = if self.buffer_range.start == self.buffer_range.end {
+            DiffHunkStatusKind::Deleted
         } else if self.diff_base_byte_range.is_empty() {
-            DiffHunkStatus::Added(self.secondary_status)
+            DiffHunkStatusKind::Added
         } else {
-            DiffHunkStatus::Modified(self.secondary_status)
+            DiffHunkStatusKind::Modified
+        };
+        DiffHunkStatus {
+            kind,
+            secondary: self.secondary_status,
         }
     }
 }
 
 impl DiffHunkStatus {
-    pub fn is_removed(&self) -> bool {
-        matches!(self, DiffHunkStatus::Removed(_))
+    pub fn is_deleted(&self) -> bool {
+        self.kind == DiffHunkStatusKind::Deleted
+    }
+
+    pub fn is_added(&self) -> bool {
+        self.kind == DiffHunkStatusKind::Added
+    }
+
+    pub fn is_modified(&self) -> bool {
+        self.kind == DiffHunkStatusKind::Modified
+    }
+
+    pub fn added(secondary: DiffHunkSecondaryStatus) -> Self {
+        Self {
+            kind: DiffHunkStatusKind::Added,
+            secondary,
+        }
+    }
+
+    pub fn modified(secondary: DiffHunkSecondaryStatus) -> Self {
+        Self {
+            kind: DiffHunkStatusKind::Modified,
+            secondary,
+        }
+    }
+
+    pub fn deleted(secondary: DiffHunkSecondaryStatus) -> Self {
+        Self {
+            kind: DiffHunkStatusKind::Deleted,
+            secondary,
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn removed() -> Self {
-        DiffHunkStatus::Removed(DiffHunkSecondaryStatus::None)
+    pub fn deleted_none() -> Self {
+        Self {
+            kind: DiffHunkStatusKind::Deleted,
+            secondary: DiffHunkSecondaryStatus::None,
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn added() -> Self {
-        DiffHunkStatus::Added(DiffHunkSecondaryStatus::None)
+    pub fn added_none() -> Self {
+        Self {
+            kind: DiffHunkStatusKind::Added,
+            secondary: DiffHunkSecondaryStatus::None,
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn modified() -> Self {
-        DiffHunkStatus::Modified(DiffHunkSecondaryStatus::None)
+    pub fn modified_none() -> Self {
+        Self {
+            kind: DiffHunkStatusKind::Modified,
+            secondary: DiffHunkSecondaryStatus::None,
+        }
     }
 }
 
@@ -999,7 +1055,7 @@ mod tests {
     use std::fmt::Write as _;
 
     use super::*;
-    use gpui::{AppContext as _, TestAppContext};
+    use gpui::TestAppContext;
     use rand::{rngs::StdRng, Rng as _};
     use text::{Buffer, BufferId, Rope};
     use unindent::Unindent as _;
@@ -1033,7 +1089,7 @@ mod tests {
             diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, None),
             &buffer,
             &diff_base,
-            &[(1..2, "two\n", "HELLO\n", DiffHunkStatus::modified())],
+            &[(1..2, "two\n", "HELLO\n", DiffHunkStatus::modified_none())],
         );
 
         buffer.edit([(0..0, "point five\n")]);
@@ -1043,8 +1099,8 @@ mod tests {
             &buffer,
             &diff_base,
             &[
-                (0..1, "", "point five\n", DiffHunkStatus::added()),
-                (2..3, "two\n", "HELLO\n", DiffHunkStatus::modified()),
+                (0..1, "", "point five\n", DiffHunkStatus::added_none()),
+                (2..3, "two\n", "HELLO\n", DiffHunkStatus::modified_none()),
             ],
         );
 
@@ -1107,23 +1163,18 @@ mod tests {
         let uncommitted_diff = BufferDiff::build_sync(buffer.clone(), head_text.clone(), cx);
 
         let expected_hunks = vec![
-            (
-                2..3,
-                "two\n",
-                "TWO\n",
-                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::None),
-            ),
+            (2..3, "two\n", "TWO\n", DiffHunkStatus::modified_none()),
             (
                 4..6,
                 "four\nfive\n",
                 "FOUR\nFIVE\n",
-                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk),
+                DiffHunkStatus::modified(DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk),
             ),
             (
                 7..8,
                 "seven\n",
                 "SEVEN\n",
-                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::HasSecondaryHunk),
+                DiffHunkStatus::modified(DiffHunkSecondaryStatus::HasSecondaryHunk),
             ),
         ];
 
@@ -1199,9 +1250,9 @@ mod tests {
             &buffer,
             &diff_base,
             &[
-                (6..7, "", "HELLO\n", DiffHunkStatus::added()),
-                (9..10, "six\n", "SIXTEEN\n", DiffHunkStatus::modified()),
-                (12..13, "", "WORLD\n", DiffHunkStatus::added()),
+                (6..7, "", "HELLO\n", DiffHunkStatus::added_none()),
+                (9..10, "six\n", "SIXTEEN\n", DiffHunkStatus::modified_none()),
+                (12..13, "", "WORLD\n", DiffHunkStatus::added_none()),
             ],
         );
     }

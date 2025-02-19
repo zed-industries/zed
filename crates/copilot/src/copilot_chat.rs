@@ -91,12 +91,12 @@ impl Model {
 
     pub fn max_token_count(&self) -> usize {
         match self {
-            Self::Gpt4o => 64000,
-            Self::Gpt4 => 32768,
-            Self::Gpt3_5Turbo => 12288,
-            Self::O3Mini => 20000,
-            Self::O1 => 20000,
-            Self::Claude3_5Sonnet => 200_000,
+            Self::Gpt4o => 64_000,
+            Self::Gpt4 => 32_768,
+            Self::Gpt3_5Turbo => 12_288,
+            Self::O3Mini => 64_000,
+            Self::O1 => 20_000,
+            Self::Claude3_5Sonnet => 128_000,
             Model::Gemini20Flash => 128_000,
         }
     }

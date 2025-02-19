@@ -218,6 +218,7 @@ type Listener = Box<dyn FnMut(&dyn Any, &mut App) -> bool + 'static>;
 pub(crate) type KeystrokeObserver =
     Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut App) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'static>;
+type WindowClosedHandler = Box<dyn FnMut(&mut App)>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
 
@@ -260,6 +261,7 @@ pub struct App {
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
+    pub(crate) window_closed_observers: SubscriberSet<(), WindowClosedHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
@@ -325,6 +327,7 @@ impl App {
                 keyboard_layout_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
+                window_closed_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
@@ -1008,6 +1011,11 @@ impl App {
             if window.removed {
                 cx.window_handles.remove(&id);
                 cx.windows.remove(id);
+
+                cx.window_closed_observers.clone().retain(&(), |callback| {
+                    callback(cx);
+                    true
+                });
             } else {
                 cx.windows
                     .get_mut(id)
@@ -1363,6 +1371,14 @@ impl App {
                 future.boxed_local()
             }),
         );
+        activate();
+        subscription
+    }
+
+    /// Register a callback to be invoked when a window is closed
+    /// The window is no longer accessible at the point this callback is invoked.
+    pub fn on_window_closed(&self, mut on_closed: impl FnMut(&mut App) + 'static) -> Subscription {
+        let (subscription, activate) = self.window_closed_observers.insert((), Box::new(on_closed));
         activate();
         subscription
     }
