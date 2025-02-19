@@ -8944,7 +8944,7 @@ fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
             }
             _ => {
                 new_text.push(c);
-                new_idx += 1;
+                new_idx += c.len_utf8();
                 last_char_was_space = false;
             }
         }
@@ -9015,27 +9015,16 @@ fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
 }
 
 #[cfg(test)]
-#[test]
-fn test_glob_literal_prefix() {
-    assert_eq!(glob_literal_prefix(Path::new("**/*.js")), Path::new(""));
-    assert_eq!(
-        glob_literal_prefix(Path::new("node_modules/**/*.js")),
-        Path::new("node_modules")
-    );
-    assert_eq!(
-        glob_literal_prefix(Path::new("foo/{bar,baz}.js")),
-        Path::new("foo")
-    );
-    assert_eq!(
-        glob_literal_prefix(Path::new("foo/bar/baz.js")),
-        Path::new("foo/bar/baz.js")
-    );
+mod tests {
+    use language::HighlightId;
 
-    #[cfg(target_os = "windows")]
-    {
-        assert_eq!(glob_literal_prefix(Path::new("**\\*.js")), Path::new(""));
+    use super::*;
+
+    #[test]
+    fn test_glob_literal_prefix() {
+        assert_eq!(glob_literal_prefix(Path::new("**/*.js")), Path::new(""));
         assert_eq!(
-            glob_literal_prefix(Path::new("node_modules\\**/*.js")),
+            glob_literal_prefix(Path::new("node_modules/**/*.js")),
             Path::new("node_modules")
         );
         assert_eq!(
@@ -9043,8 +9032,43 @@ fn test_glob_literal_prefix() {
             Path::new("foo")
         );
         assert_eq!(
-            glob_literal_prefix(Path::new("foo\\bar\\baz.js")),
+            glob_literal_prefix(Path::new("foo/bar/baz.js")),
             Path::new("foo/bar/baz.js")
+        );
+
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(glob_literal_prefix(Path::new("**\\*.js")), Path::new(""));
+            assert_eq!(
+                glob_literal_prefix(Path::new("node_modules\\**/*.js")),
+                Path::new("node_modules")
+            );
+            assert_eq!(
+                glob_literal_prefix(Path::new("foo/{bar,baz}.js")),
+                Path::new("foo")
+            );
+            assert_eq!(
+                glob_literal_prefix(Path::new("foo\\bar\\baz.js")),
+                Path::new("foo/bar/baz.js")
+            );
+        }
+    }
+
+    #[test]
+    fn test_multi_len_chars_normalization() {
+        let mut label = CodeLabel {
+            text: "myElˇ (parameter) myElˇ: {\n    foo: string;\n}".to_string(),
+            runs: vec![(0..6, HighlightId(1))],
+            filter_range: 0..6,
+        };
+        ensure_uniform_list_compatible_label(&mut label);
+        assert_eq!(
+            label,
+            CodeLabel {
+                text: "myElˇ (parameter) myElˇ: { foo: string; }".to_string(),
+                runs: vec![(0..6, HighlightId(1))],
+                filter_range: 0..6,
+            }
         );
     }
 }
