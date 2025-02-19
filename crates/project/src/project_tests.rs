@@ -5693,12 +5693,12 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
             &snapshot,
             &unstaged_diff.base_text_string().unwrap(),
             &[
-                (0..1, "", "// print goodbye\n", DiffHunkStatus::added()),
+                (0..1, "", "// print goodbye\n", DiffHunkStatus::added_none()),
                 (
                     2..3,
                     "    println!(\"hello world\");\n",
                     "    println!(\"goodbye world\");\n",
-                    DiffHunkStatus::modified(),
+                    DiffHunkStatus::modified_none(),
                 ),
             ],
         );
@@ -5727,7 +5727,7 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
                 2..3,
                 "",
                 "    println!(\"goodbye world\");\n",
-                DiffHunkStatus::added(),
+                DiffHunkStatus::added_none(),
             )],
         );
     });
@@ -5815,13 +5815,13 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
                     0..1,
                     "",
                     "// print goodbye\n",
-                    DiffHunkStatus::Added(DiffHunkSecondaryStatus::HasSecondaryHunk),
+                    DiffHunkStatus::added(DiffHunkSecondaryStatus::HasSecondaryHunk),
                 ),
                 (
                     2..3,
                     "    println!(\"hello world\");\n",
                     "    println!(\"goodbye world\");\n",
-                    DiffHunkStatus::modified(),
+                    DiffHunkStatus::modified_none(),
                 ),
             ],
         );
@@ -5850,7 +5850,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
                 2..3,
                 "",
                 "    println!(\"goodbye world\");\n",
-                DiffHunkStatus::added(),
+                DiffHunkStatus::added_none(),
             )],
         );
     });
@@ -5916,7 +5916,7 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
                 1..2,
                 "    println!(\"hello from HEAD\");\n",
                 "    println!(\"hello from the working copy\");\n",
-                DiffHunkStatus::modified(),
+                DiffHunkStatus::modified_none(),
             )],
         );
     });
