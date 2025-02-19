@@ -4795,10 +4795,15 @@ impl Editor {
             cx.background_executor()
                 .timer(Duration::from_millis(debounce))
                 .await;
-            let Some(matches_task) = editor
-                .read_with(&mut cx, |editor, cx| {
+            let Some(Some(matches_task)) = editor
+                .update_in(&mut cx, |editor, _, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
-                    cx.background_spawn(async move {
+                    let selection = editor.selections.newest::<Point>(cx);
+                    if selection.is_empty() || selection.start.row != selection.end.row {
+                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                        return None;
+                    }
+                    Some(cx.background_spawn(async move {
                         let mut ranges = Vec::new();
                         let buffer_ranges =
                             vec![buffer.anchor_before(0)..buffer.anchor_after(buffer.len())];
@@ -4836,7 +4841,7 @@ impl Editor {
                             }
                         }
                         ranges
-                    })
+                    }))
                 })
                 .log_err()
             else {
