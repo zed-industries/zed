@@ -12386,7 +12386,10 @@ async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::modified_none(), DiffHunkStatus::modified_none()],
+        vec![
+            DiffHunkStatus::modified_none(),
+            DiffHunkStatus::modified_none(),
+        ],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -12413,7 +12416,10 @@ async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::modified_none(), DiffHunkStatus::modified_none()],
+        vec![
+            DiffHunkStatus::modified_none(),
+            DiffHunkStatus::modified_none(),
+        ],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
