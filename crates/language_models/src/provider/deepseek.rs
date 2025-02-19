@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
@@ -8,8 +8,8 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    LanguageModel, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
 use schemars::JsonSchema;
@@ -83,33 +83,38 @@ impl State {
         })
     }
 
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         if self.is_authenticated() {
-            Task::ready(Ok(()))
-        } else {
-            let api_url = AllLanguageModelSettings::get_global(cx)
-                .deepseek
-                .api_url
-                .clone();
-
-            cx.spawn(|this, mut cx| async move {
-                let (api_key, from_env) = if let Ok(api_key) = std::env::var(DEEPSEEK_API_KEY_VAR) {
-                    (api_key, true)
-                } else {
-                    let (_, api_key) = cx
-                        .update(|cx| cx.read_credentials(&api_url))?
-                        .await?
-                        .ok_or_else(|| anyhow!("credentials not found"))?;
-                    (String::from_utf8(api_key)?, false)
-                };
-
-                this.update(&mut cx, |this, cx| {
-                    this.api_key = Some(api_key);
-                    this.api_key_from_env = from_env;
-                    cx.notify();
-                })
-            })
+            return Task::ready(Ok(()));
         }
+
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .deepseek
+            .api_url
+            .clone();
+
+        cx.spawn(|this, mut cx| async move {
+            let (api_key, from_env) = if let Ok(api_key) = std::env::var(DEEPSEEK_API_KEY_VAR) {
+                (api_key, true)
+            } else {
+                let (_, api_key) = cx
+                    .update(|cx| cx.read_credentials(&api_url))?
+                    .await?
+                    .ok_or(AuthenticateError::CredentialsNotFound)?;
+                (
+                    String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
+                    false,
+                )
+            };
+
+            this.update(&mut cx, |this, cx| {
+                this.api_key = Some(api_key);
+                this.api_key_from_env = from_env;
+                cx.notify();
+            })?;
+
+            Ok(())
+        })
     }
 }
 
@@ -188,7 +193,7 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
         self.state.read(cx).is_authenticated()
     }
 
-    fn authenticate(&self, cx: &mut App) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
@@ -322,6 +327,7 @@ impl LanguageModel for DeepSeekLanguageModel {
         }
         .boxed()
     }
+
     fn use_any_tool(
         &self,
         request: LanguageModelRequest,

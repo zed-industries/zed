@@ -15,8 +15,8 @@ use gpui::{
     Task, Transformation,
 };
 use language_model::{
-    LanguageModel, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
 use settings::SettingsStore;
@@ -104,26 +104,28 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         self.state.read(cx).is_authenticated(cx)
     }
 
-    fn authenticate(&self, cx: &mut App) -> Task<Result<()>> {
-        let result = if self.is_authenticated(cx) {
-            Ok(())
-        } else if let Some(copilot) = Copilot::global(cx) {
-            let error_msg = match copilot.read(cx).status() {
-                Status::Disabled => anyhow::anyhow!("Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."),
-                Status::Error(e) => anyhow::anyhow!(format!("Received the following error while signing into Copilot: {e}")),
-                Status::Starting { task: _ } => anyhow::anyhow!("Copilot is still starting, please wait for Copilot to start then try again"),
-                Status::Unauthorized => anyhow::anyhow!("Unable to authorize with Copilot. Please make sure that you have an active Copilot and Copilot Chat subscription."),
-                Status::Authorized => return Task::ready(Ok(())),
-                Status::SignedOut => anyhow::anyhow!("You have signed out of Copilot. Please sign in to Copilot and try again."),
-                Status::SigningIn { prompt: _ } => anyhow::anyhow!("Still signing into Copilot..."),
-            };
-            Err(error_msg)
-        } else {
-            Err(anyhow::anyhow!(
-                "Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."
-            ))
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+        if self.is_authenticated(cx) {
+            return Task::ready(Ok(()));
         };
-        Task::ready(result)
+
+        let Some(copilot) = Copilot::global(cx) else {
+            return Task::ready( Err(anyhow!(
+                "Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."
+            ).into()));
+        };
+
+        let err = match copilot.read(cx).status() {
+            Status::Authorized => return Task::ready(Ok(())),
+            Status::Disabled => anyhow!("Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."),
+            Status::Error(err) => anyhow!(format!("Received the following error while signing into Copilot: {err}")),
+            Status::Starting { task: _ } => anyhow!("Copilot is still starting, please wait for Copilot to start then try again"),
+            Status::Unauthorized => anyhow!("Unable to authorize with Copilot. Please make sure that you have an active Copilot and Copilot Chat subscription."),
+            Status::SignedOut => anyhow!("You have signed out of Copilot. Please sign in to Copilot and try again."),
+            Status::SigningIn { prompt: _ } => anyhow!("Still signing into Copilot..."),
+        };
+
+        Task::ready(Err(err.into()))
     }
 
     fn configuration_view(&self, _: &mut Window, cx: &mut App) -> AnyView {
