@@ -15956,7 +15956,7 @@ impl EditorSnapshot {
             ) {
                 // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
                 // when the caret is just above or just below the deleted hunk.
-                let allow_adjacent = hunk.status().is_removed();
+                let allow_adjacent = hunk.status().is_deleted();
                 let related_to_selection = if allow_adjacent {
                     hunk.row_range.overlaps(&query_rows)
                         || hunk.row_range.start == query_rows.end

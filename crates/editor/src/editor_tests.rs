@@ -12258,7 +12258,7 @@ async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row9.2;
                    struct Row9.3;
                    struct Row10;"#},
-        vec![DiffHunkStatus::added(), DiffHunkStatus::added()],
+        vec![DiffHunkStatus::added_none(), DiffHunkStatus::added_none()],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row1.1;
@@ -12296,7 +12296,7 @@ async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row8;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::added(), DiffHunkStatus::added()],
+        vec![DiffHunkStatus::added_none(), DiffHunkStatus::added_none()],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row2;
@@ -12343,11 +12343,11 @@ async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
                    «ˇ// something on bottom»
                    struct Row10;"#},
         vec![
-            DiffHunkStatus::added(),
-            DiffHunkStatus::added(),
-            DiffHunkStatus::added(),
-            DiffHunkStatus::added(),
-            DiffHunkStatus::added(),
+            DiffHunkStatus::added_none(),
+            DiffHunkStatus::added_none(),
+            DiffHunkStatus::added_none(),
+            DiffHunkStatus::added_none(),
+            DiffHunkStatus::added_none(),
         ],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
@@ -12395,7 +12395,10 @@ async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::modified(), DiffHunkStatus::modified()],
+        vec![
+            DiffHunkStatus::modified_none(),
+            DiffHunkStatus::modified_none(),
+        ],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -12422,7 +12425,10 @@ async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::modified(), DiffHunkStatus::modified()],
+        vec![
+            DiffHunkStatus::modified_none(),
+            DiffHunkStatus::modified_none(),
+        ],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -12451,12 +12457,12 @@ async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row9;
                    struct Row1011;ˇ"#},
         vec![
-            DiffHunkStatus::modified(),
-            DiffHunkStatus::modified(),
-            DiffHunkStatus::modified(),
-            DiffHunkStatus::modified(),
-            DiffHunkStatus::modified(),
-            DiffHunkStatus::modified(),
+            DiffHunkStatus::modified_none(),
+            DiffHunkStatus::modified_none(),
+            DiffHunkStatus::modified_none(),
+            DiffHunkStatus::modified_none(),
+            DiffHunkStatus::modified_none(),
+            DiffHunkStatus::modified_none(),
         ],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
@@ -12534,7 +12540,10 @@ struct Row10;"#};
                    ˇ
                    struct Row8;
                    struct Row10;"#},
-        vec![DiffHunkStatus::removed(), DiffHunkStatus::removed()],
+        vec![
+            DiffHunkStatus::deleted_none(),
+            DiffHunkStatus::deleted_none(),
+        ],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -12557,7 +12566,10 @@ struct Row10;"#};
                    ˇ»
                    struct Row8;
                    struct Row10;"#},
-        vec![DiffHunkStatus::removed(), DiffHunkStatus::removed()],
+        vec![
+            DiffHunkStatus::deleted_none(),
+            DiffHunkStatus::deleted_none(),
+        ],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -12582,7 +12594,10 @@ struct Row10;"#};
 
                    struct Row8;ˇ
                    struct Row10;"#},
-        vec![DiffHunkStatus::removed(), DiffHunkStatus::removed()],
+        vec![
+            DiffHunkStatus::deleted_none(),
+            DiffHunkStatus::deleted_none(),
+        ],
         indoc! {r#"struct Row;
                    struct Row1;
                    ˇstruct Row2;
@@ -12607,9 +12622,9 @@ struct Row10;"#};
                    struct Row8;ˇ»
                    struct Row10;"#},
         vec![
-            DiffHunkStatus::removed(),
-            DiffHunkStatus::removed(),
-            DiffHunkStatus::removed(),
+            DiffHunkStatus::deleted_none(),
+            DiffHunkStatus::deleted_none(),
+            DiffHunkStatus::deleted_none(),
         ],
         indoc! {r#"struct Row;
                    struct Row1;
