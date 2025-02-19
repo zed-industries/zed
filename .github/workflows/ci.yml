@@ -790,7 +790,7 @@ jobs:
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: |
           cargo build --release
-          cp ".\target\release\zed.exe" ".\crates\zed\resources\windows\zed.exe"
+          cp ".\target\release\zed.exe" ".\crates\zed\resources\windows\Zed.exe"
 
       - name: Sign Zed binary
         uses: azure/trusted-signing-action@v0.5.1

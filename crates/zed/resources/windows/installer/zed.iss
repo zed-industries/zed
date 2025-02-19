@@ -51,7 +51,7 @@ Name: "addtopath"; Description: "{cm:AddToPath}"; GroupDescription: "{cm:Other}"
 Name: "{app}"; AfterInstall: DisableAppDirInheritance
 
 [Files]
-Source: "{#ResourcesDir}\zed.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ResourcesDir}\Zed.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ResourcesDir}\installer\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion
 
 [Icons]
