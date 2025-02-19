@@ -1512,6 +1512,12 @@ impl Terminal {
                         _ => None,
                     };
 
+                    if selection_type == Some(SelectionType::Simple) && e.modifiers.shift {
+                        self.events
+                            .push_back(InternalEvent::UpdateSelection(position));
+                        return;
+                    }
+
                     let selection = selection_type
                         .map(|selection_type| Selection::new(selection_type, point, side));
 
