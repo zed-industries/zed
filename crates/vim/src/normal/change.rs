@@ -97,8 +97,9 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let mut objects_found = false;
-        let target_mode = object.target_visual_mode(self.mode, around);
-        if target_mode == Mode::VisualLine && around {
+        let current_mode = self.mode;
+        let target_mode = object.target_visual_mode(current_mode, around);
+        if target_mode != current_mode {
             self.switch_mode(target_mode, true, window, cx);
         }
         self.update_editor(window, cx, |vim, editor, window, cx| {
