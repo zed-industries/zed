@@ -38,8 +38,7 @@ use gpui::{
     GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement,
-    WeakEntity, Window,
+    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -76,7 +75,7 @@ use ui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::{RangeExt, ResultExt};
-use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
+use workspace::{item::Item, notifications::NotifyTaskExt};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
 
@@ -1620,13 +1619,6 @@ impl EditorElement {
             return None;
         }
 
-        let workspace = self
-            .editor
-            .read(cx)
-            .workspace
-            .as_ref()
-            .map(|(w, _)| w.clone());
-
         let editor = self.editor.read(cx);
         let blame = editor.blame.clone()?;
         let padding = {
@@ -1655,7 +1647,7 @@ impl EditorElement {
             .flatten()?;
 
         let mut element =
-            render_inline_blame_entry(&blame, blame_entry, &self.style, workspace, cx);
+            render_inline_blame_entry(self.editor.clone(), &blame, blame_entry, &self.style, cx);
 
         let start_y = content_origin.y
             + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
@@ -5873,10 +5865,10 @@ fn prepaint_gutter_button(
 }
 
 fn render_inline_blame_entry(
+    editor: Entity<Editor>,
     blame: &gpui::Entity<GitBlame>,
     blame_entry: BlameEntry,
     style: &EditorStyle,
-    workspace: Option<WeakEntity<Workspace>>,
     cx: &mut App,
 ) -> AnyElement {
     let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
@@ -5892,11 +5884,8 @@ fn render_inline_blame_entry(
         }
         _ => format!("{}, {}", author, relative_timestamp),
     };
-
-    let details = blame.read(cx).details_for_entry(&blame_entry);
-
-    let tooltip =
-        cx.new(|_| CommitTooltip::blame_entry(blame_entry, details, style.clone(), workspace));
+    let blame = blame.clone();
+    let blame_entry = blame_entry.clone();
 
     h_flex()
         .id("inline-blame")
@@ -5907,7 +5896,15 @@ fn render_inline_blame_entry(
         .child(Icon::new(IconName::FileGit).color(Color::Hint))
         .child(text)
         .gap_2()
-        .hoverable_tooltip(move |_, _| tooltip.clone().into())
+        .hoverable_tooltip(move |window, cx| {
+            let details = blame.read(cx).details_for_entry(&blame_entry);
+            let tooltip =
+                cx.new(|cx| CommitTooltip::blame_entry(&blame_entry, details, window, cx));
+            editor.update(cx, |editor, _| {
+                editor.git_blame_inline_tooltip = Some(tooltip.downgrade())
+            });
+            tooltip.into()
+        })
         .into_any()
 }
 
@@ -5941,19 +5938,7 @@ fn render_blame_entry(
 
     let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
     let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
-
     let details = blame.read(cx).details_for_entry(&blame_entry);
-
-    let workspace = editor.read(cx).workspace.as_ref().map(|(w, _)| w.clone());
-
-    let tooltip = cx.new(|_| {
-        CommitTooltip::blame_entry(
-            blame_entry.clone(),
-            details.clone(),
-            style.clone(),
-            workspace,
-        )
-    });
 
     h_flex()
         .w_full()
@@ -5988,16 +5973,20 @@ fn render_blame_entry(
         })
         .hover(|style| style.bg(cx.theme().colors().element_hover))
         .when_some(
-            details.and_then(|details| details.permalink),
+            details
+                .as_ref()
+                .and_then(|details| details.permalink.clone()),
             |this, url| {
-                let url = url.clone();
                 this.cursor_pointer().on_click(move |_, _, cx| {
                     cx.stop_propagation();
                     cx.open_url(url.as_str())
                 })
             },
         )
-        .hoverable_tooltip(move |_, _| tooltip.clone().into())
+        .hoverable_tooltip(move |window, cx| {
+            cx.new(|cx| CommitTooltip::blame_entry(&blame_entry, details.clone(), window, cx))
+                .into()
+        })
         .into_any()
 }
 
@@ -7034,12 +7023,11 @@ impl Element for EditorElement {
                                     blame.blame_for_rows(&[row_infos], cx).next()
                                 })
                                 .flatten()?;
-                            let workspace = editor.workspace.as_ref().map(|(w, _)| w.to_owned());
                             let mut element = render_inline_blame_entry(
+                                self.editor.clone(),
                                 blame,
                                 blame_entry,
                                 &style,
-                                workspace,
                                 cx,
                             );
                             let inline_blame_padding = INLINE_BLAME_PADDING_EM_WIDTHS * em_advance;
