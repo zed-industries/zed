@@ -44,7 +44,9 @@ struct ExplorerCommandInjector;
 #[allow(non_snake_case)]
 impl IExplorerCommand_Impl for ExplorerCommandInjector_Impl {
     fn GetTitle(&self, _: Option<&IShellItemArray>) -> windows_core::Result<windows_core::PWSTR> {
-        unsafe { SHStrDupW(windows::core::w!("Open with Zed")) }
+        let command_description =
+            retrieve_command_description().unwrap_or(HSTRING::from("Open with Zed"));
+        unsafe { SHStrDupW(&command_description) }
     }
 
     fn GetIcon(&self, _: Option<&IShellItemArray>) -> windows_core::Result<windows_core::PWSTR> {
@@ -180,4 +182,16 @@ fn get_zed_path() -> Option<String> {
             .to_string_lossy()
             .to_string(),
     )
+}
+
+#[inline]
+fn retrieve_command_description() -> windows_core::Result<HSTRING> {
+    #[cfg(feature = "stable")]
+    const REG_PATH: &str = "Software\\Classes\\ZedEditorContextMenu";
+    #[cfg(feature = "preview")]
+    const REG_PATH: &str = "Software\\Classes\\ZedEditorPreviewContextMenu";
+    #[cfg(feature = "nightly")]
+    const REG_PATH: &str = "Software\\Classes\\ZedEditorNightlyContextMenu";
+    let key = windows_registry::CURRENT_USER.open(REG_PATH)?;
+    key.get_hstring("Title")
 }
