@@ -3628,6 +3628,7 @@ impl EditorElement {
                         const POLE_WIDTH: Pixels = px(2.);
 
                         let mut element = v_flex()
+                            .items_end()
                             .child(
                                 editor
                                     .render_edit_prediction_line_popover("Jump", None, window, cx)?
@@ -3638,10 +3639,9 @@ impl EditorElement {
                             .child(
                                 div()
                                     .w(POLE_WIDTH)
-                                    .bg(cx.theme().colors().text_accent.opacity(0.8))
+                                    .bg(Editor::edit_prediction_callout_popover_border_color(cx))
                                     .h(line_height),
                             )
-                            .items_end()
                             .into_any();
 
                         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
