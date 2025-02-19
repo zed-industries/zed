@@ -460,7 +460,7 @@ mod tests {
                 PlatformStyle::Linux,
                 false
             ),
-            "Super+C".to_string()
+            "Super-C".to_string()
         );
         assert_eq!(
             keystroke_text(
@@ -468,7 +468,7 @@ mod tests {
                 PlatformStyle::Windows,
                 false
             ),
-            "Win+C".to_string()
+            "Win-C".to_string()
         );
 
         assert_eq!(
@@ -485,7 +485,7 @@ mod tests {
                 PlatformStyle::Linux,
                 false
             ),
-            "Ctrl+Alt+Delete".to_string()
+            "Ctrl-Alt-Delete".to_string()
         );
         assert_eq!(
             keystroke_text(
@@ -493,7 +493,7 @@ mod tests {
                 PlatformStyle::Windows,
                 false
             ),
-            "Ctrl+Alt+Delete".to_string()
+            "Ctrl-Alt-Delete".to_string()
         );
 
         assert_eq!(
@@ -510,7 +510,7 @@ mod tests {
                 PlatformStyle::Linux,
                 false,
             ),
-            "Shift+PageUp".to_string()
+            "Shift-PageUp".to_string()
         );
         assert_eq!(
             keystroke_text(
@@ -518,7 +518,7 @@ mod tests {
                 PlatformStyle::Windows,
                 false
             ),
-            "Shift+PageUp".to_string()
+            "Shift-PageUp".to_string()
         );
     }
 }
