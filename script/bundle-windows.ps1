@@ -26,6 +26,18 @@ switch ($channel) {
         $appUserId = "ZedIndustry.Zed.Preview"
         $appShellNameShort = "Z&ed Editor Preview"
     }
+    # TODO: Add support for other channels
+    "nightly" {
+        $appId = "{{F70E4811-D0E2-4D88-AC99-D63752799F95}"
+        $appName = "Zed Editor Preview"
+        $appDisplayName = "Zed Editor Preview (User)"
+        $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION-preview"
+        $appMutex = "Zed-Editor-Preview-Instance-Mutex" # The mutex name here should match the mutex name in crates\zed\src\zed\windows_only_instance.rs
+        $appExeName = "Zed"
+        $regValueName = "ZedEditorPreview"
+        $appUserId = "ZedIndustry.Zed.Preview"
+        $appShellNameShort = "Z&ed Editor Preview"
+    }
     default {
         Write-Error "can't bundle installer for $channel"
         exit 1
