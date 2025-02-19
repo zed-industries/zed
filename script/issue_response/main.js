@@ -43,10 +43,8 @@ async function main() {
     ...authorFilters,
   ];
 
-  const searchQuery = q.join("+");
-
   const response = await octokit.rest.search.issuesAndPullRequests({
-    q: searchQuery,
+    q: q.join("+"),
     per_page: 100,
   });
 
@@ -96,7 +94,7 @@ async function main() {
     },
   }));
 
-  const issuesUrl = `${GITHUB_ISSUES_URL}?q=${searchQuery}`;
+  const issuesUrl = `${GITHUB_ISSUES_URL}?q=${encodeURIComponent(q.join(" "))}`;
 
   blocks.push({
     type: "section",
