@@ -85,9 +85,9 @@ impl Render for InertState {
                                         }),
                                         request: DebugRequestType::Launch,
                                         program: Some(
-                                            "/Users/hiro/Projects/zed/test_debug_file.py".into(),
+                                            "/Users/hiro/Projects/repros/python-funsies/nested/file.py".into(),
                                         ),
-                                        cwd: None,
+                                        cwd: Some("/Users/hiro/Projects/repros/python-funsies/nested".into()),
                                         initialize_args: None,
                                         supports_attach: false,
                                     },

@@ -26,9 +26,7 @@ impl EventEmitter<StartingEvent> for StartingState {}
 impl StartingState {
     pub(crate) fn new(task: Task<Result<Entity<Session>>>, cx: &mut Context<Self>) -> Self {
         let _notify_parent = cx.spawn(move |this, mut cx| async move {
-            dbg!("Waiting for session to start");
             let entity = task.await;
-            dbg!(entity.is_err());
             this.update(&mut cx, |_, cx| cx.emit(StartingEvent::Finished(entity)))
                 .ok();
         });

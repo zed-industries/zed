@@ -2,10 +2,10 @@ use crate::project_settings::ProjectSettings;
 
 use super::breakpoint_store::{self, BreakpointStore};
 use super::dap_command::{
-    self, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand, Initialize,
-    LocalDapCommand, NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand,
-    ScopesCommand, SetVariableValueCommand, StepBackCommand, StepCommand, StepInCommand,
-    StepOutCommand, TerminateCommand, TerminateThreadsCommand, VariablesCommand,
+    self, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand,
+    Initialize, Launch, LocalDapCommand, NextCommand, PauseCommand, RestartCommand,
+    RestartStackFrameCommand, ScopesCommand, SetVariableValueCommand, StepBackCommand, StepCommand,
+    StepInCommand, StepOutCommand, TerminateCommand, TerminateThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
@@ -20,6 +20,7 @@ use dap::{
     Source, SourceBreakpoint, SteppingGranularity, StoppedEvent,
 };
 use dap_adapters::build_adapter;
+use futures::channel::oneshot;
 use futures::{future::join_all, future::Shared, FutureExt};
 use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, Task};
 use rpc::AnyProtoClient;
@@ -159,6 +160,7 @@ enum Mode {
     Remote(RemoteConnection),
 }
 
+#[derive(Clone)]
 struct LocalMode {
     client: Arc<DebugAdapterClient>,
 }
@@ -168,7 +170,6 @@ impl LocalMode {
         session_id: SessionId,
         disposition: DebugAdapterConfig,
         delegate: DapAdapterDelegate,
-        message_handler: DapMessageHandler,
         cx: AsyncApp,
     ) -> Task<Result<(Self, Capabilities)>> {
         cx.spawn(move |mut cx| async move {
@@ -209,6 +210,21 @@ impl LocalMode {
                 }
             };
 
+            let (initialized_tx, initialized_rx) = oneshot::channel();
+            let mut initialized_tx = Some(initialized_tx);
+            let message_handler = Box::new(move |message, cx: &mut App| match message {
+                Message::Event(events) => {
+                    if let Events::Initialized(_) = *events {
+                        initialized_tx
+                            .take()
+                            .expect("To receive just one Initialized event")
+                            .send(())
+                            .ok();
+                    }
+                }
+                Message::Response(response) => {}
+                Message::Request(request) => todo!(),
+            });
             let client = Arc::new(
                 DebugAdapterClient::start(session_id, binary, message_handler, cx.clone()).await?,
             );
@@ -220,6 +236,15 @@ impl LocalMode {
                     },
                     cx.background_executor().clone(),
                 )
+                .await?;
+
+            let raw = adapter.request_args(&disposition);
+
+            let launch = this
+                .request(Launch { raw }, cx.background_executor().clone())
+                .await?;
+            let _ = initialized_rx.await?;
+            this.request(ConfigurationDone, cx.background_executor().clone())
                 .await?;
 
             Ok((this, capabilities))
@@ -381,7 +406,7 @@ impl Session {
                 session_id,
                 config.clone(),
                 delegate,
-                message_handler,
+                // message_handler,
                 cx.clone(),
             )
             .await?;

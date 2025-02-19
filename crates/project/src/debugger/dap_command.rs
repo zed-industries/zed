@@ -10,6 +10,7 @@ use dap::{
     StepOutArguments, SteppingGranularity, ValueFormat, Variable, VariablesArgumentsFilter,
 };
 use rpc::proto;
+use serde_json::Value;
 use util::ResultExt;
 pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     type Response: 'static + Send + std::fmt::Debug;
@@ -1589,6 +1590,48 @@ impl LocalDapCommand for Initialize {
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap_client_capabilities(self.adapter_id.clone())
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message)
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub(super) struct ConfigurationDone;
+
+impl LocalDapCommand for ConfigurationDone {
+    type Response = ();
+    type DapRequest = dap::requests::ConfigurationDone;
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::ConfigurationDoneArguments
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message)
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub(super) struct Launch {
+    pub(super) raw: Value,
+}
+
+impl LocalDapCommand for Launch {
+    type Response = ();
+    type DapRequest = dap::requests::Launch;
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::LaunchRequestArguments {
+            raw: self.raw.clone(),
+        }
     }
 
     fn response_from_dap(
