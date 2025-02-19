@@ -1,6 +1,6 @@
 use futures::{channel::oneshot, future::OptionFuture};
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
-use gpui::{App, AsyncApp, Context, Entity, EventEmitter};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter};
 use language::{Language, LanguageRegistry};
 use rope::Rope;
 use std::{cmp, future::Future, iter, ops::Range, sync::Arc};
@@ -615,11 +615,9 @@ impl BufferDiff {
                 cx,
             )
         });
-        let base_text_snapshot = cx
-            .background_executor()
-            .spawn(OptionFuture::from(base_text_snapshot));
+        let base_text_snapshot = cx.background_spawn(OptionFuture::from(base_text_snapshot));
 
-        let hunks = cx.background_executor().spawn({
+        let hunks = cx.background_spawn({
             let buffer = buffer.clone();
             async move { compute_hunks(diff_base, buffer) }
         });
@@ -641,7 +639,7 @@ impl BufferDiff {
                 .clone()
                 .map(|buffer| buffer.as_rope().clone()),
         );
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             BufferDiffInner {
                 hunks: compute_hunks(diff_base, buffer),
                 base_text: diff_base_buffer,
@@ -998,7 +996,7 @@ mod tests {
     use std::fmt::Write as _;
 
     use super::*;
-    use gpui::{AppContext as _, TestAppContext};
+    use gpui::TestAppContext;
     use rand::{rngs::StdRng, Rng as _};
     use text::{Buffer, BufferId, Rope};
     use unindent::Unindent as _;

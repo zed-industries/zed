@@ -247,7 +247,7 @@ impl EditorDb {
                 r#"
 DELETE FROM editor_selections WHERE editor_id = ?1 AND workspace_id = ?2;
 
-INSERT INTO editor_selections (editor_id, workspace_id, start, end)
+INSERT OR IGNORE INTO editor_selections (editor_id, workspace_id, start, end)
 VALUES {placeholders};
 "#
             );

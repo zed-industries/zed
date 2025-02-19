@@ -419,8 +419,7 @@ impl Zeta {
             }
 
             let values = cx
-                .background_executor()
-                .spawn({
+                .background_spawn({
                     let snapshot = snapshot.clone();
                     let path = path.clone();
                     async move {
@@ -813,8 +812,7 @@ and then another
             let output_excerpt: Arc<str> = output_excerpt.into();
 
             let edits: Arc<[(Range<Anchor>, String)]> = cx
-                .background_executor()
-                .spawn({
+                .background_spawn({
                     let output_excerpt = output_excerpt.clone();
                     let editable_range = editable_range.clone();
                     let snapshot = snapshot.clone();
@@ -1127,7 +1125,7 @@ impl LicenseDetectionWatcher {
                 .map(|file| worktree.load_file(file, cx))
                 .collect::<ArrayVec<_, { LICENSE_FILES_TO_CHECK.len() }>>();
 
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 for loaded_file in loaded_files.into_iter() {
                     let Ok(loaded_file) = loaded_file.await else {
                         continue;

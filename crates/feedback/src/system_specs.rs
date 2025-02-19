@@ -1,5 +1,5 @@
 use client::telemetry;
-use gpui::{App, Task, Window};
+use gpui::{App, AppContext as _, Task, Window};
 use human_bytes::human_bytes;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use serde::Serialize;
@@ -44,7 +44,7 @@ impl SystemSpecs {
             None
         };
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let os_version = telemetry::os_version();
             SystemSpecs {
                 app_version,

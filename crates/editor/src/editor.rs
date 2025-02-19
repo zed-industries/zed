@@ -99,9 +99,9 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CompletionDocumentation, CursorShape, Diagnostic, DiskState, EditPredictionsMode, EditPreview,
-    HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection,
-    SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    CursorShape, Diagnostic, DiskState, EditPredictionsMode, EditPreview, HighlightedText,
+    IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
+    TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -132,7 +132,7 @@ use multi_buffer::{
     ToOffsetUtf16,
 };
 use project::{
-    lsp_store::{FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
+    lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
     PrepareRenameResponse, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
@@ -2203,6 +2203,7 @@ impl Editor {
             cx.emit(SearchEvent::ActiveMatchChanged)
         }
         if local
+            && self.is_singleton(cx)
             && WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
         {
             if let Some(workspace_id) = self.workspace.as_ref().and_then(|workspace| workspace.1) {
@@ -2223,7 +2224,7 @@ impl Editor {
                         .collect();
                     DB.save_editor_selections(editor_id, workspace_id, selections)
                         .await
-                        .context("persisting editor selections")
+                        .with_context(|| format!("persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"))
                         .log_err();
                 });
             }
@@ -4795,15 +4796,23 @@ impl Editor {
             cx.background_executor()
                 .timer(Duration::from_millis(debounce))
                 .await;
-            let Some(matches_task) = editor
-                .read_with(&mut cx, |editor, cx| {
+            let Some(Some(matches_task)) = editor
+                .update_in(&mut cx, |editor, _, cx| {
+                    if editor.selections.count() != 1 || editor.selections.line_mode {
+                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                        return None;
+                    }
+                    let selection = editor.selections.newest::<Point>(cx);
+                    if selection.is_empty() || selection.start.row != selection.end.row {
+                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                        return None;
+                    }
                     let buffer = editor.buffer().read(cx).snapshot(cx);
-                    cx.background_executor().spawn(async move {
+                    Some(cx.background_spawn(async move {
                         let mut ranges = Vec::new();
-                        let buffer_ranges =
-                            vec![buffer.anchor_before(0)..buffer.anchor_after(buffer.len())];
                         let query = buffer.text_for_range(selection.range()).collect::<String>();
-                        for range in buffer_ranges {
+                        let selection_anchors = selection.range().to_anchors(&buffer);
+                        for range in [buffer.anchor_before(0)..buffer.anchor_after(buffer.len())] {
                             for (search_buffer, search_range, excerpt_id) in
                                 buffer.range_to_buffer_ranges(range)
                             {
@@ -4821,22 +4830,27 @@ impl Editor {
                                     .search(search_buffer, Some(search_range.clone()))
                                     .await
                                     .into_iter()
-                                    .map(|match_range| {
-                                        let start = search_buffer
-                                            .anchor_after(search_range.start + match_range.start);
-                                        let end = search_buffer
-                                            .anchor_before(search_range.start + match_range.end);
-                                        Anchor::range_in_buffer(
-                                            excerpt_id,
-                                            search_buffer.remote_id(),
-                                            start..end,
-                                        )
-                                    }),
+                                    .filter_map(
+                                        |match_range| {
+                                            let start = search_buffer.anchor_after(
+                                                search_range.start + match_range.start,
+                                            );
+                                            let end = search_buffer.anchor_before(
+                                                search_range.start + match_range.end,
+                                            );
+                                            let range = Anchor::range_in_buffer(
+                                                excerpt_id,
+                                                search_buffer.remote_id(),
+                                                start..end,
+                                            );
+                                            (range != selection_anchors).then_some(range)
+                                        },
+                                    ),
                                 );
                             }
                         }
                         ranges
-                    })
+                    }))
                 })
                 .log_err()
             else {
@@ -5128,6 +5142,7 @@ impl Editor {
                         .contains(&target.to_display_point(&position_map.snapshot).row())
                         || !self.edit_prediction_requires_modifier()
                     {
+                        self.unfold_ranges(&[target..target], true, false, cx);
                         // Note that this is also done in vim's handler of the Tab action.
                         self.change_selections(
                             Some(Autoscroll::newest()),
@@ -6220,19 +6235,14 @@ impl Editor {
     }
 
     fn render_context_menu_aside(
-        &self,
-        style: &EditorStyle,
+        &mut self,
         max_size: Size<Pixels>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
-        self.context_menu.borrow().as_ref().and_then(|menu| {
+        self.context_menu.borrow_mut().as_mut().and_then(|menu| {
             if menu.visible() {
-                menu.render_aside(
-                    style,
-                    max_size,
-                    self.workspace.as_ref().map(|(w, _)| w.clone()),
-                    cx,
-                )
+                menu.render_aside(self, max_size, window, cx)
             } else {
                 None
             }
@@ -10221,13 +10231,12 @@ impl Editor {
                 return;
             }
             let new_rows =
-                cx.background_executor()
-                    .spawn({
-                        let snapshot = display_snapshot.clone();
-                        async move {
-                            Self::fetch_runnable_ranges(&snapshot, Anchor::min()..Anchor::max())
-                        }
-                    })
+                cx.background_spawn({
+                    let snapshot = display_snapshot.clone();
+                    async move {
+                        Self::fetch_runnable_ranges(&snapshot, Anchor::min()..Anchor::max())
+                    }
+                })
                     .await;
 
             let rows = Self::runnable_rows(project, display_snapshot, new_rows, cx.clone());
@@ -10989,7 +10998,7 @@ impl Editor {
                 HoverLink::InlayHint(lsp_location, server_id) => {
                     let computation =
                         self.compute_target_location(lsp_location, server_id, window, cx);
-                    cx.background_executor().spawn(async move {
+                    cx.background_spawn(async move {
                         let location = computation.await?;
                         Ok(TargetTaskResult::Location(location))
                     })
@@ -14926,8 +14935,14 @@ impl Editor {
         if !self.hover_state.focused(window, cx) {
             hide_hover(self, cx);
         }
-
-        self.hide_context_menu(window, cx);
+        if !self
+            .context_menu
+            .borrow()
+            .as_ref()
+            .is_some_and(|context_menu| context_menu.focused(window, cx))
+        {
+            self.hide_context_menu(window, cx);
+        }
         self.discard_inline_completion(false, cx);
         cx.emit(EditorEvent::Blurred);
         cx.notify();
@@ -15062,7 +15077,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None {
+        if !self.is_singleton(cx)
+            || WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None
+        {
             return;
         }
         let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() else {
@@ -15587,7 +15604,7 @@ fn snippet_completions(
     let scope = language.map(|language| language.default_scope());
     let executor = cx.background_executor().clone();
 
-    cx.background_executor().spawn(async move {
+    cx.background_spawn(async move {
         let classifier = CharClassifier::new(scope).for_completion(true);
         let mut last_word = chars
             .chars()
@@ -15674,7 +15691,7 @@ fn snippet_completions(
                     documentation: snippet
                         .description
                         .clone()
-                        .map(CompletionDocumentation::SingleLine),
+                        .map(|description| CompletionDocumentation::SingleLine(description.into())),
                     lsp_completion: lsp::CompletionItem {
                         label: snippet.prefix.first().unwrap().clone(),
                         kind: Some(CompletionItemKind::SNIPPET),
@@ -15717,7 +15734,7 @@ impl CompletionProvider for Entity<Project> {
         self.update(cx, |project, cx| {
             let snippets = snippet_completions(project, buffer, buffer_position, cx);
             let project_completions = project.completions(buffer, buffer_position, options, cx);
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 let mut completions = project_completions.await?;
                 let snippets_completions = snippets.await?;
                 completions.extend(snippets_completions);
