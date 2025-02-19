@@ -1468,7 +1468,7 @@ fn surrounding_markers(
         }
     }
 
-    if !around {
+    if !around && open_marker != close_marker {
         let start_point = opening.end.to_display_point(map);
         let end_point = closing.start.to_display_point(map);
         let start_offset = start_point.to_offset(map, Bias::Left);
