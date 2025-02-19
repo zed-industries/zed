@@ -1468,6 +1468,7 @@ fn surrounding_markers(
         }
     }
 
+    // Adjust selection to remove leading and trailing whitespace for inner brackets
     if !around && open_marker != close_marker {
         let start_point = opening.end.to_display_point(map);
         let end_point = closing.start.to_display_point(map);
@@ -1481,14 +1482,12 @@ fn surrounding_markers(
         {
             let mut first_non_ws = None;
             let mut last_non_ws = None;
-            // Find first non-whitespace
             for (ch, offset) in map.buffer_chars_at(start_offset) {
                 if !ch.is_whitespace() {
                     first_non_ws = Some(offset);
                     break;
                 }
             }
-            // Find last non-whitespace
             for (ch, offset) in map.reverse_buffer_chars_at(end_offset) {
                 if !ch.is_whitespace() {
                     last_non_ws = Some(offset + ch.len_utf8());
