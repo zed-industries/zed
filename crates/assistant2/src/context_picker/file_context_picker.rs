@@ -19,7 +19,7 @@ use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use rope::Point;
 use text::SelectionGoal;
-use ui::{prelude::*, ButtonLike, Disclosure, ListItem, Tooltip};
+use ui::{prelude::*, ButtonLike, Disclosure, ListItem, TintColor, Tooltip};
 use util::ResultExt as _;
 use workspace::{notifications::NotifyResultExt, Workspace};
 
@@ -510,7 +510,7 @@ fn render_fold_icon_button(
 
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
-            .selected_style(ButtonStyle::HighlightBorder(ButtonStyle::Filled.into()))
+            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
             .toggle_state(is_in_text_selection)
             .child(
                 h_flex()
