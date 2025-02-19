@@ -329,7 +329,7 @@ impl NodeVersionAdapter {
 }
 
 #[async_trait(?Send)]
-impl super::LspAdapter for NodeVersionAdapter {
+impl LspAdapter for NodeVersionAdapter {
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME.clone()
     }
