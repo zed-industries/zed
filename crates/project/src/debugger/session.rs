@@ -273,6 +273,7 @@ impl LocalMode {
                 let _ = initialized_rx.await?;
 
                 let mut breakpoint_tasks = Vec::new();
+
                 for (path, breakpoints) in breakpoints {
                     breakpoint_tasks.push(
                         that.request(
@@ -381,8 +382,6 @@ impl ThreadStates {
             .unwrap_or(ThreadStatus::Running)
     }
 
-    // stopped event (all_threads: true)
-    // thread event (reason: started) <- true state is running, but we'll think that it's stopped
     fn thread_state(&self, thread_id: ThreadId) -> Option<ThreadStatus> {
         self.known_thread_states
             .get(&thread_id)
@@ -413,6 +412,7 @@ pub struct Session {
     threads: IndexMap<ThreadId, Thread>,
     requests: HashMap<RequestSlot, Shared<Task<Option<()>>>>,
     thread_states: ThreadStates,
+    is_session_terminated: bool,
     _background_tasks: Vec<Task<()>>,
 }
 
@@ -550,6 +550,7 @@ impl Session {
                     loaded_sources: Vec::default(),
                     threads: IndexMap::default(),
                     _background_tasks,
+                    is_session_terminated: false,
                 }
             })
         })
@@ -578,6 +579,7 @@ impl Session {
             threads: IndexMap::default(),
             _background_tasks: Vec::default(),
             config: todo!(),
+            is_session_terminated: false,
         }
     }
 
@@ -588,8 +590,13 @@ impl Session {
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
+
     pub fn configuration(&self) -> DebugAdapterConfig {
         self.config.clone()
+    }
+
+    pub fn is_terminated(&self) -> bool {
+        self.is_session_terminated
     }
 
     fn send_changed_breakpoints(
@@ -732,7 +739,9 @@ impl Session {
                 self.invalidate(cx);
             }
             Events::Exited(_event) => {}
-            Events::Terminated(_event) => {}
+            Events::Terminated(_) => {
+                self.is_session_terminated = true;
+            }
             Events::Thread(event) => {
                 match event.reason {
                     dap::ThreadEventReason::Started => {

@@ -35,7 +35,7 @@ impl StartingState {
 }
 
 impl Focusable for StartingState {
-    fn focus_handle(&self, cx: &ui::App) -> FocusHandle {
+    fn focus_handle(&self, _: &ui::App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
