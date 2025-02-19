@@ -7650,7 +7650,6 @@ dependencies = [
  "anyhow",
  "assets",
  "env_logger 0.11.6",
- "futures 0.3.31",
  "gpui",
  "language",
  "languages",
