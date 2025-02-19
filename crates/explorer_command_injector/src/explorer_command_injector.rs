@@ -83,7 +83,7 @@ impl IExplorerCommand_Impl for ExplorerCommandInjector_Impl {
             let item = unsafe { items.GetItemAt(idx)? };
             let item_path = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)?.to_string()? };
             std::process::Command::new(&zed_exe)
-                .arg(&add_quotation_for_path(item_path))
+                .arg(&item_path)
                 .spawn()
                 .map_err(|_| E_INVALIDARG)?;
         }
@@ -180,9 +180,4 @@ fn get_zed_path() -> Option<String> {
             .to_string_lossy()
             .to_string(),
     )
-}
-
-#[inline(always)]
-fn add_quotation_for_path(path: String) -> String {
-    format!("\"{}\"", path)
 }
