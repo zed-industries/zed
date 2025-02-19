@@ -22,3 +22,4 @@ nightly = []
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
 windows-core.workspace = true
+windows-registry = "*"
