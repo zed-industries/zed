@@ -717,7 +717,15 @@ impl Session {
                 );
             }
             Events::Stopped(event) => self.handle_stopped_event(event, cx),
-            Events::Continued(_event) => {}
+            Events::Continued(event) => {
+                if event.all_threads_continued.unwrap_or_default() {
+                    self.thread_states.all_threads_continued();
+                } else {
+                    self.thread_states
+                        .thread_continued(ThreadId(event.thread_id));
+                }
+                self.invalidate(cx);
+            }
             Events::Exited(_event) => {}
             Events::Terminated(_event) => {}
             Events::Thread(event) => {
