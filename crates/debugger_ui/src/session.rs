@@ -72,10 +72,10 @@ impl DebugSession {
     pub(super) fn inert(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
-        window: &Window,
+        window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        let inert = cx.new(|cx| InertState::new(cx));
+        let inert = cx.new(|cx| InertState::new(window, cx));
 
         let project = project.read(cx);
         let dap_store = project.dap_store().downgrade();

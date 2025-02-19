@@ -1,20 +1,31 @@
-use dap::{DebugAdapterConfig, DebugRequestType};
-use gpui::{App, EventEmitter, FocusHandle, Focusable};
+use std::path::PathBuf;
+
+use dap::{DebugAdapterConfig, DebugAdapterKind, DebugRequestType};
+use editor::{Editor, EditorElement, EditorStyle};
+use gpui::{App, AppContext, Entity, EventEmitter, FocusHandle, Focusable, TextStyle};
+use settings::Settings as _;
+use task::TCPHost;
+use theme::ThemeSettings;
 use ui::{
-    h_flex, v_flex, Button, ButtonCommon, ButtonStyle, Clickable, Context, ContextMenu,
-    DropdownMenu, InteractiveElement, ParentElement, Render, SharedString, Styled, Window,
+    h_flex, relative, v_flex, ActiveTheme as _, Button, ButtonCommon, ButtonStyle, Clickable,
+    Context, ContextMenu, DropdownMenu, InteractiveElement, IntoElement, Label, ParentElement,
+    Render, SharedString, Styled, Window,
 };
 
 pub(super) struct InertState {
     focus_handle: FocusHandle,
     selected_debugger: Option<SharedString>,
+    program_editor: Entity<Editor>,
+    cwd_editor: Entity<Editor>,
 }
 
 impl InertState {
-    pub(super) fn new(cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             selected_debugger: None,
+            program_editor: cx.new(|cx| Editor::single_line(window, cx)),
+            cwd_editor: cx.new(|cx| Editor::single_line(window, cx)),
         }
     }
 }
@@ -31,6 +42,7 @@ pub(crate) enum InertEvent {
 impl EventEmitter<InertEvent> for InertState {}
 
 static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select Debugger");
+
 impl Render for InertState {
     fn render(
         &mut self,
@@ -65,8 +77,26 @@ impl Render for InertState {
                         this.entry("GDB", None, setter_for_name("GDB"))
                             .entry("Delve", None, setter_for_name("Delve"))
                             .entry("LLDB", None, setter_for_name("LLDB"))
+                            .entry("PHP", None, setter_for_name("PHP"))
+                            .entry("Debugpy", None, setter_for_name("Debugpy"))
                     }),
                 )),
+            )
+            .child(
+                v_flex()
+                    .child(
+                        h_flex()
+                            .w_4_5()
+                            .gap_2()
+                            .child(Label::new("Program path"))
+                            .child(Self::render_editor(&self.program_editor, cx)),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(Label::new("Working directory"))
+                            .child(Self::render_editor(&self.cwd_editor, cx)),
+                    ),
             )
             .child(
                 h_flex()
@@ -74,20 +104,17 @@ impl Render for InertState {
                     .child(
                         Button::new("launch-dap", "Launch")
                             .style(ButtonStyle::Filled)
-                            .on_click(cx.listener(|_, _, _, cx| {
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let program = this.program_editor.read(cx).text(cx);
+                                let cwd = PathBuf::from(this.cwd_editor.read(cx).text(cx));
+                                let kind = kind_for_label(this.selected_debugger.as_deref().unwrap_or_else(|| unimplemented!("Automatic selection of a debugger based on users project")));
                                 cx.emit(InertEvent::Spawned {
                                     config: DebugAdapterConfig {
                                         label: "hard coded".into(),
-                                        kind: dap::DebugAdapterKind::Python(task::TCPHost {
-                                            port: None,
-                                            host: None,
-                                            timeout: None,
-                                        }),
+                                        kind,
                                         request: DebugRequestType::Launch,
-                                        program: Some(
-                                            "/Users/remcosmits/Documents/code/prettier-test/test.py".into(),
-                                        ),
-                                        cwd: Some("/Users/remcosmits/Documents/code/prettier-test".into()),
+                                        program: Some(program),
+                                        cwd: Some(cwd),
                                         initialize_args: None,
                                         supports_attach: false,
                                     },
@@ -96,5 +123,41 @@ impl Render for InertState {
                     )
                     .child(Button::new("attach-dap", "Attach").style(ButtonStyle::Filled)),
             )
+    }
+}
+
+fn kind_for_label(label: &str) -> DebugAdapterKind {
+    match label {
+        "LLDB" => DebugAdapterKind::Lldb,
+        "Debugpy" => DebugAdapterKind::Python(TCPHost::default()),
+        "PHP" => DebugAdapterKind::Php(TCPHost::default()),
+        "Delve" => DebugAdapterKind::Go(TCPHost::default()),
+        _ => {
+            unimplemented!()
+        } // Maybe we should set a toast notification here
+    }
+}
+impl InertState {
+    fn render_editor(editor: &Entity<Editor>, cx: &Context<Self>) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.buffer_font.family.clone(),
+            font_features: settings.buffer_font.features.clone(),
+            font_size: settings.buffer_font_size.into(),
+            font_weight: settings.buffer_font.weight,
+            line_height: relative(settings.buffer_line_height.value()),
+            ..Default::default()
+        };
+
+        EditorElement::new(
+            editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
     }
 }
