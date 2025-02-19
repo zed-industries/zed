@@ -2597,7 +2597,7 @@ mod test {
         cx.simulate_keystrokes("y i b");
         cx.assert_state(
             indoc! {
-                "(trailingˇ whitespace          )"
+                "(ˇtrailing whitespace          )"
             },
             Mode::Normal,
         );
