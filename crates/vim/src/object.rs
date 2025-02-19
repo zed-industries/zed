@@ -1468,8 +1468,7 @@ fn surrounding_markers(
         }
     }
 
-    // Preseve an indented newline for nonempty multiline { }
-    if !around && open_marker == '{' && close_marker == '}' {
+    if !around {
         let start_point = opening.end.to_display_point(map);
         let end_point = closing.start.to_display_point(map);
         let start_offset = start_point.to_offset(map, Bias::Left);
@@ -1480,28 +1479,26 @@ fn surrounding_markers(
             .take_while(|(_, offset)| offset < &end_offset)
             .any(|(ch, _)| !ch.is_whitespace())
         {
-            // Handle opening newline and following whitespace
-            if let Some((ch, range)) = movement::chars_after(map, start_offset).next() {
-                if ch == '\n' {
-                    let mut new_start = range.end;
-                    for (ch, range) in movement::chars_after(map, new_start) {
-                        if !ch.is_whitespace() {
-                            break;
-                        }
-                        new_start = range.end;
-                    }
-                    opening.end = new_start;
-                }
-            }
-            // Adjust closing.start to exclude trailing newline and whitespace
-            let mut last_non_whitespace = None;
-            for (ch, offset) in map.reverse_buffer_chars_at(end_offset) {
+            let mut first_non_ws = None;
+            let mut last_non_ws = None;
+            // Find first non-whitespace
+            for (ch, offset) in map.buffer_chars_at(start_offset) {
                 if !ch.is_whitespace() {
-                    last_non_whitespace = Some(offset + ch.len_utf8());
+                    first_non_ws = Some(offset);
                     break;
                 }
             }
-            if let Some(end) = last_non_whitespace {
+            // Find last non-whitespace
+            for (ch, offset) in map.reverse_buffer_chars_at(end_offset) {
+                if !ch.is_whitespace() {
+                    last_non_ws = Some(offset + ch.len_utf8());
+                    break;
+                }
+            }
+            if let Some(start) = first_non_ws {
+                opening.end = start;
+            }
+            if let Some(end) = last_non_ws {
                 closing.start = end;
             }
         }
