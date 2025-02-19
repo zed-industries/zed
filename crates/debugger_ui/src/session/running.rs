@@ -25,7 +25,7 @@ use workspace::{item::ItemEvent, Item, Workspace};
 
 pub struct RunningState {
     session: Entity<Session>,
-    thread_id: Option<ThreadId>,
+    thread: Option<(ThreadId, String)>,
     console: Entity<console::Console>,
     focus_handle: FocusHandle,
     remote_id: Option<ViewId>,
@@ -42,14 +42,19 @@ pub struct RunningState {
 
 impl Render for RunningState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let threads = self.session.update(cx, |this, cx| this.threads(cx));
+        if let Some((thread, _)) = threads.first().filter(|_| self.thread.is_none()) {
+            self.select_thread(ThreadId(thread.id), thread.name.clone(), cx);
+        }
+
         let thread_status = self
-            .thread_id
-            .map(|thread_id| self.session.read(cx).thread_status(thread_id))
+            .thread
+            .as_ref()
+            .map(|(thread_id, _)| self.session.read(cx).thread_status(*thread_id))
             .unwrap_or(ThreadStatus::Exited);
         let is_terminated = self.session.read(cx).is_terminated();
         let active_thread_item = &self.active_thread_item;
 
-        let threads = self.session.update(cx, |this, cx| this.threads(cx));
         let has_no_threads = threads.is_empty();
         let capabilities = self.capabilities(cx);
         let state = cx.entity();
@@ -235,16 +240,21 @@ impl Render for RunningState {
                                 h_flex().p_1().mx_2().w_3_4().justify_end().child(
                                     DropdownMenu::new(
                                         "thread-list",
-                                        "Threads",
+                                        self.thread
+                                            .as_ref()
+                                            .map(|(_, name)| format!("Thread {name}"))
+                                            .unwrap_or_else(|| "Threads".into()),
                                         ContextMenu::build(window, cx, move |mut this, _, _| {
-                                            for (thread, status) in threads {
+                                            for (thread, _) in threads {
                                                 let state = state.clone();
                                                 let thread_id = thread.id;
+                                                let thread_name = SharedString::from(&thread.name);
                                                 this =
                                                     this.entry(thread.name, None, move |_, cx| {
                                                         state.update(cx, |state, cx| {
                                                             state.select_thread(
                                                                 ThreadId(thread_id),
+                                                                String::from(thread_name.as_ref()),
                                                                 cx,
                                                             );
                                                         });
@@ -373,7 +383,7 @@ impl RunningState {
             focus_handle,
             variable_list,
             _subscriptions,
-            thread_id: None,
+            thread: None,
             remote_id: None,
             stack_frame_list,
             loaded_source_list,
@@ -460,11 +470,11 @@ impl RunningState {
         self.session().read(cx).capabilities().clone()
     }
 
-    fn select_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
-        self.thread_id = Some(thread_id);
+    fn select_thread(&mut self, thread_id: ThreadId, thread_name: String, cx: &mut Context<Self>) {
+        self.thread = Some((thread_id, thread_name));
 
         self.stack_frame_list.update(cx, |stack_frame_list, cx| {
-            stack_frame_list.set_thread_id(self.thread_id, cx);
+            stack_frame_list.set_thread_id(self.thread.as_ref().map(|id| id.0), cx);
         });
 
         cx.notify();
@@ -542,7 +552,7 @@ impl RunningState {
     }
 
     pub fn continue_thread(&mut self, cx: &mut Context<Self>) {
-        let Some(thread_id) = self.thread_id else {
+        let Some((thread_id, _)) = self.thread else {
             return;
         };
 
@@ -552,7 +562,7 @@ impl RunningState {
     }
 
     pub fn step_over(&mut self, cx: &mut Context<Self>) {
-        let Some(thread_id) = self.thread_id else {
+        let Some((thread_id, _)) = self.thread else {
             return;
         };
 
@@ -564,7 +574,7 @@ impl RunningState {
     }
 
     pub fn step_in(&mut self, cx: &mut Context<Self>) {
-        let Some(thread_id) = self.thread_id else {
+        let Some((thread_id, _)) = self.thread else {
             return;
         };
 
@@ -576,7 +586,7 @@ impl RunningState {
     }
 
     pub fn step_out(&mut self, cx: &mut Context<Self>) {
-        let Some(thread_id) = self.thread_id else {
+        let Some((thread_id, _)) = self.thread else {
             return;
         };
 
@@ -588,7 +598,7 @@ impl RunningState {
     }
 
     pub fn step_back(&mut self, cx: &mut Context<Self>) {
-        let Some(thread_id) = self.thread_id else {
+        let Some((thread_id, _)) = self.thread else {
             return;
         };
 
@@ -606,7 +616,7 @@ impl RunningState {
     }
 
     pub fn pause_thread(&self, cx: &mut Context<Self>) {
-        let Some(thread_id) = self.thread_id else {
+        let Some((thread_id, _)) = self.thread else {
             return;
         };
 
@@ -616,7 +626,7 @@ impl RunningState {
     }
 
     pub fn stop_thread(&self, cx: &mut Context<Self>) {
-        let Some(thread_id) = self.thread_id else {
+        let Some((thread_id, _)) = self.thread else {
             return;
         };
 
