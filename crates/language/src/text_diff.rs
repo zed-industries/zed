@@ -1,3 +1,4 @@
+use crate::{CharClassifier, CharKind, LanguageScope};
 use imara_diff::{
     diff,
     intern::{InternedInput, Token},
@@ -6,7 +7,23 @@ use imara_diff::{
 };
 use std::{iter, ops::Range, sync::Arc};
 
+const MAX_WORD_DIFF_LEN: usize = 512;
+const MAX_WORD_DIFF_LINE_COUNT: usize = 8;
+
+/// Computes a diff between two strings.
+///
+/// Performs word-level diffing within hunks that replace small numbers of lines.
 pub fn text_diff(old_text: &str, new_text: &str) -> Vec<(Range<usize>, Arc<str>)> {
+    text_diff_with_language_scope(old_text, new_text, None)
+}
+
+/// Computes a diff between two strings, using a specific language scope's
+/// word characters for word-level diffing.
+pub fn text_diff_with_language_scope(
+    old_text: &str,
+    new_text: &str,
+    language_scope: Option<LanguageScope>,
+) -> Vec<(Range<usize>, Arc<str>)> {
     let empty: Arc<str> = Arc::default();
     let mut edits = Vec::new();
     let mut hunk_input = InternedInput::default();
@@ -15,70 +32,39 @@ pub fn text_diff(old_text: &str, new_text: &str) -> Vec<(Range<usize>, Arc<str>)
         lines_with_terminator(new_text),
     );
 
-    let mut old_offset = 0;
-    let mut new_offset = 0;
-    let mut old_row = 0;
-    let mut new_row = 0;
-    diff(
-        Algorithm::Histogram,
+    diff_internal(
         &input,
-        |old_rows: Range<u32>, new_rows: Range<u32>| {
-            let old_rows = old_rows.start as usize..old_rows.end as usize;
-            let new_rows = new_rows.start as usize..new_rows.end as usize;
-
-            old_offset += token_len(&input, &input.before[old_row..old_rows.start]);
-            new_offset += token_len(&input, &input.after[new_row..new_rows.start]);
-            let old_len = token_len(&input, &input.before[old_rows.start..old_rows.end]);
-            let new_len = token_len(&input, &input.after[new_rows.start..new_rows.end]);
-            old_row = old_rows.end;
-            new_row = new_rows.end;
-
-            let old_byte_range = old_offset..old_offset + old_len;
-            let new_byte_range = new_offset..new_offset + new_len;
-
+        |old_byte_range, new_byte_range, old_rows, new_rows| {
             if should_perform_word_diff_within_hunk(
                 &old_rows,
                 &old_byte_range,
                 &new_rows,
                 &new_byte_range,
             ) {
-                let mut old_offset = old_offset;
-                let mut new_offset = new_offset;
-                let mut old_token = 0;
-                let mut new_token = 0;
-                let input = &mut hunk_input;
+                let old_offset = old_byte_range.start;
+                let new_offset = new_byte_range.start;
+                hunk_input.clear();
+                hunk_input.update_before(tokenize(
+                    &old_text[old_byte_range.clone()],
+                    language_scope.clone(),
+                ));
+                hunk_input.update_after(tokenize(
+                    &new_text[new_byte_range.clone()],
+                    language_scope.clone(),
+                ));
+                diff_internal(&hunk_input, |old_byte_range, new_byte_range, _, _| {
+                    let old_byte_range =
+                        old_offset + old_byte_range.start..old_offset + old_byte_range.end;
+                    let new_byte_range =
+                        new_offset + new_byte_range.start..new_offset + new_byte_range.end;
 
-                input.clear();
-                input.update_before(words(&old_text[old_byte_range.clone()]));
-                input.update_after(words(&new_text[new_byte_range.clone()]));
-                diff(
-                    Algorithm::Histogram,
-                    input,
-                    |old_tokens: Range<u32>, new_tokens: Range<u32>| {
-                        let old_tokens = old_tokens.start as usize..old_tokens.end as usize;
-                        let new_tokens = new_tokens.start as usize..new_tokens.end as usize;
-                        old_offset += token_len(&input, &input.before[old_token..old_tokens.start]);
-                        new_offset += token_len(&input, &input.after[new_token..new_tokens.start]);
-                        let old_len =
-                            token_len(&input, &input.before[old_tokens.start..old_tokens.end]);
-                        let new_len =
-                            token_len(&input, &input.after[new_tokens.start..new_tokens.end]);
-                        old_token = old_tokens.end;
-                        new_token = new_tokens.end;
-
-                        let old_byte_range = old_offset..old_offset + old_len;
-                        let new_byte_range = new_offset..new_offset + new_len;
-
-                        let replacement_text = if new_byte_range.is_empty() {
-                            empty.clone()
-                        } else {
-                            new_text[new_byte_range.clone()].into()
-                        };
-                        edits.push((old_byte_range, replacement_text));
-                        old_offset += old_len;
-                        new_offset += new_len;
-                    },
-                );
+                    let replacement_text = if new_byte_range.is_empty() {
+                        empty.clone()
+                    } else {
+                        new_text[new_byte_range.clone()].into()
+                    };
+                    edits.push((old_byte_range, replacement_text));
+                });
             } else {
                 let replacement_text = if new_byte_range.is_empty() {
                     empty.clone()
@@ -87,43 +73,89 @@ pub fn text_diff(old_text: &str, new_text: &str) -> Vec<(Range<usize>, Arc<str>)
                 };
                 edits.push((old_byte_range.clone(), replacement_text));
             }
-
-            old_offset = old_byte_range.end;
-            new_offset = new_byte_range.end;
         },
     );
 
     edits
 }
 
-const MAX_WORD_DIFF_LEN: usize = 512;
-
 fn should_perform_word_diff_within_hunk(
-    old_rows: &Range<usize>,
+    old_row_range: &Range<u32>,
     old_byte_range: &Range<usize>,
-    new_rows: &Range<usize>,
+    new_row_range: &Range<u32>,
     new_byte_range: &Range<usize>,
 ) -> bool {
-    old_byte_range.len() < MAX_WORD_DIFF_LEN
-        && new_byte_range.len() < MAX_WORD_DIFF_LEN
-        && old_rows.len() < 5
-        && new_rows.len() < 5
+    old_byte_range.len() <= MAX_WORD_DIFF_LEN
+        && new_byte_range.len() <= MAX_WORD_DIFF_LEN
+        && old_row_range.len() <= MAX_WORD_DIFF_LINE_COUNT
+        && new_row_range.len() <= MAX_WORD_DIFF_LINE_COUNT
 }
 
-fn words(text: &str) -> impl Iterator<Item = &str> {
-    let mut ix = 0;
-    let mut in_whitespace = text.chars().next().map_or(false, |c| c.is_whitespace());
+fn diff_internal(
+    input: &InternedInput<&str>,
+    mut on_change: impl FnMut(Range<usize>, Range<usize>, Range<u32>, Range<u32>),
+) {
+    let mut old_offset = 0;
+    let mut new_offset = 0;
+    let mut old_token_ix = 0;
+    let mut new_token_ix = 0;
+    diff(
+        Algorithm::Histogram,
+        input,
+        |old_tokens: Range<u32>, new_tokens: Range<u32>| {
+            old_offset += token_len(
+                &input,
+                &input.before[old_token_ix as usize..old_tokens.start as usize],
+            );
+            new_offset += token_len(
+                &input,
+                &input.after[new_token_ix as usize..new_tokens.start as usize],
+            );
+            let old_len = token_len(
+                &input,
+                &input.before[old_tokens.start as usize..old_tokens.end as usize],
+            );
+            let new_len = token_len(
+                &input,
+                &input.after[new_tokens.start as usize..new_tokens.end as usize],
+            );
+            let old_byte_range = old_offset..old_offset + old_len;
+            let new_byte_range = new_offset..new_offset + new_len;
+            old_token_ix = old_tokens.end;
+            new_token_ix = new_tokens.end;
+            old_offset = old_byte_range.end;
+            new_offset = new_byte_range.end;
+            on_change(old_byte_range, new_byte_range, old_tokens, new_tokens);
+        },
+    );
+}
+
+fn tokenize(text: &str, language_scope: Option<LanguageScope>) -> impl Iterator<Item = &str> {
+    let classifier = CharClassifier::new(language_scope).for_completion(true);
+    let mut chars = text.char_indices();
+    let mut prev = None;
+    let mut start_ix = 0;
     iter::from_fn(move || {
-        if ix == text.len() {
-            return None;
+        while let Some((ix, c)) = chars.next() {
+            let mut token = None;
+            let kind = classifier.kind(c);
+            if let Some((prev_char, prev_kind)) = prev {
+                if kind != prev_kind || (kind == CharKind::Punctuation && c != prev_char) {
+                    token = Some(&text[start_ix..ix]);
+                    start_ix = ix;
+                }
+            }
+            prev = Some((c, kind));
+            if token.is_some() {
+                return token;
+            }
         }
-        let next_ix = text[ix..]
-            .find(|c: char| c.is_whitespace() != in_whitespace)
-            .map_or(text.len(), |i| i + ix);
-        in_whitespace = !in_whitespace;
-        let token = &text[ix..next_ix];
-        ix = next_ix;
-        Some(token)
+        if start_ix < text.len() {
+            let token = &text[start_ix..];
+            start_ix = text.len();
+            return Some(token);
+        }
+        None
     })
 }
 
@@ -139,28 +171,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_words() {
+    fn test_tokenize() {
         let text = "";
-        assert_eq!(words(text).collect::<Vec<_>>(), Vec::<&str>::new());
+        assert_eq!(tokenize(text, None).collect::<Vec<_>>(), Vec::<&str>::new());
 
         let text = " ";
-        assert_eq!(words(text).collect::<Vec<_>>(), vec![" "]);
+        assert_eq!(tokenize(text, None).collect::<Vec<_>>(), vec![" "]);
 
         let text = "one";
-        assert_eq!(words(text).collect::<Vec<_>>(), vec!["one"]);
+        assert_eq!(tokenize(text, None).collect::<Vec<_>>(), vec!["one"]);
 
         let text = "one\n";
-        assert_eq!(words(text).collect::<Vec<_>>(), vec!["one", "\n"]);
+        assert_eq!(tokenize(text, None).collect::<Vec<_>>(), vec!["one", "\n"]);
 
-        let text = "one two three";
+        let text = "one.two(three)";
         assert_eq!(
-            words(text).collect::<Vec<_>>(),
-            vec!["one", " ", "two", " ", "three"]
+            tokenize(text, None).collect::<Vec<_>>(),
+            vec!["one", ".", "two", "(", "three", ")"]
+        );
+
+        let text = "one two three()";
+        assert_eq!(
+            tokenize(text, None).collect::<Vec<_>>(),
+            vec!["one", " ", "two", " ", "three", "(", ")"]
         );
 
         let text = "   one\n two three";
         assert_eq!(
-            words(text).collect::<Vec<_>>(),
+            tokenize(text, None).collect::<Vec<_>>(),
             vec!["   ", "one", "\n ", "two", " ", "three"]
         );
     }
