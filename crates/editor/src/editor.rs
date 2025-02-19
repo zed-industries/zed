@@ -4798,8 +4798,8 @@ impl Editor {
             let Some(Some(matches_task)) = editor
                 .update_in(&mut cx, |editor, _, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let selection = editor.selections.newest::<Point>(cx);
-                    if selection.is_empty() || selection.start.row != selection.end.row {
+                    let new_selection = editor.selections.newest::<Point>(cx);
+                    if selection != new_selection {
                         editor.clear_background_highlights::<SelectedTextHighlight>(cx);
                         return None;
                     }
