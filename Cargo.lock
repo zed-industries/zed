@@ -6963,6 +6963,7 @@ dependencies = [
  "feature_flags",
  "gpui",
  "language_model",
+ "log",
  "picker",
  "proto",
  "ui",

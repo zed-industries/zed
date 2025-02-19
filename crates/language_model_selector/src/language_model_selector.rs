@@ -5,7 +5,9 @@ use gpui::{
     Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Subscription, Task, WeakEntity,
 };
-use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
+use language_model::{
+    AuthenticateError, LanguageModel, LanguageModelAvailability, LanguageModelRegistry,
+};
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
@@ -20,6 +22,7 @@ pub struct LanguageModelSelector {
     /// The task used to update the picker's matches when there is a change to
     /// the language model registry.
     update_matches_task: Option<Task<()>>,
+    _authenticate_all_providers_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -50,6 +53,7 @@ impl LanguageModelSelector {
         LanguageModelSelector {
             picker,
             update_matches_task: None,
+            _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
             _subscriptions: vec![cx.subscribe_in(
                 &LanguageModelRegistry::global(cx),
                 window,
@@ -78,6 +82,56 @@ impl LanguageModelSelector {
             }
             _ => {}
         }
+    }
+
+    /// Authenticates all providers in the [`LanguageModelRegistry`].
+    ///
+    /// We do this so that we can populate the language selector with all of the
+    /// models from the configured providers.
+    fn authenticate_all_providers(cx: &mut App) -> Task<()> {
+        let authenticate_all_providers = LanguageModelRegistry::global(cx)
+            .read(cx)
+            .providers()
+            .iter()
+            .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
+            .collect::<Vec<_>>();
+
+        cx.spawn(|_cx| async move {
+            for (provider_id, provider_name, authenticate_task) in authenticate_all_providers {
+                if let Err(err) = authenticate_task.await {
+                    if matches!(err, AuthenticateError::CredentialsNotFound) {
+                        // Since we're authenticating these providers in the
+                        // background for the purposes of populating the
+                        // language selector, we don't care about providers
+                        // where the credentials are not found.
+                    } else {
+                        // Some providers have noisy failure states that we
+                        // don't want to spam the logs with every time the
+                        // language model selector is initialized.
+                        //
+                        // Ideally these should have more clear failure modes
+                        // that we know are safe to ignore here, like what we do
+                        // with `CredentialsNotFound` above.
+                        match provider_id.0.as_ref() {
+                            "lmstudio" | "ollama" => {
+                                // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
+                                //
+                                // These fail noisily, so we don't log them.
+                            }
+                            "copilot_chat" => {
+                                // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.
+                            }
+                            _ => {
+                                log::error!(
+                                    "Failed to authenticate provider: {}: {err}",
+                                    provider_name.0
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        })
     }
 
     fn all_models(cx: &App) -> Vec<ModelInfo> {
