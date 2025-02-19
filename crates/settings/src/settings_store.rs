@@ -4,7 +4,7 @@ use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
 use futures::{channel::mpsc, future::LocalBoxFuture, FutureExt, StreamExt};
 use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
-use migrator::migrate_settings;
+
 use paths::{local_settings_file_relative_path, EDITORCONFIG_NAME};
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -17,6 +17,7 @@ use std::{
     str::{self, FromStr},
     sync::{Arc, LazyLock},
 };
+use streaming_iterator::StreamingIterator;
 use tree_sitter::Query;
 use util::RangeExt;
 
@@ -389,7 +390,7 @@ impl SettingsStore {
         self.set_user_settings(&new_text, cx).unwrap();
     }
 
-    async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
+    pub async fn load_settings(fs: &Arc<dyn Fs>) -> Result<String> {
         match fs.load(paths::settings_file()).await {
             result @ Ok(_) => result,
             Err(err) => {
@@ -415,11 +416,11 @@ impl SettingsStore {
                     let new_text = cx.read_global(|store: &SettingsStore, cx| {
                         store.new_text_for_update::<T>(old_text, |content| update(content, cx))
                     })?;
-                    let initial_path = paths::settings_file().as_path();
-                    if fs.is_file(initial_path).await {
+                    let settings_path = paths::settings_file().as_path();
+                    if fs.is_file(settings_path).await {
                         let resolved_path =
-                            fs.canonicalize(initial_path).await.with_context(|| {
-                                format!("Failed to canonicalize settings path {:?}", initial_path)
+                            fs.canonicalize(settings_path).await.with_context(|| {
+                                format!("Failed to canonicalize settings path {:?}", settings_path)
                             })?;
 
                         fs.atomic_write(resolved_path.clone(), new_text)
@@ -428,10 +429,10 @@ impl SettingsStore {
                                 format!("Failed to write settings to file {:?}", resolved_path)
                             })?;
                     } else {
-                        fs.atomic_write(initial_path.to_path_buf(), new_text)
+                        fs.atomic_write(settings_path.to_path_buf(), new_text)
                             .await
                             .with_context(|| {
-                                format!("Failed to write settings to file {:?}", initial_path)
+                                format!("Failed to write settings to file {:?}", settings_path)
                             })?;
                     }
 
@@ -995,52 +996,6 @@ impl SettingsStore {
         properties.use_fallbacks();
         Some(properties)
     }
-
-    pub fn should_migrate_settings(settings: &serde_json::Value) -> bool {
-        let Ok(old_text) = serde_json::to_string(settings) else {
-            return false;
-        };
-        migrate_settings(&old_text).is_some()
-    }
-
-    pub fn migrate_settings(&self, fs: Arc<dyn Fs>) {
-        self.setting_file_updates_tx
-            .unbounded_send(Box::new(move |_: AsyncApp| {
-                async move {
-                    let old_text = Self::load_settings(&fs).await?;
-                    let Some(new_text) = migrate_settings(&old_text) else {
-                        return anyhow::Ok(());
-                    };
-                    let initial_path = paths::settings_file().as_path();
-                    if fs.is_file(initial_path).await {
-                        let backup_path = paths::home_dir().join(".zed_settings_backup");
-                        fs.atomic_write(backup_path, old_text)
-                            .await
-                            .with_context(|| {
-                                "Failed to create settings backup in home directory".to_string()
-                            })?;
-                        let resolved_path =
-                            fs.canonicalize(initial_path).await.with_context(|| {
-                                format!("Failed to canonicalize settings path {:?}", initial_path)
-                            })?;
-                        fs.atomic_write(resolved_path.clone(), new_text)
-                            .await
-                            .with_context(|| {
-                                format!("Failed to write settings to file {:?}", resolved_path)
-                            })?;
-                    } else {
-                        fs.atomic_write(initial_path.to_path_buf(), new_text)
-                            .await
-                            .with_context(|| {
-                                format!("Failed to write settings to file {:?}", initial_path)
-                            })?;
-                    }
-                    anyhow::Ok(())
-                }
-                .boxed_local()
-            }))
-            .ok();
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1263,8 +1218,8 @@ fn replace_value_in_json_text(
     let mut last_value_range = 0..0;
     let mut first_key_start = None;
     let mut existing_value_range = 0..text.len();
-    let matches = cursor.matches(&PAIR_QUERY, syntax_tree.root_node(), text.as_bytes());
-    for mat in matches {
+    let mut matches = cursor.matches(&PAIR_QUERY, syntax_tree.root_node(), text.as_bytes());
+    while let Some(mat) = matches.next() {
         if mat.captures.len() != 2 {
             continue;
         }

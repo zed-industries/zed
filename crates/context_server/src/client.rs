@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, FutureExt};
-use gpui::{AsyncApp, BackgroundExecutor, Task};
+use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::barrier;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -192,7 +192,7 @@ impl Client {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
             stdout.or(stderr)
         });
-        let output_task = cx.background_executor().spawn({
+        let output_task = cx.background_spawn({
             Self::handle_output(
                 stdin,
                 outbound_rx,

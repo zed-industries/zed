@@ -37,9 +37,9 @@
       "[ [": "vim::PreviousSectionStart",
       "[ ]": "vim::PreviousSectionEnd",
       "] m": "vim::NextMethodStart",
-      "] M": "vim::NextMethodEnd",
+      "] shift-m": "vim::NextMethodEnd",
       "[ m": "vim::PreviousMethodStart",
-      "[ M": "vim::PreviousMethodEnd",
+      "[ shift-m": "vim::PreviousMethodEnd",
       "[ *": "vim::PreviousComment",
       "[ /": "vim::PreviousComment",
       "] *": "vim::NextComment",
@@ -631,7 +631,7 @@
     }
   },
   {
-    "context": "GitPanel || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || Welcome",
+    "context": "ChangesList || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || Welcome",
     "bindings": {
       ":": "command_palette::Toggle",
       "g /": "pane::DeploySearch"
@@ -693,6 +693,23 @@
       "x": "git::ToggleStaged",
       "shift-x": "git::StageAll",
       "shift-u": "git::UnstageAll"
+    }
+  },
+  {
+    "context": "Editor && edit_prediction",
+    "bindings": {
+      // This is identical to the binding in the base keymap, but the vim bindings above to
+      // "vim::Tab" shadow it, so it needs to be bound again.
+      "tab": "editor::AcceptEditPrediction"
+    }
+  },
+  {
+    "context": "os != macos && Editor && edit_prediction_conflict",
+    "bindings": {
+      // alt-l is provided as an alternative to tab/alt-tab. and will be displayed in the UI. This
+      // is because alt-tab may not be available, as it is often used for window switching on Linux
+      // and Windows.
+      "alt-l": "editor::AcceptEditPrediction"
     }
   }
 ]

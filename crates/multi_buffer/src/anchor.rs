@@ -73,7 +73,7 @@ impl Anchor {
                 if let Some(base_text) = snapshot
                     .diffs
                     .get(&excerpt.buffer_id)
-                    .and_then(|diff| diff.base_text.as_ref())
+                    .and_then(|diff| diff.base_text())
                 {
                     let self_anchor = self.diff_base_anchor.filter(|a| base_text.can_resolve(a));
                     let other_anchor = other.diff_base_anchor.filter(|a| base_text.can_resolve(a));
@@ -110,7 +110,7 @@ impl Anchor {
                         if let Some(base_text) = snapshot
                             .diffs
                             .get(&excerpt.buffer_id)
-                            .and_then(|diff| diff.base_text.as_ref())
+                            .and_then(|diff| diff.base_text())
                         {
                             if a.buffer_id == Some(base_text.remote_id()) {
                                 return a.bias_left(base_text);
@@ -135,7 +135,7 @@ impl Anchor {
                         if let Some(base_text) = snapshot
                             .diffs
                             .get(&excerpt.buffer_id)
-                            .and_then(|diff| diff.base_text.as_ref())
+                            .and_then(|diff| diff.base_text())
                         {
                             if a.buffer_id == Some(base_text.remote_id()) {
                                 return a.bias_right(&base_text);

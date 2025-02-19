@@ -34,6 +34,7 @@ call.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
+component.workspace = true
 db.workspace = true
 derive_more.workspace = true
 fs.workspace = true
@@ -62,6 +63,7 @@ theme.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }

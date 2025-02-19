@@ -19,9 +19,8 @@ impl MarkdownView {
     pub fn from(text: String, cx: &mut Context<Self>) -> Self {
         let task = cx.spawn(|markdown_view, mut cx| {
             let text = text.clone();
-            let parsed = cx
-                .background_executor()
-                .spawn(async move { parse_markdown(&text, None, None).await });
+            let parsed =
+                cx.background_spawn(async move { parse_markdown(&text, None, None).await });
 
             async move {
                 let content = parsed.await;

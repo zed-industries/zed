@@ -4,12 +4,13 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
+use gpui::SharedString;
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 use serde::Deserialize;
 use url::Url;
 
 use git::{
-    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, Oid, ParsedGitRemote,
+    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
     RemoteUrl,
 };
 
@@ -160,7 +161,7 @@ impl GitHostingProvider for Codeberg {
         &self,
         repo_owner: &str,
         repo: &str,
-        commit: Oid,
+        commit: SharedString,
         http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
         let commit = commit.to_string();

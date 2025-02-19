@@ -250,7 +250,7 @@ async fn test_basic_following(
     });
     executor.run_until_parked();
     // are you sure you want to leave the call?
-    cx_c.simulate_prompt_answer(0);
+    cx_c.simulate_prompt_answer("Close window and hang up");
     cx_c.cx.update(|_| {
         drop(workspace_c);
     });

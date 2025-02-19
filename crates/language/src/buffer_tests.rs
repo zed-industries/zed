@@ -3149,7 +3149,7 @@ fn html_lang() -> Language {
             block_comment: Some(("<!--".into(), "-->".into())),
             ..Default::default()
         },
-        Some(tree_sitter_html::language()),
+        Some(tree_sitter_html::LANGUAGE.into()),
     )
     .with_indents_query(
         "

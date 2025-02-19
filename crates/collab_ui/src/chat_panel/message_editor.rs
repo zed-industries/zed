@@ -454,8 +454,7 @@ impl MessageEditor {
         mut cx: AsyncWindowContext,
     ) {
         let (buffer, ranges) = cx
-            .background_executor()
-            .spawn(async move {
+            .background_spawn(async move {
                 let ranges = MENTIONS_SEARCH.search(&buffer, None).await;
                 (buffer, ranges)
             })

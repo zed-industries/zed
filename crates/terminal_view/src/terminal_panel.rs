@@ -139,10 +139,9 @@ impl TerminalPanel {
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
                         PopoverMenu::new("terminal-tab-bar-popover-menu")
-                            .trigger(
-                                IconButton::new("plus", IconName::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("New…")),
+                            .trigger_with_tooltip(
+                                IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
+                                Tooltip::text("New…"),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
@@ -169,10 +168,10 @@ impl TerminalPanel {
                     .children(assistant_tab_bar_button.clone())
                     .child(
                         PopoverMenu::new("terminal-pane-tab-bar-split")
-                            .trigger(
+                            .trigger_with_tooltip(
                                 IconButton::new("terminal-pane-split", IconName::Split)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Split Pane")),
+                                    .icon_size(IconSize::Small),
+                                Tooltip::text("Split Pane"),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
@@ -223,8 +222,7 @@ impl TerminalPanel {
         mut cx: AsyncWindowContext,
     ) -> Result<Entity<Self>> {
         let serialized_panel = cx
-            .background_executor()
-            .spawn(async move { KEY_VALUE_STORE.read_kvp(TERMINAL_PANEL_KEY) })
+            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(TERMINAL_PANEL_KEY) })
             .await
             .log_err()
             .flatten()
@@ -743,25 +741,24 @@ impl TerminalPanel {
                     ))
                 })
                 .ok()?;
-            cx.background_executor()
-                .spawn(
-                    async move {
-                        KEY_VALUE_STORE
-                            .write_kvp(
-                                TERMINAL_PANEL_KEY.into(),
-                                serde_json::to_string(&SerializedTerminalPanel {
-                                    items,
-                                    active_item_id: None,
-                                    height,
-                                    width,
-                                })?,
-                            )
-                            .await?;
-                        anyhow::Ok(())
-                    }
-                    .log_err(),
-                )
-                .await;
+            cx.background_spawn(
+                async move {
+                    KEY_VALUE_STORE
+                        .write_kvp(
+                            TERMINAL_PANEL_KEY.into(),
+                            serde_json::to_string(&SerializedTerminalPanel {
+                                items,
+                                active_item_id: None,
+                                height,
+                                width,
+                            })?,
+                        )
+                        .await?;
+                    anyhow::Ok(())
+                }
+                .log_err(),
+            )
+            .await;
             Some(())
         });
     }
@@ -981,7 +978,9 @@ pub fn new_terminal_pane(
             false
         })));
 
-        let buffer_search_bar = cx.new(|cx| search::BufferSearchBar::new(window, cx));
+        let buffer_search_bar = cx.new(|cx| {
+            search::BufferSearchBar::new(Some(project.read(cx).languages().clone()), window, cx)
+        });
         let breadcrumbs = cx.new(|_| Breadcrumbs::new());
         pane.toolbar().update(cx, |toolbar, cx| {
             toolbar.add_item(buffer_search_bar, window, cx);

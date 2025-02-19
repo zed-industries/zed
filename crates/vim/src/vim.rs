@@ -23,7 +23,6 @@ use anyhow::Result;
 use collections::HashMap;
 use editor::{
     movement::{self, FindRange},
-    scroll::Autoscroll,
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
@@ -216,7 +215,7 @@ pub fn init(cx: &mut App) {
             };
 
             let theme = ThemeSettings::get_global(cx);
-            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
+            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
 
             let desired_size = if let Some(count) = Vim::take_count(cx) {
                 height * count
@@ -234,7 +233,7 @@ pub fn init(cx: &mut App) {
             };
             let Ok(width) = window
                 .text_system()
-                .advance(font_id, theme.buffer_font_size(), 'm')
+                .advance(font_id, theme.buffer_font_size(cx), 'm')
             else {
                 return;
             };
@@ -249,7 +248,7 @@ pub fn init(cx: &mut App) {
             };
             let Ok(width) = window
                 .text_system()
-                .advance(font_id, theme.buffer_font_size(), 'm')
+                .advance(font_id, theme.buffer_font_size(cx), 'm')
             else {
                 return;
             };
@@ -259,14 +258,14 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &ResizePaneUp, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             let theme = ThemeSettings::get_global(cx);
-            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
+            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
             workspace.resize_pane(Axis::Vertical, height * count, window, cx);
         });
 
         workspace.register_action(|workspace, _: &ResizePaneDown, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             let theme = ThemeSettings::get_global(cx);
-            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
+            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
             workspace.resize_pane(Axis::Vertical, -height * count, window, cx);
         });
 
@@ -649,20 +648,24 @@ impl Vim {
                 vim.push_count_digit(n.0, window, cx);
             });
             Vim::action(editor, cx, |vim, _: &Tab, window, cx| {
-                let Some(anchor) = vim
-                    .editor()
-                    .and_then(|editor| editor.read(cx).inline_completion_start_anchor())
-                else {
-                    return;
-                };
-
-                vim.update_editor(window, cx, |_, editor, window, cx| {
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                        s.select_anchor_ranges([anchor..anchor])
-                    });
-                });
-                vim.switch_mode(Mode::Insert, true, window, cx);
+                vim.input_ignored(" ".into(), window, cx)
             });
+            Vim::action(
+                editor,
+                cx,
+                |vim, action: &editor::AcceptEditPrediction, window, cx| {
+                    vim.update_editor(window, cx, |_, editor, window, cx| {
+                        editor.accept_edit_prediction(action, window, cx);
+                    });
+                    // In non-insertion modes, predictions will be hidden and instead a jump will be
+                    // displayed (and performed by `accept_edit_prediction`). This switches to
+                    // insert mode so that the prediction is displayed after the jump.
+                    match vim.mode {
+                        Mode::Replace => {}
+                        _ => vim.switch_mode(Mode::Insert, true, window, cx),
+                    };
+                },
+            );
             Vim::action(editor, cx, |vim, _: &Enter, window, cx| {
                 vim.input_ignored("\n".into(), window, cx)
             });
@@ -822,6 +825,7 @@ impl Vim {
                 | Operator::Uppercase
                 | Operator::OppositeCase
                 | Operator::ToggleComments
+                | Operator::ReplaceWithRegister
         ) {
             self.start_recording(cx)
         };

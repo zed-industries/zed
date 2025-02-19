@@ -13,8 +13,9 @@
   --menu-bar-height: 64px;
   --font: "IA Writer Quattro S", sans-serif;
   --title-font: "Lora", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --mono-font: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    Liberation Mono, Courier New, monospace;
+  --mono-font:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono,
+    Courier New, monospace;
   --code-font-size: 0.875em
     /* please adjust the ace font size accordingly in editor.js */;
 
@@ -97,7 +98,7 @@
   --title-color: hsl(220, 92%, 80%);
 
   --border: hsl(220, 13%, 20%);
-  --border-light: hsl(220, 13%, 90%);
+  --border-light: hsl(220, 13%, 15%);
   --border-hover: hsl(220, 13%, 40%);
 
   --media-bg: hsl(220, 13%, 8%);

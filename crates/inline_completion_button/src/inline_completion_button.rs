@@ -36,9 +36,8 @@ use workspace::{
     Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
-use zeta::RateCompletionModal;
+use zeta::RateCompletions;
 
-actions!(zeta, [RateCompletions]);
 actions!(edit_prediction, [ToggleMenu]);
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
@@ -54,7 +53,6 @@ pub struct InlineCompletionButton {
     file: Option<Arc<dyn File>>,
     edit_prediction_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
     fs: Arc<dyn Fs>,
-    workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
@@ -142,9 +140,12 @@ impl Render for InlineCompletionButton {
                             })
                         })
                         .anchor(Corner::BottomRight)
-                        .trigger(IconButton::new("copilot-icon", icon).tooltip(|window, cx| {
-                            Tooltip::for_action("GitHub Copilot", &ToggleMenu, window, cx)
-                        }))
+                        .trigger_with_tooltip(
+                            IconButton::new("copilot-icon", icon),
+                            |window, cx| {
+                                Tooltip::for_action("GitHub Copilot", &ToggleMenu, window, cx)
+                            },
+                        )
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
@@ -211,7 +212,8 @@ impl Render for InlineCompletionButton {
                             _ => None,
                         })
                         .anchor(Corner::BottomRight)
-                        .trigger(IconButton::new("supermaven-icon", icon).tooltip(
+                        .trigger_with_tooltip(
+                            IconButton::new("supermaven-icon", icon),
                             move |window, cx| {
                                 if has_menu {
                                     Tooltip::for_action(
@@ -224,7 +226,7 @@ impl Render for InlineCompletionButton {
                                     Tooltip::text(tooltip_text.clone())(window, cx)
                                 }
                             },
-                        ))
+                        )
                         .with_handle(self.popover_menu_handle.clone()),
                 );
             }
@@ -350,7 +352,6 @@ impl Render for InlineCompletionButton {
 
 impl InlineCompletionButton {
     pub fn new(
-        workspace: WeakEntity<Workspace>,
         fs: Arc<dyn Fs>,
         user_store: Entity<UserStore>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -372,7 +373,6 @@ impl InlineCompletionButton {
             file: None,
             edit_prediction_provider: None,
             popover_menu_handle,
-            workspace,
             fs,
             user_store,
         }
@@ -406,7 +406,7 @@ impl InlineCompletionButton {
 
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
             menu = menu.toggleable_entry(
-                "This File",
+                "This Buffer",
                 self.editor_show_predictions,
                 IconPosition::Start,
                 Some(Box::new(ToggleEditPrediction)),
@@ -438,13 +438,10 @@ impl InlineCompletionButton {
 
         let settings = AllLanguageSettings::get_global(cx);
         let globally_enabled = settings.show_inline_completions(None, cx);
-        menu = menu.toggleable_entry(
-            "All Files",
-            globally_enabled,
-            IconPosition::Start,
-            None,
-            move |_, cx| toggle_inline_completions_globally(fs.clone(), cx),
-        );
+        menu = menu.toggleable_entry("All Files", globally_enabled, IconPosition::Start, None, {
+            let fs = fs.clone();
+            move |_, cx| toggle_inline_completions_globally(fs.clone(), cx)
+        });
         menu = menu.separator().header("Privacy Settings");
 
         if let Some(provider) = &self.edit_prediction_provider {
@@ -452,17 +449,64 @@ impl InlineCompletionButton {
             if data_collection.is_supported() {
                 let provider = provider.clone();
                 let enabled = data_collection.is_enabled();
+                let is_open_source = data_collection.is_project_open_source();
+                let is_collecting = data_collection.is_enabled();
+                let (icon_name, icon_color) = if is_open_source && is_collecting {
+                    (IconName::Check, Color::Success)
+                } else {
+                    (IconName::Check, Color::Accent)
+                };
 
                 menu = menu.item(
-                    // TODO: We want to add something later that communicates whether
-                    // the current project is open-source.
-                    ContextMenuEntry::new("Share Training Data")
+                    ContextMenuEntry::new("Training Data Collection")
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
-                        .documentation_aside(|_| {
-                            Label::new(indoc!{"
-                                Help us improve our open model by sharing data from open source repositories. \
-                                Zed must detect a license file in your repo for this setting to take effect.\
-                            "}).into_any_element()
+                        .icon(icon_name)
+                        .icon_color(icon_color)
+                        .documentation_aside(move |cx| {
+                            let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
+                                (true, true) => (
+                                    "Project identified as open source, and you're sharing data.",
+                                    Color::Default,
+                                    IconName::Check,
+                                    Color::Success,
+                                ),
+                                (true, false) => (
+                                    "Project identified as open source, but you're not sharing data.",
+                                    Color::Muted,
+                                    IconName::Close,
+                                    Color::Muted,
+                                ),
+                                (false, true) => (
+                                    "Project not identified as open source. No data captured.",
+                                    Color::Muted,
+                                    IconName::Close,
+                                    Color::Muted,
+                                ),
+                                (false, false) => (
+                                    "Project not identified as open source, and setting turned off.",
+                                    Color::Muted,
+                                    IconName::Close,
+                                    Color::Muted,
+                                ),
+                            };
+                            v_flex()
+                                .gap_2()
+                                .child(
+                                    Label::new(indoc!{
+                                        "Help us improve our open dataset model by sharing data from open source repositories. \
+                                        Zed must detect a license file in your repo for this setting to take effect."
+                                    })
+                                )
+                                .child(
+                                    h_flex()
+                                        .pt_2()
+                                        .gap_1p5()
+                                        .border_t_1()
+                                        .border_color(cx.theme().colors().border_variant)
+                                        .child(Icon::new(icon_name).size(IconSize::XSmall).color(icon_color))
+                                        .child(div().child(Label::new(msg).size(LabelSize::Small).color(label_color)))
+                                )
+                                .into_any_element()
                         })
                         .handler(move |_, cx| {
                             provider.toggle_data_collection(cx);
@@ -479,7 +523,17 @@ impl InlineCompletionButton {
                                 );
                             }
                         })
-                )
+                );
+
+                if is_collecting && !is_open_source {
+                    menu = menu.item(
+                        ContextMenuEntry::new("No data captured.")
+                            .disabled(true)
+                            .icon(IconName::Close)
+                            .icon_color(Color::Error)
+                            .icon_size(IconSize::Small),
+                    );
+                }
             }
         }
 
@@ -512,6 +566,44 @@ impl InlineCompletionButton {
                     .disabled(true)
                     .icon(IconName::ZedPredictDisabled)
                     .icon_size(IconSize::Small),
+            );
+        }
+
+        if cx.has_flag::<feature_flags::PredictEditsNonEagerModeFeatureFlag>() {
+            let is_eager_preview_enabled = match settings.edit_predictions_mode() {
+                language::EditPredictionsMode::Auto => false,
+                language::EditPredictionsMode::EagerPreview => true,
+            };
+            menu = menu.separator().toggleable_entry(
+                "Eager Preview Mode",
+                is_eager_preview_enabled,
+                IconPosition::Start,
+                None,
+                {
+                    let fs = fs.clone();
+                    move |_window, cx| {
+                        update_settings_file::<AllLanguageSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _cx| {
+                                let new_mode = match is_eager_preview_enabled {
+                                    true => language::EditPredictionsMode::Auto,
+                                    false => language::EditPredictionsMode::EagerPreview,
+                                };
+
+                                if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
+                                    edit_predictions.mode = new_mode;
+                                } else {
+                                    settings.edit_predictions =
+                                        Some(language_settings::EditPredictionSettingsContent {
+                                            mode: new_mode,
+                                            ..Default::default()
+                                        });
+                                }
+                            },
+                        );
+                    }
+                },
             );
         }
 
@@ -570,23 +662,10 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        let workspace = self.workspace.clone();
         ContextMenu::build(window, cx, |menu, _window, cx| {
             self.build_language_settings_menu(menu, cx).when(
                 cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>(),
-                |this| {
-                    this.entry(
-                        "Rate Completions",
-                        Some(RateCompletions.boxed_clone()),
-                        move |window, cx| {
-                            workspace
-                                .update(cx, |workspace, cx| {
-                                    RateCompletionModal::toggle(workspace, window, cx)
-                                })
-                                .ok();
-                        },
-                    )
-                },
+                |this| this.action("Rate Completions", RateCompletions.boxed_clone()),
             )
         })
     }
@@ -607,7 +686,7 @@ impl InlineCompletionButton {
                 .unwrap_or(true),
             )
         };
-        self.editor_show_predictions = editor.should_show_inline_completions(cx);
+        self.editor_show_predictions = editor.edit_predictions_enabled();
         self.edit_prediction_provider = editor.edit_prediction_provider();
         self.language = language.cloned();
         self.file = file;

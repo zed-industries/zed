@@ -383,7 +383,7 @@ impl MarkdownPreviewView {
                 (contents, file_location)
             })?;
 
-            let parsing_task = cx.background_executor().spawn(async move {
+            let parsing_task = cx.background_spawn(async move {
                 parse_markdown(&contents, file_location, Some(language_registry)).await
             });
             let contents = parsing_task.await;

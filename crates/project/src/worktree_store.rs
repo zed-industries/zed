@@ -12,10 +12,13 @@ use futures::{
     future::{BoxFuture, Shared},
     FutureExt, SinkExt,
 };
-use gpui::{App, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity};
+use git::repository::Branch;
+use gpui::{
+    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity,
+};
 use postage::oneshot;
 use rpc::{
-    proto::{self, SSH_PROJECT_ID},
+    proto::{self, FromProto, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, ErrorExt, TypedEnvelope,
 };
 use smol::{
@@ -24,7 +27,10 @@ use smol::{
 };
 use text::ReplicaId;
 use util::{paths::SanitizedPath, ResultExt};
-use worktree::{Entry, ProjectEntryId, UpdatedEntriesSet, Worktree, WorktreeId, WorktreeSettings};
+use worktree::{
+    branch_to_proto, Entry, ProjectEntryId, UpdatedEntriesSet, Worktree, WorktreeId,
+    WorktreeSettings,
+};
 
 use crate::{search::SearchQuery, ProjectPath};
 
@@ -133,11 +139,12 @@ impl WorktreeStore {
             .find(|worktree| worktree.read(cx).id() == id)
     }
 
-    pub fn current_branch(&self, repository: ProjectPath, cx: &App) -> Option<Arc<str>> {
+    pub fn current_branch(&self, repository: ProjectPath, cx: &App) -> Option<Branch> {
         self.worktree_for_id(repository.worktree_id, cx)?
             .read(cx)
             .git_entry(repository.path)?
             .branch()
+            .cloned()
     }
 
     pub fn worktree_for_entry(
@@ -174,8 +181,7 @@ impl WorktreeStore {
             Task::ready(Ok((tree, relative_path)))
         } else {
             let worktree = self.create_worktree(abs_path, visible, cx);
-            cx.background_executor()
-                .spawn(async move { Ok((worktree.await?, PathBuf::new())) })
+            cx.background_spawn(async move { Ok((worktree.await?, PathBuf::new())) })
         }
     }
 
@@ -268,10 +274,11 @@ impl WorktreeStore {
         cx.spawn(|this, mut cx| async move {
             let this = this.upgrade().context("Dropped worktree store")?;
 
+            let path = Path::new(abs_path.as_str());
             let response = client
                 .request(proto::AddWorktree {
                     project_id: SSH_PROJECT_ID,
-                    path: abs_path.clone(),
+                    path: path.to_proto(),
                     visible,
                 })
                 .await?;
@@ -282,10 +289,11 @@ impl WorktreeStore {
                 return Ok(existing_worktree);
             }
 
-            let root_name = PathBuf::from(&response.canonicalized_path)
+            let root_path_buf = PathBuf::from_proto(response.canonicalized_path.clone());
+            let root_name = root_path_buf
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or(response.canonicalized_path.to_string());
+                .unwrap_or(root_path_buf.to_string_lossy().to_string());
 
             let worktree = cx.update(|cx| {
                 Worktree::remote(
@@ -596,7 +604,7 @@ impl WorktreeStore {
                     id: worktree.id().to_proto(),
                     root_name: worktree.root_name().into(),
                     visible: worktree.is_visible(),
-                    abs_path: worktree.abs_path().to_string_lossy().into(),
+                    abs_path: worktree.abs_path().to_proto(),
                 }
             })
             .collect()
@@ -672,7 +680,7 @@ impl WorktreeStore {
         let (output_tx, output_rx) = smol::channel::bounded(64);
         let (matching_paths_tx, matching_paths_rx) = smol::channel::unbounded();
 
-        let input = cx.background_executor().spawn({
+        let input = cx.background_spawn({
             let fs = fs.clone();
             let query = query.clone();
             async move {
@@ -689,7 +697,7 @@ impl WorktreeStore {
             }
         });
         const MAX_CONCURRENT_FILE_SCANS: usize = 64;
-        let filters = cx.background_executor().spawn(async move {
+        let filters = cx.background_spawn(async move {
             let fs = &fs;
             let query = &query;
             executor
@@ -705,25 +713,24 @@ impl WorktreeStore {
                 })
                 .await;
         });
-        cx.background_executor()
-            .spawn(async move {
-                let mut matched = 0;
-                while let Ok(mut receiver) = output_rx.recv().await {
-                    let Some(path) = receiver.next().await else {
-                        continue;
-                    };
-                    let Ok(_) = matching_paths_tx.send(path).await else {
-                        break;
-                    };
-                    matched += 1;
-                    if matched == limit {
-                        break;
-                    }
+        cx.background_spawn(async move {
+            let mut matched = 0;
+            while let Ok(mut receiver) = output_rx.recv().await {
+                let Some(path) = receiver.next().await else {
+                    continue;
+                };
+                let Ok(_) = matching_paths_tx.send(path).await else {
+                    break;
+                };
+                matched += 1;
+                if matched == limit {
+                    break;
                 }
-                drop(input);
-                drop(filters);
-            })
-            .detach();
+            }
+            drop(input);
+            drop(filters);
+        })
+        .detach();
         matching_paths_rx
     }
 
@@ -923,11 +930,11 @@ impl WorktreeStore {
                     project_id: remote_worktree.project_id(),
                     repository: Some(proto::ProjectPath {
                         worktree_id: project_path.worktree_id.to_proto(),
-                        path: project_path.path.to_string_lossy().to_string(), // Root path
+                        path: project_path.path.to_proto(), // Root path
                     }),
                 });
 
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     let response = request.await?;
 
                     let branches = response
@@ -936,9 +943,24 @@ impl WorktreeStore {
                         .map(|proto_branch| git::repository::Branch {
                             is_head: proto_branch.is_head,
                             name: proto_branch.name.into(),
-                            unix_timestamp: proto_branch
-                                .unix_timestamp
-                                .map(|timestamp| timestamp as i64),
+                            upstream: proto_branch.upstream.map(|upstream| {
+                                git::repository::Upstream {
+                                    ref_name: upstream.ref_name.into(),
+                                    tracking: upstream.tracking.map(|tracking| {
+                                        git::repository::UpstreamTracking {
+                                            ahead: tracking.ahead as u32,
+                                            behind: tracking.behind as u32,
+                                        }
+                                    }),
+                                }
+                            }),
+                            most_recent_commit: proto_branch.most_recent_commit.map(|commit| {
+                                git::repository::CommitSummary {
+                                    sha: commit.sha.into(),
+                                    subject: commit.subject.into(),
+                                    commit_timestamp: commit.commit_timestamp,
+                                }
+                            }),
                         })
                         .collect();
 
@@ -994,12 +1016,12 @@ impl WorktreeStore {
                     project_id: remote_worktree.project_id(),
                     repository: Some(proto::ProjectPath {
                         worktree_id: repository.worktree_id.to_proto(),
-                        path: repository.path.to_string_lossy().to_string(), // Root path
+                        path: repository.path.to_proto(), // Root path
                     }),
                     branch_name: new_branch,
                 });
 
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     request.await?;
                     Ok(())
                 })
@@ -1116,7 +1138,7 @@ impl WorktreeStore {
             .context("Invalid GitBranches call")?;
         let project_path = ProjectPath {
             worktree_id: WorktreeId::from_proto(project_path.worktree_id),
-            path: Path::new(&project_path.path).into(),
+            path: Arc::<Path>::from_proto(project_path.path),
         };
 
         let branches = this
@@ -1124,14 +1146,7 @@ impl WorktreeStore {
             .await?;
 
         Ok(proto::GitBranchesResponse {
-            branches: branches
-                .into_iter()
-                .map(|branch| proto::Branch {
-                    is_head: branch.is_head,
-                    name: branch.name.to_string(),
-                    unix_timestamp: branch.unix_timestamp.map(|timestamp| timestamp as u64),
-                })
-                .collect(),
+            branches: branches.iter().map(branch_to_proto).collect(),
         })
     }
 
@@ -1147,7 +1162,7 @@ impl WorktreeStore {
             .context("Invalid GitBranches call")?;
         let project_path = ProjectPath {
             worktree_id: WorktreeId::from_proto(project_path.worktree_id),
-            path: Path::new(&project_path.path).into(),
+            path: Arc::<Path>::from_proto(project_path.path),
         };
         let new_branch = update_branch.payload.branch_name;
 

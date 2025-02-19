@@ -1,12 +1,13 @@
 #![allow(missing_docs)]
 
-use gpui::{Action, AnyView, AppContext as _, FocusHandle, IntoElement, Render};
+use gpui::{Action, AnyElement, AnyView, AppContext as _, FocusHandle, IntoElement, Render};
 use settings::Settings;
 use theme::ThemeSettings;
 
 use crate::prelude::*;
 use crate::{h_flex, v_flex, Color, KeyBinding, Label, LabelSize, StyledExt};
 
+#[derive(IntoComponent)]
 pub struct Tooltip {
     title: SharedString,
     meta: Option<SharedString>,
@@ -42,10 +43,10 @@ impl Tooltip {
         let title = title.into();
         let action = action.boxed_clone();
         move |window, cx| {
-            cx.new(|_| Self {
+            cx.new(|cx| Self {
                 title: title.clone(),
                 meta: None,
-                key_binding: KeyBinding::for_action(action.as_ref(), window),
+                key_binding: KeyBinding::for_action(action.as_ref(), window, cx),
             })
             .into()
         }
@@ -57,10 +58,10 @@ impl Tooltip {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyView {
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
             title: title.into(),
             meta: None,
-            key_binding: KeyBinding::for_action(action, window),
+            key_binding: KeyBinding::for_action(action, window, cx),
         })
         .into()
     }
@@ -72,10 +73,10 @@ impl Tooltip {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyView {
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
             title: title.into(),
             meta: None,
-            key_binding: KeyBinding::for_action_in(action, focus_handle, window),
+            key_binding: KeyBinding::for_action_in(action, focus_handle, window, cx),
         })
         .into()
     }
@@ -87,10 +88,10 @@ impl Tooltip {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyView {
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
             title: title.into(),
             meta: Some(meta.into()),
-            key_binding: action.and_then(|action| KeyBinding::for_action(action, window)),
+            key_binding: action.and_then(|action| KeyBinding::for_action(action, window, cx)),
         })
         .into()
     }
@@ -103,11 +104,11 @@ impl Tooltip {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyView {
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
             title: title.into(),
             meta: Some(meta.into()),
             key_binding: action
-                .and_then(|action| KeyBinding::for_action_in(action, focus_handle, window)),
+                .and_then(|action| KeyBinding::for_action_in(action, focus_handle, window, cx)),
         })
         .into()
     }
@@ -202,5 +203,18 @@ impl Render for LinkPreview {
                     .color(Color::Muted),
             )
         })
+    }
+}
+
+// View this component preview using `workspace: open component-preview`
+impl ComponentPreview for Tooltip {
+    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+        example_group(vec![single_example(
+            "Text only",
+            Button::new("delete-example", "Delete")
+                .tooltip(Tooltip::text("This is a tooltip!"))
+                .into_any_element(),
+        )])
+        .into_any_element()
     }
 }

@@ -1,6 +1,6 @@
 use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SemanticsProvider};
+use buffer_diff::BufferDiff;
 use collections::HashSet;
-use diff::BufferDiff;
 use futures::{channel::mpsc, future::join_all};
 use gpui::{App, Entity, EventEmitter, Focusable, Render, Subscription, Task};
 use language::{Buffer, BufferEvent, Capability};
@@ -185,7 +185,7 @@ impl ProposedChangesEditor {
             } else {
                 branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
                 new_diffs.push(cx.new(|cx| {
-                    let mut diff = BufferDiff::new(&branch_buffer, cx);
+                    let mut diff = BufferDiff::new(branch_buffer.read(cx));
                     let _ = diff.set_base_text(
                         location.buffer.clone(),
                         branch_buffer.read(cx).text_snapshot(),
@@ -387,7 +387,7 @@ impl Render for ProposedChangesEditorToolbar {
             Some(editor) => {
                 let focus_handle = editor.focus_handle(cx);
                 let keybinding =
-                    KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, window)
+                    KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, window, cx)
                         .map(|binding| binding.into_any_element());
 
                 button_like.children(keybinding).on_click({
@@ -467,7 +467,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         self.0.resolve_inlay_hint(hint, buffer, server_id, cx)
     }
 
-    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
+    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
         if let Some(buffer) = self.to_base(&buffer, &[], cx) {
             self.0.supports_inlay_hints(&buffer, cx)
         } else {

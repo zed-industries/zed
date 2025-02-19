@@ -14,6 +14,7 @@ doctest = false
 
 [features]
 test-support = [
+    "buffer_diff/test-support",
     "client/test-support",
     "language/test-support",
     "settings/test-support",
@@ -30,7 +31,7 @@ async-trait.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
-diff.workspace = true
+buffer_diff.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -78,7 +79,7 @@ fancy-regex.workspace = true
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
-diff = { workspace = true, features = ["test-support"] }
+buffer_diff = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 git2.workspace = true
