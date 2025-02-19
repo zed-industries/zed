@@ -561,57 +561,9 @@ async fn parse_blocks(
 
     let rendered_block = cx
         .new_window_entity(|window, cx| {
-            let settings = ThemeSettings::get_global(cx);
-            let ui_font_family = settings.ui_font.family.clone();
-            let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
-            let buffer_font_family = settings.buffer_font.family.clone();
-            let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
-
-            let mut base_text_style = window.text_style();
-            base_text_style.refine(&TextStyleRefinement {
-                font_family: Some(ui_font_family.clone()),
-                font_fallbacks: ui_font_fallbacks,
-                color: Some(cx.theme().colors().editor_foreground),
-                ..Default::default()
-            });
-
-            let markdown_style = MarkdownStyle {
-                base_text_style,
-                code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
-                inline_code: TextStyleRefinement {
-                    background_color: Some(cx.theme().colors().background),
-                    font_family: Some(buffer_font_family),
-                    font_fallbacks: buffer_font_fallbacks,
-                    ..Default::default()
-                },
-                rule_color: cx.theme().colors().border,
-                block_quote_border_color: Color::Muted.color(cx),
-                block_quote: TextStyleRefinement {
-                    color: Some(Color::Muted.color(cx)),
-                    ..Default::default()
-                },
-                link: TextStyleRefinement {
-                    color: Some(cx.theme().colors().editor_foreground),
-                    underline: Some(gpui::UnderlineStyle {
-                        thickness: px(1.),
-                        color: Some(cx.theme().colors().editor_foreground),
-                        wavy: false,
-                    }),
-                    ..Default::default()
-                },
-                syntax: cx.theme().syntax().clone(),
-                selection_background_color: { cx.theme().players().local().selection },
-
-                heading: StyleRefinement::default()
-                    .font_weight(FontWeight::BOLD)
-                    .text_base()
-                    .mt(rems(1.))
-                    .mb_0(),
-            };
-
             Markdown::new(
                 combined_text,
-                markdown_style.clone(),
+                hover_markdown_style(window, cx),
                 Some(language_registry.clone()),
                 fallback_language_name,
                 window,
@@ -625,7 +577,56 @@ async fn parse_blocks(
     rendered_block
 }
 
-fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) {
+pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+    let settings = ThemeSettings::get_global(cx);
+    let ui_font_family = settings.ui_font.family.clone();
+    let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
+    let buffer_font_family = settings.buffer_font.family.clone();
+    let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
+
+    let mut base_text_style = window.text_style();
+    base_text_style.refine(&TextStyleRefinement {
+        font_family: Some(ui_font_family.clone()),
+        font_fallbacks: ui_font_fallbacks,
+        color: Some(cx.theme().colors().editor_foreground),
+        ..Default::default()
+    });
+    MarkdownStyle {
+        base_text_style,
+        code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
+        inline_code: TextStyleRefinement {
+            background_color: Some(cx.theme().colors().background),
+            font_family: Some(buffer_font_family),
+            font_fallbacks: buffer_font_fallbacks,
+            ..Default::default()
+        },
+        rule_color: cx.theme().colors().border,
+        block_quote_border_color: Color::Muted.color(cx),
+        block_quote: TextStyleRefinement {
+            color: Some(Color::Muted.color(cx)),
+            ..Default::default()
+        },
+        link: TextStyleRefinement {
+            color: Some(cx.theme().colors().editor_foreground),
+            underline: Some(gpui::UnderlineStyle {
+                thickness: px(1.),
+                color: Some(cx.theme().colors().editor_foreground),
+                wavy: false,
+            }),
+            ..Default::default()
+        },
+        syntax: cx.theme().syntax().clone(),
+        selection_background_color: { cx.theme().players().local().selection },
+
+        heading: StyleRefinement::default()
+            .font_weight(FontWeight::BOLD)
+            .text_base()
+            .mt(rems(1.))
+            .mb_0(),
+    }
+}
+
+pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) {
     if let Ok(uri) = Url::parse(&link) {
         if uri.scheme() == "file" {
             if let Some(workspace) = window.root::<Workspace>().flatten() {

@@ -34,7 +34,7 @@ util.workspace = true
 assets.workspace = true
 env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
-languages.workspace = true
+languages = { workspace = true, features = ["load-grammars"] }
 node_runtime.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }

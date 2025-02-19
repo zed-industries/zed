@@ -1,7 +1,6 @@
 pub mod parser;
 
 use crate::parser::CodeBlockKind;
-use futures::FutureExt;
 use gpui::{
     actions, point, quad, AnyElement, App, Bounds, ClipboardItem, CursorStyle, DispatchPhase,
     Edges, Entity, FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla,
@@ -12,7 +11,7 @@ use gpui::{
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
 
-use std::{iter, mem, ops::Range, rc::Rc, sync::Arc};
+use std::{collections::HashMap, iter, mem, ops::Range, rc::Rc, sync::Arc};
 use theme::SyntaxTheme;
 use ui::{prelude::*, Tooltip};
 use util::{ResultExt, TryFutureExt};
@@ -191,15 +190,37 @@ impl Markdown {
 
         let text = self.source.clone();
         let parse_text_only = self.options.parse_links_only;
+        let language_registry = self.language_registry.clone();
+        let fallback = self.fallback_code_block_language.clone();
         let parsed = cx.background_spawn(async move {
             let text = SharedString::from(text);
-            let events = match parse_text_only {
-                true => Arc::from(parse_links_only(text.as_ref())),
-                false => Arc::from(parse_markdown(text.as_ref())),
-            };
+            if parse_text_only {
+                return anyhow::Ok(ParsedMarkdown {
+                    events: Arc::from(parse_links_only(text.as_ref())),
+                    source: text,
+                    languages: HashMap::default(),
+                });
+            }
+            let (events, langauge_names) = parse_markdown(&text);
+            let mut languages = HashMap::with_capacity(langauge_names.len());
+            for name in langauge_names {
+                if let Some(registry) = language_registry.as_ref() {
+                    let language = if !name.is_empty() {
+                        registry.language_for_name(&name)
+                    } else if let Some(fallback) = &fallback {
+                        registry.language_for_name(fallback)
+                    } else {
+                        continue;
+                    };
+                    if let Ok(language) = language.await {
+                        languages.insert(name, language);
+                    }
+                }
+            }
             anyhow::Ok(ParsedMarkdown {
                 source: text,
-                events,
+                events: Arc::from(events),
+                languages,
             })
         });
 
@@ -230,12 +251,7 @@ impl Markdown {
 
 impl Render for Markdown {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        MarkdownElement::new(
-            cx.entity().clone(),
-            self.style.clone(),
-            self.language_registry.clone(),
-            self.fallback_code_block_language.clone(),
-        )
+        MarkdownElement::new(cx.entity().clone(), self.style.clone())
     }
 }
 
@@ -283,6 +299,7 @@ impl Selection {
 pub struct ParsedMarkdown {
     source: SharedString,
     events: Arc<[(Range<usize>, MarkdownEvent)]>,
+    languages: HashMap<SharedString, Arc<Language>>,
 }
 
 impl ParsedMarkdown {
@@ -298,61 +315,11 @@ impl ParsedMarkdown {
 pub struct MarkdownElement {
     markdown: Entity<Markdown>,
     style: MarkdownStyle,
-    language_registry: Option<Arc<LanguageRegistry>>,
-    fallback_code_block_language: Option<String>,
 }
 
 impl MarkdownElement {
-    fn new(
-        markdown: Entity<Markdown>,
-        style: MarkdownStyle,
-        language_registry: Option<Arc<LanguageRegistry>>,
-        fallback_code_block_language: Option<String>,
-    ) -> Self {
-        Self {
-            markdown,
-            style,
-            language_registry,
-            fallback_code_block_language,
-        }
-    }
-
-    fn load_language(
-        &self,
-        name: &str,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<Arc<Language>> {
-        let language_test = self.language_registry.as_ref()?.language_for_name(name);
-
-        let language_name = match language_test.now_or_never() {
-            Some(Ok(_)) => String::from(name),
-            Some(Err(_)) if !name.is_empty() && self.fallback_code_block_language.is_some() => {
-                self.fallback_code_block_language.clone().unwrap()
-            }
-            _ => String::new(),
-        };
-
-        let language = self
-            .language_registry
-            .as_ref()?
-            .language_for_name(language_name.as_str())
-            .map(|language| language.ok())
-            .shared();
-
-        match language.clone().now_or_never() {
-            Some(language) => language,
-            None => {
-                let markdown = self.markdown.downgrade();
-                window
-                    .spawn(cx, |mut cx| async move {
-                        language.await;
-                        markdown.update(&mut cx, |_, cx| cx.notify())
-                    })
-                    .detach_and_log_err(cx);
-                None
-            }
-        }
+    fn new(markdown: Entity<Markdown>, style: MarkdownStyle) -> Self {
+        Self { markdown, style }
     }
 
     fn paint_selection(
@@ -465,7 +432,7 @@ impl MarkdownElement {
                                 pending: true,
                             };
                             window.focus(&markdown.focus_handle);
-                            window.prevent_default()
+                            window.prevent_default();
                         }
 
                         cx.notify();
@@ -634,7 +601,7 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::CodeBlock(kind) => {
                             let language = if let CodeBlockKind::Fenced(language) = kind {
-                                self.load_language(language.as_ref(), window, cx)
+                                parsed_markdown.languages.get(language).cloned()
                             } else {
                                 None
                             };

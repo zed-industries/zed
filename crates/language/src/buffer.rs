@@ -7,7 +7,6 @@ pub use crate::{
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     language_settings::{language_settings, LanguageSettings},
-    markdown::parse_markdown,
     outline::OutlineItem,
     syntax_map::{
         SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatch,
@@ -231,38 +230,6 @@ pub struct Diagnostic {
     pub data: Option<Value>,
 }
 
-/// TODO - move this into the `project` crate and make it private.
-pub async fn prepare_completion_documentation(
-    documentation: &lsp::Documentation,
-    language_registry: &Arc<LanguageRegistry>,
-    language: Option<Arc<Language>>,
-) -> CompletionDocumentation {
-    match documentation {
-        lsp::Documentation::String(text) => {
-            if text.lines().count() <= 1 {
-                CompletionDocumentation::SingleLine(text.clone())
-            } else {
-                CompletionDocumentation::MultiLinePlainText(text.clone())
-            }
-        }
-
-        lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
-            lsp::MarkupKind::PlainText => {
-                if value.lines().count() <= 1 {
-                    CompletionDocumentation::SingleLine(value.clone())
-                } else {
-                    CompletionDocumentation::MultiLinePlainText(value.clone())
-                }
-            }
-
-            lsp::MarkupKind::Markdown => {
-                let parsed = parse_markdown(value, Some(language_registry), language).await;
-                CompletionDocumentation::MultiLineMarkdown(parsed)
-            }
-        },
-    }
-}
-
 #[derive(Clone, Debug)]
 pub enum CompletionDocumentation {
     /// There is no documentation for this completion.
@@ -272,7 +239,33 @@ pub enum CompletionDocumentation {
     /// Multiple lines of plain text documentation.
     MultiLinePlainText(String),
     /// Markdown documentation.
-    MultiLineMarkdown(ParsedMarkdown),
+    MultiLineMarkdown(String),
+}
+
+impl From<lsp::Documentation> for CompletionDocumentation {
+    fn from(docs: lsp::Documentation) -> Self {
+        match docs {
+            lsp::Documentation::String(text) => {
+                if text.lines().count() <= 1 {
+                    CompletionDocumentation::SingleLine(text)
+                } else {
+                    CompletionDocumentation::MultiLinePlainText(text)
+                }
+            }
+
+            lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
+                lsp::MarkupKind::PlainText => {
+                    if value.lines().count() <= 1 {
+                        CompletionDocumentation::SingleLine(value)
+                    } else {
+                        CompletionDocumentation::MultiLinePlainText(value)
+                    }
+                }
+
+                lsp::MarkupKind::Markdown => CompletionDocumentation::MultiLineMarkdown(value),
+            },
+        }
+    }
 }
 
 /// An operation used to synchronize this buffer with its other replicas.
