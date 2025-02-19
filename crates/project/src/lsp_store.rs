@@ -37,10 +37,9 @@ use language::{
     point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel,
-    CompletionDocumentation, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language,
-    LanguageRegistry, LanguageServerBinaryStatus, LanguageToolchainStore, LocalFile, LspAdapter,
-    LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
-    Unclipped,
+    Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language, LanguageRegistry,
+    LanguageServerBinaryStatus, LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate,
+    Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
     notification::DidRenameFiles, CodeActionKind, CompletionContext, DiagnosticSeverity,
@@ -8450,6 +8449,44 @@ impl DiagnosticSummary {
             language_server_id: language_server_id.0 as u64,
             error_count: self.error_count as u32,
             warning_count: self.warning_count as u32,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum CompletionDocumentation {
+    /// There is no documentation for this completion.
+    Undocumented,
+    /// A single line of documentation.
+    SingleLine(String),
+    /// Multiple lines of plain text documentation.
+    MultiLinePlainText(String),
+    /// Markdown documentation.
+    MultiLineMarkdown(String),
+}
+
+impl From<lsp::Documentation> for CompletionDocumentation {
+    fn from(docs: lsp::Documentation) -> Self {
+        match docs {
+            lsp::Documentation::String(text) => {
+                if text.lines().count() <= 1 {
+                    CompletionDocumentation::SingleLine(text)
+                } else {
+                    CompletionDocumentation::MultiLinePlainText(text)
+                }
+            }
+
+            lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
+                lsp::MarkupKind::PlainText => {
+                    if value.lines().count() <= 1 {
+                        CompletionDocumentation::SingleLine(value)
+                    } else {
+                        CompletionDocumentation::MultiLinePlainText(value)
+                    }
+                }
+
+                lsp::MarkupKind::Markdown => CompletionDocumentation::MultiLineMarkdown(value),
+            },
         }
     }
 }

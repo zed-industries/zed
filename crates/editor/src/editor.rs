@@ -99,9 +99,9 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CompletionDocumentation, CursorShape, Diagnostic, DiskState, EditPredictionsMode, EditPreview,
-    HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection,
-    SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    CursorShape, Diagnostic, DiskState, EditPredictionsMode, EditPreview, HighlightedText,
+    IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
+    TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -132,7 +132,7 @@ use multi_buffer::{
     ToOffsetUtf16,
 };
 use project::{
-    lsp_store::{FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
+    lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
     PrepareRenameResponse, Project, ProjectItem, ProjectTransaction, TaskSourceKind,

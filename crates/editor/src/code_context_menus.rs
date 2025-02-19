@@ -5,11 +5,12 @@ use gpui::{
     UniformListScrollHandle,
 };
 use language::Buffer;
-use language::{CodeLabel, CompletionDocumentation};
+use language::CodeLabel;
 use lsp::LanguageServerId;
 use markdown::Markdown;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
+use project::lsp_store::CompletionDocumentation;
 use project::{CodeAction, Completion, TaskSourceKind};
 
 use std::{

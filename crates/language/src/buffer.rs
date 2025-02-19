@@ -230,44 +230,6 @@ pub struct Diagnostic {
     pub data: Option<Value>,
 }
 
-#[derive(Clone, Debug)]
-pub enum CompletionDocumentation {
-    /// There is no documentation for this completion.
-    Undocumented,
-    /// A single line of documentation.
-    SingleLine(String),
-    /// Multiple lines of plain text documentation.
-    MultiLinePlainText(String),
-    /// Markdown documentation.
-    MultiLineMarkdown(String),
-}
-
-impl From<lsp::Documentation> for CompletionDocumentation {
-    fn from(docs: lsp::Documentation) -> Self {
-        match docs {
-            lsp::Documentation::String(text) => {
-                if text.lines().count() <= 1 {
-                    CompletionDocumentation::SingleLine(text)
-                } else {
-                    CompletionDocumentation::MultiLinePlainText(text)
-                }
-            }
-
-            lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
-                lsp::MarkupKind::PlainText => {
-                    if value.lines().count() <= 1 {
-                        CompletionDocumentation::SingleLine(value)
-                    } else {
-                        CompletionDocumentation::MultiLinePlainText(value)
-                    }
-                }
-
-                lsp::MarkupKind::Markdown => CompletionDocumentation::MultiLineMarkdown(value),
-            },
-        }
-    }
-}
-
 /// An operation used to synchronize this buffer with its other replicas.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
