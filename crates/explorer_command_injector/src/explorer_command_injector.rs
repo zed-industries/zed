@@ -176,7 +176,7 @@ fn get_zed_path() -> Option<String> {
     Some(
         path.parent()?
             .parent()?
-            .join("zed.exe")
+            .join("Zed.exe")
             .to_string_lossy()
             .to_string(),
     )
