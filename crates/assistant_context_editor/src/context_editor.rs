@@ -1513,15 +1513,13 @@ impl ContextEditor {
 
                 (!text.is_empty()).then_some((text, true))
             } else {
-                let anchor = context_editor.selections.newest_anchor();
-                let text = context_editor
-                    .buffer()
-                    .read(cx)
-                    .read(cx)
-                    .text_for_range(anchor.range())
-                    .collect::<String>();
+                let selection = context_editor.selections.newest_adjusted(cx);
+                let buffer = context_editor.buffer().read(cx).snapshot(cx);
+                let range = editor::ToOffset::to_offset(&selection.start, &buffer)
+                    ..editor::ToOffset::to_offset(&selection.end, &buffer);
+                let selected_text = buffer.text_for_range(range.clone()).collect::<String>();
 
-                (!text.is_empty()).then_some((text, false))
+                (!selected_text.is_empty()).then_some((selected_text, false))
             }
         })
     }
