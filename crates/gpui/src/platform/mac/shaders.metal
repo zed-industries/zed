@@ -455,14 +455,7 @@ vertex PathRasterizationVertexOutput path_rasterization_vertex(
 
 fragment float4 path_rasterization_fragment(PathRasterizationFragmentInput input
                                             [[stage_in]]) {
-  float2 dx = dfdx(input.st_position);
-  float2 dy = dfdy(input.st_position);
-  float2 gradient = float2((2. * input.st_position.x) * dx.x - dx.y,
-                           (2. * input.st_position.x) * dy.x - dy.y);
-  float f = (input.st_position.x * input.st_position.x) - input.st_position.y;
-  float distance = f / length(gradient);
-  float alpha = saturate(0.5 - distance);
-  return float4(alpha, 0., 0., 1.);
+  return float4(1., 0., 0., 1.);
 }
 
 struct PathSpriteVertexOutput {
