@@ -1774,8 +1774,9 @@ impl ContextEditor {
         &mut self,
         cx: &mut Context<Self>,
     ) -> (String, CopyMetadata, Vec<text::Selection<usize>>) {
-        let (snapshot, selection, creases) = self.editor.update(cx, |editor, cx| {
+        let (snapshot, selection, base_selection, creases) = self.editor.update(cx, |editor, cx| {
             let mut selection = editor.selections.newest::<Point>(cx);
+            let base_selection = editor.selections.newest_adjusted(cx);
             let snapshot = editor.buffer().read(cx).snapshot(cx);
 
             let is_entire_line = selection.is_empty() || editor.selections.line_mode;
@@ -1791,6 +1792,7 @@ impl ContextEditor {
             (
                 snapshot.clone(),
                 selection.clone(),
+                base_selection.clone(),
                 editor.display_map.update(cx, |display_map, cx| {
                     display_map
                         .snapshot(cx)
@@ -1838,8 +1840,20 @@ impl ContextEditor {
             if message.offset_range.start >= selection.range().end {
                 break;
             } else if message.offset_range.end >= selection.range().start {
-                let range = cmp::max(message.offset_range.start, selection.range().start)
-                    ..cmp::min(message.offset_range.end, selection.range().end);
+                let range = cmp::max(
+                    message.offset_range.start,
+                    cmp::min(
+                        editor::ToOffset::to_offset(&base_selection.start, &snapshot),
+                        selection.range().start,
+                    ),
+                )
+                    ..cmp::min(
+                        message.offset_range.end,
+                        cmp::max(
+                            editor::ToOffset::to_offset(&base_selection.end, &snapshot),
+                            selection.range().end,
+                        ),
+                    );
                 if !range.is_empty() {
                     for chunk in context.buffer().read(cx).text_for_range(range) {
                         text.push_str(chunk);
