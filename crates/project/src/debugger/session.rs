@@ -268,7 +268,7 @@ impl LocalMode {
             let that = this.clone();
             let breakpoints =
                 breakpoints.update(&mut cx, |this, cx| this.all_breakpoints(true, cx))?;
-
+            let caps = &capabilities;
             let configuration_sequence = async move {
                 let _ = initialized_rx.await?;
 
@@ -289,10 +289,7 @@ impl LocalMode {
                 }
                 let _ = futures::future::join_all(breakpoint_tasks).await;
 
-                if capabilities
-                    .supports_configuration_done_request
-                    .unwrap_or_default()
-                {
+                if ConfigurationDone::is_supported(caps) {
                     that.request(ConfigurationDone, cx.background_executor().clone())
                         .await?;
                 }

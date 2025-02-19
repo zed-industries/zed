@@ -1609,6 +1609,12 @@ impl LocalDapCommand for ConfigurationDone {
     type Response = ();
     type DapRequest = dap::requests::ConfigurationDone;
 
+    fn is_supported(capabilities: &Capabilities) -> bool {
+        capabilities
+            .supports_configuration_done_request
+            .unwrap_or_default()
+    }
+
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::ConfigurationDoneArguments
     }
