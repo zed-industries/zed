@@ -197,6 +197,12 @@ enum ParseMode {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub enum SiblingDirection {
+    Next,
+    Previous
+}
+
+#[derive(Debug, PartialEq, Eq)]
 struct ChangedRegion {
     depth: usize,
     range: Range<Anchor>,
@@ -1547,6 +1553,57 @@ impl<'a> SyntaxLayer<'a> {
     pub fn node(&self) -> Node<'a> {
         self.tree
             .root_node_with_offset(self.offset.0, self.offset.1)
+    }
+
+    pub fn smallest_containing_node(&self, range: Range<usize>) -> Option<Node<'a>> {
+        let mut cursor = self.node().walk();
+        
+        while cursor.goto_first_child_for_byte(range.start).is_some() {
+            if !range.is_empty() && cursor.node().end_byte() == range.start {
+                cursor.goto_next_sibling();
+            }
+        }
+
+        // Ascend to the smallest ancestor that strictly contains the range.
+        loop {
+            let node_range = cursor.node().byte_range();
+            if node_range.start <= range.start
+                && node_range.end >= range.end
+                && node_range.len() > range.len()
+            {
+                break Some(cursor.node());
+            }
+            if !cursor.goto_parent() {
+                break None;
+            }
+        }
+    }
+
+
+    pub fn next_prev_sibling(&self, range: Range<usize>, direction: &SiblingDirection) -> Option<Node<'a>> {
+        let mut current_node = self.smallest_containing_node(range);
+        dbg!(direction);
+        dbg!(&current_node);
+        loop {
+            dbg!(&current_node);
+            match current_node {
+                Some(node) => {
+                    match match direction {
+                        SiblingDirection::Next => node.next_sibling(),
+                        SiblingDirection::Previous => node.prev_sibling(),
+                    } {
+                        Some(sibling) => {
+                            break Some(sibling);
+                        }
+                        None => {
+                            dbg!("no sibling");
+                            current_node = node.parent();
+                        }
+                    }
+                }
+                None => break None,
+            }
+        }
     }
 
     pub(crate) fn override_id(&self, offset: usize, text: &text::BufferSnapshot) -> Option<u32> {

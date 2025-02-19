@@ -21,7 +21,7 @@ use language::{
     CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, IndentSize, Language,
     LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection,
     TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId, TreeSitterOptions,
-    Unclipped,
+    Unclipped, SiblingDirection,
 };
 
 use rope::DimensionPair;
@@ -5684,6 +5684,19 @@ impl MultiBufferSnapshot {
         let node = excerpt
             .buffer()
             .syntax_ancestor(excerpt.map_range_to_buffer(range))?;
+        Some((node, excerpt.map_range_from_buffer(node.byte_range())))
+    }
+
+    pub fn syntax_sibling<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        direction: SiblingDirection,
+    ) -> Option<(tree_sitter::Node, Range<usize>)> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut excerpt = self.excerpt_containing(range.clone())?;
+        let node = excerpt
+            .buffer()
+            .syntax_sibling(excerpt.map_range_to_buffer(range), direction)?;
         Some((node, excerpt.map_range_from_buffer(node.byte_range())))
     }
 

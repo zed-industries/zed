@@ -368,6 +368,8 @@ gpui::actions!(
         SelectDown,
         SelectEnclosingSymbol,
         SelectLargerSyntaxNode,
+        SelectNextSyntaxNode,
+        SelectPreviousSyntaxNode,
         SelectLeft,
         SelectLine,
         SelectPageDown,

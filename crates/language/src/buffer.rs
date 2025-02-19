@@ -2,6 +2,7 @@ pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
     proto, Grammar, Language, LanguageRegistry,
+    syntax_map::SiblingDirection,
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
@@ -85,6 +86,7 @@ pub enum Capability {
     /// The buffer is a read-only replica.
     ReadOnly,
 }
+
 
 pub type BufferRow = u32;
 
@@ -3220,6 +3222,28 @@ impl BufferSnapshot {
         }
 
         (start..end, word_kind)
+    }
+
+    pub fn syntax_sibling<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+        direction: SiblingDirection,
+    ) -> Option<tree_sitter::Node<'a>> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut result: Option<tree_sitter::Node<'a>> = None;
+        'outer: for layer in self
+            .syntax
+            .layers_for_range(range.clone(), &self.text, true)
+        {
+            match layer.next_prev_sibling(range.clone(), &direction) {
+                Some(node) => {
+                    result = Some(node);
+                    break;
+                }
+                None => continue 'outer,
+            }
+        };
+        result
     }
 
     /// Returns the closest syntax node enclosing the given range.

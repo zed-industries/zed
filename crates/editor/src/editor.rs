@@ -47,6 +47,7 @@ mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+use language::SiblingDirection;
 pub(crate) use actions::*;
 pub use actions::{AcceptEditPrediction, OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
@@ -564,6 +565,12 @@ pub trait Addon: 'static {
 pub enum IsVimMode {
     Yes,
     No,
+}
+
+enum SyntaxMovement {
+    Parent,
+    NextSibling,
+    PreviousSibling,
 }
 
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
@@ -10071,11 +10078,12 @@ impl Editor {
         }
     }
 
-    pub fn select_larger_syntax_node(
+
+    fn select_syntax_helper(
         &mut self,
-        _: &SelectLargerSyntaxNode,
         window: &mut Window,
         cx: &mut Context<Self>,
+        direction: SyntaxMovement,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -10089,7 +10097,17 @@ impl Editor {
                 let old_range = selection.start..selection.end;
                 let mut new_range = old_range.clone();
                 let mut new_node = None;
-                while let Some((node, containing_range)) = buffer.syntax_ancestor(new_range.clone())
+
+
+                while 
+                    let Some((node, containing_range)) = 
+                        match direction {
+                            SyntaxMovement::Parent => buffer.syntax_ancestor(new_range.clone()),
+                            SyntaxMovement::NextSibling => 
+                                buffer.syntax_sibling(new_range.clone(), SiblingDirection::Next),
+                            SyntaxMovement::PreviousSibling => 
+                                buffer.syntax_sibling(new_range.clone(), SiblingDirection::Previous),
+                        }
                 {
                     new_node = Some(node);
                     new_range = containing_range;
@@ -10130,6 +10148,34 @@ impl Editor {
         }
         self.select_larger_syntax_node_stack = stack;
     }
+
+    pub fn select_larger_syntax_node(
+        &mut self,
+        _: &SelectLargerSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_syntax_helper(window, cx, SyntaxMovement::Parent);
+    }
+
+    pub fn select_next_syntax_node(
+        &mut self,
+        _: &SelectNextSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_syntax_helper(window, cx, SyntaxMovement::NextSibling);
+    }
+
+    pub fn select_previous_syntax_node(
+        &mut self,
+        _: &SelectPreviousSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_syntax_helper(window, cx, SyntaxMovement::PreviousSibling);
+    }
+    
 
     pub fn select_smaller_syntax_node(
         &mut self,

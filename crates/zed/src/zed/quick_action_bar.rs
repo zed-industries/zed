@@ -6,7 +6,7 @@ use assistant_settings::AssistantSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
     GoToPrevDiagnostic, GoToPrevHunk, MoveLineDown, MoveLineUp, SelectAll, SelectLargerSyntaxNode,
-    SelectNext, SelectSmallerSyntaxNode, ToggleGoToLine,
+    SelectNext, SelectNextSyntaxNode, SelectPreviousSyntaxNode, SelectSmallerSyntaxNode, ToggleGoToLine,
 };
 use editor::{Editor, EditorSettings};
 use gpui::{
@@ -191,6 +191,8 @@ impl Render for QuickActionBar {
                                 }),
                             )
                             .action("Expand Selection", Box::new(SelectLargerSyntaxNode))
+                            .action("Select Next Syntax Node", Box::new(SelectNextSyntaxNode))
+                            .action("Select Previous Syntax Node", Box::new(SelectPreviousSyntaxNode))
                             .action("Shrink Selection", Box::new(SelectSmallerSyntaxNode))
                             .action("Add Cursor Above", Box::new(AddSelectionAbove))
                             .action("Add Cursor Below", Box::new(AddSelectionBelow))
