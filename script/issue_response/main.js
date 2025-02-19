@@ -96,7 +96,7 @@ async function main() {
     },
   }));
 
-  const issuesUrl = `${GITHUB_ISSUES_URL}?q=${encodeURIComponent(searchQuery)}`;
+  const issuesUrl = `${GITHUB_ISSUES_URL}?q=${searchQuery}`;
 
   blocks.push({
     type: "section",
