@@ -314,16 +314,7 @@ impl SelectionsCollection {
         &self,
         cx: &mut App,
     ) -> Vec<Range<D>> {
-        self.all::<D>(cx)
-            .iter()
-            .map(|s| {
-                if s.reversed {
-                    s.end..s.start
-                } else {
-                    s.start..s.end
-                }
-            })
-            .collect()
+        self.all::<D>(cx).iter().map(|s| s.range()).collect()
     }
 
     #[cfg(any(test, feature = "test-support"))]
