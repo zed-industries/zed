@@ -14,6 +14,8 @@ switch ($channel) {
         $regValueName = "ZedEditor"
         $appUserId = "ZedIndustry.Zed"
         $appShellNameShort = "Z&ed Editor"
+        # TODO: Update this value
+        $appAppxFullName = "ZedIndusty.Zed_1.0.0.0_neutral__jr6ek54py7bac"
     }
     "preview" {
         $appId = "{{F70E4811-D0E2-4D88-AC99-D63752799F95}"
@@ -25,6 +27,7 @@ switch ($channel) {
         $regValueName = "ZedEditorPreview"
         $appUserId = "ZedIndustry.Zed.Preview"
         $appShellNameShort = "Z&ed Editor Preview"
+        $appAppxFullName = "ZedIndusty.Zed.Preview_1.0.0.0_neutral__jr6ek54py7bac"
     }
     "nightly" {
         $appId = "{{1BDB21D3-14E7-433C-843C-9C97382B2FE0}"
@@ -36,6 +39,7 @@ switch ($channel) {
         $regValueName = "ZedEditorNightly"
         $appUserId = "ZedIndustry.Zed.Nightly"
         $appShellNameShort = "Z&ed Editor Nightly"
+        $appAppxFullName = "ZedIndusty.Zed.Nightly_1.0.0.0_neutral__jr6ek54py7bac"
     }
     default {
         Write-Error "can't bundle installer for $channel"
@@ -63,6 +67,7 @@ $definitions = @{
     "AppUserId"      = $appUserId
     "Version"        = "$env:RELEASE_VERSION"
     "SourceDir"      = "$env:ZED_WORKSPACE"
+    "AppxFullName"   = $appAppxFullName
 }
 
 $signTool = "pwsh.exe -ExecutionPolicy Bypass -File $env:ZED_WORKSPACE/crates/zed/resources/windows/installer/sign.ps1 `$f"

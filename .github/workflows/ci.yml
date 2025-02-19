@@ -790,9 +790,20 @@ jobs:
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: |
           cargo build --release
-          cp ".\target\release\zed.exe" ".\crates\zed\resources\windows\Zed.exe"
-          cargo build -p explorer_command_injector --release
-          cp ".\target\release\explorer_command_injector.dll" ".\crates\zed\resources\windows\zed_explorer_command_injector.dll"
+          Copy-Item -Path ".\target\release\zed.exe" -Destination ".\crates\zed\resources\windows\Zed.exe"
+          $channel = $env:RELEASE_CHANNEL
+          switch ($channel) {
+            "stable" {
+              cargo build -p explorer_command_injector --release --features stable --no-default-features
+            }
+            "preview" {
+              cargo build -p explorer_command_injector --release --features preview --no-default-features
+            }
+            default {
+              cargo build -p explorer_command_injector --release
+            }
+          }
+          Copy-Item -Path ".\target\release\explorer_command_injector.dll" -Destination ".\crates\zed\resources\windows\zed_explorer_command_injector.dll"
 
       - name: Make appx for dll
         working-directory: ${{ env.ZED_WORKSPACE }}
