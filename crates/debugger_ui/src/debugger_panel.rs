@@ -9,7 +9,10 @@ use gpui::{
     actions, Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
     Focusable, Subscription, Task, WeakEntity,
 };
-use project::Project;
+use project::{
+    debugger::dap_store::{self, DapStore},
+    Project,
+};
 use rpc::proto::{self};
 use settings::Settings;
 use std::any::TypeId;
@@ -54,6 +57,7 @@ impl DebugPanel {
     ) -> Entity<Self> {
         cx.new(|cx| {
             let project = workspace.project().clone();
+            let dap_store = project.read(cx).dap_store();
             let weak_workspace = workspace.weak_handle();
             let pane = cx.new(|cx| {
                 let mut pane = Pane::new(
@@ -123,6 +127,7 @@ impl DebugPanel {
             let _subscriptions = vec![
                 cx.observe(&pane, |_, _, cx| cx.notify()),
                 cx.subscribe_in(&pane, window, Self::handle_pane_event),
+                cx.subscribe_in(&dap_store, window, Self::handle_dap_store_event),
             ];
 
             let debug_panel = Self {
@@ -235,6 +240,35 @@ impl DebugPanel {
 
                 item.session_id(cx) == Some(client_id)
             })
+    }
+
+    fn handle_dap_store_event(
+        &mut self,
+        dap_store: &Entity<DapStore>,
+        event: &dap_store::DapStoreEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            dap_store::DapStoreEvent::DebugClientStarted(session_id) => {
+                let Some(session) = dap_store.read(cx).session_by_id(session_id) else {
+                    return log::error!("Couldn't get session with id: {session_id:?} from DebugClientStarted event");
+                };
+
+                let Some(project) = self.project.upgrade() else {
+                    return log::error!("Debug Panel out lived it's weak reference to Project");
+                };
+
+                let session_item =
+                    DebugSession::running(project, self.workspace.clone(), session, window, cx);
+
+                self.pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(session_item), true, true, None, window, cx);
+                    window.focus(&pane.focus_handle(cx));
+                });
+            }
+            _ => {}
+        }
     }
 
     fn handle_pane_event(

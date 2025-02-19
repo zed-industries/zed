@@ -3845,6 +3845,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "log",
  "menu",
  "picker",
  "pretty_assertions",

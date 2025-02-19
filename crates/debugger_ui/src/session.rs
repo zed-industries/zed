@@ -7,8 +7,7 @@ use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
 use inert::{InertEvent, InertState};
-use project::debugger::dap_store::DapStore;
-use project::debugger::session::ThreadId;
+use project::debugger::{self, dap_store::DapStore, session::Session};
 use project::worktree_store::WorktreeStore;
 use project::Project;
 use rpc::proto::{self, PeerId};
@@ -92,6 +91,28 @@ impl DebugSession {
             }
         })
     }
+
+    pub(crate) fn running(
+        project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
+        session: Entity<Session>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let mode = DebugSessionState::Running(
+            cx.new(|cx| RunningState::new(session.clone(), workspace.clone(), window, cx)),
+        );
+
+        cx.new(|cx| Self {
+            remote_id: None,
+            mode,
+            dap_store: project.read(cx).dap_store().downgrade(),
+            worktree_store: project.read(cx).worktree_store().downgrade(),
+            workspace,
+            _subscriptions: [cx.subscribe(&project, |_, _, _, _| {})], // todo(debugger) We don't need this subscription
+        })
+    }
+
     pub(crate) fn session_id(&self, cx: &App) -> Option<SessionId> {
         match &self.mode {
             DebugSessionState::Inert(_) => None,
@@ -124,6 +145,7 @@ impl DebugSession {
         self._subscriptions = [cx.subscribe_in(&starting, window, Self::on_starting_event)];
         self.mode = DebugSessionState::Starting(starting);
     }
+
     fn on_starting_event(
         &mut self,
         _: &Entity<StartingState>,
