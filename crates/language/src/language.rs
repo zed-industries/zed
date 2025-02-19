@@ -917,7 +917,7 @@ pub struct Grammar {
     pub ts_language: tree_sitter::Language,
     pub(crate) error_query: Option<Query>,
     pub(crate) highlights_query: Option<Query>,
-    pub(crate) brackets_config: Option<BracketConfig>,
+    pub(crate) brackets_config: Option<BracketsConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
     pub(crate) runnable_config: Option<RunnableConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
@@ -1038,10 +1038,17 @@ struct InjectionPatternConfig {
     combined: bool,
 }
 
-struct BracketConfig {
+struct BracketsConfig {
     query: Query,
     open_capture_ix: u32,
     close_capture_ix: u32,
+    patterns: Vec<BracketsPatternConfig>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct BracketsPatternConfig {
+    newline: bool,
+    no_match: bool,
 }
 
 impl Language {
@@ -1283,11 +1290,25 @@ impl Language {
                 ("close", &mut close_capture_ix),
             ],
         );
+        let patterns = (0..query.pattern_count())
+            .map(|ix| {
+                let mut config = BracketsPatternConfig::default();
+                for setting in query.property_settings(ix) {
+                    match setting.key.as_ref() {
+                        "newline" => config.newline = true,
+                        "nomatch" => config.no_match = true,
+                        _ => {}
+                    }
+                }
+                config
+            })
+            .collect();
         if let Some((open_capture_ix, close_capture_ix)) = open_capture_ix.zip(close_capture_ix) {
-            grammar.brackets_config = Some(BracketConfig {
+            grammar.brackets_config = Some(BracketsConfig {
                 query,
                 open_capture_ix,
                 close_capture_ix,
+                patterns,
             });
         }
         Ok(self)

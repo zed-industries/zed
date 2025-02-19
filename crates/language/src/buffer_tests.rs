@@ -3380,7 +3380,10 @@ fn assert_bracket_pairs(
         .collect::<Vec<_>>();
 
     assert_set_eq!(
-        buffer.bracket_ranges(selection_range).collect::<Vec<_>>(),
+        buffer
+            .bracket_ranges(selection_range)
+            .map(|pair| (pair.open_range, pair.close_range))
+            .collect::<Vec<_>>(),
         bracket_pairs
     );
 }

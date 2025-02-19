@@ -98,10 +98,10 @@ pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
-    markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, Diagnostic, DiskState, EditPredictionsMode, EditPreview, HighlightedText,
-    IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
-    TransactionId, TreeSitterOptions,
+    markdown, point_from_lsp, AutoindentMode, BracketMatch, BracketPair, Buffer, Capability,
+    CharKind, CodeLabel, CursorShape, Diagnostic, DiskState, EditPredictionsMode, EditPreview,
+    HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection,
+    SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -3215,35 +3215,9 @@ impl Editor {
                         let (comment_delimiter, insert_extra_newline) = if let Some(language) =
                             &language_scope
                         {
-                            let leading_whitespace_len = buffer
-                                .reversed_chars_at(start)
-                                .take_while(|c| c.is_whitespace() && *c != '\n')
-                                .map(|c| c.len_utf8())
-                                .sum::<usize>();
-
-                            let trailing_whitespace_len = buffer
-                                .chars_at(end)
-                                .take_while(|c| c.is_whitespace() && *c != '\n')
-                                .map(|c| c.len_utf8())
-                                .sum::<usize>();
-
                             let insert_extra_newline =
-                                language.brackets().any(|(pair, enabled)| {
-                                    let pair_start = pair.start.trim_end();
-                                    let pair_end = pair.end.trim_start();
-
-                                    enabled
-                                        && pair.newline
-                                        && buffer.contains_str_at(
-                                            end + trailing_whitespace_len,
-                                            pair_end,
-                                        )
-                                        && buffer.contains_str_at(
-                                            (start - leading_whitespace_len)
-                                                .saturating_sub(pair_start.len()),
-                                            pair_start,
-                                        )
-                                });
+                                insert_extra_newline_brackets(&buffer, start..end, language)
+                                    || insert_extra_newline_tree_sitter(&buffer, start..end);
 
                             // Comment extension on newline is allowed only for cursor selections
                             let comment_delimiter = maybe!({
@@ -15096,6 +15070,72 @@ impl Editor {
             }));
         });
     }
+}
+
+fn insert_extra_newline_brackets(
+    buffer: &MultiBufferSnapshot,
+    range: Range<usize>,
+    language: &language::LanguageScope,
+) -> bool {
+    let leading_whitespace_len = buffer
+        .reversed_chars_at(range.start)
+        .take_while(|c| c.is_whitespace() && *c != '\n')
+        .map(|c| c.len_utf8())
+        .sum::<usize>();
+    let trailing_whitespace_len = buffer
+        .chars_at(range.end)
+        .take_while(|c| c.is_whitespace() && *c != '\n')
+        .map(|c| c.len_utf8())
+        .sum::<usize>();
+    let range = range.start - leading_whitespace_len..range.end + trailing_whitespace_len;
+
+    language.brackets().any(|(pair, enabled)| {
+        let pair_start = pair.start.trim_end();
+        let pair_end = pair.end.trim_start();
+
+        enabled
+            && pair.newline
+            && buffer.contains_str_at(range.end, pair_end)
+            && buffer.contains_str_at(range.start.saturating_sub(pair_start.len()), pair_start)
+    })
+}
+
+fn insert_extra_newline_tree_sitter(buffer: &MultiBufferSnapshot, range: Range<usize>) -> bool {
+    let (buffer, range) = match buffer.range_to_buffer_ranges(range).as_slice() {
+        [(buffer, range, _)] => (*buffer, range.clone()),
+        _ => return false,
+    };
+    let pair = {
+        let mut result: Option<BracketMatch> = None;
+
+        for pair in buffer
+            .all_bracket_ranges(range.clone())
+            .filter(move |pair| {
+                pair.open_range.start <= range.start && pair.close_range.end >= range.end
+            })
+        {
+            let len = pair.close_range.end - pair.open_range.start;
+
+            if let Some(existing) = &result {
+                let existing_len = existing.close_range.end - existing.open_range.start;
+                if len > existing_len {
+                    continue;
+                }
+            }
+
+            result = Some(pair);
+        }
+
+        result
+    };
+    let Some(pair) = pair else {
+        return false;
+    };
+    pair.newline
+        && buffer
+            .chars_for_range(pair.open_range.end..range.start)
+            .chain(buffer.chars_for_range(range.end..pair.close_range.start))
+            .all(|c| c.is_whitespace() && c != '\n')
 }
 
 fn get_uncommitted_diff_for_buffer(
