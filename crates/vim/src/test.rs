@@ -1707,3 +1707,25 @@ async fn test_ctrl_o_dot(cx: &mut gpui::TestAppContext) {
     cx.simulate_shared_keystrokes("l l escape .").await;
     cx.shared_state().await.assert_eq("hellˇllo world.");
 }
+
+#[gpui::test]
+async fn test_rewrap_around_paragraph(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_wrap(20).await;
+    cx.set_shared_state(
+        &['a', 'ˇ', ' ']
+            .into_iter()
+            .chain(['a', ' '].into_iter().cycle().take(38))
+            .chain(['\n', '\n', 'b', '\n'])
+            .collect::<String>(),
+    )
+    .await;
+    cx.simulate_shared_keystrokes("g q a p").await;
+    cx.shared_state().await.assert_eq(indoc! {"
+        a a a a a a a a a a
+        a a a a a a a a a a•
+        ˇ
+        b
+    "});
+}

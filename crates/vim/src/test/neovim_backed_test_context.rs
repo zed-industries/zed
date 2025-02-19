@@ -218,8 +218,9 @@ impl NeovimBackedTestContext {
             panic!("nvim doesn't support columns < 12")
         }
         self.neovim.set_option("wrap").await;
+        self.neovim.set_option(&format!("columns={columns}")).await;
         self.neovim
-            .set_option(&format!("columns={}", columns))
+            .set_option(&format!("textwidth={columns}"))
             .await;
 
         self.update(|_, cx| {
