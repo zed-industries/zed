@@ -399,6 +399,7 @@ async fn run_evaluation(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_eval_project(
     evaluation_project: EvaluationProject,
     user_store: &Entity<UserStore>,
