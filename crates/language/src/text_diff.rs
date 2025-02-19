@@ -85,7 +85,9 @@ fn should_perform_word_diff_within_hunk(
     new_row_range: &Range<u32>,
     new_byte_range: &Range<usize>,
 ) -> bool {
-    old_byte_range.len() <= MAX_WORD_DIFF_LEN
+    !old_byte_range.is_empty()
+        && !new_byte_range.is_empty()
+        && old_byte_range.len() <= MAX_WORD_DIFF_LEN
         && new_byte_range.len() <= MAX_WORD_DIFF_LEN
         && old_row_range.len() <= MAX_WORD_DIFF_LINE_COUNT
         && new_row_range.len() <= MAX_WORD_DIFF_LINE_COUNT
