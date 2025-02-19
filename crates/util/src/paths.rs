@@ -544,10 +544,18 @@ pub fn compare_paths_with_strategy(
             }
         }
         SortStrategy::Alphabetical => {
-            let path_a = path_a.to_string_lossy();
-            let path_b = path_b.to_string_lossy();
+            let a_is_file = a_is_file as u8;
+            let b_is_file = b_is_file as u8;
 
-            natural_sort(&path_a, &path_b)
+            match a_is_file.cmp(&b_is_file) {
+                Ordering::Equal => {
+                    let path_a = path_a.to_string_lossy();
+                    let path_b = path_b.to_string_lossy();
+
+                    natural_sort(&path_a, &path_b)
+                }
+                ordering => ordering,
+            }
         }
     }
 }
