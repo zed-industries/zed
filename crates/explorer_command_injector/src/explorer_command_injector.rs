@@ -6,7 +6,8 @@ use windows::{
     core::implement,
     Win32::{
         Foundation::{
-            GetLastError, BOOL, ERROR_INSUFFICIENT_BUFFER, E_FAIL, E_NOTIMPL, HINSTANCE, MAX_PATH,
+            GetLastError, BOOL, ERROR_INSUFFICIENT_BUFFER, E_FAIL, E_INVALIDARG, E_NOTIMPL,
+            HINSTANCE, MAX_PATH,
         },
         Globalization::u_strlen,
         System::{
@@ -33,25 +34,6 @@ extern "system" fn DllMain(
     }
 
     true
-}
-
-fn get_zed_path() -> Option<String> {
-    let mut buf = vec![0u16; MAX_PATH as usize];
-    unsafe { GetModuleFileNameW(DLL_INSTANCE, &mut buf) };
-
-    while unsafe { GetLastError() } == ERROR_INSUFFICIENT_BUFFER {
-        buf = vec![0u16; buf.len() * 2];
-        unsafe { GetModuleFileNameW(DLL_INSTANCE, &mut buf) };
-    }
-    let len = unsafe { u_strlen(buf.as_ptr()) };
-    let path: PathBuf = String::from_utf16_lossy(&buf[..len as usize]).into();
-    Some(
-        path.parent()?
-            .parent()?
-            .join("zed.exe")
-            .to_string_lossy()
-            .to_string(),
-    )
 }
 
 #[implement(IExplorerCommand)]
@@ -90,12 +72,18 @@ impl IExplorerCommand_Impl for ContextMenuHandler_Impl {
         let Some(items) = psiitemarray else {
             return Ok(());
         };
+        let Some(zed_exe) = get_zed_path() else {
+            return Ok(());
+        };
 
         let count = unsafe { items.GetCount()? };
         for idx in 0..count {
             let item = unsafe { items.GetItemAt(idx)? };
-            let item_path = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)? };
-            let string = unsafe { item_path.to_string()? };
+            let item_path = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)?.to_string()? };
+            std::process::Command::new(&zed_exe)
+                .arg(&add_quotation_for_path(item_path))
+                .spawn()
+                .map_err(|_| E_INVALIDARG)?;
         }
 
         Ok(())
@@ -108,4 +96,28 @@ impl IExplorerCommand_Impl for ContextMenuHandler_Impl {
     fn EnumSubCommands(&self) -> windows_core::Result<IEnumExplorerCommand> {
         Err(E_NOTIMPL.into())
     }
+}
+
+fn get_zed_path() -> Option<String> {
+    let mut buf = vec![0u16; MAX_PATH as usize];
+    unsafe { GetModuleFileNameW(DLL_INSTANCE, &mut buf) };
+
+    while unsafe { GetLastError() } == ERROR_INSUFFICIENT_BUFFER {
+        buf = vec![0u16; buf.len() * 2];
+        unsafe { GetModuleFileNameW(DLL_INSTANCE, &mut buf) };
+    }
+    let len = unsafe { u_strlen(buf.as_ptr()) };
+    let path: PathBuf = String::from_utf16_lossy(&buf[..len as usize]).into();
+    Some(
+        path.parent()?
+            .parent()?
+            .join("zed.exe")
+            .to_string_lossy()
+            .to_string(),
+    )
+}
+
+#[inline(always)]
+fn add_quotation_for_path(path: String) -> String {
+    format!("\"{}\"", path)
 }
