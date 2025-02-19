@@ -140,8 +140,8 @@ use project::{
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, CompletionSource, DocumentHighlight, InlayHint,
-    Location, LocationLink, LspDiagnostics, LspStore, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction,
-    TaskSourceKind,
+    Location, LocationLink, LspDiagnostics, PrepareRenameResponse, Project, ProjectItem,
+    ProjectTransaction, TaskSourceKind,
 };
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
@@ -1244,7 +1244,9 @@ impl Editor {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                         }
-                        project::Event::LanguageServerAdded | project::Event::LanguageServerRemoved | project::Event::RefreshDocumentsDiagnostics => {
+                        project::Event::LanguageServerAdded(_, _, _)
+                        | project::Event::LanguageServerRemoved(_)
+                        | project::Event::RefreshDocumentsDiagnostics => {
                             editor.refresh_diagnostics(cx);
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
@@ -13182,70 +13184,44 @@ impl Editor {
     }
 
     fn refresh_diagnostics(&mut self, cx: &mut Context<Self>) -> Option<()> {
-        let buffer = self.buffer.read(cx);
-        let cursor_position = self.selections.newest_anchor().clone();
-        let (cursor_buffer, _) = buffer.text_anchor_for_position(cursor_position.start, cx)?;
-        let (end_buffer, _) = buffer.text_anchor_for_position(cursor_position.end, cx)?;
-
-        if cursor_buffer != end_buffer {
-            return None;
-        }
-
-        let lsp_store = self.lsp_store(cx)?.downgrade();
+        let project = self.project.as_ref()?.downgrade();
+        let buffers = self.buffer.read(cx).all_buffers();
 
         self.tasks_pull_diagnostics_task = cx.spawn(|this, mut cx| async move {
             cx.background_executor()
                 .timer(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT)
                 .await;
 
-            let Some(lsp_store) = lsp_store.upgrade() else {
+            let Some(project) = project.upgrade() else {
                 return;
             };
 
-            let diagnostics = if let Some(diagnostics) = lsp_store
-                .update(&mut cx, |lsp_store, cx| {
-                    lsp_store.document_diagnostic(cursor_buffer, cx)
-                })
-                .ok()
-            {
-                diagnostics.await.log_err()
-            } else {
-                None
-            };
+            for buffer in buffers {
+                let diagnostics = if let Some(diagnostics) = cx
+                    .update(|cx| project.pull_diagnostics(&buffer, cx))
+                    .ok()
+                    .flatten()
+                {
+                    diagnostics.await.log_err()
+                } else {
+                    None
+                };
 
-            if let Some(diagnostics) = diagnostics {
-                lsp_store
-                    .update(&mut cx, |lsp_store, cx| {
-                        diagnostics
-                            .iter()
-                            .filter_map(|diagnostic_set| match diagnostic_set {
-                                Some(diagnostic_set) => {
-                                    let publish_diagnostics_params =
-                                        lsp::PublishDiagnosticsParams {
-                                            uri: diagnostic_set.uri.as_ref().unwrap().clone(),
-                                            diagnostics: match diagnostic_set.diagnostics.as_ref() {
-                                                Some(diagnostics) => diagnostics.clone(),
-                                                None => Vec::new(),
-                                            },
-                                            version: None,
-                                        };
-
-                                    Some(lsp_store.update_diagnostics(
-                                        diagnostic_set.server_id,
-                                        publish_diagnostics_params,
-                                        &[],
-                                        cx,
-                                    ))
+                if let Some(diagnostics) = diagnostics {
+                    this.update(&mut cx, |editor, cx| {
+                        if let Some(result) = project.update_diagnostics(diagnostics, cx) {
+                            match result {
+                                Ok(_) => {
+                                    editor.refresh_active_diagnostics(cx);
                                 }
-                                None => None,
-                            })
-                            .collect::<Vec<_>>()
+                                Err(err) => {
+                                    log::error!("Failed to update project diagnostics: {:?}", err);
+                                }
+                            }
+                        }
                     })
                     .log_err();
-
-                this.update(&mut cx, |editor, cx| editor.refresh_active_diagnostics(cx))
-                    .map_err(|e| log::error!("Failed to refresh active diagnostics: {}", e))
-                    .ok();
+                }
             }
         });
         None
@@ -17030,6 +17006,18 @@ pub trait SemanticsProvider {
         new_name: String,
         cx: &mut App,
     ) -> Option<Task<Result<ProjectTransaction>>>;
+
+    fn pull_diagnostics(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> Option<Task<Result<Vec<Option<LspDiagnostics>>>>>;
+
+    fn update_diagnostics(
+        &self,
+        diagnostics: Vec<Option<LspDiagnostics>>,
+        cx: &mut App,
+    ) -> Option<Result<()>>;
 }
 
 pub trait CompletionProvider {
@@ -17489,6 +17477,48 @@ impl SemanticsProvider for Entity<Project> {
         Some(self.update(cx, |project, cx| {
             project.perform_rename(buffer.clone(), position, new_name, cx)
         }))
+    }
+
+    fn pull_diagnostics(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> Option<Task<Result<Vec<Option<LspDiagnostics>>>>> {
+        Some(self.update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                lsp_store.document_diagnostic(buffer.clone(), cx)
+            })
+        }))
+    }
+
+    fn update_diagnostics(
+        &self,
+        diagnostics: Vec<Option<LspDiagnostics>>,
+        cx: &mut App,
+    ) -> Option<Result<()>> {
+        self.update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                diagnostics
+                    .iter()
+                    .map(|diagnostic_set| match diagnostic_set {
+                        Some(diagnostic_set) => Some(lsp_store.update_diagnostics(
+                            diagnostic_set.server_id,
+                            lsp::PublishDiagnosticsParams {
+                                uri: diagnostic_set.uri.as_ref().unwrap().clone(),
+                                diagnostics: match diagnostic_set.diagnostics.as_ref() {
+                                    Some(diagnostics) => diagnostics.clone(),
+                                    None => Vec::new(),
+                                },
+                                version: None,
+                            },
+                            &[],
+                            cx,
+                        )),
+                        None => None,
+                    })
+                    .collect()
+            })
+        })
     }
 }
 
