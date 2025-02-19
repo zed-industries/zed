@@ -54,6 +54,7 @@ impl Render for RunningState {
         let active_thread_item = &self.active_thread_item;
 
         let threads = self.session.update(cx, |this, cx| this.threads(cx));
+        let has_no_threads = threads.is_empty();
         let capabilities = self.capabilities(cx);
         let state = cx.entity();
         h_flex()
@@ -233,25 +234,29 @@ impl Render for RunningState {
                                     ),
                             )
                             //.child(h_flex())
-                            .child(h_flex().p_1().mx_2().w_3_4().justify_end().child(
-                                DropdownMenu::new(
-                                    "thread-list",
-                                    "Threads",
-                                    ContextMenu::build(window, cx, move |mut this, _, _| {
-                                        for (thread, status) in threads {
-                                            let state = state.clone();
-                                            let thread_id = thread.id;
-                                            this = this.entry(thread.name, None, move |_, cx| {
-                                                state.update(cx, |state, cx| {
-                                                    state.thread_id = ThreadId(thread_id);
-                                                    cx.notify();
-                                                });
-                                            });
-                                        }
-                                        this
-                                    }),
+                            .child(
+                                h_flex().p_1().mx_2().w_3_4().justify_end().child(
+                                    DropdownMenu::new(
+                                        "thread-list",
+                                        "Threads",
+                                        ContextMenu::build(window, cx, move |mut this, _, _| {
+                                            for (thread, status) in threads {
+                                                let state = state.clone();
+                                                let thread_id = thread.id;
+                                                this =
+                                                    this.entry(thread.name, None, move |_, cx| {
+                                                        state.update(cx, |state, cx| {
+                                                            state.thread_id = ThreadId(thread_id);
+                                                            cx.notify();
+                                                        });
+                                                    });
+                                            }
+                                            this
+                                        }),
+                                    )
+                                    .disabled(has_no_threads),
                                 ),
-                            )),
+                            ),
                     )
                     .child(
                         h_flex()
