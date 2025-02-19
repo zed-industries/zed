@@ -1610,6 +1610,7 @@ impl Render for PromptEditor {
                                 cx,
                             )
                         },
+                        gpui::Corner::TopRight,
                     ))
                     .map(|el| {
                         let CodegenStatus::Error(error) = self.codegen.read(cx).status(cx) else {
