@@ -13,10 +13,10 @@ switch ($channel) {
         $appMutex = "Zed-Editor-Stable-Instance-Mutex"
         $appExeName = "Zed"
         $regValueName = "ZedEditor"
-        $appUserId = "ZedIndustry.Zed"
+        $appUserId = "ZedIndustries.Zed"
         $appShellNameShort = "Z&ed Editor"
         # TODO: Update this value
-        $appAppxFullName = "ZedIndusty.Zed_1.0.0.0_neutral__jr6ek54py7bac"
+        $appAppxFullName = "ZedIndustries.Zed_1.0.0.0_neutral__jr6ek54py7bac"
     }
     "preview" {
         $appId = "{{F70E4811-D0E2-4D88-AC99-D63752799F95}"
@@ -27,10 +27,10 @@ switch ($channel) {
         $appMutex = "Zed-Editor-Preview-Instance-Mutex"
         $appExeName = "Zed"
         $regValueName = "ZedEditorPreview"
-        $appUserId = "ZedIndustry.Zed.Preview"
+        $appUserId = "ZedIndustries.Zed.Preview"
         $appShellNameShort = "Z&ed Editor Preview"
         # TODO: Update this value
-        $appAppxFullName = "ZedIndusty.Zed.Preview_1.0.0.0_neutral__jr6ek54py7bac"
+        $appAppxFullName = "ZedIndustries.Zed.Preview_1.0.0.0_neutral__jr6ek54py7bac"
     }
     "nightly" {
         $appId = "{{1BDB21D3-14E7-433C-843C-9C97382B2FE0}"
@@ -41,10 +41,10 @@ switch ($channel) {
         $appMutex = "Zed-Editor-Nightly-Instance-Mutex"
         $appExeName = "Zed"
         $regValueName = "ZedEditorNightly"
-        $appUserId = "ZedIndustry.Zed.Nightly"
+        $appUserId = "ZedIndustries.Zed.Nightly"
         $appShellNameShort = "Z&ed Editor Nightly"
         # TODO: Update this value
-        $appAppxFullName = "ZedIndusty.Zed.Nightly_1.0.0.0_neutral__jr6ek54py7bac"
+        $appAppxFullName = "ZedIndustries.Zed.Nightly_1.0.0.0_neutral__jr6ek54py7bac"
     }
     default {
         Write-Error "can't bundle installer for $channel"

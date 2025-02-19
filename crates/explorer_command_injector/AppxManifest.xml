@@ -14,12 +14,12 @@
   IgnorableNamespaces="uap uap2 uap3 rescap desktop desktop4 desktop5 desktop6 uap10 com">
   <!-- TODO: Use Zed's signature here. -->
   <Identity
-    Name="ZedIndusty.Zed"
+    Name="ZedIndustries.Zed"
     Publisher="CN=Junkui Zhang, O=Junkui Zhang, L=Wuhan, S=Hubei, C=CN"
     Version="1.0.0.0" />
   <Properties>
     <DisplayName>Zed Editor</DisplayName>
-    <PublisherDisplayName>Zed Industy</PublisherDisplayName>
+    <PublisherDisplayName>Zed Industries</PublisherDisplayName>
     <!-- TODO: Use actual icon here. -->
     <Logo>resources\logo_150x150.png</Logo>
     <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
