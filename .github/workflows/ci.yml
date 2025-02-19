@@ -792,7 +792,7 @@ jobs:
           cargo build --release
           cp ".\target\release\zed.exe" ".\crates\zed\resources\windows\Zed.exe"
           cargo build -p explorer_command_injector --release
-          cp ".\target\release\explorer_command_injector.dll" ".\crates\zed\resources\windows\explorer_command_injector.dll"
+          cp ".\target\release\explorer_command_injector.dll" ".\crates\zed\resources\windows\zed_explorer_command_injector.dll"
 
       - name: Make appx for dll
         run: |
@@ -826,6 +826,13 @@ jobs:
           certificate-profile-name: ${{ secrets.CERT_PROFILE_NAME }}
           files-folder: ${{ env.ZED_WORKSPACE }}\crates\zed\resources\windows
           files-folder-filter: exe,dll,appx
+
+      - name: Collect appx files
+        run: |
+          $windowsDir = ${{ env.ZED_WORKSPACE }}\crates\zed\resources\windows
+          mkdir -p $windowsDir\installer\appx -ErrorAction Ignore
+          Move-Item -Path "$windowsDir\zed_explorer_command_injector.appx" -Destination "$windowsDir\installer\appx\zed_explorer_command_injector.appx"
+          Move-Item -Path "$windowsDir\zed_explorer_command_injector.dll" -Destination "$windowsDir\installer\appx\zed_explorer_command_injector.dll"
 
       - name: Run Inno Setup
         env:

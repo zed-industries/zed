@@ -53,6 +53,7 @@ Name: "{app}"; AfterInstall: DisableAppDirInheritance
 [Files]
 Source: "{#ResourcesDir}\Zed.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#ResourcesDir}\installer\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion
+Source: "{#ResourcesDir}\installer\appx\*"; DestDir: "{app}\appx";  BeforeInstall: RemoveAppxPackage; AfterInstall: AddAppxPackage; Flags: ignoreversion; Check: IsWindows11OrLater
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}.exe"; AppUserModelID: "{#AppUserId}"
@@ -1333,4 +1334,27 @@ begin
   Permissions := Permissions + Format(' /grant:r "*S-1-3-0:(OI)(CI)F" /grant:r "%s:(OI)(CI)F"', [GetUserNameString()]);
 
   Exec(ExpandConstant('{sys}\icacls.exe'), ExpandConstant('"{app}" /inheritancelevel:r ') + Permissions, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+procedure AddAppxPackage();
+var
+  AddAppxPackageResultCode: Integer;
+begin
+  if WizardIsTaskSelected('addcontextmenufiles') then begin
+    ShellExec('', 'powershell.exe', '-Command ' + AddQuotes('Add-AppxPackage -Path ''' + ExpandConstant('{app}\appx\zed_explorer_command_injector.appx') + ''' -ExternalLocation ''' + ExpandConstant('{app}\appx') + ''''), '', SW_HIDE, ewWaitUntilTerminated, AddAppxPackageResultCode);
+    RegDeleteKeyIncludingSubkeys(HKA, 'Software\Classes\*\shell\{#RegValueName}');
+    RegDeleteKeyIncludingSubkeys(HKA, 'Software\Classes\directory\shell\{#RegValueName}');
+    RegDeleteKeyIncludingSubkeys(HKA, 'Software\Classes\directory\background\shell\{#RegValueName}');
+    RegDeleteKeyIncludingSubkeys(HKA, 'Software\Classes\Drive\shell\{#RegValueName}');
+  end;
+end;
+
+procedure RemoveAppxPackage();
+var
+  RemoveAppxPackageResultCode: Integer;
+begin
+  ShellExec('', 'powershell.exe', '-Command ' + AddQuotes('Remove-AppxPackage -Package ''{#AppxPackageFullname}'''), '', SW_HIDE, ewWaitUntilTerminated, RemoveAppxPackageResultCode);
+  if not WizardIsTaskSelected('addcontextmenufiles') then begin
+    RegDeleteKeyIncludingSubkeys(HKA, 'Software\Classes\{#RegValueName}ContextMenu');
+  end;
 end;
