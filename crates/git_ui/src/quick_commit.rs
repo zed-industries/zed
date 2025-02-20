@@ -2,7 +2,7 @@
 
 use crate::repository_selector::RepositorySelector;
 use anyhow::Result;
-use git::{CommitAllChanges, CommitChanges};
+use git::Commit;
 use language::Buffer;
 use panel::{panel_editor_container, panel_editor_style, panel_filled_button, panel_icon_button};
 use ui::{prelude::*, Tooltip};
@@ -14,10 +14,10 @@ use project::{Fs, Project};
 use std::sync::Arc;
 use workspace::{ModalView, Workspace};
 
-actions!(
-    git,
-    [QuickCommitWithMessage, QuickCommitStaged, QuickCommitAll]
-);
+// actions!(
+//     git,
+//     [QuickCommitWithMessage, QuickCommitStaged, QuickCommitAll]
+// );
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
@@ -81,7 +81,7 @@ impl ModalView for QuickCommitModal {}
 
 impl QuickCommitModal {
     pub fn register(workspace: &mut Workspace, _: &mut Window, cx: &mut Context<Workspace>) {
-        workspace.register_action(|workspace, _: &QuickCommitWithMessage, window, cx| {
+        workspace.register_action(|workspace, _: &Commit, window, cx| {
             let project = workspace.project().clone();
             let fs = workspace.app_state().fs.clone();
 
@@ -171,7 +171,7 @@ impl QuickCommitModal {
                 let focus_handle = focus_handle_1.clone();
                 Tooltip::for_action_in(
                     "Commit all staged changes",
-                    &CommitChanges,
+                    &Commit,
                     &focus_handle,
                     window,
                     cx,
@@ -179,61 +179,6 @@ impl QuickCommitModal {
             })
             .when(!can_commit, |this| {
                 this.disabled(true).style(ButtonStyle::Transparent)
-            });
-        // .on_click({
-        //     let name_and_email = name_and_email.clone();
-        //     cx.listener(move |this, _: &ClickEvent, window, cx| {
-        //         this.commit_changes(&CommitChanges, name_and_email.clone(), window, cx)
-        //     })
-        // });
-
-        let commit_all_button = panel_filled_button("Commit All")
-            .tooltip(move |window, cx| {
-                let focus_handle = focus_handle_2.clone();
-                Tooltip::for_action_in(
-                    "Commit all changes, including unstaged changes",
-                    &CommitAllChanges,
-                    &focus_handle,
-                    window,
-                    cx,
-                )
-            })
-            .when(!can_commit, |this| {
-                this.disabled(true).style(ButtonStyle::Transparent)
-            });
-        // .on_click({
-        //     let name_and_email = name_and_email.clone();
-        //     cx.listener(move |this, _: &ClickEvent, window, cx| {
-        //         this.commit_tracked_changes(
-        //             &CommitAllChanges,
-        //             name_and_email.clone(),
-        //             window,
-        //             cx,
-        //         )
-        //     })
-        // });
-
-        let co_author_button = panel_icon_button("add-co-author", IconName::UserGroup)
-            .icon_color(if self.enable_auto_coauthors {
-                Color::Muted
-            } else {
-                Color::Accent
-            })
-            .icon_size(IconSize::Small)
-            .toggle_state(self.enable_auto_coauthors)
-            // .on_click({
-            //     cx.listener(move |this, _: &ClickEvent, _, cx| {
-            //         this.toggle_auto_coauthors(cx);
-            //     })
-            // })
-            .tooltip(move |window, cx| {
-                Tooltip::with_meta(
-                    "Toggle automatic co-authors",
-                    None,
-                    "Automatically adds current collaborators",
-                    window,
-                    cx,
-                )
             });
 
         panel_editor_container(window, cx)
@@ -255,8 +200,6 @@ impl QuickCommitModal {
                     .h_8()
                     .justify_between()
                     .gap_1()
-                    .child(co_author_button)
-                    .child(commit_all_button)
                     .child(commit_staged_button),
             )
     }

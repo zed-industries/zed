@@ -79,16 +79,16 @@ pub fn init(cx: &mut App) {
                 workspace.toggle_panel_focus::<GitPanel>(window, cx);
             });
 
-            workspace.register_action(|workspace, _: &Commit, window, cx| {
-                workspace.open_panel::<GitPanel>(window, cx);
-                if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
-                    git_panel
-                        .read(cx)
-                        .commit_editor
-                        .focus_handle(cx)
-                        .focus(window);
-                }
-            });
+            // workspace.register_action(|workspace, _: &Commit, window, cx| {
+            //     workspace.open_panel::<GitPanel>(window, cx);
+            //     if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
+            //         git_panel
+            //             .read(cx)
+            //             .commit_editor
+            //             .focus_handle(cx)
+            //             .focus(window);
+            //     }
+            // });
         },
     )
     .detach();
