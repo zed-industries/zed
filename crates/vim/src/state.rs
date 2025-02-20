@@ -240,14 +240,13 @@ impl MarksState {
         marks: Vec<(Vec<u8>, String, String)>,
         global_mark_paths: Vec<(Vec<u8>, String)>,
     ) {
-        println!("loaded");
         self.workspace_id = workspace_id;
         for (path, name, values) in marks {
             let Some(value) = serde_json::from_str::<Vec<(u32, u32)>>(&values).log_err() else {
                 continue;
             };
             let path = PathBuf::from(OsString::from_vec(path));
-            let marks = self.marks.entry(Arc::from(path)).or_default();
+            let mut marks = self.marks.entry(Arc::from(path)).or_default();
             let points: Vec<Point> = value
                 .into_iter()
                 .map(|(row, col)| Point::new(row, col))
@@ -268,7 +267,6 @@ impl MarksState {
         };
 
         self.path_buf_id.insert(path.clone(), id.clone());
-        println!("inserted");
 
         if !self.marks.contains_key(&path) {
             return;
@@ -317,39 +315,16 @@ impl MarksState {
                                         .zip(old_points.iter())
                                         .any(|(&p1, &p2)| p1 != p2)
                                     {
-                                        // Collect necessary data before mutable borrow
                                         updates.push((name.clone(), anchors.clone()));
                                     }
                                 }
                             }
                         }
 
-                        // Perform mutation after all immutable borrows are done
                         for (name, anchors) in updates {
                             this.set_mark(name, &buffer, anchors, cx);
                         }
                     }
-                    // if let Some(m) = this.loaded_marks.get(&id) {
-                    //     for (name, anchors) in m.iter() {
-                    //         let points_from_anchors: Vec<Point> = anchors
-                    //             .iter()
-                    //             .map(|anchor| anchor.text_anchor.to_point(&snapshot))
-                    //             .collect();
-                    //         let Some(map) = this.marks.get(&path) else {
-                    //             return;
-                    //         };
-                    //         let Some(old_points) = map.get(name) else {
-                    //             return;
-                    //         };
-                    //         if points_from_anchors
-                    //             .iter()
-                    //             .zip(old_points.iter())
-                    //             .any(|(&p1, &p2)| p1 != p2)
-                    //         {
-                    //             this.set_mark(name.clone(), &buffer, anchors.clone(), cx)
-                    //         }
-                    //     }
-                    // }
                     // recalculate marks for this buffer, and if they've changed update SQLite
                 }
                 // BufferEvent::Operation { operation, is_local } => todo!(),
@@ -391,7 +366,6 @@ impl MarksState {
         // This needs to happen before reading file so buffers without files can be jumped to
         let mut map = self.loaded_marks.entry(id).or_default();
         map.insert(name.clone(), anchors.clone());
-        println!("s1");
         let Some(path) = buffer.file().map(|file| file.path().clone()) else {
             return;
         };
@@ -442,11 +416,8 @@ impl MarksState {
         if name.starts_with(|c: char| c.is_uppercase())
             || name.starts_with(|c: char| c.is_digit(10))
         {
-            println!("g1");
             let path = self.get_path_for_mark(name.clone())?;
-            println!("g2");
             let buffer_id = self.path_buf_id.get(&path)?;
-            println!("g3");
             self.loaded_marks.get(&buffer_id)?.get(&name).cloned()
         } else {
             let buffer = entity.read(cx);
@@ -504,23 +475,22 @@ impl VimGlobals {
             let Some(workspace_id) = workspace.database_id() else {
                 return;
             };
+
             cx.spawn(|_, cx| async move {
                 let marks = cx
                     .background_executor()
                     .spawn(async move { DB.get_marks(workspace_id) })
                     .await?;
-                let global_mark_paths = cx
+                let global_marks_paths = cx
                     .background_executor()
-                    .spawn(async move { DB.get_global_mark_path(workspace_id) })
+                    .spawn(async move { DB.get_global_marks_paths(workspace_id) })
                     .await?;
-
                 cx.update_global(|g: &mut VimGlobals, cx: &mut App| {
                     g.marks
                         .insert(workspace_id, MarksState::new(workspace_id.clone(), cx));
-                    println!("we inserted workspace id");
                     if let Some(marks_state) = g.marks.get(&workspace_id) {
                         marks_state.update(cx, |ms, cx| {
-                            ms.load(workspace_id, marks, global_mark_paths);
+                            ms.load(workspace_id, marks, global_marks_paths);
                         });
                     }
                     // g.load_local_marks(workspace_id, local_marks);
@@ -530,13 +500,11 @@ impl VimGlobals {
             .detach_and_log_err(cx);
 
             let buffer_store = workspace.project().read(cx).buffer_store().clone();
-            println!("before buffer store");
             cx.subscribe(&buffer_store, move |this, _, event, cx| {
                 match event {
                     project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
                         // if we have marks for this buffer, upgrade to anchors,
                         // watch for changes, and when the buffer is closed, convert back
-                        println!("added buffer");
                         Vim::update_globals(cx, |globals, cx| {
                             if let Some(marks_state) = globals.marks.get(&workspace_id) {
                                 marks_state.update(cx, |ms, cx| {
@@ -1095,7 +1063,7 @@ impl VimDb {
     }
 
     query! {
-        pub fn get_global_mark_path(workspace_id: WorkspaceId) -> Result<Vec<(Vec<u8>, String)>> {
+        pub fn get_global_marks_paths(workspace_id: WorkspaceId) -> Result<Vec<(Vec<u8>, String)>> {
             SELECT path, mark_name FROM vim_global_marks_paths
                 WHERE workspace_id = ?
         }

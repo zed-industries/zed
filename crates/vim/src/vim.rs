@@ -804,10 +804,8 @@ impl Vim {
         cx: &mut App,
     ) {
         cx.update_global::<VimGlobals, ()>(|vim_globals, cx| {
-            println!("here1");
             let marks_state = vim_globals.marks.get(&workspace_id);
             marks_state.unwrap().update(cx, |ms, cx| {
-                println!("here2");
                 ms.set_mark(name.clone(), buffer_entity, anchors, cx);
             });
         });
@@ -881,15 +879,10 @@ impl Vim {
     ) -> Option<(Arc<Path>, Vec<Anchor>)> {
         let workspace_id = self.workspace(window)?.read(cx).database_id()?;
         let buffer = self.editor()?.read(cx).buffer().read(cx).as_singleton()?;
-        println!("1h");
         VimGlobals::update_global(cx, |vim_globals, cx| {
-            println!("2h");
             vim_globals.marks.get(&workspace_id)?.update(cx, |ms, cx| {
-                println!("3h");
                 let anchors = ms.get_mark(name.clone(), buffer, cx)?;
-                println!("4h");
                 let path = ms.get_path_for_mark(name)?;
-                println!("5h");
                 Some((path, anchors))
             })
         })
