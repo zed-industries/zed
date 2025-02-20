@@ -4720,9 +4720,13 @@ impl Editor {
                         return None;
                     }
                     let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let query = buffer.text_for_range(selection.range()).collect::<String>();
+                    if query.trim().is_empty() {
+                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                        return None;
+                    }
                     Some(cx.background_spawn(async move {
                         let mut ranges = Vec::new();
-                        let query = buffer.text_for_range(selection.range()).collect::<String>();
                         let selection_anchors = selection.range().to_anchors(&buffer);
                         for range in [buffer.anchor_before(0)..buffer.anchor_after(buffer.len())] {
                             for (search_buffer, search_range, excerpt_id) in
