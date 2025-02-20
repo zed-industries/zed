@@ -464,9 +464,12 @@ enum EditPredictionSettings {
 
 enum InlineCompletionHighlight {}
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct InlineDiagnostic {
-    message: String,
+    message: SharedString,
+    group_id: usize,
+    is_primary: bool,
+    start: Point,
     severity: DiagnosticSeverity,
 }
 
@@ -603,7 +606,7 @@ pub struct Editor {
     show_inline_diagnostics: bool,
     inline_diagnostics_update: Task<()>,
     inline_diagnostics_disabled: bool,
-    inline_diagnostics: BTreeMap<DisplayRow, InlineDiagnostic>,
+    inline_diagnostics: Vec<(Anchor, InlineDiagnostic)>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
 
     // TODO: make this a access method
@@ -11906,12 +11909,12 @@ impl Editor {
             return;
         }
 
-        let debounce = ProjectSettings::get_global(cx)
+        let debounce_ms = ProjectSettings::get_global(cx)
             .diagnostics
             .inline
             .update_debounce_ms;
-        let debounce = if debounce > 0 {
-            Some(Duration::from_millis(debounce))
+        let debounce = if debounce_ms > 0 {
+            Some(Duration::from_millis(debounce_ms))
         } else {
             None
         };
@@ -11919,73 +11922,53 @@ impl Editor {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
             }
-            editor
-                .update(&mut cx, |editor, cx| {
-                    let display_snapshot =
-                        editor.display_map.update(cx, |map, cx| map.snapshot(cx));
-                    let buffer = editor.buffer.read(cx).snapshot(cx);
-                    let diagnostics = buffer
-                        .diagnostics_in_range(Point::zero()..buffer.len().to_point(&buffer))
-                        .sorted_by_key(|diagnostic| {
-                            (
-                                diagnostic.diagnostic.severity,
-                                std::cmp::Reverse(diagnostic.diagnostic.is_primary),
-                                diagnostic.range.start.row,
-                                diagnostic.range.start.column,
-                            )
-                        })
-                        .collect::<Vec<_>>();
+            let Some(snapshot) = editor
+                .update(&mut cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
+                .ok()
+            else {
+                return;
+            };
 
-                    editor.inline_diagnostics.clear();
-                    let mut prev_diagnostic_line = None;
-                    for diagnostic in diagnostics {
-                        let curr_line = diagnostic.range.start.row;
-
-                        // We only show one inline diagnostic per line, so continue on
-                        // if we've already seen one for the current line.
-                        if prev_diagnostic_line.map_or(false, |l| l >= curr_line) {
-                            continue;
-                        } else {
-                            prev_diagnostic_line = Some(curr_line);
-                        }
-
-                        let message = diagnostic
+            let new_inline_diagnostics = cx
+                .background_spawn(async move {
+                    let mut inline_diagnostics = Vec::<(Anchor, InlineDiagnostic)>::new();
+                    for diagnostic_entry in snapshot.diagnostics_in_range(0..snapshot.len()) {
+                        let message = diagnostic_entry
                             .diagnostic
                             .message
                             .split_once('\n')
-                            .map(|(line, _)| line.to_string())
-                            .unwrap_or(diagnostic.diagnostic.message.to_string());
-
-                        let mut disp_point = display_snapshot
-                            .point_to_display_point(diagnostic.range.start, Bias::Right);
-
-                        // Show the inline diagnostic after the last wrapped line, if any.
-                        let mut wrapped_lines = 0u32;
-                        display_snapshot
-                            .row_infos(disp_point.row())
-                            .skip(1)
-                            .try_fold((), |_, next| {
-                                if next.buffer_row.is_none() {
-                                    wrapped_lines += 1;
-                                    Some(())
-                                } else {
-                                    None
-                                }
+                            .map(|(line, _)| line)
+                            .map(SharedString::new)
+                            .unwrap_or_else(|| {
+                                SharedString::from(diagnostic_entry.diagnostic.message)
                             });
-
-                        *disp_point.row_mut() += wrapped_lines;
-
-                        editor.inline_diagnostics.insert(
-                            disp_point.row(),
-                            InlineDiagnostic {
-                                message,
-                                severity: diagnostic.diagnostic.severity,
-                            },
+                        let start_anchor = snapshot.anchor_before(diagnostic_entry.range.start);
+                        let (Ok(i) | Err(i)) = inline_diagnostics
+                            .binary_search_by(|(probe, _)| probe.cmp(&start_anchor, &snapshot));
+                        inline_diagnostics.insert(
+                            i,
+                            (
+                                start_anchor,
+                                InlineDiagnostic {
+                                    message,
+                                    group_id: diagnostic_entry.diagnostic.group_id,
+                                    start: diagnostic_entry.range.start.to_point(&snapshot),
+                                    is_primary: diagnostic_entry.diagnostic.is_primary,
+                                    severity: diagnostic_entry.diagnostic.severity,
+                                },
+                            ),
                         );
                     }
+                    inline_diagnostics
+                })
+                .await;
+
+            editor
+                .update(&mut cx, |editor, cx| {
+                    editor.inline_diagnostics = new_inline_diagnostics;
                     cx.notify();
                 })
-                .log_err();
+                .ok();
         });
     }
 

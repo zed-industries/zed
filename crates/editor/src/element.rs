@@ -1635,20 +1635,29 @@ impl EditorElement {
                 project_settings::DiagnosticSeverity::Info => DiagnosticSeverity::INFORMATION,
                 project_settings::DiagnosticSeverity::Hint => DiagnosticSeverity::HINT,
             });
-        let diagnostics = self.editor.update(cx, |editor, _| {
+
+        let diagnostics_by_rows = self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(window, cx);
             editor
                 .inline_diagnostics
-                .range(start_row..=end_row)
+                .iter()
                 .filter(|(_, diagnostic)| diagnostic.severity <= max_severity)
-                .map(|(point, diag)| (*point, diag.clone()))
-                .collect::<Vec<_>>()
+                .map(|(point, diag)| (point.to_display_point(&snapshot), diag.clone()))
+                .skip_while(|(point, _)| point.row() < start_row)
+                .take_while(|(point, _)| point.row() <= end_row)
+                .fold(HashMap::default(), |mut acc, (point, diagnostic)| {
+                    acc.entry(point.row())
+                        .or_insert_with(Vec::new)
+                        .push(diagnostic);
+                    acc
+                })
         });
 
-        if diagnostics.is_empty() {
-            return Default::default();
+        if diagnostics_by_rows.is_empty() {
+            return HashMap::default();
         }
 
-        let sev_to_color = |sev: &DiagnosticSeverity| match sev {
+        let severity_to_color = |sev: &DiagnosticSeverity| match sev {
             &DiagnosticSeverity::ERROR => Color::Error,
             &DiagnosticSeverity::WARNING => Color::Warning,
             &DiagnosticSeverity::INFORMATION => Color::Info,
@@ -1657,25 +1666,57 @@ impl EditorElement {
         };
 
         let padding = ProjectSettings::get_global(cx).diagnostics.inline.padding as f32 * em_width;
-
         let min_x = ProjectSettings::get_global(cx)
             .diagnostics
             .inline
             .min_column as f32
             * em_width;
 
+        let active_diagnostics_group = self
+            .editor
+            .read(cx)
+            .active_diagnostics
+            .as_ref()
+            .map(|active_diagnostics| active_diagnostics.group_id);
+
         let mut elements = HashMap::default();
-        for (row, diagnostic) in diagnostics {
-            if !(start_row..end_row).contains(&row) {
+        for (row, mut diagnostics) in diagnostics_by_rows {
+            diagnostics.sort_by_key(|diagnostic| {
+                (
+                    diagnostic.severity,
+                    std::cmp::Reverse(diagnostic.is_primary),
+                    diagnostic.start.row,
+                    diagnostic.start.column,
+                )
+            });
+            let Some(diagnostic_to_render) = (match active_diagnostics_group {
+                // TODO kb do not show primary diagnostic that is active
+                Some(active_diagnostics_group) => diagnostics
+                    .iter()
+                    .find(|diagnostic| diagnostic.group_id == active_diagnostics_group)
+                    .or_else(|| {
+                        diagnostics
+                            .iter()
+                            .filter(|diagnostic| diagnostic.is_primary)
+                            .next()
+                    }),
+                None => diagnostics
+                    .iter()
+                    .filter(|diagnostic| diagnostic.is_primary)
+                    .next(),
+            }) else {
                 continue;
-            }
+            };
 
             let pos_y = content_origin.y
                 + line_height * (row.0 as f32 - scroll_pixel_position.y / line_height);
 
+            // TODO kb move diagnostics down the line for "wrapping"
+            // TODO kb wrong, panics
             let window_ix = (row - start_row).0 as usize;
+            dbg!((row, start_row, window_ix, diagnostic_to_render));
             let pos_x = {
-                let crease_trailer_layout = crease_trailers[window_ix].as_ref();
+                let crease_trailer_layout = &crease_trailers[window_ix];
                 let line_layout = &line_layouts[window_ix];
 
                 let line_end = if let Some(crease_trailer) = crease_trailer_layout {
@@ -1696,11 +1737,13 @@ impl EditorElement {
                 .w_full()
                 .px_1()
                 .rounded_sm()
-                .bg(sev_to_color(&diagnostic.severity).color(cx).opacity(0.05))
-                .text_color(sev_to_color(&diagnostic.severity).color(cx))
+                .bg(severity_to_color(&diagnostic_to_render.severity)
+                    .color(cx)
+                    .opacity(0.05))
+                .text_color(severity_to_color(&diagnostic_to_render.severity).color(cx))
                 .text_sm()
                 .font_family(style.text.font().family)
-                .child(diagnostic.message.clone())
+                .child(diagnostic_to_render.message.clone())
                 .into_any();
 
             element.prepaint_as_root(point(pos_x, pos_y), AvailableSpace::min_size(), window, cx);
@@ -7334,7 +7377,7 @@ impl Element for EditorElement {
                             )
                         });
 
-                    let inline_diagnostics = self.layout_inline_diagnostics(
+                    let mut inline_diagnostics = self.layout_inline_diagnostics(
                         &line_layouts[..],
                         &crease_trailers[..],
                         content_origin,
@@ -7351,24 +7394,26 @@ impl Element for EditorElement {
                     let mut inline_blame = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         let display_row = newest_selection_head.row();
-                        if !inline_diagnostics.contains_key(&display_row) {
-                            if (start_row..end_row).contains(&display_row) {
-                                let line_ix = display_row.minus(start_row) as usize;
-                                let row_info = &row_infos[line_ix];
-                                let line_layout = &line_layouts[line_ix];
-                                let crease_trailer_layout = crease_trailers[line_ix].as_ref();
-                                inline_blame = self.layout_inline_blame(
-                                    display_row,
-                                    row_info,
-                                    line_layout,
-                                    crease_trailer_layout,
-                                    em_width,
-                                    content_origin,
-                                    scroll_pixel_position,
-                                    line_height,
-                                    window,
-                                    cx,
-                                );
+                        if (start_row..end_row).contains(&display_row) {
+                            let line_ix = display_row.minus(start_row) as usize;
+                            let row_info = &row_infos[line_ix];
+                            let line_layout = &line_layouts[line_ix];
+                            let crease_trailer_layout = crease_trailers[line_ix].as_ref();
+                            inline_blame = self.layout_inline_blame(
+                                display_row,
+                                row_info,
+                                line_layout,
+                                crease_trailer_layout,
+                                em_width,
+                                content_origin,
+                                scroll_pixel_position,
+                                line_height,
+                                window,
+                                cx,
+                            );
+                            if inline_blame.is_some() {
+                                // Blame overrides inline diagnostics
+                                inline_diagnostics.remove(&display_row);
                             }
                         }
                     }
