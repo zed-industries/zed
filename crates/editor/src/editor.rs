@@ -16678,6 +16678,10 @@ impl Editor {
             self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
             self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
             self.hide_mouse_while_typing = editor_settings.hide_mouse_while_typing.unwrap_or(true);
+
+            if !self.hide_mouse_while_typing {
+                self.mouse_cursor_hidden = false;
+            }
         }
 
         if old_cursor_shape != self.cursor_shape {
