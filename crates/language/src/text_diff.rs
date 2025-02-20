@@ -41,15 +41,31 @@ pub fn line_diff(old_text: &str, new_text: &str) -> Vec<(Range<u32>, Range<u32>)
 /// Internally, this function first performs a line-based diff, and then performs a second
 /// word-based diff within hunks that replace small numbers of lines.
 pub fn text_diff(old_text: &str, new_text: &str) -> Vec<(Range<usize>, Arc<str>)> {
-    line_and_word_diff(old_text, new_text, None)
+    text_diff_with_options(old_text, new_text, DiffOptions::default())
+}
+
+pub struct DiffOptions {
+    pub language_scope: Option<LanguageScope>,
+    pub max_word_diff_len: usize,
+    pub max_word_diff_line_count: usize,
+}
+
+impl Default for DiffOptions {
+    fn default() -> Self {
+        Self {
+            language_scope: Default::default(),
+            max_word_diff_len: MAX_WORD_DIFF_LEN,
+            max_word_diff_line_count: MAX_WORD_DIFF_LINE_COUNT,
+        }
+    }
 }
 
 /// Computes a diff between two strings, using a specific language scope's
 /// word characters for word-level diffing.
-pub fn line_and_word_diff(
+pub fn text_diff_with_options(
     old_text: &str,
     new_text: &str,
-    language_scope: Option<LanguageScope>,
+    options: DiffOptions,
 ) -> Vec<(Range<usize>, Arc<str>)> {
     let empty: Arc<str> = Arc::default();
     let mut edits = Vec::new();
@@ -66,17 +82,18 @@ pub fn line_and_word_diff(
                 &old_byte_range,
                 &new_rows,
                 &new_byte_range,
+                &options,
             ) {
                 let old_offset = old_byte_range.start;
                 let new_offset = new_byte_range.start;
                 hunk_input.clear();
                 hunk_input.update_before(tokenize(
                     &old_text[old_byte_range.clone()],
-                    language_scope.clone(),
+                    options.language_scope.clone(),
                 ));
                 hunk_input.update_after(tokenize(
                     &new_text[new_byte_range.clone()],
-                    language_scope.clone(),
+                    options.language_scope.clone(),
                 ));
                 diff_internal(&hunk_input, |old_byte_range, new_byte_range, _, _| {
                     let old_byte_range =
@@ -108,13 +125,14 @@ fn should_perform_word_diff_within_hunk(
     old_byte_range: &Range<usize>,
     new_row_range: &Range<u32>,
     new_byte_range: &Range<usize>,
+    options: &DiffOptions,
 ) -> bool {
     !old_byte_range.is_empty()
         && !new_byte_range.is_empty()
-        && old_byte_range.len() <= MAX_WORD_DIFF_LEN
-        && new_byte_range.len() <= MAX_WORD_DIFF_LEN
-        && old_row_range.len() <= MAX_WORD_DIFF_LINE_COUNT
-        && new_row_range.len() <= MAX_WORD_DIFF_LINE_COUNT
+        && old_byte_range.len() <= options.max_word_diff_len
+        && new_byte_range.len() <= options.max_word_diff_len
+        && old_row_range.len() <= options.max_word_diff_line_count
+        && new_row_range.len() <= options.max_word_diff_line_count
 }
 
 fn diff_internal(
