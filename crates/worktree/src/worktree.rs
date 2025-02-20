@@ -5492,7 +5492,7 @@ impl BackgroundScanner {
                             local_repository.dot_git_dir_abs_path.join("MERGE_MSG"),
                         )
                         .ok()
-                        .map(|merge_msg| merge_msg.lines().next().unwrap_or("").to_owned());
+                        .and_then(|merge_msg| Some(merge_msg.lines().next()?.to_owned()));
                         entry.status_scan_id += 1;
                     },
                 );
