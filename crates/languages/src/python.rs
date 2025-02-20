@@ -65,6 +65,8 @@ pub struct PythonLspAdapter {
 
 impl PythonLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pyright");
+    const SERVER_NAME_BINARY: LanguageServerName =
+        LanguageServerName::new_static("pyright-langserver");
 
     pub fn new(node: NodeRuntime) -> Self {
         PythonLspAdapter { node }
@@ -83,7 +85,7 @@ impl LspAdapter for PythonLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        let pyright_path = delegate.which("pyright-langserver".as_ref()).await;
+        let pyright_path = delegate.which(Self::SERVER_NAME_BINARY.as_ref()).await;
 
         if let Some(pyright_path) = pyright_path {
             let env = delegate.shell_env().await;
