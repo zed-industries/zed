@@ -286,7 +286,8 @@
       "alt-enter": "search::SelectAllMatches",
       "cmd-f": "search::FocusSearch",
       "cmd-alt-f": "search::ToggleReplace",
-      "cmd-alt-l": "search::ToggleSelection"
+      "cmd-alt-l": "search::ToggleSelection",
+      "cmd-shift-o": "outline::Toggle"
     }
   },
   {

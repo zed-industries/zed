@@ -11845,6 +11845,7 @@ dependencies = [
  "unindent",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
