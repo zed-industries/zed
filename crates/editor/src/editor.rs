@@ -1142,7 +1142,7 @@ impl Editor {
         let editor = cx.entity().downgrade();
         let fold_placeholder = FoldPlaceholder {
             constrain_width: true,
-            render: Arc::new(move |fold_id, fold_range, _, cx| {
+            render: Arc::new(move |fold_id, fold_range, cx| {
                 let editor = editor.clone();
                 div()
                     .id(fold_id)

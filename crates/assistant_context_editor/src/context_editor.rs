@@ -634,7 +634,7 @@ impl ContextEditor {
                                 }
                             });
                             let placeholder = FoldPlaceholder {
-                                render: Arc::new(move |_, _, _, _| Empty.into_any()),
+                                render: Arc::new(move |_, _, _| Empty.into_any()),
                                 ..Default::default()
                             };
                             let render_toggle = {
@@ -2668,8 +2668,8 @@ fn render_fold_icon_button(
     editor: WeakEntity<Editor>,
     icon: IconName,
     label: SharedString,
-) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut Window, &mut App) -> AnyElement> {
-    Arc::new(move |fold_id, fold_range, _window, _cx| {
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
+    Arc::new(move |fold_id, fold_range, _cx| {
         let editor = editor.clone();
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
@@ -2729,7 +2729,7 @@ pub fn fold_toggle(
 fn quote_selection_fold_placeholder(title: String, editor: WeakEntity<Editor>) -> FoldPlaceholder {
     FoldPlaceholder {
         render: Arc::new({
-            move |fold_id, fold_range, _window, _cx| {
+            move |fold_id, fold_range, _cx| {
                 let editor = editor.clone();
                 ButtonLike::new(fold_id)
                     .style(ButtonStyle::Filled)
@@ -3413,7 +3413,7 @@ fn invoked_slash_command_fold_placeholder(
     FoldPlaceholder {
         constrain_width: false,
         merge_adjacent: false,
-        render: Arc::new(move |fold_id, _, _window, cx| {
+        render: Arc::new(move |fold_id, _, cx| {
             let Some(context) = context.upgrade() else {
                 return Empty.into_any();
             };
