@@ -25,6 +25,7 @@ use text::{BufferId, LineEnding};
 use text::{Point, ToPoint};
 use theme::ActiveTheme;
 use unindent::Unindent as _;
+use util::test::marked_text_offsets;
 use util::{assert_set_eq, post_inc, test::marked_text_ranges, RandomCharIter};
 
 pub static TRAILING_WHITESPACE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
@@ -354,24 +355,44 @@ fn test_edit_events(cx: &mut gpui::App) {
 
 #[gpui::test]
 async fn test_apply_diff(cx: &mut TestAppContext) {
-    let text = "a\nbb\nccc\ndddd\neeeee\nffffff\n";
+    let (text, offsets) = marked_text_offsets(
+        "one two three\nfour fiˇve six\nseven eightˇ nine\nten eleven twelve\n",
+    );
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let anchor = buffer.update(cx, |buffer, _| buffer.anchor_before(Point::new(3, 3)));
-
-    let text = "a\nccc\ndddd\nffffff\n";
-    let diff = buffer.update(cx, |b, cx| b.diff(text.into(), cx)).await;
-    buffer.update(cx, |buffer, cx| {
-        buffer.apply_diff(diff, cx).unwrap();
-        assert_eq!(buffer.text(), text);
-        assert_eq!(anchor.to_point(buffer), Point::new(2, 3));
+    let anchors = buffer.update(cx, |buffer, _| {
+        offsets
+            .iter()
+            .map(|offset| buffer.anchor_before(offset))
+            .collect::<Vec<_>>()
     });
 
-    let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
-    let diff = buffer.update(cx, |b, cx| b.diff(text.into(), cx)).await;
+    let (text, offsets) = marked_text_offsets(
+        "one two three\n{\nfour FIVEˇ six\n}\nseven AND EIGHTˇ nine\nten eleven twelve\n",
+    );
+
+    let diff = buffer.update(cx, |b, cx| b.diff(text.clone(), cx)).await;
     buffer.update(cx, |buffer, cx| {
         buffer.apply_diff(diff, cx).unwrap();
         assert_eq!(buffer.text(), text);
-        assert_eq!(anchor.to_point(buffer), Point::new(4, 4));
+        let actual_offsets = anchors
+            .iter()
+            .map(|anchor| anchor.to_offset(buffer))
+            .collect::<Vec<_>>();
+        assert_eq!(actual_offsets, offsets);
+    });
+
+    let (text, offsets) =
+        marked_text_offsets("one two three\n{\nˇ}\nseven AND EIGHTEENˇ nine\nten eleven twelve\n");
+
+    let diff = buffer.update(cx, |b, cx| b.diff(text.clone(), cx)).await;
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(diff, cx).unwrap();
+        assert_eq!(buffer.text(), text);
+        let actual_offsets = anchors
+            .iter()
+            .map(|anchor| anchor.to_offset(buffer))
+            .collect::<Vec<_>>();
+        assert_eq!(actual_offsets, offsets);
     });
 }
 

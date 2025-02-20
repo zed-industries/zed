@@ -73,6 +73,7 @@ use futures::{
 };
 use fuzzy::StringMatchCandidate;
 
+use ::git::Restore;
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
@@ -100,10 +101,10 @@ use language::{
     language_settings::{
         self, all_language_settings, language_settings, InlayHintSettings, RewrapBehavior,
     },
-    point_from_lsp, AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind,
-    CodeLabel, CursorShape, Diagnostic, DiskState, EditPredictionsMode, EditPreview,
-    HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection,
-    SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    point_from_lsp, text_diff_with_options, AutoindentMode, BracketMatch, BracketPair, Buffer,
+    Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, DiskState,
+    EditPredictionsMode, EditPreview, HighlightedText, IndentKind, IndentSize, Language,
+    OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -112,7 +113,6 @@ use persistence::DB;
 pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
-use similar::{ChangeTag, TextDiff};
 use std::iter::Peekable;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
@@ -202,7 +202,7 @@ pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 
-pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
+pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub(crate) const EDIT_PREDICTION_KEY_CONTEXT: &str = "edit_prediction";
@@ -7000,21 +7000,6 @@ impl Editor {
         })
     }
 
-    pub fn revert_file(&mut self, _: &RevertFile, window: &mut Window, cx: &mut Context<Self>) {
-        let mut revert_changes = HashMap::default();
-        let snapshot = self.snapshot(window, cx);
-        for hunk in snapshot
-            .hunks_for_ranges(Some(Point::zero()..snapshot.buffer_snapshot.max_point()).into_iter())
-        {
-            self.prepare_revert_change(&mut revert_changes, &hunk, cx);
-        }
-        if !revert_changes.is_empty() {
-            self.transact(window, cx, |editor, window, cx| {
-                editor.revert(revert_changes, window, cx);
-            });
-        }
-    }
-
     pub fn reload_file(&mut self, _: &ReloadFile, window: &mut Window, cx: &mut Context<Self>) {
         let Some(project) = self.project.clone() else {
             return;
@@ -7023,27 +7008,62 @@ impl Editor {
             .detach_and_notify_err(window, cx);
     }
 
-    pub fn revert_selected_hunks(
+    pub fn restore_file(
         &mut self,
-        _: &RevertSelectedHunks,
+        _: &::git::RestoreFile,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let selections = self.selections.all(cx).into_iter().map(|s| s.range());
-        self.revert_hunks_in_ranges(selections, window, cx);
+        let mut buffer_ids = HashSet::default();
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        for selection in self.selections.all::<usize>(cx) {
+            buffer_ids.extend(snapshot.buffer_ids_for_range(selection.range()))
+        }
+
+        let buffer = self.buffer().read(cx);
+        let ranges = buffer_ids
+            .into_iter()
+            .flat_map(|buffer_id| buffer.excerpt_ranges_for_buffer(buffer_id, cx))
+            .collect::<Vec<_>>();
+
+        self.restore_hunks_in_ranges(ranges, window, cx);
     }
 
-    fn revert_hunks_in_ranges(
+    pub fn git_restore(&mut self, _: &Restore, window: &mut Window, cx: &mut Context<Self>) {
+        let selections = self
+            .selections
+            .all(cx)
+            .into_iter()
+            .map(|s| s.range())
+            .collect();
+        self.restore_hunks_in_ranges(selections, window, cx);
+    }
+
+    fn restore_hunks_in_ranges(
         &mut self,
-        ranges: impl Iterator<Item = Range<Point>>,
+        ranges: Vec<Range<Point>>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         let mut revert_changes = HashMap::default();
-        let snapshot = self.snapshot(window, cx);
-        for hunk in &snapshot.hunks_for_ranges(ranges) {
-            self.prepare_revert_change(&mut revert_changes, &hunk, cx);
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let Some(project) = &self.project else {
+            return;
+        };
+
+        let chunk_by = self
+            .snapshot(window, cx)
+            .hunks_for_ranges(ranges.into_iter())
+            .into_iter()
+            .chunk_by(|hunk| hunk.buffer_id);
+        for (buffer_id, hunks) in &chunk_by {
+            let hunks = hunks.collect::<Vec<_>>();
+            for hunk in &hunks {
+                self.prepare_restore_change(&mut revert_changes, hunk, cx);
+            }
+            Self::do_stage_or_unstage(project, false, buffer_id, hunks.into_iter(), &snapshot, cx);
         }
+        drop(chunk_by);
         if !revert_changes.is_empty() {
             self.transact(window, cx, |editor, window, cx| {
                 editor.revert(revert_changes, window, cx);
@@ -7073,7 +7093,7 @@ impl Editor {
         }
     }
 
-    pub fn prepare_revert_change(
+    pub fn prepare_restore_change(
         &self,
         revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
         hunk: &MultiBufferDiffHunk,
@@ -7803,6 +7823,7 @@ impl Editor {
             }
 
             let start = Point::new(start_row, 0);
+            let start_offset = start.to_offset(&buffer);
             let end = Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
             let selection_text = buffer.text_for_range(start..end).collect::<String>();
             let Some(lines_without_prefixes) = selection_text
@@ -7832,44 +7853,21 @@ impl Editor {
 
             // TODO: should always use char-based diff while still supporting cursor behavior that
             // matches vim.
-            let diff = match is_vim_mode {
-                IsVimMode::Yes => TextDiff::from_lines(&selection_text, &wrapped_text),
-                IsVimMode::No => TextDiff::from_chars(&selection_text, &wrapped_text),
-            };
-            let mut offset = start.to_offset(&buffer);
-            let mut moved_since_edit = true;
+            let mut diff_options = DiffOptions::default();
+            if is_vim_mode == IsVimMode::Yes {
+                diff_options.max_word_diff_len = 0;
+                diff_options.max_word_diff_line_count = 0;
+            } else {
+                diff_options.max_word_diff_len = usize::MAX;
+                diff_options.max_word_diff_line_count = usize::MAX;
+            }
 
-            for change in diff.iter_all_changes() {
-                let value = change.value();
-                match change.tag() {
-                    ChangeTag::Equal => {
-                        offset += value.len();
-                        moved_since_edit = true;
-                    }
-                    ChangeTag::Delete => {
-                        let start = buffer.anchor_after(offset);
-                        let end = buffer.anchor_before(offset + value.len());
-
-                        if moved_since_edit {
-                            edits.push((start..end, String::new()));
-                        } else {
-                            edits.last_mut().unwrap().0.end = end;
-                        }
-
-                        offset += value.len();
-                        moved_since_edit = false;
-                    }
-                    ChangeTag::Insert => {
-                        if moved_since_edit {
-                            let anchor = buffer.anchor_after(offset);
-                            edits.push((anchor..anchor, value.to_string()));
-                        } else {
-                            edits.last_mut().unwrap().1.push_str(value);
-                        }
-
-                        moved_since_edit = false;
-                    }
-                }
+            for (old_range, new_text) in
+                text_diff_with_options(&selection_text, &wrapped_text, diff_options)
+            {
+                let edit_start = buffer.anchor_after(start_offset + old_range.start);
+                let edit_end = buffer.anchor_after(start_offset + old_range.end);
+                edits.push((edit_start..edit_end, new_text));
             }
 
             rewrapped_row_ranges.push(start_row..=end_row);
@@ -12573,87 +12571,132 @@ impl Editor {
 
     pub fn toggle_staged_selected_diff_hunks(
         &mut self,
-        _: &ToggleStagedSelectedDiffHunks,
+        _: &::git::ToggleStaged,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
-        self.stage_or_unstage_diff_hunks(&ranges, cx);
+        let stage = self.has_stageable_diff_hunks_in_ranges(&ranges, &snapshot);
+        self.stage_or_unstage_diff_hunks(stage, &ranges, cx);
+    }
+
+    pub fn stage_and_next(
+        &mut self,
+        _: &::git::StageAndNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let head = self.selections.newest_anchor().head();
+        self.stage_or_unstage_diff_hunks(true, &[head..head], cx);
+        self.go_to_next_hunk(&Default::default(), window, cx);
+    }
+
+    pub fn unstage_and_next(
+        &mut self,
+        _: &::git::UnstageAndNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let head = self.selections.newest_anchor().head();
+        self.stage_or_unstage_diff_hunks(false, &[head..head], cx);
+        self.go_to_next_hunk(&Default::default(), window, cx);
     }
 
     pub fn stage_or_unstage_diff_hunks(
         &mut self,
+        stage: bool,
         ranges: &[Range<Anchor>],
         cx: &mut Context<Self>,
     ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let Some(project) = &self.project else {
             return;
         };
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let stage = self.has_stageable_diff_hunks_in_ranges(ranges, &snapshot);
 
         let chunk_by = self
             .diff_hunks_in_ranges(&ranges, &snapshot)
             .chunk_by(|hunk| hunk.buffer_id);
         for (buffer_id, hunks) in &chunk_by {
-            let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
-                log::debug!("no buffer for id");
-                continue;
-            };
-            let buffer = buffer.read(cx).snapshot();
-            let Some((repo, path)) = project
-                .read(cx)
-                .repository_and_path_for_buffer_id(buffer_id, cx)
-            else {
-                log::debug!("no git repo for buffer id");
-                continue;
-            };
-            let Some(diff) = snapshot.diff_for_buffer_id(buffer_id) else {
-                log::debug!("no diff for buffer id");
-                continue;
-            };
-            let Some(secondary_diff) = diff.secondary_diff() else {
-                log::debug!("no secondary diff for buffer id");
-                continue;
-            };
-
-            let edits = diff.secondary_edits_for_stage_or_unstage(
-                stage,
-                hunks.map(|hunk| {
-                    (
-                        hunk.diff_base_byte_range.clone(),
-                        hunk.secondary_diff_base_byte_range.clone(),
-                        hunk.buffer_range.clone(),
-                    )
-                }),
-                &buffer,
-            );
-
-            let index_base = secondary_diff.base_text().map_or_else(
-                || Rope::from(""),
-                |snapshot| snapshot.text.as_rope().clone(),
-            );
-            let index_buffer = cx.new(|cx| {
-                Buffer::local_normalized(index_base.clone(), text::LineEnding::default(), cx)
-            });
-            let new_index_text = index_buffer.update(cx, |index_buffer, cx| {
-                index_buffer.edit(edits, None, cx);
-                index_buffer.snapshot().as_rope().to_string()
-            });
-            let new_index_text = if new_index_text.is_empty()
-                && (diff.is_single_insertion
-                    || buffer
-                        .file()
-                        .map_or(false, |file| file.disk_state() == DiskState::New))
-            {
-                log::debug!("removing from index");
-                None
-            } else {
-                Some(new_index_text)
-            };
-
-            let _ = repo.read(cx).set_index_text(&path, new_index_text);
+            Self::do_stage_or_unstage(project, stage, buffer_id, hunks, &snapshot, cx);
         }
+    }
+
+    fn do_stage_or_unstage(
+        project: &Entity<Project>,
+        stage: bool,
+        buffer_id: BufferId,
+        hunks: impl Iterator<Item = MultiBufferDiffHunk>,
+        snapshot: &MultiBufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
+            log::debug!("no buffer for id");
+            return;
+        };
+        let buffer = buffer.read(cx).snapshot();
+        let Some((repo, path)) = project
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer_id, cx)
+        else {
+            log::debug!("no git repo for buffer id");
+            return;
+        };
+        let Some(diff) = snapshot.diff_for_buffer_id(buffer_id) else {
+            log::debug!("no diff for buffer id");
+            return;
+        };
+        let Some(secondary_diff) = diff.secondary_diff() else {
+            log::debug!("no secondary diff for buffer id");
+            return;
+        };
+
+        let edits = diff.secondary_edits_for_stage_or_unstage(
+            stage,
+            hunks.filter_map(|hunk| {
+                if stage && hunk.secondary_status == DiffHunkSecondaryStatus::None {
+                    return None;
+                } else if !stage
+                    && hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk
+                {
+                    return None;
+                }
+                Some((
+                    hunk.diff_base_byte_range.clone(),
+                    hunk.secondary_diff_base_byte_range.clone(),
+                    hunk.buffer_range.clone(),
+                ))
+            }),
+            &buffer,
+        );
+
+        let Some(index_base) = secondary_diff
+            .base_text()
+            .map(|snapshot| snapshot.text.as_rope().clone())
+        else {
+            log::debug!("no index base");
+            return;
+        };
+        let index_buffer = cx.new(|cx| {
+            Buffer::local_normalized(index_base.clone(), text::LineEnding::default(), cx)
+        });
+        let new_index_text = index_buffer.update(cx, |index_buffer, cx| {
+            index_buffer.edit(edits, None, cx);
+            index_buffer.snapshot().as_rope().to_string()
+        });
+        let new_index_text = if new_index_text.is_empty()
+            && (diff.is_single_insertion
+                || buffer
+                    .file()
+                    .map_or(false, |file| file.disk_state() == DiskState::New))
+        {
+            log::debug!("removing from index");
+            None
+        } else {
+            Some(new_index_text)
+        };
+
+        let _ = repo.read(cx).set_index_text(&path, new_index_text);
     }
 
     pub fn expand_selected_diff_hunks(&mut self, cx: &mut Context<Self>) {
