@@ -43,6 +43,7 @@ actions!(
         RestoreTrackedFiles,
         TrashUntrackedFiles,
         Uncommit,
+        Push,
         Commit,
     ]
 );

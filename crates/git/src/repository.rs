@@ -28,7 +28,38 @@ pub struct Branch {
     pub most_recent_commit: Option<CommitSummary>,
 }
 
+pub enum PushAction {
+    Republish,
+    Publish,
+    ForcePush { ahead: u32, behind: u32 },
+    Push { ahead: u32 },
+}
+
 impl Branch {
+    pub fn push_action(&self) -> Option<PushAction> {
+        if let Some(upstream) = &self.upstream {
+            match upstream.tracking {
+                UpstreamTracking::Gone => Some(PushAction::Republish),
+                UpstreamTracking::Tracked(tracking) => {
+                    if tracking.behind > 0 {
+                        Some(PushAction::ForcePush {
+                            ahead: tracking.ahead,
+                            behind: tracking.behind,
+                        })
+                    } else if tracking.ahead > 0 {
+                        Some(PushAction::Push {
+                            ahead: tracking.ahead,
+                        })
+                    } else {
+                        None
+                    }
+                }
+            }
+        } else {
+            Some(PushAction::Publish)
+        }
+    }
+
     pub fn priority_key(&self) -> (bool, Option<i64>) {
         (
             self.is_head,
@@ -42,11 +73,28 @@ impl Branch {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Upstream {
     pub ref_name: SharedString,
-    pub tracking: Option<UpstreamTracking>,
+    pub tracking: UpstreamTracking,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct UpstreamTracking {
+pub enum UpstreamTracking {
+    /// Remote ref not present in local repository.
+    Gone,
+    /// Remote ref present in local repository (fetched from remote).
+    Tracked(UpstreamTrackingStatus),
+}
+
+impl UpstreamTracking {
+    pub fn status(&self) -> Option<UpstreamTrackingStatus> {
+        match self {
+            UpstreamTracking::Gone => None,
+            UpstreamTracking::Tracked(status) => Some(*status),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub struct UpstreamTrackingStatus {
     pub ahead: u32,
     pub behind: u32,
 }
@@ -911,9 +959,9 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
     Ok(branches)
 }
 
-fn parse_upstream_track(upstream_track: &str) -> Result<Option<UpstreamTracking>> {
+fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
     if upstream_track == "" {
-        return Ok(Some(UpstreamTracking {
+        return Ok(UpstreamTracking::Tracked(UpstreamTrackingStatus {
             ahead: 0,
             behind: 0,
         }));
@@ -929,7 +977,7 @@ fn parse_upstream_track(upstream_track: &str) -> Result<Option<UpstreamTracking>
     let mut behind: u32 = 0;
     for component in upstream_track.split(", ") {
         if component == "gone" {
-            return Ok(None);
+            return Ok(UpstreamTracking::Gone);
         }
         if let Some(ahead_num) = component.strip_prefix("ahead ") {
             ahead = ahead_num.parse::<u32>()?;
@@ -938,7 +986,10 @@ fn parse_upstream_track(upstream_track: &str) -> Result<Option<UpstreamTracking>
             behind = behind_num.parse::<u32>()?;
         }
     }
-    Ok(Some(UpstreamTracking { ahead, behind }))
+    Ok(UpstreamTracking::Tracked(UpstreamTrackingStatus {
+        ahead,
+        behind,
+    }))
 }
 
 #[test]
@@ -953,7 +1004,7 @@ fn test_branches_parsing() {
             name: "zed-patches".into(),
             upstream: Some(Upstream {
                 ref_name: "refs/remotes/origin/zed-patches".into(),
-                tracking: Some(UpstreamTracking {
+                tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus {
                     ahead: 0,
                     behind: 0
                 })

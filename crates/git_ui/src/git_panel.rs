@@ -11,7 +11,7 @@ use editor::{
     scroll::ScrollbarAutoHide, Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer,
     ShowScrollbar,
 };
-use git::repository::{CommitDetails, ResetMode};
+use git::repository::{Branch, CommitDetails, PushAction, ResetMode};
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
 use git::{RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::*;
@@ -1131,6 +1131,13 @@ impl GitPanel {
         self.pending_commit = Some(task);
     }
 
+    fn push(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
+            return;
+        };
+        todo!();
+    }
+
     fn potential_co_authors(&self, cx: &App) -> Vec<(String, String)> {
         let mut new_co_authors = Vec::new();
         let project = self.project.read(cx);
@@ -1607,14 +1614,14 @@ impl GitPanel {
 
         let focus_handle_1 = self.focus_handle(cx).clone();
         let tooltip = if self.has_staged_changes() {
-            "Commit staged changes"
+            "git commit"
         } else {
-            "Commit changes to tracked files"
+            "git commit --all"
         };
         let title = if self.has_staged_changes() {
             "Commit"
         } else {
-            "Commit All"
+            "Commit Tracked"
         };
 
         let commit_button = panel_filled_button(title)
@@ -1725,20 +1732,10 @@ impl GitPanel {
         let branch = active_repository.read(cx).branch()?;
         let commit = branch.most_recent_commit.as_ref()?.clone();
 
-        if branch.upstream.as_ref().is_some_and(|upstream| {
-            if let Some(tracking) = &upstream.tracking {
-                tracking.ahead == 0
-            } else {
-                true
-            }
-        }) {
-            return None;
-        }
-        let tooltip = if self.has_staged_changes() {
-            "git reset HEAD^ --soft"
-        } else {
-            "git reset HEAD^"
-        };
+        // Previous commit -> Always show this if present
+        // Uncommit -> Puts the last commit message back in the box, prompt for confirmation if text in box,
+        //              always shown
+        // Push -> Always show, but disabled if identical
 
         let this = cx.entity();
         Some(
@@ -1779,9 +1776,17 @@ impl GitPanel {
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
                         .icon_position(IconPosition::Start)
-                        .tooltip(Tooltip::for_action_title(tooltip, &git::Uncommit))
+                        .tooltip(Tooltip::for_action_title(
+                            if self.has_staged_changes() {
+                                "git reset HEAD^ --soft"
+                            } else {
+                                "git reset HEAD^"
+                            },
+                            &git::Uncommit,
+                        ))
                         .on_click(cx.listener(|this, _, window, cx| this.uncommit(window, cx))),
-                ),
+                )
+                .child(self.render_push_button(branch, cx)),
         )
     }
 
@@ -2194,6 +2199,45 @@ impl GitPanel {
                             ),
                     ),
             )
+            .into_any_element()
+    }
+
+    fn render_push_button(&self, branch: &Branch, cx: &Context<Self>) -> AnyElement {
+        // TODO: think about the GitAction based interface
+        // so that we can enforce a near 1:1 mapping between UI buttons and CLI commands
+        let action = branch.push_action();
+
+        let mut disabled = false;
+
+        let button: SharedString = match action {
+            Some(PushAction::Republish) => "Republish".into(),
+            Some(PushAction::Publish) => "Publish".into(),
+            Some(PushAction::ForcePush { ahead, behind }) => {
+                format!("Force Push (-{} -> +{})", ahead, behind).into()
+            }
+            Some(PushAction::Push { ahead }) => format!("Push (+{})", ahead).into(),
+            None => {
+                disabled = true;
+                "Push".into()
+            }
+        };
+
+        let tooltip: SharedString = match action {
+            Some(PushAction::Republish) => "git push".into(),
+            Some(PushAction::Publish) => "git push --set-upstream".into(),
+            Some(PushAction::ForcePush { .. }) => "git push --force-with-lease".into(),
+            Some(PushAction::Push { .. }) => "git push".into(),
+            None => "Upstream matches local branch".into(),
+        };
+
+        panel_filled_button(button)
+            .icon(IconName::ArrowUp)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .icon_position(IconPosition::Start)
+            .disabled(disabled)
+            .tooltip(Tooltip::for_action_title(tooltip, &git::Push))
+            .on_click(cx.listener(|this, _, window, cx| this.push(window, cx)))
             .into_any_element()
     }
 
