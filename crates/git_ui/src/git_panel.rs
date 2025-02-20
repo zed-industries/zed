@@ -13,7 +13,7 @@ use editor::{
 };
 use git::repository::{CommitDetails, ResetMode};
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
-use git::{DiscardTrackedChanges, StageAll, TrashUntrackedFiles, UnstageAll};
+use git::{RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::*;
 use itertools::Itertools;
 use language::{Buffer, File};
@@ -625,7 +625,7 @@ impl GitPanel {
 
     fn revert_selected(
         &mut self,
-        _: &editor::actions::RevertFile,
+        _: &git::RestoreFile,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -763,7 +763,7 @@ impl GitPanel {
 
     fn discard_tracked_changes(
         &mut self,
-        _: &DiscardTrackedChanges,
+        _: &RestoreTrackedFiles,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2019,7 +2019,7 @@ impl GitPanel {
         let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
             context_menu
                 .action("Stage File", ToggleStaged.boxed_clone())
-                .action(revert_title, editor::actions::RevertFile.boxed_clone())
+                .action(revert_title, git::RestoreFile.boxed_clone())
                 .separator()
                 .action("Open Diff", Confirm.boxed_clone())
                 .action("Open File", SecondaryConfirm.boxed_clone())
@@ -2040,10 +2040,7 @@ impl GitPanel {
                 .action("Unstage All", UnstageAll.boxed_clone())
                 .action("Open Diff", project_diff::Diff.boxed_clone())
                 .separator()
-                .action(
-                    "Discard Tracked Changes",
-                    DiscardTrackedChanges.boxed_clone(),
-                )
+                .action("Discard Tracked Changes", RestoreTrackedFiles.boxed_clone())
                 .action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
         });
         self.set_context_menu(context_menu, position, window, cx);

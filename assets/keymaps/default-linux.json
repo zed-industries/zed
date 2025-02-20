@@ -116,7 +116,7 @@
       // "alt-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-alt-space": "editor::ShowCharacterPalette",
       "ctrl-;": "editor::ToggleLineNumbers",
-      "ctrl-k ctrl-r": "editor::RevertSelectedHunks",
+      "ctrl-k ctrl-r": "git::Restore",
       "ctrl-'": "editor::ToggleSelectedDiffHunks",
       "ctrl-\"": "editor::ExpandAllHunkDiffs",
       "ctrl-i": "editor::ShowSignatureHelp",

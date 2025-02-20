@@ -446,7 +446,7 @@
       "d": "vim::CurrentLine",
       "s": "vim::PushDeleteSurrounds",
       "o": "editor::ToggleSelectedDiffHunks", // "d o"
-      "p": "editor::RevertSelectedHunks" // "d p"
+      "p": "git::Restore" // "d p"
     }
   },
   {
