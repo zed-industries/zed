@@ -1,19 +1,18 @@
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
-    markdown::ParsedMarkdown,
     proto, Grammar, Language, LanguageRegistry,
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     language_settings::{language_settings, LanguageSettings},
-    markdown::parse_markdown,
     outline::OutlineItem,
     syntax_map::{
         SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatch,
         SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
     },
     task_context::RunnableRange,
+    text_diff::text_diff,
     LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
     TreeSitterOptions,
 };
@@ -34,7 +33,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::WorktreeId;
-use similar::{ChangeTag, TextDiff};
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -229,50 +227,6 @@ pub struct Diagnostic {
     pub is_unnecessary: bool,
     /// Data from language server that produced this diagnostic. Passed back to the LS when we request code actions for this diagnostic.
     pub data: Option<Value>,
-}
-
-/// TODO - move this into the `project` crate and make it private.
-pub async fn prepare_completion_documentation(
-    documentation: &lsp::Documentation,
-    language_registry: &Arc<LanguageRegistry>,
-    language: Option<Arc<Language>>,
-) -> CompletionDocumentation {
-    match documentation {
-        lsp::Documentation::String(text) => {
-            if text.lines().count() <= 1 {
-                CompletionDocumentation::SingleLine(text.clone())
-            } else {
-                CompletionDocumentation::MultiLinePlainText(text.clone())
-            }
-        }
-
-        lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
-            lsp::MarkupKind::PlainText => {
-                if value.lines().count() <= 1 {
-                    CompletionDocumentation::SingleLine(value.clone())
-                } else {
-                    CompletionDocumentation::MultiLinePlainText(value.clone())
-                }
-            }
-
-            lsp::MarkupKind::Markdown => {
-                let parsed = parse_markdown(value, Some(language_registry), language).await;
-                CompletionDocumentation::MultiLineMarkdown(parsed)
-            }
-        },
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum CompletionDocumentation {
-    /// There is no documentation for this completion.
-    Undocumented,
-    /// A single line of documentation.
-    SingleLine(String),
-    /// Multiple lines of plain text documentation.
-    MultiLinePlainText(String),
-    /// Markdown documentation.
-    MultiLineMarkdown(ParsedMarkdown),
 }
 
 /// An operation used to synchronize this buffer with its other replicas.
@@ -940,7 +894,7 @@ impl Buffer {
         }
 
         let text_operations = self.text.operations().clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let since = since.unwrap_or_default();
             operations.extend(
                 text_operations
@@ -1135,7 +1089,7 @@ impl Buffer {
         let old_snapshot = self.text.snapshot();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             if !edits.is_empty() {
                 if let Some(language) = language.clone() {
                     syntax_snapshot.reparse(&old_snapshot, registry.clone(), language);
@@ -1499,7 +1453,7 @@ impl Buffer {
         let mut syntax_snapshot = syntax_map.snapshot();
         drop(syntax_map);
 
-        let parse_task = cx.background_executor().spawn({
+        let parse_task = cx.background_spawn({
             let language = language.clone();
             let language_registry = language_registry.clone();
             async move {
@@ -1578,7 +1532,7 @@ impl Buffer {
 
     fn request_autoindent(&mut self, cx: &mut Context<Self>) {
         if let Some(indent_sizes) = self.compute_autoindents() {
-            let indent_sizes = cx.background_executor().spawn(indent_sizes);
+            let indent_sizes = cx.background_spawn(indent_sizes);
             match cx
                 .background_executor()
                 .block_with_timeout(Duration::from_micros(500), indent_sizes)
@@ -1838,61 +1792,7 @@ impl Buffer {
                 let old_text = old_text.to_string();
                 let line_ending = LineEnding::detect(&new_text);
                 LineEnding::normalize(&mut new_text);
-
-                let diff = TextDiff::from_chars(old_text.as_str(), new_text.as_str());
-                let empty: Arc<str> = Arc::default();
-
-                let mut edits = Vec::new();
-                let mut old_offset = 0;
-                let mut new_offset = 0;
-                let mut last_edit: Option<(Range<usize>, Range<usize>)> = None;
-                for change in diff.iter_all_changes().map(Some).chain([None]) {
-                    if let Some(change) = &change {
-                        let len = change.value().len();
-                        match change.tag() {
-                            ChangeTag::Equal => {
-                                old_offset += len;
-                                new_offset += len;
-                            }
-                            ChangeTag::Delete => {
-                                let old_end_offset = old_offset + len;
-                                if let Some((last_old_range, _)) = &mut last_edit {
-                                    last_old_range.end = old_end_offset;
-                                } else {
-                                    last_edit =
-                                        Some((old_offset..old_end_offset, new_offset..new_offset));
-                                }
-                                old_offset = old_end_offset;
-                            }
-                            ChangeTag::Insert => {
-                                let new_end_offset = new_offset + len;
-                                if let Some((_, last_new_range)) = &mut last_edit {
-                                    last_new_range.end = new_end_offset;
-                                } else {
-                                    last_edit =
-                                        Some((old_offset..old_offset, new_offset..new_end_offset));
-                                }
-                                new_offset = new_end_offset;
-                            }
-                        }
-                    }
-
-                    if let Some((old_range, new_range)) = &last_edit {
-                        if old_offset > old_range.end
-                            || new_offset > new_range.end
-                            || change.is_none()
-                        {
-                            let text = if new_range.is_empty() {
-                                empty.clone()
-                            } else {
-                                new_text[new_range.clone()].into()
-                            };
-                            edits.push((old_range.clone(), text));
-                            last_edit.take();
-                        }
-                    }
-                }
-
+                let edits = text_diff(&old_text, &new_text);
                 Diff {
                     base_version,
                     line_ending,
@@ -1907,7 +1807,7 @@ impl Buffer {
         let old_text = self.as_rope().clone();
         let line_ending = self.line_ending();
         let base_version = self.version();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let ranges = trailing_whitespace_ranges(&old_text);
             let empty = Arc::<str>::from("");
             Diff {
@@ -2804,10 +2704,12 @@ impl Deref for Buffer {
 }
 
 impl BufferSnapshot {
-    /// Returns [`IndentSize`] for a given line that respects user settings and /// language preferences.
+    /// Returns [`IndentSize`] for a given line that respects user settings and
+    /// language preferences.
     pub fn indent_size_for_line(&self, row: u32) -> IndentSize {
         indent_size_for_line(self, row)
     }
+
     /// Returns [`IndentSize`] for a given position that respects user settings
     /// and language preferences.
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &App) -> IndentSize {

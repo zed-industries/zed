@@ -104,6 +104,19 @@ pub fn init(cx: &mut App) {
     }
 }
 
+fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
+    WorkspaceSettings::get_global(cx)
+        .on_last_window_closed
+        .is_quit_app()
+        .then(|| {
+            cx.on_window_closed(|cx| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+        })
+}
+
 pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowOptions {
     let display = display_uuid.and_then(|uuid| {
         cx.displays()
@@ -144,6 +157,12 @@ pub fn initialize_workspace(
     prompt_builder: Arc<PromptBuilder>,
     cx: &mut App,
 ) {
+    let mut _on_close_subscription = bind_on_window_closed(cx);
+    cx.observe_global::<SettingsStore>(move |cx| {
+        _on_close_subscription = bind_on_window_closed(cx);
+    })
+    .detach();
+
     cx.observe_new(move |workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
@@ -956,7 +975,7 @@ fn install_cli(
                 Some(LINUX_PROMPT_DETAIL),
                 &["Ok"],
             );
-            cx.background_executor().spawn(prompt).detach();
+            cx.background_spawn(prompt).detach();
             return Ok(());
         }
         let path = install_cli::install_cli(cx.deref())
@@ -1335,7 +1354,7 @@ fn show_markdown_app_notification<F>(
 ) where
     F: 'static + Send + Sync + Fn(&mut Window, &mut Context<MessageNotification>),
 {
-    let parsed_markdown = cx.background_executor().spawn(async move {
+    let parsed_markdown = cx.background_spawn(async move {
         let file_location_directory = None;
         let language_registry = None;
         markdown_preview::markdown_parser::parse_markdown(

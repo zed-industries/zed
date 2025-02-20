@@ -843,6 +843,7 @@ impl Pane {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn open_item(
         &mut self,
         project_entry_id: Option<ProjectEntryId>,

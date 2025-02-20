@@ -416,7 +416,6 @@ dependencies = [
  "serde",
  "serde_json_lenient",
  "settings",
- "similar",
  "smol",
  "streaming_diff",
  "telemetry",
@@ -482,7 +481,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "similar",
  "smol",
  "streaming_diff",
  "telemetry_events",
@@ -4064,7 +4062,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "similar",
  "smallvec",
  "smol",
  "snippet",
@@ -6377,6 +6374,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edcd27d72f2f071c64249075f42e205ff93c9a4c5f6c6da53e79ed9f9832c285"
 
 [[package]]
+name = "imara-diff"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17d34b7d42178945f775e84bc4c36dde7c1c6cdfea656d3354d009056f2bb3d2"
+dependencies = [
+ "hashbrown 0.15.2",
+]
+
+[[package]]
 name = "imgref"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6868,6 +6874,7 @@ dependencies = [
  "globset",
  "gpui",
  "http_client",
+ "imara-diff",
  "indoc",
  "itertools 0.14.0",
  "log",
@@ -6875,7 +6882,6 @@ dependencies = [
  "parking_lot",
  "postage",
  "pretty_assertions",
- "pulldown-cmark 0.12.2",
  "rand 0.8.5",
  "regex",
  "rpc",
@@ -6883,7 +6889,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "similar",
  "smallvec",
  "smol",
  "streaming-iterator",
@@ -6951,6 +6956,7 @@ dependencies = [
  "serde_json",
  "smol",
  "strum",
+ "thiserror 1.0.69",
  "ui",
  "util",
 ]
@@ -6962,6 +6968,7 @@ dependencies = [
  "feature_flags",
  "gpui",
  "language_model",
+ "log",
  "picker",
  "proto",
  "ui",
@@ -7185,7 +7192,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -7650,7 +7657,6 @@ dependencies = [
  "anyhow",
  "assets",
  "env_logger 0.11.6",
- "futures 0.3.31",
  "gpui",
  "language",
  "languages",
@@ -7754,9 +7760,9 @@ dependencies = [
 
 [[package]]
 name = "mdbook"
-version = "0.4.44"
+version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9da1e54401fe5d45a664c57e112e70f18e8c5a73e268c179305b932ee864574"
+checksum = "b07d36d96ffe1b5b16ddf2bc80b3b26bb7a498b2a6591061250bf0af8e8095ad"
 dependencies = [
  "ammonia",
  "anyhow",
@@ -10129,7 +10135,6 @@ dependencies = [
  "sha2",
  "shellexpand 2.1.2",
  "shlex",
- "similar",
  "smol",
  "snippet",
  "snippet_provider",
@@ -10297,7 +10302,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes 1.10.0",
- "heck 0.5.0",
+ "heck 0.4.1",
  "itertools 0.12.1",
  "log",
  "multimap 0.10.0",
@@ -12271,12 +12276,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
-name = "similar"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ad1d488a557b235fc46dae55512ffbfc429d2482b08b4d9435ab07384ca8aec"
-
-[[package]]
 name = "simple_asn1"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13481,6 +13480,7 @@ dependencies = [
  "serde_repr",
  "settings",
  "strum",
+ "thiserror 1.0.69",
  "util",
  "uuid",
 ]
@@ -14692,9 +14692,9 @@ dependencies = [
 
 [[package]]
 name = "uuid"
-version = "1.13.1"
+version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ced87ca4be083373936a67f8de945faa23b6b42384bd5b64434850802c6dccd0"
+checksum = "8c1f41ffb7cf259f1ecc2876861a17e7142e63ead296f671f81f6ae85903e0d6"
 dependencies = [
  "getrandom 0.3.1",
  "serde",
@@ -15682,7 +15682,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -16662,7 +16662,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.175.0"
+version = "0.176.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -17139,7 +17139,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "similar",
  "telemetry",
  "telemetry_events",
  "theme",

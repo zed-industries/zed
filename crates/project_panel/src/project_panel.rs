@@ -544,8 +544,7 @@ impl ProjectPanel {
         mut cx: AsyncWindowContext,
     ) -> Result<Entity<Self>> {
         let serialized_panel = cx
-            .background_executor()
-            .spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
+            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
             .await
             .map_err(|e| anyhow!("Failed to load project panel: {}", e))
             .log_err()
@@ -627,7 +626,7 @@ impl ProjectPanel {
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
-        self.pending_serialization = cx.background_executor().spawn(
+        self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
@@ -1943,19 +1942,19 @@ impl ProjectPanel {
     }
 
     fn select_last(&mut self, _: &SelectLast, _: &mut Window, cx: &mut Context<Self>) {
-        let worktree = self.visible_entries.last().and_then(|(worktree_id, _, _)| {
-            self.project.read(cx).worktree_for_id(*worktree_id, cx)
-        });
-        if let Some(worktree) = worktree {
-            let worktree = worktree.read(cx);
-            let worktree_id = worktree.id();
-            if let Some(last_entry) = worktree.entries(true, 0).last() {
-                self.selection = Some(SelectedEntry {
-                    worktree_id,
-                    entry_id: last_entry.id,
-                });
-                self.autoscroll(cx);
-                cx.notify();
+        if let Some((worktree_id, visible_worktree_entries, _)) = self.visible_entries.last() {
+            let worktree = self.project.read(cx).worktree_for_id(*worktree_id, cx);
+            if let (Some(worktree), Some(entry)) = (worktree, visible_worktree_entries.last()) {
+                let worktree = worktree.read(cx);
+                if let Some(entry) = worktree.entry_for_id(entry.id) {
+                    let selection = SelectedEntry {
+                        worktree_id: *worktree_id,
+                        entry_id: entry.id,
+                    };
+                    self.selection = Some(selection);
+                    self.autoscroll(cx);
+                    cx.notify();
+                }
             }
         }
     }
@@ -7122,6 +7121,76 @@ mod tests {
                 "    > dir_4",
                 "      file_1.py",
                 "      file_2.py",
+            ]
+        );
+    }
+    #[gpui::test]
+    async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/project_root",
+            json!({
+                "dir_1": {
+                    "nested_dir": {
+                        "file_a.py": "# File contents",
+                    }
+                },
+                "file_1.py": "# File contents",
+                "file_2.py": "# File contents",
+                "zdir_2": {
+                    "nested_dir2": {
+                        "file_b.py": "# File contents",
+                    }
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    > dir_1",
+                "    > zdir_2",
+                "      file_1.py",
+                "      file_2.py",
+            ]
+        );
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_first(&SelectFirst, window, cx)
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root  <== selected",
+                "    > dir_1",
+                "    > zdir_2",
+                "      file_1.py",
+                "      file_2.py",
+            ]
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_last(&SelectLast, window, cx)
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    > dir_1",
+                "    > zdir_2",
+                "      file_1.py",
+                "      file_2.py  <== selected",
             ]
         );
     }

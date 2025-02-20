@@ -36,6 +36,7 @@ pub struct ContextStrip {
 }
 
 impl ContextStrip {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
