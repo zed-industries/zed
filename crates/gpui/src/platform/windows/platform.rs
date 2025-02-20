@@ -30,6 +30,8 @@ use windows::{
 
 use crate::{platform::blade::BladeContext, *};
 
+use super::jump_list;
+
 pub(crate) struct WindowsPlatform {
     state: RefCell<WindowsPlatformState>,
     raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
@@ -479,8 +481,17 @@ impl Platform for WindowsPlatform {
         Some(self.state.borrow().menus.clone())
     }
 
-    // todo(windows)
-    fn set_dock_menu(&self, _menus: Vec<MenuItem>, _keymap: &Keymap) {}
+    fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {
+        jump_list::add_tasks(menus).log_err();
+    }
+
+    fn add_recent_document(&self, _path: &Path) {}
+
+    fn add_recent_documents(&self, paths: &[PathBuf]) {
+        jump_list::update_recent_items(paths).log_err();
+    }
+
+    fn clear_recent_documents(&self) {}
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.state.borrow_mut().callbacks.app_menu_action = Some(callback);

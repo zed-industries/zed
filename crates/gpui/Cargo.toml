@@ -207,6 +207,7 @@ flume = "0.11"
 rand.workspace = true
 windows.workspace = true
 windows-core = "0.58"
+once_cell.workspace = true
 
 [dev-dependencies]
 backtrace = "0.3"

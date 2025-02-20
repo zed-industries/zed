@@ -18,6 +18,7 @@ pub use remote_servers::RemoteServerProjects;
 use settings::Settings;
 pub use ssh_connections::SshSettings;
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -546,7 +547,17 @@ impl RecentProjectsDelegate {
                     .recent_workspaces_on_disk()
                     .await
                     .unwrap_or_default();
+                let mut unique_added_paths = HashMap::new();
+                for (id, workspace) in &workspaces {
+                    for path in workspace.sorted_paths().iter() {
+                        unique_added_paths.insert(path.clone(), id);
+                    }
+                }
+                let updated_paths = unique_added_paths.into_keys().collect::<Vec<_>>();
                 this.update_in(&mut cx, move |picker, window, cx| {
+                    cx.clear_recent_documents();
+                    cx.add_recent_documents(&updated_paths);
+
                     picker.delegate.set_workspaces(workspaces);
                     picker
                         .delegate

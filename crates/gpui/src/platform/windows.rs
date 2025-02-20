@@ -3,6 +3,7 @@ mod direct_write;
 mod dispatcher;
 mod display;
 mod events;
+mod jump_list;
 mod platform;
 mod system_settings;
 mod util;

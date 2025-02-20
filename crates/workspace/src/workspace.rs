@@ -887,6 +887,15 @@ impl Workspace {
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
                     this.update_window_title(window, cx);
                     this.serialize_workspace(window, cx);
+
+                    cx.spawn(|workspace, mut cx| async move {
+                        workspace
+                            .update(&mut cx, |workspace, cx| {
+                                workspace.refresh_recent_documents(cx)
+                            })?
+                            .await
+                    })
+                    .detach_and_log_err(cx);
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -1296,7 +1305,12 @@ impl Workspace {
                 .unwrap_or_default();
 
             window
-                .update(&mut cx, |_, window, _| window.activate_window())
+                .update(&mut cx, |workspace, window, cx| {
+                    workspace
+                        .refresh_recent_documents(cx)
+                        .detach_and_log_err(cx);
+                    window.activate_window()
+                })
                 .log_err();
             Ok((window, opened_items))
         })
@@ -4646,6 +4660,29 @@ impl Workspace {
         self.serializable_items_tx
             .unbounded_send(item)
             .map_err(|err| anyhow!("failed to send serializable item over channel: {}", err))
+    }
+
+    fn refresh_recent_documents(&self, cx: &mut Context<Workspace>) -> Task<Result<()>> {
+        if !self.project.read(cx).is_local() {
+            return Task::ready(Ok(()));
+        }
+        cx.spawn(|_, cx| async move {
+            let recents = WORKSPACE_DB
+                .recent_workspaces_on_disk()
+                .await
+                .unwrap_or_default();
+            let mut unique_paths = HashMap::default();
+            for (id, workspace) in &recents {
+                for path in workspace.sorted_paths().iter() {
+                    unique_paths.insert(path.clone(), id);
+                }
+            }
+            let current_paths = unique_paths.into_keys().collect::<Vec<_>>();
+            cx.update(|cx| {
+                cx.clear_recent_documents();
+                cx.add_recent_documents(&current_paths);
+            })
+        })
     }
 
     pub(crate) fn load_workspace(

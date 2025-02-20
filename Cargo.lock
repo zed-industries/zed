@@ -5512,6 +5512,7 @@ dependencies = [
  "objc",
  "objc2",
  "objc2-metal",
+ "once_cell",
  "oo7",
  "open",
  "parking",

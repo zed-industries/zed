@@ -1434,6 +1434,18 @@ impl App {
         self.platform.add_recent_document(path);
     }
 
+    /// Adds given path to list of recent paths for the application.
+    /// The list is usually shown on the application icon's context menu in the dock,
+    /// and allows to open the recent files via that context menu.
+    pub fn add_recent_documents(&self, paths: &[PathBuf]) {
+        self.platform.add_recent_documents(paths);
+    }
+
+    /// Clears the list of recent paths from the application.
+    pub fn clear_recent_documents(&self) {
+        self.platform.clear_recent_documents();
+    }
+
     /// Dispatch an action to the currently active window or global action handler
     /// See [`crate::Action`] for more information on how actions work
     pub fn dispatch_action(&mut self, action: &dyn Action) {

@@ -622,6 +622,7 @@ features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
 ]
 
@@ -685,7 +686,7 @@ ui_input = { codegen-units = 1 }
 zed_actions = { codegen-units = 1 }
 
 [profile.release]
-debug = "limited"
+debug = false
 lto = "thin"
 codegen-units = 1
 

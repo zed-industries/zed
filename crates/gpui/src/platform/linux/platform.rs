@@ -539,6 +539,8 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn add_recent_document(&self, _path: &Path) {}
+    fn add_recent_documents(&self, _paths: &[PathBuf]) {}
+    fn clear_recent_documents(&self) {}
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
