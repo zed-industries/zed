@@ -41,6 +41,7 @@ derive_more.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+gpui_tokio = { workspace = true, optional = true }
 http_client.workspace = true
 itertools.workspace = true
 language.workspace = true

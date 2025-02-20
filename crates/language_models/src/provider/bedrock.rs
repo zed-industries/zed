@@ -24,9 +24,7 @@ use gpui::{
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
 use language_model::{
-    LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, RateLimiter, Role,
+    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, RateLimiter, Role
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -122,7 +120,7 @@ impl State {
         self.credentials.is_some()
     }
 
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         if self.is_authenticated() {
             return Task::ready(Ok(()));
         }
@@ -135,16 +133,17 @@ impl State {
                     let (_, credentials) = cx
                         .update(|cx| cx.read_credentials(ZED_AWS_CREDENTIALS))?
                         .await?
-                        .ok_or_else(|| anyhow!("credentials not found"))?;
-                    (String::from_utf8(credentials)?, false)
+                        .ok_or_else(|| AuthenticateError::CredentialsNotFound)?;
+                    (String::from_utf8(credentials).map_err(|e| AuthenticateError::from(anyhow::Error::from(e)))?, false)
                 };
 
-            this.update(&mut cx, |this, cx| {
+            let res = this.update(&mut cx, |this, cx| {
                 let credentials: BedrockCredentials = serde_json::from_str(&credentials).unwrap();
                 this.credentials = Some(credentials);
                 this.credentials_from_env = from_env;
                 cx.notify();
-            })
+            });
+            res.map_err(|_err| AuthenticateError::Other(anyhow!("Failed to parse credentials")))
         })
     }
 }
@@ -238,7 +237,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         self.state.read(cx).is_authenticated()
     }
 
-    fn authenticate(&self, cx: &mut App) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
@@ -312,7 +311,7 @@ impl BedrockModel {
                 futures::stream::once(async move { Err(BedrockError::ClientError(e)) }).boxed()
             })
         }
-        .boxed())
+            .boxed())
     }
 }
 
@@ -489,10 +488,10 @@ pub async fn extract_tool_args_from_events(
             let mut tool_use_index = None;
             while let Some(event) = events.next().await {
                 if let BedrockStreamingResponse::ContentBlockStart(ContentBlockStartEvent {
-                    content_block_index,
-                    start,
-                    ..
-                }) = event?
+                                                                       content_block_index,
+                                                                       start,
+                                                                       ..
+                                                                   }) = event?
                 {
                     match start {
                         None => {
@@ -655,7 +654,7 @@ pub fn map_to_language_model_completion_events(
             }
         },
     )
-    .filter_map(|event| async move { event })
+        .filter_map(|event| async move { event })
 }
 
 struct ConfigurationView {
@@ -674,7 +673,7 @@ impl ConfigurationView {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
-        .detach();
+            .detach();
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
@@ -690,7 +689,7 @@ impl ConfigurationView {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
-                .log_err();
+                    .log_err();
             }
         }));
 
@@ -757,7 +756,7 @@ impl ConfigurationView {
                 })?
                 .await
         })
-        .detach_and_log_err(cx);
+            .detach_and_log_err(cx);
     }
 
     fn reset_credentials(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -774,7 +773,7 @@ impl ConfigurationView {
                 .update(&mut cx, |state, cx| state.reset_credentials(cx))?
                 .await
         })
-        .detach_and_log_err(cx);
+            .detach_and_log_err(cx);
     }
 
     fn make_text_style(&self, cx: &Context<Self>) -> TextStyle {
