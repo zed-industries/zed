@@ -1,7 +1,8 @@
 use crate::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest,
+    AuthenticateError, LanguageModel, LanguageModelCompletionEvent,
+    LanguageModelCredentialsProvider, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest,
 };
 use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, App, AsyncApp, Entity, Task, Window};
@@ -54,7 +55,11 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         true
     }
 
-    fn authenticate(&self, _: &mut App) -> Task<Result<(), AuthenticateError>> {
+    fn authenticate(
+        &self,
+        _credentials_provider: Arc<LanguageModelCredentialsProvider>,
+        _: &mut App,
+    ) -> Task<Result<(), AuthenticateError>> {
         Task::ready(Ok(()))
     }
 

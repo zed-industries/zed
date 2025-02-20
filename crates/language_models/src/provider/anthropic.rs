@@ -10,9 +10,10 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
+    LanguageModelCredentialsProvider, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -105,7 +106,11 @@ impl State {
         self.api_key.is_some()
     }
 
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+    fn authenticate(
+        &self,
+        credentials_provider: Arc<LanguageModelCredentialsProvider>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), AuthenticateError>> {
         if self.is_authenticated() {
             return Task::ready(Ok(()));
         }
@@ -120,7 +125,7 @@ impl State {
                 (api_key, true)
             } else {
                 let (_, api_key) = cx
-                    .update(|cx| cx.read_credentials(&api_url))?
+                    .update(|cx| credentials_provider.read_credentials(&api_url))?
                     .await?
                     .ok_or(AuthenticateError::CredentialsNotFound)?;
                 (
@@ -230,8 +235,13 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         self.state.read(cx).is_authenticated()
     }
 
-    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
-        self.state.update(cx, |state, cx| state.authenticate(cx))
+    fn authenticate(
+        &self,
+        credentials_provider: Arc<LanguageModelCredentialsProvider>,
+        cx: &mut App,
+    ) -> Task<Result<(), AuthenticateError>> {
+        self.state
+            .update(cx, |state, cx| state.authenticate(credentials_provider, cx))
     }
 
     fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {

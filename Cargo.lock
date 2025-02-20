@@ -3484,7 +3484,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "fs",
+ "futures 0.3.31",
  "gpui",
+ "serde",
+ "serde_json",
+ "util",
 ]
 
 [[package]]
@@ -6948,6 +6952,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "collections",
+ "credentials_provider",
  "deepseek",
  "futures 0.3.31",
  "google_ai",

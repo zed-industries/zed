@@ -8,6 +8,7 @@ mod role;
 pub mod fake_provider;
 
 use anyhow::Result;
+use credentials_provider::CredentialsProvider;
 use futures::FutureExt;
 use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
@@ -20,6 +21,7 @@ pub use role::*;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fmt;
+use std::pin::Pin;
 use std::{future::Future, sync::Arc};
 use thiserror::Error;
 use ui::IconName;
@@ -250,7 +252,11 @@ pub trait LanguageModelProvider: 'static {
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>>;
     fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &App) {}
     fn is_authenticated(&self, cx: &App) -> bool;
-    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
+    fn authenticate(
+        &self,
+        credentials_provider: Arc<LanguageModelCredentialsProvider>,
+        cx: &mut App,
+    ) -> Task<Result<(), AuthenticateError>>;
     fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView;
     fn must_accept_terms(&self, _cx: &App) -> bool {
         false
@@ -263,6 +269,38 @@ pub trait LanguageModelProvider: 'static {
         None
     }
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
+}
+
+#[derive(Debug, Clone)]
+pub struct LanguageModelCredentials {
+    pub url: String,
+    pub api_key: String,
+}
+
+pub struct LanguageModelCredentialsProvider {}
+
+impl CredentialsProvider<LanguageModelCredentials> for LanguageModelCredentialsProvider {
+    fn read_credentials<'a>(
+        &'a self,
+        cx: &'a AsyncApp,
+    ) -> Pin<Box<dyn Future<Output = Option<LanguageModelCredentials>> + 'a>> {
+        todo!()
+    }
+
+    fn write_credentials<'a>(
+        &'a self,
+        credentials: LanguageModelCredentials,
+        cx: &'a AsyncApp,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        todo!()
+    }
+
+    fn delete_credentials<'a>(
+        &'a self,
+        cx: &'a AsyncApp,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        todo!()
+    }
 }
 
 #[derive(PartialEq, Eq)]
