@@ -491,71 +491,68 @@ pub fn compare_paths_with_strategy(
     (path_b, b_is_file): (&Path, bool),
     sort_strategy: SortStrategy,
 ) -> Ordering {
-    match sort_strategy {
-        SortStrategy::Lexicographical => {
-            let mut components_a = path_a.components().peekable();
-            let mut components_b = path_b.components().peekable();
-            loop {
-                match (components_a.next(), components_b.next()) {
-                    (Some(component_a), Some(component_b)) => {
-                        let a_is_file = components_a.peek().is_none() && a_is_file;
-                        let b_is_file = components_b.peek().is_none() && b_is_file;
-                        let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
-                            let path_a = Path::new(component_a.as_os_str());
-                            let path_string_a = if a_is_file {
-                                path_a.file_stem()
-                            } else {
-                                path_a.file_name()
-                            }
-                            .map(|s| s.to_string_lossy());
+    let mut components_a = path_a.components().peekable();
+    let mut components_b = path_b.components().peekable();
+
+    loop {
+        match (components_a.next(), components_b.next()) {
+            (Some(component_a), Some(component_b)) => {
+                let a_is_file = components_a.peek().is_none() && a_is_file;
+                let b_is_file = components_b.peek().is_none() && b_is_file;
+
+                let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
+                    let path_a = Path::new(component_a.as_os_str());
+                    let path_string_a = if a_is_file {
+                        path_a.file_stem()
+                    } else {
+                        path_a.file_name()
+                    }
+                    .map(|s| s.to_string_lossy());
+
+                    let path_b = Path::new(component_b.as_os_str());
+                    let path_string_b = if b_is_file {
+                        path_b.file_stem()
+                    } else {
+                        path_b.file_name()
+                    }
+                    .map(|s| s.to_string_lossy());
+
+                    let compare_components = match sort_strategy {
+                        SortStrategy::Lexicographical => {
                             let num_and_remainder_a = path_string_a
                                 .as_deref()
                                 .map(NumericPrefixWithSuffix::from_numeric_prefixed_str);
-
-                            let path_b = Path::new(component_b.as_os_str());
-                            let path_string_b = if b_is_file {
-                                path_b.file_stem()
-                            } else {
-                                path_b.file_name()
-                            }
-                            .map(|s| s.to_string_lossy());
                             let num_and_remainder_b = path_string_b
                                 .as_deref()
                                 .map(NumericPrefixWithSuffix::from_numeric_prefixed_str);
-
-                            num_and_remainder_a.cmp(&num_and_remainder_b).then_with(|| {
-                                if a_is_file && b_is_file {
-                                    let ext_a = path_a.extension().unwrap_or_default();
-                                    let ext_b = path_b.extension().unwrap_or_default();
-                                    ext_a.cmp(ext_b)
-                                } else {
-                                    cmp::Ordering::Equal
-                                }
-                            })
-                        });
-                        if !ordering.is_eq() {
-                            return ordering;
+                            num_and_remainder_a.cmp(&num_and_remainder_b)
                         }
-                    }
-                    (Some(_), None) => break cmp::Ordering::Greater,
-                    (None, Some(_)) => break cmp::Ordering::Less,
-                    (None, None) => break cmp::Ordering::Equal,
+                        SortStrategy::Alphabetical => match (path_string_a, path_string_b) {
+                            (Some(a), Some(b)) => natural_sort(&a, &b),
+                            (Some(_), None) => Ordering::Greater,
+                            (None, Some(_)) => Ordering::Less,
+                            (None, None) => Ordering::Equal,
+                        },
+                    };
+
+                    compare_components.then_with(|| {
+                        if a_is_file && b_is_file {
+                            let ext_a = path_a.extension().unwrap_or_default();
+                            let ext_b = path_b.extension().unwrap_or_default();
+                            ext_a.cmp(ext_b)
+                        } else {
+                            Ordering::Equal
+                        }
+                    })
+                });
+
+                if !ordering.is_eq() {
+                    return ordering;
                 }
             }
-        }
-        SortStrategy::Alphabetical => {
-            let a_is_file = a_is_file as u8;
-            let b_is_file = b_is_file as u8;
-
-            match a_is_file.cmp(&b_is_file) {
-                Ordering::Equal => {
-                    let path_a = path_a.to_string_lossy();
-                    let path_b = path_b.to_string_lossy();
-
-                    natural_sort(&path_a, &path_b)
-                }
-                ordering => ordering,
-            }
+            (Some(_), None) => break Ordering::Greater,
+            (None, Some(_)) => break Ordering::Less,
+            (None, None) => break Ordering::Equal,
         }
     }
 }
