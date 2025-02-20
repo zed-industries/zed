@@ -50,7 +50,7 @@ impl IExplorerCommand_Impl for ExplorerCommandInjector_Impl {
     }
 
     fn GetIcon(&self, _: Option<&IShellItemArray>) -> windows_core::Result<windows_core::PWSTR> {
-        let Some(zed_exe) = get_zed_path() else {
+        let Some(zed_exe) = get_zed_cli_path() else {
             return Err(E_FAIL.into());
         };
         unsafe { SHStrDupW(&HSTRING::from(zed_exe)) }
@@ -76,7 +76,7 @@ impl IExplorerCommand_Impl for ExplorerCommandInjector_Impl {
         let Some(items) = psiitemarray else {
             return Ok(());
         };
-        let Some(zed_exe) = get_zed_path() else {
+        let Some(zed_cli_exe) = get_zed_cli_path() else {
             return Ok(());
         };
 
@@ -84,7 +84,7 @@ impl IExplorerCommand_Impl for ExplorerCommandInjector_Impl {
         for idx in 0..count {
             let item = unsafe { items.GetItemAt(idx)? };
             let item_path = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)?.to_string()? };
-            std::process::Command::new(&zed_exe)
+            std::process::Command::new(&zed_cli_exe)
                 .arg(&item_path)
                 .spawn()
                 .map_err(|_| E_INVALIDARG)?;
@@ -165,7 +165,7 @@ extern "system" fn DllGetClassObject(
     }
 }
 
-fn get_zed_path() -> Option<String> {
+fn get_zed_cli_path() -> Option<String> {
     let mut buf = vec![0u16; MAX_PATH as usize];
     unsafe { GetModuleFileNameW(DLL_INSTANCE, &mut buf) };
 
@@ -178,7 +178,8 @@ fn get_zed_path() -> Option<String> {
     Some(
         path.parent()?
             .parent()?
-            .join("Zed.exe")
+            .join("bin")
+            .join("zed.exe")
             .to_string_lossy()
             .to_string(),
     )
