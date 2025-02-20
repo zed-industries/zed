@@ -401,7 +401,9 @@ impl Vim {
                     });
                 });
             });
-            self.switch_mode(current_mode, true, window, cx);
+            if matches!(current_mode, Mode::VisualLine | Mode::VisualBlock) {
+                self.switch_mode(current_mode, true, window, cx);
+            }
         }
     }
 
