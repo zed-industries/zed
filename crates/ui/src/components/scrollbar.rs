@@ -157,9 +157,9 @@ impl ScrollbarState {
         let max_offset = content_size - viewport_size;
         current_offset = current_offset.clamp(0., max_offset);
         let start_offset = (current_offset / max_offset) * (viewport_size - thumb_size);
-        let thumb_percetage_start = start_offset / viewport_size;
+        let thumb_percentage_start = start_offset / viewport_size;
         let thumb_percentage_end = (start_offset + thumb_size) / viewport_size;
-        Some(thumb_percetage_start..thumb_percentage_end)
+        Some(thumb_percentage_start..thumb_percentage_end)
     }
 }
 
