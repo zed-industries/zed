@@ -894,6 +894,7 @@ impl EditorElement {
         let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, cx);
         editor.gutter_breakpoint_indicator = None;
+        editor.mouse_cursor_hidden = false;
 
         if gutter_hovered {
             let new_point = position_map
@@ -4636,9 +4637,10 @@ impl EditorElement {
                 bounds: layout.position_map.text_hitbox.bounds,
             }),
             |window| {
-                let cursor_style = if self
-                    .editor
-                    .read(cx)
+                let editor = self.editor.read(cx);
+                let cursor_style = if editor.mouse_cursor_hidden {
+                    CursorStyle::None
+                } else if editor
                     .hovered_link_state
                     .as_ref()
                     .is_some_and(|hovered_link_state| !hovered_link_state.links.is_empty())
@@ -6598,6 +6600,7 @@ impl Element for EditorElement {
                         },
                         false,
                     );
+
                     // Offset the content_bounds from the text_bounds by the gutter margin (which
                     // is roughly half a character wide) to make hit testing work more like how we want.
                     let content_origin =

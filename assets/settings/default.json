@@ -155,6 +155,8 @@
   //
   // Default: not set, defaults to "bar"
   "cursor_shape": null,
+  // Determines whether the mouse cursor is hidden when typing in an editor or input box.
+  "hide_mouse_while_typing": true,
   // How to highlight the current line in the editor.
   //
   // 1. Don't highlight the current line:
