@@ -1644,7 +1644,7 @@ impl EditorElement {
                 .filter(|(_, diagnostic)| diagnostic.severity <= max_severity)
                 .map(|(point, diag)| (point.to_display_point(&snapshot), diag.clone()))
                 .skip_while(|(point, _)| point.row() < start_row)
-                .take_while(|(point, _)| point.row() <= end_row)
+                .take_while(|(point, _)| point.row() < end_row)
                 .fold(HashMap::default(), |mut acc, (point, diagnostic)| {
                     acc.entry(point.row())
                         .or_insert_with(Vec::new)
@@ -1712,9 +1712,7 @@ impl EditorElement {
                 + line_height * (row.0 as f32 - scroll_pixel_position.y / line_height);
 
             // TODO kb move diagnostics down the line for "wrapping"
-            // TODO kb wrong, panics
-            let window_ix = (row - start_row).0 as usize;
-            dbg!((row, start_row, window_ix, diagnostic_to_render));
+            let window_ix = row.minus(start_row) as usize;
             let pos_x = {
                 let crease_trailer_layout = &crease_trailers[window_ix];
                 let line_layout = &line_layouts[window_ix];
@@ -7378,8 +7376,8 @@ impl Element for EditorElement {
                         });
 
                     let mut inline_diagnostics = self.layout_inline_diagnostics(
-                        &line_layouts[..],
-                        &crease_trailers[..],
+                        &line_layouts,
+                        &crease_trailers,
                         content_origin,
                         scroll_pixel_position,
                         start_row,
