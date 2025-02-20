@@ -394,7 +394,7 @@ impl ProjectDiagnosticsEditor {
         let editor = self.editor.clone().downgrade();
         cx.spawn_in(window, move |this, mut cx| async move {
             let mut old_groups = this
-                .update(&mut cx, |this, cx| {
+                .update(&mut cx, |this, _| {
                     mem::take(&mut this.path_states[path_ix].diagnostic_groups)
                 })?
                 .into_iter()
@@ -550,7 +550,7 @@ impl ProjectDiagnosticsEditor {
                         }
                     }
 
-                    this.update(&mut cx, |this, cx| {
+                    this.update(&mut cx, |this, _| {
                         new_group_ixs.push(this.path_states[path_ix].diagnostic_groups.len());
                         this.path_states[path_ix]
                             .diagnostic_groups
@@ -565,7 +565,7 @@ impl ProjectDiagnosticsEditor {
                     prev_excerpt_id = *group_state.excerpts.last().unwrap();
                     first_excerpt_id.get_or_insert(prev_excerpt_id);
 
-                    this.update(&mut cx, |this, cx| {
+                    this.update(&mut cx, |this, _| {
                         this.path_states[path_ix]
                             .diagnostic_groups
                             .push(group_state)
@@ -617,7 +617,7 @@ impl ProjectDiagnosticsEditor {
                     }
                 })?;
                 Result::<(), anyhow::Error>::Ok(())
-            })?;
+            })??;
 
             this.update_in(&mut cx, |this, window, cx| {
                 if this.path_states[path_ix].diagnostic_groups.is_empty() {
@@ -682,7 +682,7 @@ impl ProjectDiagnosticsEditor {
                     });
                     Some(())
                 });
-            });
+            })?;
 
             this.update_in(&mut cx, |this, window, cx| {
                 if this.path_states.is_empty() {
@@ -1094,11 +1094,11 @@ async fn heuristic_syntactic_expand(
         let node_end = Point::from_ts_point(node.end_position());
         let node_range = node_start..node_end;
         let row_count = node_end.row - node_start.row + 1;
-        let mut xd = None;
+        let mut ancestor_range = None;
         let reached_outline_node = cx.background_executor().scoped({
                  let node_range = node_range.clone();
                  let outline_range = outline_range.clone();
-                 let mut xd =  &mut xd;
+                 let ancestor_range =  &mut ancestor_range;
                 |scope| {scope.spawn(async move {
                     // Stop if we've exceeded the row count or reached an outline node. Then, find the interval
                     // of node children which contains the query range. For example, this allows just returning
@@ -1128,7 +1128,7 @@ async fn heuristic_syntactic_expand(
                         if let Some(start) = included_child_start {
                             let row_count = end.row - start.row;
                             if row_count < max_row_count {
-                                *xd = Some(Some(RangeInclusive::new(start.row, end.row)));
+                                *ancestor_range = Some(Some(RangeInclusive::new(start.row, end.row)));
                                 return;
                             }
                         }
@@ -1137,12 +1137,12 @@ async fn heuristic_syntactic_expand(
                             "Expanding to ancestor started on {} node exceeding row limit of {max_row_count}.",
                             node.grammar_name()
                         );
-                        *xd = Some(None);
+                        *ancestor_range = Some(None);
                     }
                 })
             }});
         reached_outline_node.await;
-        if let Some(node) = xd {
+        if let Some(node) = ancestor_range {
             return node;
         }
 
