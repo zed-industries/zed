@@ -126,6 +126,13 @@
   //  3. Never close the window
   //         "when_closing_with_no_tabs": "keep_window_open",
   "when_closing_with_no_tabs": "platform_default",
+  // What to do when the last window is closed.
+  // May take 2 values:
+  //  1. Use the current platform's convention
+  //         "on_last_window_closed": "platform_default"
+  //  2. Always quit the application
+  //         "on_last_window_closed": "quit_app",
+  "on_last_window_closed": "platform_default",
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
@@ -143,6 +150,8 @@
   //
   // Default: not set, defaults to "bar"
   "cursor_shape": null,
+  // Determines whether the mouse cursor is hidden when typing in an editor or input box.
+  "hide_mouse_while_typing": true,
   // How to highlight the current line in the editor.
   //
   // 1. Don't highlight the current line:
@@ -204,6 +213,23 @@
   // Otherwise(when `true`), the closing characters are always skipped over and auto-removed
   // no matter how they were inserted.
   "always_treat_brackets_as_autoclosed": false,
+  // Controls where the `editor::Rewrap` action is allowed in the current language scope.
+  //
+  // This setting can take three values:
+  //
+  // 1. Only allow rewrapping in comments:
+  //    "in_comments"
+  // 2. Only allow rewrapping in the current selection(s):
+  //    "in_selections"
+  // 3. Allow rewrapping anywhere:
+  //    "anywhere"
+  //
+  // When using values other than `in_comments`, it is possible for the rewrapping to produce code
+  // that is syntactically invalid. Keep this in mind when selecting which behavior you would like
+  // to use.
+  //
+  // Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
+  "allow_rewrap": "in_comments",
   // Controls whether edit predictions are shown immediately (true)
   // or manually by triggering `editor::ShowEditPrediction` (false).
   "show_edit_predictions": true,
@@ -734,7 +760,25 @@
   // Diagnostics configuration.
   "diagnostics": {
     // Whether to show warnings or not by default.
-    "include_warnings": true
+    "include_warnings": true,
+    // Settings for inline diagnostics
+    "inline": {
+      // Whether to show diagnostics inline or not
+      "enabled": false,
+      // The delay in milliseconds to show inline diagnostics after the
+      // last diagnostic update.
+      "update_debounce_ms": 150,
+      // The amount of padding between the end of the source line and the start
+      // of the inline diagnostic in units of em widths.
+      "padding": 4,
+      // The minimum column to display inline diagnostics. This setting can be
+      // used to horizontally align inline diagnostics at some column. Lines
+      // longer than this value will still push diagnostics further to the right.
+      "min_column": 0,
+      // The minimum severity of the diagnostics to show inline.
+      // Shows all diagnostics when not specified.
+      "max_severity": null
+    }
   },
   // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file
   // scans, file searches, and not be displayed in the project file tree. Takes precedence over `file_scan_inclusions`.
@@ -1060,6 +1104,9 @@
     "Erlang": {
       "language_servers": ["erlang-ls", "!elp", "..."]
     },
+    "Git Commit": {
+      "allow_rewrap": "anywhere"
+    },
     "Go": {
       "code_actions_on_format": {
         "source.organizeImports": true
@@ -1103,6 +1150,7 @@
     "Markdown": {
       "format_on_save": "off",
       "use_on_type_format": false,
+      "allow_rewrap": "anywhere",
       "prettier": {
         "allowed": true
       }
@@ -1114,6 +1162,9 @@
         "plugins": ["@prettier/plugin-php"],
         "parser": "php"
       }
+    },
+    "Plain Text": {
+      "allow_rewrap": "anywhere"
     },
     "Ruby": {
       "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "..."]

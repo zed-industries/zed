@@ -1073,6 +1073,9 @@ impl SerializableItem for Editor {
                             buffer.set_language(Some(language), cx);
                         }
                         buffer.set_text(contents, cx);
+                        if let Some(entry) = buffer.peek_undo_stack() {
+                            buffer.forget_transaction(entry.transaction_id());
+                        }
                     })?;
 
                     cx.update(|window, cx| {
@@ -1127,6 +1130,9 @@ impl SerializableItem for Editor {
                                         );
                                     }
                                     buffer.set_text(buffer_text, cx);
+                                    if let Some(entry) = buffer.peek_undo_stack() {
+                                        buffer.forget_transaction(entry.transaction_id());
+                                    }
                                 })?;
                             }
 
@@ -1219,28 +1225,27 @@ impl SerializableItem for Editor {
         let snapshot = buffer.read(cx).snapshot();
 
         Some(cx.spawn_in(window, |_this, cx| async move {
-            cx.background_executor()
-                .spawn(async move {
-                    let (contents, language) = if serialize_dirty_buffers && is_dirty {
-                        let contents = snapshot.text();
-                        let language = snapshot.language().map(|lang| lang.name().to_string());
-                        (Some(contents), language)
-                    } else {
-                        (None, None)
-                    };
+            cx.background_spawn(async move {
+                let (contents, language) = if serialize_dirty_buffers && is_dirty {
+                    let contents = snapshot.text();
+                    let language = snapshot.language().map(|lang| lang.name().to_string());
+                    (Some(contents), language)
+                } else {
+                    (None, None)
+                };
 
-                    let editor = SerializedEditor {
-                        abs_path,
-                        contents,
-                        language,
-                        mtime,
-                    };
-                    DB.save_serialized_editor(item_id, workspace_id, editor)
-                        .await
-                        .context("failed to save serialized editor")
-                })
-                .await
-                .context("failed to save contents of buffer")?;
+                let editor = SerializedEditor {
+                    abs_path,
+                    contents,
+                    language,
+                    mtime,
+                };
+                DB.save_serialized_editor(item_id, workspace_id, editor)
+                    .await
+                    .context("failed to save serialized editor")
+            })
+            .await
+            .context("failed to save contents of buffer")?;
 
             Ok(())
         }))
@@ -1534,7 +1539,7 @@ impl SearchableItem for Editor {
                 ranges.iter().cloned().collect::<Vec<_>>()
             });
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let mut ranges = Vec::new();
 
             let search_within_ranges = if search_within_ranges.is_empty() {

@@ -171,7 +171,7 @@ impl SearchState {
                 })
                 .collect(),
             highlight_search_match_tx,
-            _search_match_highlighter: cx.background_executor().spawn(async move {
+            _search_match_highlighter: cx.background_spawn(async move {
                 while let Ok(highlight_arguments) = highlight_search_match_rx.recv().await {
                     let needs_init = highlight_arguments.search_data.get().is_none();
                     let search_data = highlight_arguments.search_data.get_or_init(|| {
@@ -681,8 +681,7 @@ impl OutlinePanel {
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
         let serialized_panel = cx
-            .background_executor()
-            .spawn(async move { KEY_VALUE_STORE.read_kvp(OUTLINE_PANEL_KEY) })
+            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(OUTLINE_PANEL_KEY) })
             .await
             .context("loading outline panel")
             .log_err()
@@ -849,7 +848,7 @@ impl OutlinePanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
         let active = Some(self.active);
-        self.pending_serialization = cx.background_executor().spawn(
+        self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
@@ -2361,6 +2360,7 @@ impl OutlinePanel {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_search_match(
         &mut self,
         multi_buffer_snapshot: Option<&MultiBufferSnapshot>,
@@ -2452,6 +2452,7 @@ impl OutlinePanel {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn entry_element(
         &self,
         rendered_entry: PanelEntry,
@@ -2631,8 +2632,7 @@ impl OutlinePanel {
                 new_depth_map,
                 new_children_count,
             )) = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     let mut processed_external_buffers = HashSet::default();
                     let mut new_worktree_entries =
                         BTreeMap::<WorktreeId, HashMap<ProjectEntryId, GitEntry>>::default();
@@ -3224,8 +3224,7 @@ impl OutlinePanel {
                     (buffer_id, excerpt_id),
                     cx.spawn_in(window, |outline_panel, mut cx| async move {
                         let fetched_outlines = cx
-                            .background_executor()
-                            .spawn(async move {
+                            .background_spawn(async move {
                                 buffer_snapshot
                                     .outline_items_containing(
                                         excerpt_range.context,
@@ -3837,6 +3836,7 @@ impl OutlinePanel {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn push_entry(
         &self,
         state: &mut GenerationState,
@@ -4054,6 +4054,7 @@ impl OutlinePanel {
         update_cached_entries
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_excerpt_entries(
         &self,
         state: &mut GenerationState,
@@ -4112,6 +4113,7 @@ impl OutlinePanel {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_search_entries(
         &mut self,
         state: &mut GenerationState,
@@ -4948,13 +4950,16 @@ impl Render for OutlinePanel {
             .track_focus(&self.focus_handle)
             .when_some(search_query, |outline_panel, search_state| {
                 outline_panel.child(
-                    v_flex()
-                        .child(
-                            Label::new(format!("Searching: '{}'", search_state.query))
-                                .color(Color::Muted)
-                                .mx_2(),
-                        )
-                        .child(horizontal_separator(cx)),
+                    h_flex()
+                        .py_1p5()
+                        .px_2()
+                        .h(DynamicSpacing::Base32.px(cx))
+                        .flex_shrink_0()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border)
+                        .gap_0p5()
+                        .child(Label::new("Searching:").color(Color::Muted))
+                        .child(Label::new(format!("'{}'", search_state.query))),
                 )
             })
             .child(self.render_main_contents(query, show_indent_guides, indent_size, window, cx))

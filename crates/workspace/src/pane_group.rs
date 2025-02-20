@@ -122,6 +122,7 @@ impl PaneGroup {
         };
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
         project: &Entity<Project>,
@@ -227,6 +228,7 @@ impl Member {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
         project: &Entity<Project>,
@@ -676,6 +678,7 @@ impl PaneAxis {
         None
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render(
         &self,
         project: &Entity<Project>,
@@ -879,6 +882,7 @@ mod element {
             self
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn compute_resize(
             flexes: &Arc<Mutex<Vec<f32>>>,
             e: &MouseMoveEvent,
@@ -968,6 +972,7 @@ mod element {
             window.refresh();
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn layout_handle(
             axis: Axis,
             pane_bounds: Bounds<Pixels>,

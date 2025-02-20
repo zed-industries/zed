@@ -22,7 +22,7 @@ use alacritty_terminal::{
     term::Config,
     vte::ansi::Processor,
 };
-use gpui::{canvas, size, ClipboardItem, Entity, FontStyle, TextStyle, WhiteSpace};
+use gpui::{canvas, size, Bounds, ClipboardItem, Entity, FontStyle, TextStyle, WhiteSpace};
 use language::Buffer;
 use settings::Settings as _;
 use terminal_view::terminal_element::TerminalElement;
@@ -85,7 +85,7 @@ pub fn text_style(window: &mut Window, cx: &mut App) -> TextStyle {
 }
 
 /// Returns the default terminal size for the terminal output.
-pub fn terminal_size(window: &mut Window, cx: &mut App) -> terminal::TerminalSize {
+pub fn terminal_size(window: &mut Window, cx: &mut App) -> terminal::TerminalBounds {
     let text_style = text_style(window, cx);
     let text_system = window.text_system();
 
@@ -106,10 +106,13 @@ pub fn terminal_size(window: &mut Window, cx: &mut App) -> terminal::TerminalSiz
     let width = columns as f32 * cell_width;
     let height = num_lines as f32 * window.line_height();
 
-    terminal::TerminalSize {
+    terminal::TerminalBounds {
         cell_width,
         line_height,
-        size: size(width, height),
+        bounds: Bounds {
+            origin: gpui::Point::default(),
+            size: size(width, height),
+        },
     }
 }
 
@@ -181,10 +184,10 @@ impl TerminalOutput {
         for byte in text.as_bytes() {
             if *byte == b'\n' {
                 // Dirty (?) hack to move the cursor down
-                self.parser.advance(&mut self.handler, b'\r');
-                self.parser.advance(&mut self.handler, b'\n');
+                self.parser.advance(&mut self.handler, &[b'\r']);
+                self.parser.advance(&mut self.handler, &[b'\n']);
             } else {
-                self.parser.advance(&mut self.handler, *byte);
+                self.parser.advance(&mut self.handler, &[*byte]);
             }
         }
 
@@ -277,10 +280,10 @@ impl Render for TerminalOutput {
                 for rect in rects {
                     rect.paint(
                         bounds.origin,
-                        &terminal::TerminalSize {
+                        &terminal::TerminalBounds {
                             cell_width,
                             line_height: text_line_height,
-                            size: bounds.size,
+                            bounds,
                         },
                         window,
                     );
@@ -289,10 +292,10 @@ impl Render for TerminalOutput {
                 for cell in cells {
                     cell.paint(
                         bounds.origin,
-                        &terminal::TerminalSize {
+                        &terminal::TerminalBounds {
                             cell_width,
                             line_height: text_line_height,
-                            size: bounds.size,
+                            bounds,
                         },
                         bounds,
                         window,

@@ -102,8 +102,7 @@ impl PickerDelegate for SlashCommandDelegate {
         let all_commands = self.all_commands.clone();
         cx.spawn_in(window, |this, mut cx| async move {
             let filtered_commands = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     if query.is_empty() {
                         all_commands
                     } else {

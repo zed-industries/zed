@@ -16,6 +16,7 @@ members = [
     "crates/auto_update",
     "crates/auto_update_ui",
     "crates/breadcrumbs",
+    "crates/buffer_diff",
     "crates/call",
     "crates/channel",
     "crates/cli",
@@ -31,10 +32,10 @@ members = [
     "crates/context_server",
     "crates/context_server_settings",
     "crates/copilot",
+    "crates/credentials_provider",
     "crates/db",
     "crates/deepseek",
     "crates/diagnostics",
-    "crates/buffer_diff",
     "crates/docs_preprocessor",
     "crates/editor",
     "crates/evals",
@@ -233,6 +234,7 @@ component_preview = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
 context_server_settings = { path = "crates/context_server_settings" }
 copilot = { path = "crates/copilot" }
+credentials_provider = { path = "crates/credentials_provider" }
 db = { path = "crates/db" }
 deepseek = { path = "crates/deepseek" }
 diagnostics = { path = "crates/diagnostics" }
@@ -364,7 +366,7 @@ zeta = { path = "crates/zeta" }
 #
 
 aho-corasick = "1.1"
-alacritty_terminal = "0.25"
+alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", rev = "03c2907b44b4189aac5fdeaea331f5aab5c7072e"}
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
@@ -421,6 +423,7 @@ hyper = "0.14"
 http = "1.1"
 ignore = "0.4.22"
 image = "0.25.1"
+imara-diff = "0.1.8"
 indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
 inventory = "0.3.19"
@@ -499,7 +502,6 @@ sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
 signal-hook = "0.3.17"
-similar = "1.3"
 simplelog = "0.12.2"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "2.0"
@@ -701,7 +703,6 @@ codegen-units = 16
 [workspace.lints.clippy]
 dbg_macro = "deny"
 todo = "deny"
-too_many_arguments = "allow"
 
 # Motivation: We use `vec![a..b]` a lot when dealing with ranges in text, so
 # warning on this rule produces a lot of noise.

@@ -7,9 +7,12 @@ import { IncomingWebhook } from "@slack/webhook";
  * [Slack Docs](https://api.slack.com/reference/block-kit/blocks#section)
  */
 const SECTION_BLOCK_TEXT_LIMIT = 3000;
+const GITHUB_ISSUES_URL = "https://github.com/zed-industries/zed/issues";
 
 async function main() {
-  const octokit = new Octokit({ auth: process.env["GITHUB_TOKEN"] });
+  const octokit = new Octokit({
+    auth: process.env["ISSUE_RESPONSE_GITHUB_TOKEN"],
+  });
 
   if (!process.env["SLACK_ISSUE_RESPONSE_WEBHOOK_URL"]) {
     throw new Error("SLACK_ISSUE_RESPONSE_WEBHOOK_URL is not set");
@@ -21,8 +24,9 @@ async function main() {
 
   const owner = "zed-industries";
   const repo = "zed";
-  const staff = await octokit.paginate(octokit.rest.orgs.listMembers, {
+  const staff = await octokit.paginate(octokit.rest.teams.listMembersInOrg, {
     org: owner,
+    team_slug: "staff",
     per_page: 100,
   });
   let staffHandles = staff.map((member) => member.login);
@@ -89,6 +93,16 @@ async function main() {
       text: section.join("").trimEnd(),
     },
   }));
+
+  const issuesUrl = `${GITHUB_ISSUES_URL}?q=${encodeURIComponent(q.join(" "))}`;
+
+  blocks.push({
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: `<${issuesUrl}|View on GitHub>`,
+    },
+  });
 
   await webhook.send({ blocks });
 }

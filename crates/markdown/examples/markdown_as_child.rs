@@ -35,7 +35,7 @@ pub fn main() {
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);
-        let _ = cx.open_window(WindowOptions::default(), |window, cx| {
+        let _ = cx.open_window(WindowOptions::default(), |_, cx| {
             cx.new(|cx| {
                 let markdown_style = MarkdownStyle {
                     base_text_style: gpui::TextStyle {
@@ -86,14 +86,7 @@ pub fn main() {
                     heading: Default::default(),
                 };
                 let markdown = cx.new(|cx| {
-                    Markdown::new(
-                        MARKDOWN_EXAMPLE.into(),
-                        markdown_style,
-                        None,
-                        None,
-                        window,
-                        cx,
-                    )
+                    Markdown::new(MARKDOWN_EXAMPLE.into(), markdown_style, None, None, cx)
                 });
 
                 HelloWorld { markdown }

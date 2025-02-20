@@ -19,7 +19,7 @@ struct ScrollHandleState {
 impl ScrollHandleState {
     fn new(terminal: &Terminal) -> Self {
         Self {
-            line_height: terminal.last_content().size.line_height,
+            line_height: terminal.last_content().terminal_bounds.line_height,
             total_lines: terminal.total_lines(),
             viewport_lines: terminal.viewport_lines(),
             display_offset: terminal.last_content().display_offset,
