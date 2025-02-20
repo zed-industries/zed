@@ -1,4 +1,5 @@
 use crate::git_panel_settings::StatusStyle;
+use crate::project_diff::Diff;
 use crate::repository_selector::RepositorySelectorPopoverMenu;
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
@@ -592,7 +593,6 @@ impl GitPanel {
                 })
                 .ok()
         });
-        self.focus_handle.focus(window);
     }
 
     fn open_file(
@@ -1482,6 +1482,12 @@ impl GitPanel {
             || self.conflicted_staged_count > 0
     }
 
+    fn has_unstaged_changes(&self) -> bool {
+        self.tracked_count > self.tracked_staged_count
+            || self.new_count > self.new_staged_count
+            || self.conflicted_count > self.conflicted_staged_count
+    }
+
     fn has_conflicts(&self) -> bool {
         self.conflicted_count > 0
     }
@@ -1564,7 +1570,17 @@ impl GitPanel {
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(self.render_repository_selector(cx)),
+                    .child(self.render_repository_selector(cx))
+                    .child(div().flex_grow())
+                    .child(
+                        Button::new("diff", "+/-")
+                            .tooltip(Tooltip::for_action_title("Open diff", &Diff))
+                            .on_click(|_, _, cx| {
+                                cx.defer(|cx| {
+                                    cx.dispatch_action(&Diff);
+                                })
+                            }),
+                    ),
             )
         } else {
             None
@@ -1587,16 +1603,26 @@ impl GitPanel {
         )
     }
 
+    pub fn can_commit(&self) -> bool {
+        (self.has_staged_changes() || self.has_tracked_changes()) && !self.has_unstaged_conflicts()
+    }
+
+    pub fn can_stage_all(&self) -> bool {
+        self.has_unstaged_changes()
+    }
+    pub fn can_unstage_all(&self) -> bool {
+        self.has_staged_changes()
+    }
+
     pub fn render_commit_editor(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let editor = self.commit_editor.clone();
-        let can_commit = (self.has_staged_changes() || self.has_tracked_changes())
+        let can_commit = self.can_commit()
             && self.pending_commit.is_none()
             && !editor.read(cx).is_empty(cx)
-            && !self.has_unstaged_conflicts()
             && self.has_write_access(cx);
 
         // let can_commit_all =
@@ -1892,8 +1918,8 @@ impl GitPanel {
         Some(
             h_flex()
                 .id("start-slot")
+                .text_lg()
                 .child(checkbox)
-                .child(git_status_icon(entry.status_entry()?.status, cx))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| {
                     // prevent the list item active state triggering when toggling checkbox
                     cx.stop_propagation();
