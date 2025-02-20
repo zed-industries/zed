@@ -1278,6 +1278,30 @@ mod test {
         cx.assert_state("hello in a w«ordˇ» again.", Mode::VisualBlock);
         cx.simulate_keystrokes("o a s");
         cx.assert_state("«ˇhello in a word» again.", Mode::VisualBlock);
+
+        cx.set_state(
+            indoc! {
+                "func empty(a string) bool {
+                   if a == \"\" {
+                      return true
+                   }
+                   ˇreturn false
+                }"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("shift-v a {");
+        cx.assert_state(
+            indoc! {
+                "«func empty(a string) bool {
+                   if a == \"\" {
+                      return true
+                   }
+                   return false
+                }ˇ»"
+            },
+            Mode::VisualLine,
+        );
     }
 
     #[gpui::test]
