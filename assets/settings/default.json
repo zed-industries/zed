@@ -640,7 +640,14 @@
     "close_position": "right",
     // Whether to show the file icon for a tab.
     "file_icons": false,
-    // Whether to always show the close button on tabs.
+    // Controls the appearance behavior of the tab's close button.
+    //
+    // 1. Show it just upon hovering the tab. (default)
+    //     "hover"
+    // 2. Show it persistently.
+    //     "always"
+    // 3. Never show it, even if hovering it.
+    //     "hidden"
     "show_close_button": "hover",
     // What to do after closing the current tab.
     //

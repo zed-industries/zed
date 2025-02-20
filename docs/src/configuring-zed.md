@@ -784,7 +784,7 @@ List of `string` values
   "file_icons": false,
   "git_status": false,
   "activate_on_close": "history",
-  "always_show_close_button": false
+  "show_close_button": "hover"
 },
 ```
 
@@ -809,14 +809,6 @@ List of `string` values
 ```json
 {
   "close_position": "left"
-}
-```
-
-3. Hide the close button:
-
-```json
-{
-  "close_position": "hidden"
 }
 ```
 
@@ -864,11 +856,37 @@ List of `string` values
 }
 ```
 
-### Always show the close button
+### Show close button
 
-- Description: Whether to always show the close button on tabs.
-- Setting: `always_show_close_button`
-- Default: `false`
+- Description: Controls the appearance behavior of the tab's close button.
+- Setting: `show_close_button`
+- Default: `hover`
+
+**Options**
+
+1.  Show it just upon hovering the tab:
+
+```json
+{
+  "show_close_button": "hover"
+}
+```
+
+2. Show it persistently:
+
+```json
+{
+  "show_close_button": "always"
+}
+```
+
+3. Never show it, even if hovering it:
+
+```json
+{
+  "show_close_button": "hidden"
+}
+```
 
 ## Editor Toolbar
 
