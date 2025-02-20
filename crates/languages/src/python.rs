@@ -83,13 +83,15 @@ impl LspAdapter for PythonLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        if let Some(pyright_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await {
+        let pyright_path = delegate.which("pyright-langserver".as_ref()).await;
+
+        if let Some(pyright_path) = pyright_path {
             let env = delegate.shell_env().await;
-            Some(LanguageServerBinary {
-                path: pyright_bin,
+            return Some(LanguageServerBinary {
+                path: pyright_path,
                 env: Some(env),
                 arguments: vec!["--stdio".into()],
-            })
+            });
         } else {
             let node = delegate.which("node".as_ref()).await?;
             let (node_modules_path, _) = delegate
@@ -99,11 +101,11 @@ impl LspAdapter for PythonLspAdapter {
 
             let path = node_modules_path.join(NODE_MODULE_RELATIVE_SERVER_PATH);
 
-            Some(LanguageServerBinary {
+            return Some(LanguageServerBinary {
                 path: node,
                 env: None,
                 arguments: server_binary_arguments(&path),
-            })
+            });
         }
     }
 
