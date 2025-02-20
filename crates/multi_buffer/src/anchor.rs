@@ -204,6 +204,7 @@ impl AnchorRangeExt for Range<Anchor> {
         }
     }
 
+
     fn includes(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool {
         self.start.cmp(&other.start, &buffer).is_le() && other.end.cmp(&self.end, &buffer).is_le()
     }
