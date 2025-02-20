@@ -1237,7 +1237,8 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
       "enabled": false,
       "update_debounce_ms": 150,
       "padding": 4,
-      "min_column": 0
+      "min_column": 0,
+      "max_severity": null
     }
   }
 }
@@ -1294,6 +1295,19 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
   }
 }
 ````
+
+5. Show only warning and error diagnostics.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "max_severity": "warning"
+    }
+  }
+}
+```
 
 ## Git
 

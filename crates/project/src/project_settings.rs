@@ -119,6 +119,18 @@ pub struct InlineDiagnosticsSettings {
     /// Default: 0
     #[serde(default)]
     pub min_column: u32,
+
+    #[serde(default)]
+    pub max_severity: Option<DiagnosticSeverity>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticSeverity {
+    Error,
+    Warning,
+    Info,
+    Hint,
 }
 
 impl Default for InlineDiagnosticsSettings {
@@ -128,6 +140,7 @@ impl Default for InlineDiagnosticsSettings {
             update_debounce_ms: default_inline_diagnostics_debounce_ms(),
             padding: default_inline_diagnostics_padding(),
             min_column: 0,
+            max_severity: None,
         }
     }
 }

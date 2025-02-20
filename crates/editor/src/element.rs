@@ -52,7 +52,7 @@ use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
     RowInfo, ToOffset,
 };
-use project::project_settings::{GitGutterSetting, ProjectSettings};
+use project::project_settings::{self, GitGutterSetting, ProjectSettings};
 use settings::Settings;
 use smallvec::{smallvec, SmallVec};
 use std::{
@@ -1625,10 +1625,21 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> HashMap<DisplayRow, AnyElement> {
+        let max_severity = ProjectSettings::get_global(cx)
+            .diagnostics
+            .inline
+            .max_severity
+            .map_or(DiagnosticSeverity::HINT, |severity| match severity {
+                project_settings::DiagnosticSeverity::Error => DiagnosticSeverity::ERROR,
+                project_settings::DiagnosticSeverity::Warning => DiagnosticSeverity::WARNING,
+                project_settings::DiagnosticSeverity::Info => DiagnosticSeverity::INFORMATION,
+                project_settings::DiagnosticSeverity::Hint => DiagnosticSeverity::HINT,
+            });
         let diagnostics = self.editor.update(cx, |editor, _| {
             editor
                 .inline_diagnostics
                 .range(start_row..=end_row)
+                .filter(|(_, diagnostic)| diagnostic.severity <= max_severity)
                 .map(|(point, diag)| (*point, diag.clone()))
                 .collect::<Vec<_>>()
         });
