@@ -2947,12 +2947,6 @@ impl Editor {
                 }
             }
 
-            if selection.is_empty() {
-                let autoclose_tag_prediction =
-                    autoclose_tags::predict_at(&snapshot, selection.start, text.as_ref());
-                dbg!(autoclose_tag_prediction);
-            }
-
             if self.auto_replace_emoji_shortcode
                 && selection.is_empty()
                 && text.as_ref().ends_with(':')

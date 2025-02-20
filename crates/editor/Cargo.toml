@@ -32,7 +32,6 @@ test-support = [
 aho-corasick.workspace = true
 anyhow.workspace = true
 assets.workspace = true
-autoclose_tags.workspace = true
 chrono.workspace = true
 client.workspace = true
 clock.workspace = true
