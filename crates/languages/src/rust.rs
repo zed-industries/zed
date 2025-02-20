@@ -514,29 +514,9 @@ impl ContextProvider for RustContextProvider {
             variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
         }
 
-        if let Some(stem) = task_variables.get(&VariableName::Stem) {
-            let fragment = if stem == "lib" {
-                // This isn't quite right---it runs the tests for the entire library, rather than
-                // just for the top-level `mod tests`. But we don't really have the means here to
-                // filter out just that module.
-                Some("--lib".to_owned())
-            } else if stem == "mod" {
-                local_abs_path.and_then(|path| {
-                    Some(path.parent()?.file_name()?.to_string_lossy().to_string())
-                })
-            } else if stem == "main" {
-                if let (Some(bin_name), Some(bin_kind)) = (
-                    variables.get(&RUST_BIN_NAME_TASK_VARIABLE),
-                    variables.get(&RUST_BIN_KIND_TASK_VARIABLE),
-                ) {
-                    Some(format!("--{bin_kind}={bin_name}"))
-                } else {
-                    None
-                }
-            } else {
-                Some(stem.to_owned())
-            };
-            let fragment = fragment.unwrap_or_else(|| "--".to_owned());
+        if let (Some(path), Some(stem)) = (local_abs_path, task_variables.get(&VariableName::Stem))
+        {
+            let fragment = test_fragment(&variables, path, stem);
             variables.insert(RUST_TEST_FRAGMENT_TASK_VARIABLE, fragment);
         };
 
@@ -844,6 +824,29 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
     })
     .await
     .log_err()
+}
+
+fn test_fragment(variables: &TaskVariables, path: &Path, stem: &str) -> String {
+    let fragment = if stem == "lib" {
+        // This isn't quite right---it runs the tests for the entire library, rather than
+        // just for the top-level `mod tests`. But we don't really have the means here to
+        // filter out just that module.
+        Some("--lib".to_owned())
+    } else if stem == "mod" {
+        maybe!({ Some(path.parent()?.file_name()?.to_string_lossy().to_string()) })
+    } else if stem == "main" {
+        if let (Some(bin_name), Some(bin_kind)) = (
+            variables.get(&RUST_BIN_NAME_TASK_VARIABLE),
+            variables.get(&RUST_BIN_KIND_TASK_VARIABLE),
+        ) {
+            Some(format!("--{bin_kind}={bin_name}"))
+        } else {
+            None
+        }
+    } else {
+        Some(stem.to_owned())
+    };
+    fragment.unwrap_or_else(|| "--".to_owned())
 }
 
 #[cfg(test)]
@@ -1200,5 +1203,35 @@ mod tests {
                 expected.map(|(pkgid, name, kind)| (pkgid.to_owned(), name.to_owned(), kind))
             );
         }
+    }
+
+    #[test]
+    fn test_rust_test_fragment() {
+        #[track_caller]
+        fn check(
+            variables: impl IntoIterator<Item = (VariableName, &'static str)>,
+            path: &str,
+            expected: &str,
+        ) {
+            let path = Path::new(path);
+            let found = test_fragment(
+                &TaskVariables::from_iter(variables.into_iter().map(|(k, v)| (k, v.to_owned()))),
+                path,
+                &path.file_stem().unwrap().to_str().unwrap(),
+            );
+            assert_eq!(expected, found);
+        }
+
+        check([], "/project/src/lib.rs", "--lib");
+        check([], "/project/src/foo/mod.rs", "foo");
+        check(
+            [
+                (RUST_BIN_KIND_TASK_VARIABLE.clone(), "bin"),
+                (RUST_BIN_NAME_TASK_VARIABLE, "x"),
+            ],
+            "/project/src/main.rs",
+            "--bin=x",
+        );
+        check([], "/project/src/main.rs", "--");
     }
 }
