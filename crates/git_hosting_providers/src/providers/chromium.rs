@@ -4,16 +4,15 @@ use std::sync::{Arc, LazyLock};
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
+use git::{
+    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
+    PullRequest, RemoteUrl,
+};
 use gpui::SharedString;
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 use regex::Regex;
 use serde::Deserialize;
 use url::Url;
-
-use git::{
-    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
-    PullRequest, RemoteUrl,
-};
 
 const CHROMIUM_REVIEW_URL: &str = "https://chromium-review.googlesource.com";
 
