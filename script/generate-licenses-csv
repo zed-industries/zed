@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-CARGO_ABOUT_VERSION="0.6.1"
+CARGO_ABOUT_VERSION="0.6.6"
 OUTPUT_FILE="${1:-$(pwd)/assets/licenses.csv}"
 TEMPLATE_FILE="script/licenses/template.csv.hbs"
 
@@ -14,10 +14,12 @@ else
 fi
 
 echo "Generating cargo licenses"
+
 cargo about generate \
     --fail \
     -c script/licenses/zed-licenses.toml \
     script/licenses/template.csv.hbs \
     | awk 'NR==1{print;next} NF{print | "sort"}' \
     > $OUTPUT_FILE
-echo "Completed. See $OUTPUT_FILE"
+
+echo "generate-licenses-csv completed. See $OUTPUT_FILE"

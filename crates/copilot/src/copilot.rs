@@ -234,8 +234,7 @@ impl RegisteredBuffer {
                 let new_snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot()).ok()?;
 
                 let content_changes = cx
-                    .background_executor()
-                    .spawn({
+                    .background_spawn({
                         let new_snapshot = new_snapshot.clone();
                         async move {
                             new_snapshot
@@ -458,12 +457,14 @@ impl Copilot {
                 .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
                 .detach();
 
-            let initialize_params = None;
             let configuration = lsp::DidChangeConfigurationParams {
                 settings: Default::default(),
             };
             let server = cx
-                .update(|cx| server.initialize(initialize_params, configuration.into(), cx))?
+                .update(|cx| {
+                    let params = server.default_initialize_params(cx);
+                    server.initialize(params, configuration.into(), cx)
+                })?
                 .await?;
 
             let status = server
@@ -586,8 +587,7 @@ impl Copilot {
                 }
             };
 
-            cx.background_executor()
-                .spawn(task.map_err(|err| anyhow!("{:?}", err)))
+            cx.background_spawn(task.map_err(|err| anyhow!("{:?}", err)))
         } else {
             // If we're downloading, wait until download is finished
             // If we're in a stuck state, display to the user
@@ -599,7 +599,7 @@ impl Copilot {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
         if let CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) = &self.server {
             let server = server.clone();
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 server
                     .request::<request::SignOut>(request::SignOutParams {})
                     .await?;
@@ -629,7 +629,7 @@ impl Copilot {
 
         cx.notify();
 
-        cx.background_executor().spawn(start_task)
+        cx.background_spawn(start_task)
     }
 
     pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
@@ -811,7 +811,7 @@ impl Copilot {
                 .request::<request::NotifyAccepted>(request::NotifyAcceptedParams {
                     uuid: completion.uuid.clone(),
                 });
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             request.await?;
             Ok(())
         })
@@ -835,7 +835,7 @@ impl Copilot {
                         .map(|completion| completion.uuid.clone())
                         .collect(),
                 });
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             request.await?;
             Ok(())
         })
@@ -882,7 +882,7 @@ impl Copilot {
             .map(|file| file.path().to_path_buf())
             .unwrap_or_default();
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let (version, snapshot) = snapshot.await?;
             let result = lsp
                 .request::<R>(request::GetCompletionsParams {

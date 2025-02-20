@@ -397,7 +397,7 @@ Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), b
 {
   "context": "vim_mode == visual",
   "bindings": {
-    "shift-s": ["vim::PushOperator", { "AddSurrounds": {} }]
+    "shift-s": ["vim::PushAddSurrounds", {}]
   }
 }
 ```
@@ -408,8 +408,8 @@ The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for qui
 {
   "context": "vim_mode == normal || vim_mode == visual",
   "bindings": {
-    "s": ["vim::PushSneak", {}],
-    "S": ["vim::PushSneakBackward", {}]
+    "s": "vim::PushSneak",
+    "shift-s": "vim::PushSneakBackward"
   }
 }
 ```

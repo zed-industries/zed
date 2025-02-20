@@ -850,4 +850,35 @@ mod test {
         let clipboard: Register = cx.read_from_clipboard().unwrap().into();
         assert_eq!(clipboard.text, "fish");
     }
+
+    #[gpui::test]
+    async fn test_replace_with_register_dot_repeat(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                   ˇfish one
+                   two three
+                   "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y i w");
+        cx.simulate_keystrokes("w");
+        cx.simulate_keystrokes("g r i w");
+        cx.assert_state(
+            indoc! {"
+                fish fisˇh
+                two three
+                "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("j .");
+        cx.assert_state(
+            indoc! {"
+                fish fish
+                two fisˇh
+                "},
+            Mode::Normal,
+        );
+    }
 }

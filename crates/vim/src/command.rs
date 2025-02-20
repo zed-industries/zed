@@ -7,7 +7,7 @@ use editor::{
     scroll::Autoscroll,
     Bias, Editor, ToPoint,
 };
-use gpui::{actions, impl_internal_actions, Action, App, Context, Global, Window};
+use gpui::{actions, impl_internal_actions, Action, App, AppContext as _, Context, Global, Window};
 use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
@@ -841,7 +841,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             .range(act_on_range),
         VimCommand::new(("dif", "fupdate"), editor::actions::ToggleSelectedDiffHunks)
             .range(act_on_range),
-        VimCommand::new(("rev", "ert"), editor::actions::RevertSelectedHunks).range(act_on_range),
+        VimCommand::str(("rev", "ert"), "git::Restore").range(act_on_range),
         VimCommand::new(("d", "elete"), VisualDeleteLine).range(select_range),
         VimCommand::new(("y", "ank"), gpui::NoAction).range(|_, range| {
             Some(
@@ -1185,8 +1185,7 @@ impl OnMatchingLines {
                     .clip_point(Point::new(range.end.0 + 1, 0), Bias::Left);
             cx.spawn_in(window, |editor, mut cx| async move {
                 let new_selections = cx
-                    .background_executor()
-                    .spawn(async move {
+                    .background_spawn(async move {
                         let mut line = String::new();
                         let mut new_selections = Vec::new();
                         let chunks = snapshot
@@ -1513,22 +1512,20 @@ impl ShellExec {
             if let Some(mut stdin) = running.stdin.take() {
                 if let Some(snapshot) = input_snapshot {
                     let range = range.clone();
-                    cx.background_executor()
-                        .spawn(async move {
-                            for chunk in snapshot.text_for_range(range) {
-                                if stdin.write_all(chunk.as_bytes()).log_err().is_none() {
-                                    return;
-                                }
+                    cx.background_spawn(async move {
+                        for chunk in snapshot.text_for_range(range) {
+                            if stdin.write_all(chunk.as_bytes()).log_err().is_none() {
+                                return;
                             }
-                            stdin.flush().log_err();
-                        })
-                        .detach();
+                        }
+                        stdin.flush().log_err();
+                    })
+                    .detach();
                 }
             };
 
             let output = cx
-                .background_executor()
-                .spawn(async move { running.wait_with_output() })
+                .background_spawn(async move { running.wait_with_output() })
                 .await;
 
             let Some(output) = output.log_err() else {

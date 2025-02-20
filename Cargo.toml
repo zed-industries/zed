@@ -16,6 +16,7 @@ members = [
     "crates/auto_update",
     "crates/auto_update_ui",
     "crates/breadcrumbs",
+    "crates/buffer_diff",
     "crates/call",
     "crates/channel",
     "crates/cli",
@@ -31,10 +32,10 @@ members = [
     "crates/context_server",
     "crates/context_server_settings",
     "crates/copilot",
+    "crates/credentials_provider",
     "crates/db",
     "crates/deepseek",
     "crates/diagnostics",
-    "crates/buffer_diff",
     "crates/docs_preprocessor",
     "crates/editor",
     "crates/evals",
@@ -74,9 +75,9 @@ members = [
     "crates/language_selector",
     "crates/language_tools",
     "crates/languages",
+    "crates/livekit_api",
     "crates/livekit_client",
     "crates/livekit_client_macos",
-    "crates/livekit_server",
     "crates/lmstudio",
     "crates/lsp",
     "crates/markdown",
@@ -84,6 +85,7 @@ members = [
     "crates/media",
     "crates/menu",
     "crates/migrator",
+    "crates/mistral",
     "crates/multi_buffer",
     "crates/node_runtime",
     "crates/notifications",
@@ -232,6 +234,7 @@ component_preview = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
 context_server_settings = { path = "crates/context_server_settings" }
 copilot = { path = "crates/copilot" }
+credentials_provider = { path = "crates/credentials_provider" }
 db = { path = "crates/db" }
 deepseek = { path = "crates/deepseek" }
 diagnostics = { path = "crates/diagnostics" }
@@ -273,9 +276,9 @@ language_models = { path = "crates/language_models" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
+livekit_api = { path = "crates/livekit_api" }
 livekit_client = { path = "crates/livekit_client" }
 livekit_client_macos = { path = "crates/livekit_client_macos" }
-livekit_server = { path = "crates/livekit_server" }
 lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
@@ -283,6 +286,7 @@ markdown_preview = { path = "crates/markdown_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
 migrator = { path = "crates/migrator" }
+mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
@@ -362,12 +366,11 @@ zeta = { path = "crates/zeta" }
 #
 
 aho-corasick = "1.1"
-# TODO(#18342): Update to version 0.25 from crates.io when it is released.
-alacritty_terminal = { git = "https://github.com/alacritty/alacritty.git", rev = "5e78d20c709cb1ab8d44ca7a8702cc26d779227c" }
+alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", rev = "03c2907b44b4189aac5fdeaea331f5aab5c7072e"}
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
-ashpd = { version = "0.10", default-features = false, features = ["async-std"] }
+ashpd = { version = "0.11", default-features = false, features = ["async-std"] }
 async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"
@@ -396,7 +399,7 @@ cocoa-foundation = "0.2.0"
 convert_case = "0.7.0"
 core-foundation = "0.9.3"
 core-foundation-sys = "0.8.6"
-ctor = "0.2.6"
+ctor = "0.3.0"
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
@@ -420,6 +423,7 @@ hyper = "0.14"
 http = "1.1"
 ignore = "0.4.22"
 image = "0.25.1"
+imara-diff = "0.1.8"
 indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
 inventory = "0.3.19"
@@ -442,6 +446,7 @@ nanoid = "0.4"
 nbformat = { version = "0.10.0" }
 nix = "0.29"
 num-format = "0.4.4"
+once_cell = "1.20"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
@@ -497,7 +502,6 @@ sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
 signal-hook = "0.3.17"
-similar = "1.3"
 simplelog = "0.12.2"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "2.0"
@@ -524,7 +528,7 @@ tiny_http = "0.8"
 toml = "0.8"
 tokio = { version = "1" }
 tower-http = "0.4.4"
-tree-sitter = { version = "0.24", features = ["wasm"] }
+tree-sitter = { version = "0.25.2", features = ["wasm"] }
 tree-sitter-bash = "0.23"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = "0.23"
@@ -537,7 +541,7 @@ tree-sitter-go-mod = { git = "https://github.com/camdencheek/tree-sitter-go-mod"
 tree-sitter-gowork = { git = "https://github.com/zed-industries/tree-sitter-go-work", rev = "acb0617bf7f4fda02c6217676cc64acb89536dc7" }
 tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex", rev = "1dd45142fbb05562e35b2040c6129c9bca346592" }
 tree-sitter-diff = "0.1.0"
-tree-sitter-html = "0.20"
+tree-sitter-html = "0.23"
 tree-sitter-jsdoc = "0.23"
 tree-sitter-json = "0.24"
 tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-markdown", rev = "9a23c1a96c0513d8fc6520972beedd419a973539" }
@@ -553,18 +557,18 @@ unicode-segmentation = "1.10"
 unicode-script = "0.5.7"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
-wasmparser = "0.217"
-wasm-encoder = "0.217"
-wasmtime = { version = "25", default-features = false, features = [
+wasmparser = "0.221"
+wasm-encoder = "0.221"
+wasmtime = { version = "29", default-features = false, features = [
     "async",
     "demangle",
     "runtime",
     "cranelift",
     "component-model",
 ] }
-wasmtime-wasi = "25"
+wasmtime-wasi = "29"
 which = "6.0.0"
-wit-component = "0.201"
+wit-component = "0.221"
 zed_llm_client = "0.4"
 zstd = "0.11"
 metal = "0.31"

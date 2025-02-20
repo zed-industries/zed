@@ -607,25 +607,6 @@ impl Default for Background {
     }
 }
 
-impl Background {
-    /// Gets the color of the background if there is one.
-    pub fn color(&self) -> Option<Hsla> {
-        match self.tag {
-            BackgroundTag::Solid => Some(self.solid),
-            BackgroundTag::LinearGradient => None,
-            BackgroundTag::PatternSlash => Some(self.solid),
-        }
-    }
-}
-
-/// Creates a background with a solid color
-pub fn solid_color(color: impl Into<Hsla>) -> Background {
-    Background {
-        solid: color.into(),
-        ..Default::default()
-    }
-}
-
 /// Creates a hash pattern background
 pub fn pattern_slash(color: Hsla, thickness: f32) -> Background {
     Background {

@@ -37,9 +37,9 @@
       "[ [": "vim::PreviousSectionStart",
       "[ ]": "vim::PreviousSectionEnd",
       "] m": "vim::NextMethodStart",
-      "] M": "vim::NextMethodEnd",
+      "] shift-m": "vim::NextMethodEnd",
       "[ m": "vim::PreviousMethodStart",
-      "[ M": "vim::PreviousMethodEnd",
+      "[ shift-m": "vim::PreviousMethodEnd",
       "[ *": "vim::PreviousComment",
       "[ /": "vim::PreviousComment",
       "] *": "vim::NextComment",
@@ -446,7 +446,7 @@
       "d": "vim::CurrentLine",
       "s": "vim::PushDeleteSurrounds",
       "o": "editor::ToggleSelectedDiffHunks", // "d o"
-      "p": "editor::RevertSelectedHunks" // "d p"
+      "p": "git::Restore" // "d p"
     }
   },
   {

@@ -28,12 +28,12 @@ use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, anchored, deferred, div, point, px, size, uniform_list, Action, AnyElement, App,
-    AppContext as _, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent,
-    Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    InteractiveElement, IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy,
-    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task,
-    UniformListScrollHandle, WeakEntity, Window,
+    AppContext as _, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
+    ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle, InteractiveElement,
+    IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Stateful,
+    StatefulInteractiveElement as _, Styled, Subscription, Task, UniformListScrollHandle,
+    WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -171,7 +171,7 @@ impl SearchState {
                 })
                 .collect(),
             highlight_search_match_tx,
-            _search_match_highlighter: cx.background_executor().spawn(async move {
+            _search_match_highlighter: cx.background_spawn(async move {
                 while let Ok(highlight_arguments) = highlight_search_match_rx.recv().await {
                     let needs_init = highlight_arguments.search_data.get().is_none();
                     let search_data = highlight_arguments.search_data.get_or_init(|| {
@@ -664,9 +664,8 @@ pub fn init_settings(cx: &mut App) {
     OutlinePanelSettings::register(cx);
 }
 
-pub fn init(assets: impl AssetSource, cx: &mut App) {
+pub fn init(cx: &mut App) {
     init_settings(cx);
-    file_icons::init(assets, cx);
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
@@ -682,8 +681,7 @@ impl OutlinePanel {
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
         let serialized_panel = cx
-            .background_executor()
-            .spawn(async move { KEY_VALUE_STORE.read_kvp(OUTLINE_PANEL_KEY) })
+            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(OUTLINE_PANEL_KEY) })
             .await
             .context("loading outline panel")
             .log_err()
@@ -850,7 +848,7 @@ impl OutlinePanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
         let active = Some(self.active);
-        self.pending_serialization = cx.background_executor().spawn(
+        self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
@@ -2634,8 +2632,7 @@ impl OutlinePanel {
                 new_depth_map,
                 new_children_count,
             )) = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     let mut processed_external_buffers = HashSet::default();
                     let mut new_worktree_entries =
                         BTreeMap::<WorktreeId, HashMap<ProjectEntryId, GitEntry>>::default();
@@ -3227,8 +3224,7 @@ impl OutlinePanel {
                     (buffer_id, excerpt_id),
                     cx.spawn_in(window, |outline_panel, mut cx| async move {
                         let fetched_outlines = cx
-                            .background_executor()
-                            .spawn(async move {
+                            .background_spawn(async move {
                                 buffer_snapshot
                                     .outline_items_containing(
                                         excerpt_range.context,
@@ -4954,13 +4950,16 @@ impl Render for OutlinePanel {
             .track_focus(&self.focus_handle)
             .when_some(search_query, |outline_panel, search_state| {
                 outline_panel.child(
-                    v_flex()
-                        .child(
-                            Label::new(format!("Searching: '{}'", search_state.query))
-                                .color(Color::Muted)
-                                .mx_2(),
-                        )
-                        .child(horizontal_separator(cx)),
+                    h_flex()
+                        .py_1p5()
+                        .px_2()
+                        .h(DynamicSpacing::Base32.px(cx))
+                        .flex_shrink_0()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border)
+                        .gap_0p5()
+                        .child(Label::new("Searching:").color(Color::Muted))
+                        .child(Label::new(format!("'{}'", search_state.query))),
                 )
             })
             .child(self.render_main_contents(query, show_indent_guides, indent_size, window, cx))
@@ -5169,6 +5168,7 @@ mod tests {
     use project::FakeFs;
     use search::project_search::{self, perform_project_search};
     use serde_json::json;
+    use util::path;
     use workspace::OpenVisible;
 
     use super::*;
@@ -5546,8 +5546,8 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
-        populate_with_test_ra_project(&fs, "/rust-analyzer").await;
-        let project = Project::test(fs.clone(), ["/rust-analyzer".as_ref()], cx).await;
+        populate_with_test_ra_project(&fs, path!("/rust-analyzer")).await;
+        let project = Project::test(fs.clone(), [path!("/rust-analyzer").as_ref()], cx).await;
         project.read_with(cx, |project, _| {
             project.languages().add(Arc::new(rust_lang()))
         });
@@ -5591,15 +5591,17 @@ mod tests {
                     );
                 });
         });
-        let all_matches = r#"/rust-analyzer/
+        let root_path = format!("{}/", path!("/rust-analyzer"));
+        let all_matches = format!(
+            r#"{root_path}
   crates/
     ide/src/
       inlay_hints/
         fn_lifetime_fn.rs
-          search: match config.param_names_for_lifetime_elision_hints {
-          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
-          search: Some(it) if config.param_names_for_lifetime_elision_hints => {
-          search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
+          search: match config.param_names_for_lifetime_elision_hints {{
+          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {{
+          search: Some(it) if config.param_names_for_lifetime_elision_hints => {{
+          search: InlayHintsConfig {{ param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG }},
       inlay_hints.rs
         search: pub param_names_for_lifetime_elision_hints: bool,
         search: param_names_for_lifetime_elision_hints: self
@@ -5610,7 +5612,8 @@ mod tests {
         analysis_stats.rs
           search: param_names_for_lifetime_elision_hints: true,
       config.rs
-        search: param_names_for_lifetime_elision_hints: self"#;
+        search: param_names_for_lifetime_elision_hints: self"#
+        );
         let select_first_in_all_matches = |line_to_select: &str| {
             assert!(all_matches.contains(line_to_select));
             all_matches.replacen(
@@ -5921,7 +5924,7 @@ mod tests {
     async fn test_navigating_in_singleton(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let root = "/root";
+        let root = path!("/root");
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             root,
@@ -5968,7 +5971,7 @@ struct OutlineEntryExcerpt {
 
         let _editor = workspace
             .update(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/root/src/lib.rs"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(path!("/root/src/lib.rs")), true, window, cx)
             })
             .unwrap()
             .await
@@ -6637,7 +6640,7 @@ outline: struct OutlineEntryExcerpt
             workspace::init_settings(cx);
             Project::init_settings(cx);
             project_search::init(cx);
-            super::init((), cx);
+            super::init(cx);
         });
     }
 

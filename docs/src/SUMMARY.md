@@ -7,6 +7,7 @@
 - [Linux](./linux.md)
 - [Windows](./windows.md)
 - [Telemetry](./telemetry.md)
+- [Workspace Persistence](./workspace-persistence.md)
 - [Additional Learning Materials](./additional-learning-materials.md)
 
 # Configuration
@@ -16,6 +17,7 @@
 - [Key bindings](./key-bindings.md)
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
+- [Icon Themes](./icon-themes.md)
 - [Vim Mode](./vim.md)
 
 <!-- - [Globs](./globs.md) -->

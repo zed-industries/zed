@@ -29,8 +29,7 @@ use gpui::{
 use http_client::{HttpClient, Method};
 use input_excerpt::excerpt_for_cursor_position;
 use language::{
-    Anchor, Buffer, BufferSnapshot, CharClassifier, CharKind, EditPreview, OffsetRangeExt,
-    ToOffset, ToPoint,
+    text_diff, Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToOffset, ToPoint,
 };
 use language_models::LlmApiToken;
 use postage::watch;
@@ -420,8 +419,7 @@ impl Zeta {
             }
 
             let values = cx
-                .background_executor()
-                .spawn({
+                .background_spawn({
                     let snapshot = snapshot.clone();
                     let path = path.clone();
                     async move {
@@ -815,8 +813,7 @@ and then another
             let output_excerpt: Arc<str> = output_excerpt.into();
 
             let edits: Arc<[(Range<Anchor>, String)]> = cx
-                .background_executor()
-                .spawn({
+                .background_spawn({
                     let output_excerpt = output_excerpt.clone();
                     let editable_range = editable_range.clone();
                     let snapshot = snapshot.clone();
@@ -921,77 +918,18 @@ and then another
         offset: usize,
         snapshot: &BufferSnapshot,
     ) -> Vec<(Range<Anchor>, String)> {
-        fn tokenize(text: &str) -> Vec<&str> {
-            let classifier = CharClassifier::new(None).for_completion(true);
-            let mut chars = text.chars().peekable();
-            let mut prev_ch = chars.peek().copied();
-            let mut tokens = Vec::new();
-            let mut start = 0;
-            let mut end = 0;
-            while let Some(ch) = chars.next() {
-                let prev_kind = prev_ch.map(|ch| classifier.kind(ch));
-                let kind = classifier.kind(ch);
-                if Some(kind) != prev_kind || (kind == CharKind::Punctuation && Some(ch) != prev_ch)
-                {
-                    tokens.push(&text[start..end]);
-                    start = end;
-                }
-                end += ch.len_utf8();
-                prev_ch = Some(ch);
-            }
-            tokens.push(&text[start..end]);
-            tokens
-        }
-
-        let old_tokens = tokenize(&old_text);
-        let new_tokens = tokenize(new_text);
-
-        let diff = similar::TextDiffConfig::default()
-            .algorithm(similar::Algorithm::Patience)
-            .diff_slices(&old_tokens, &new_tokens);
-        let mut edits: Vec<(Range<usize>, String)> = Vec::new();
-        let mut old_start = offset;
-        for change in diff.iter_all_changes() {
-            let value = change.value();
-            match change.tag() {
-                similar::ChangeTag::Equal => {
-                    old_start += value.len();
-                }
-                similar::ChangeTag::Delete => {
-                    let old_end = old_start + value.len();
-                    if let Some((last_old_range, _)) = edits.last_mut() {
-                        if last_old_range.end == old_start {
-                            last_old_range.end = old_end;
-                        } else {
-                            edits.push((old_start..old_end, String::new()));
-                        }
-                    } else {
-                        edits.push((old_start..old_end, String::new()));
-                    }
-                    old_start = old_end;
-                }
-                similar::ChangeTag::Insert => {
-                    if let Some((last_old_range, last_new_text)) = edits.last_mut() {
-                        if last_old_range.end == old_start {
-                            last_new_text.push_str(value);
-                        } else {
-                            edits.push((old_start..old_start, value.into()));
-                        }
-                    } else {
-                        edits.push((old_start..old_start, value.into()));
-                    }
-                }
-            }
-        }
-
-        edits
+        text_diff(&old_text, &new_text)
             .into_iter()
             .map(|(mut old_range, new_text)| {
+                old_range.start += offset;
+                old_range.end += offset;
+
                 let prefix_len = common_prefix(
                     snapshot.chars_for_range(old_range.clone()),
                     new_text.chars(),
                 );
                 old_range.start += prefix_len;
+
                 let suffix_len = common_prefix(
                     snapshot.reversed_chars_for_range(old_range.clone()),
                     new_text[prefix_len..].chars().rev(),
@@ -1129,7 +1067,7 @@ impl LicenseDetectionWatcher {
                 .map(|file| worktree.load_file(file, cx))
                 .collect::<ArrayVec<_, { LICENSE_FILES_TO_CHECK.len() }>>();
 
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 for loaded_file in loaded_files.into_iter() {
                     let Ok(loaded_file) = loaded_file.await else {
                         continue;
@@ -1250,10 +1188,7 @@ impl Event {
                     writeln!(prompt, "User renamed {:?} to {:?}\n", old_path, new_path).unwrap();
                 }
 
-                let diff =
-                    similar::TextDiff::from_lines(&old_snapshot.text(), &new_snapshot.text())
-                        .unified_diff()
-                        .to_string();
+                let diff = language::unified_diff(&old_snapshot.text(), &new_snapshot.text());
                 if !diff.is_empty() {
                     write!(
                         prompt,

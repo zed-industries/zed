@@ -104,6 +104,19 @@ pub fn init(cx: &mut App) {
     }
 }
 
+fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
+    WorkspaceSettings::get_global(cx)
+        .on_last_window_closed
+        .is_quit_app()
+        .then(|| {
+            cx.on_window_closed(|cx| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+        })
+}
+
 pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowOptions {
     let display = display_uuid.and_then(|uuid| {
         cx.displays()
@@ -144,6 +157,12 @@ pub fn initialize_workspace(
     prompt_builder: Arc<PromptBuilder>,
     cx: &mut App,
 ) {
+    let mut _on_close_subscription = bind_on_window_closed(cx);
+    cx.observe_global::<SettingsStore>(move |cx| {
+        _on_close_subscription = bind_on_window_closed(cx);
+    })
+    .detach();
+
     cx.observe_new(move |workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
@@ -541,12 +560,16 @@ fn register_actions(
         .register_action({
             let fs = app_state.fs.clone();
             move |_, action: &zed_actions::IncreaseUiFontSize, _window, cx| {
-                theme::adjust_ui_font_size(cx, |size| {
-                    *size += px(1.0);
-                });
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
-                        let _ = settings.ui_font_size.insert(theme::get_ui_font_size(cx).0);
+                        let ui_font_size = theme::get_ui_font_size(cx) + px(1.0);
+                        let _ = settings
+                            .ui_font_size
+                            .insert(theme::clamp_font_size(ui_font_size).0);
+                    });
+                } else {
+                    theme::adjust_ui_font_size(cx, |size| {
+                        *size += px(1.0);
                     });
                 }
             }
@@ -554,12 +577,16 @@ fn register_actions(
         .register_action({
             let fs = app_state.fs.clone();
             move |_, action: &zed_actions::DecreaseUiFontSize, _window, cx| {
-                theme::adjust_ui_font_size(cx, |size| {
-                    *size -= px(1.0);
-                });
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
-                        let _ = settings.ui_font_size.insert(theme::get_ui_font_size(cx).0);
+                        let ui_font_size = theme::get_ui_font_size(cx) - px(1.0);
+                        let _ = settings
+                            .ui_font_size
+                            .insert(theme::clamp_font_size(ui_font_size).0);
+                    });
+                } else {
+                    theme::adjust_ui_font_size(cx, |size| {
+                        *size -= px(1.0);
                     });
                 }
             }
@@ -567,25 +594,28 @@ fn register_actions(
         .register_action({
             let fs = app_state.fs.clone();
             move |_, action: &zed_actions::ResetUiFontSize, _window, cx| {
-                theme::reset_ui_font_size(cx);
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, _| {
-                        let _ = settings.ui_font_size.take();
+                        settings.ui_font_size = None;
                     });
+                } else {
+                    theme::reset_ui_font_size(cx);
                 }
             }
         })
         .register_action({
             let fs = app_state.fs.clone();
             move |_, action: &zed_actions::IncreaseBufferFontSize, _window, cx| {
-                theme::adjust_buffer_font_size(cx, |size| {
-                    *size += px(1.0);
-                });
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                        let buffer_font_size = theme::get_buffer_font_size(cx) + px(1.0);
                         let _ = settings
                             .buffer_font_size
-                            .insert(theme::get_buffer_font_size(cx).0);
+                            .insert(theme::clamp_font_size(buffer_font_size).0);
+                    });
+                } else {
+                    theme::adjust_buffer_font_size(cx, |size| {
+                        *size += px(1.0);
                     });
                 }
             }
@@ -593,14 +623,16 @@ fn register_actions(
         .register_action({
             let fs = app_state.fs.clone();
             move |_, action: &zed_actions::DecreaseBufferFontSize, _window, cx| {
-                theme::adjust_buffer_font_size(cx, |size| {
-                    *size -= px(1.0);
-                });
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                        let buffer_font_size = theme::get_buffer_font_size(cx) - px(1.0);
                         let _ = settings
                             .buffer_font_size
-                            .insert(theme::get_buffer_font_size(cx).0);
+                            .insert(theme::clamp_font_size(buffer_font_size).0);
+                    });
+                } else {
+                    theme::adjust_buffer_font_size(cx, |size| {
+                        *size -= px(1.0);
                     });
                 }
             }
@@ -608,11 +640,12 @@ fn register_actions(
         .register_action({
             let fs = app_state.fs.clone();
             move |_, action: &zed_actions::ResetBufferFontSize, _window, cx| {
-                theme::reset_buffer_font_size(cx);
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, _| {
-                        let _ = settings.buffer_font_size.take();
+                        settings.buffer_font_size = None;
                     });
+                } else {
+                    theme::reset_buffer_font_size(cx);
                 }
             }
         })
@@ -871,7 +904,13 @@ fn initialize_pane(
             toolbar.add_item(multibuffer_hint, window, cx);
             let breadcrumbs = cx.new(|_| Breadcrumbs::new());
             toolbar.add_item(breadcrumbs, window, cx);
-            let buffer_search_bar = cx.new(|cx| search::BufferSearchBar::new(window, cx));
+            let buffer_search_bar = cx.new(|cx| {
+                search::BufferSearchBar::new(
+                    Some(workspace.project().read(cx).languages().clone()),
+                    window,
+                    cx,
+                )
+            });
             toolbar.add_item(buffer_search_bar.clone(), window, cx);
             let proposed_change_bar = cx.new(|_| ProposedChangesEditorToolbar::new());
             toolbar.add_item(proposed_change_bar, window, cx);
@@ -936,7 +975,7 @@ fn install_cli(
                 Some(LINUX_PROMPT_DETAIL),
                 &["Ok"],
             );
-            cx.background_executor().spawn(prompt).detach();
+            cx.background_spawn(prompt).detach();
             return Ok(());
         }
         let path = install_cli::install_cli(cx.deref())
@@ -1315,7 +1354,7 @@ fn show_markdown_app_notification<F>(
 ) where
     F: 'static + Send + Sync + Fn(&mut Window, &mut Context<MessageNotification>),
 {
-    let parsed_markdown = cx.background_executor().spawn(async move {
+    let parsed_markdown = cx.background_spawn(async move {
         let file_location_directory = None;
         let language_registry = None;
         markdown_preview::markdown_parser::parse_markdown(
@@ -1711,7 +1750,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                "/root",
+                path!("/root"),
                 json!({
                     "a": {
                     },
@@ -1721,7 +1760,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/a/new")],
+                &[PathBuf::from(path!("/root/a/new"))],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -3925,7 +3964,7 @@ mod tests {
         assert_key_bindings_for(
             workspace.into(),
             cx,
-            vec![("backspace", &B), ("[", &ActivatePrevItem)],
+            vec![("backspace", &B), ("{", &ActivatePrevItem)],
             line!(),
         );
     }
@@ -4184,8 +4223,8 @@ mod tests {
             editor::init(cx);
             collab_ui::init(&app_state, cx);
             git_ui::init(cx);
-            project_panel::init((), cx);
-            outline_panel::init((), cx);
+            project_panel::init(cx);
+            outline_panel::init(cx);
             terminal_view::init(cx);
             copilot::copilot_chat::init(
                 app_state.fs.clone(),

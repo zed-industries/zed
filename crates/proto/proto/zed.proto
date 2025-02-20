@@ -320,7 +320,8 @@ message Envelope {
         GitReset git_reset = 301;
         GitCommitDetails git_commit_details = 302;
 
-        SetIndexText set_index_text = 299; // current max
+        SetIndexText set_index_text = 299;
+        GitCheckoutFiles git_checkout_files = 303; // current max
     }
 
     reserved 87 to 88;
@@ -789,6 +790,7 @@ message Symbol {
     PointUtf16 start = 7;
     PointUtf16 end = 8;
     bytes signature = 9;
+    uint64 language_server_id = 10;
 }
 
 message OpenBufferForSymbol {
@@ -2685,6 +2687,14 @@ message GitReset {
         SOFT = 0;
         MIXED = 1;
     }
+}
+
+message GitCheckoutFiles {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string commit = 4;
+    repeated string paths = 5;
 }
 
 message GetPanicFilesResponse {

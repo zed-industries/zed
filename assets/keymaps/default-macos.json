@@ -28,10 +28,10 @@
       "cmd-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "cmd-o": "workspace::Open",
-      "cmd-=": ["zed::IncreaseBufferFontSize", { "persist": true }],
-      "cmd-+": ["zed::IncreaseBufferFontSize", { "persist": true }],
-      "cmd--": ["zed::DecreaseBufferFontSize", { "persist": true }],
-      "cmd-0": ["zed::ResetBufferFontSize", { "persist": true }],
+      "cmd-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
+      "cmd-+": ["zed::IncreaseBufferFontSize", { "persist": false }],
+      "cmd--": ["zed::DecreaseBufferFontSize", { "persist": false }],
+      "cmd-0": ["zed::ResetBufferFontSize", { "persist": false }],
       "cmd-,": "zed::OpenSettings",
       "cmd-q": "zed::Quit",
       "cmd-h": "zed::Hide",
@@ -126,7 +126,10 @@
       "ctrl-shift-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
       "cmd-;": "editor::ToggleLineNumbers",
-      "cmd-alt-z": "editor::RevertSelectedHunks",
+      "cmd-alt-z": "git::Restore",
+      "cmd-alt-y": "git::ToggleStaged",
+      "cmd-y": "git::StageAndNext",
+      "cmd-shift-y": "git::UnstageAndNext",
       "cmd-'": "editor::ToggleSelectedDiffHunks",
       "cmd-\"": "editor::ExpandAllHunkDiffs",
       "cmd-alt-g b": "editor::ToggleGitBlame",
@@ -206,6 +209,7 @@
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-k h": "assistant::DeployHistory",
       "cmd-k l": "assistant::DeployPromptLibrary",
+      "cmd-t": "assistant::NewContext",
       "cmd-n": "assistant::NewContext"
     }
   },
@@ -218,6 +222,7 @@
       "cmd-s": "workspace::Save",
       "cmd->": "assistant::QuoteSelection",
       "cmd-<": "assistant::InsertIntoEditor",
+      "cmd-alt-/": "assistant::ToggleModelSelector",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",
@@ -282,7 +287,8 @@
       "alt-enter": "search::SelectAllMatches",
       "cmd-f": "search::FocusSearch",
       "cmd-alt-f": "search::ToggleReplace",
-      "cmd-alt-l": "search::ToggleSelection"
+      "cmd-alt-l": "search::ToggleSelection",
+      "cmd-shift-o": "outline::Toggle"
     }
   },
   {
@@ -460,7 +466,7 @@
       "ctrl-9": ["pane::ActivateItem", 8],
       "ctrl-0": "pane::ActivateLastItem",
       "ctrl--": "pane::GoBack",
-      "ctrl-shift--": "pane::GoForward",
+      "ctrl-_": "pane::GoForward",
       "cmd-shift-f": "pane::DeploySearch"
     }
   },
@@ -784,14 +790,7 @@
     }
   },
   {
-    "context": "FileFinder",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd": "file_finder::ToggleMenu"
-    }
-  },
-  {
-    "context": "FileFinder && !menu_open",
+    "context": "FileFinder || (FileFinder > Picker > Editor) || (FileFinder > Picker > menu)",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-shift-p": "file_finder::SelectPrev",
@@ -799,16 +798,6 @@
       "cmd-k": "pane::SplitUp",
       "cmd-h": "pane::SplitLeft",
       "cmd-l": "pane::SplitRight"
-    }
-  },
-  {
-    "context": "FileFinder && menu_open",
-    "use_key_equivalents": true,
-    "bindings": {
-      "j": "pane::SplitDown",
-      "k": "pane::SplitUp",
-      "h": "pane::SplitLeft",
-      "l": "pane::SplitRight"
     }
   },
   {

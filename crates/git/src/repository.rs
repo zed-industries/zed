@@ -84,12 +84,12 @@ pub trait GitRepository: Send + Sync {
 
     /// Returns the contents of an entry in the repository's index, or None if there is no entry for the given path.
     ///
-    /// Note that for symlink entries, this will return the contents of the symlink, not the target.
+    /// Also returns `None` for symlinks.
     fn load_index_text(&self, path: &RepoPath) -> Option<String>;
 
     /// Returns the contents of an entry in the repository's HEAD, or None if HEAD does not exist or has no entry for the given path.
     ///
-    /// Note that for symlink entries, this will return the contents of the symlink, not the target.
+    /// Also returns `None` for symlinks.
     fn load_committed_text(&self, path: &RepoPath) -> Option<String>;
 
     fn set_index_text(&self, path: &RepoPath, content: Option<String>) -> anyhow::Result<()>;
@@ -111,6 +111,7 @@ pub trait GitRepository: Send + Sync {
     fn branch_exits(&self, _: &str) -> Result<bool>;
 
     fn reset(&self, commit: &str, mode: ResetMode) -> Result<()>;
+    fn checkout_files(&self, commit: &str, paths: &[RepoPath]) -> Result<()>;
 
     fn show(&self, commit: &str) -> Result<CommitDetails>;
 
@@ -233,6 +234,31 @@ impl GitRepository for RealGitRepository {
         Ok(())
     }
 
+    fn checkout_files(&self, commit: &str, paths: &[RepoPath]) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let working_directory = self
+            .repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")?
+            .to_path_buf();
+
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["checkout", commit, "--"])
+            .args(paths.iter().map(|path| path.as_ref()))
+            .output()?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to checkout files:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(())
+    }
+
     fn load_index_text(&self, path: &RepoPath) -> Option<String> {
         fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
             const STAGE_NORMAL: i32 = 0;
@@ -260,8 +286,11 @@ impl GitRepository for RealGitRepository {
     fn load_committed_text(&self, path: &RepoPath) -> Option<String> {
         let repo = self.repository.lock();
         let head = repo.head().ok()?.peel_to_tree().log_err()?;
-        let oid = head.get_path(path).ok()?.id();
-        let content = repo.find_blob(oid).log_err()?.content().to_owned();
+        let entry = head.get_path(path).ok()?;
+        if entry.filemode() == i32::from(git2::FileMode::Link) {
+            return None;
+        }
+        let content = repo.find_blob(entry.id()).log_err()?.content().to_owned();
         let content = String::from_utf8(content).log_err()?;
         Some(content)
     }
@@ -614,6 +643,10 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn reset(&self, _: &str, _: ResetMode) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn checkout_files(&self, _: &str, _: &[RepoPath]) -> Result<()> {
         unimplemented!()
     }
 

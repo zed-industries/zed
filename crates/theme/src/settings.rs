@@ -1,7 +1,7 @@
 use crate::fallback_themes::zed_default_dark;
 use crate::{
-    Appearance, IconTheme, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent,
-    DEFAULT_ICON_THEME_NAME,
+    Appearance, IconTheme, IconThemeNotFoundError, SyntaxTheme, Theme, ThemeNotFoundError,
+    ThemeRegistry, ThemeStyleContent, DEFAULT_ICON_THEME_NAME,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -157,7 +157,11 @@ impl ThemeSettings {
             // If the selected theme doesn't exist, fall back to a default theme
             // based on the system appearance.
             let theme_registry = ThemeRegistry::global(cx);
-            if theme_registry.get(theme_name).ok().is_none() {
+            if let Err(err @ ThemeNotFoundError(_)) = theme_registry.get(theme_name) {
+                if theme_registry.extensions_loaded() {
+                    log::error!("{err}");
+                }
+
                 theme_name = Self::default_theme(*system_appearance);
             };
 
@@ -180,11 +184,13 @@ impl ThemeSettings {
 
             // If the selected icon theme doesn't exist, fall back to the default theme.
             let theme_registry = ThemeRegistry::global(cx);
-            if theme_registry
-                .get_icon_theme(icon_theme_name)
-                .ok()
-                .is_none()
+            if let Err(err @ IconThemeNotFoundError(_)) =
+                theme_registry.get_icon_theme(icon_theme_name)
             {
+                if theme_registry.extensions_loaded() {
+                    log::error!("{err}");
+                }
+
                 icon_theme_name = DEFAULT_ICON_THEME_NAME;
             };
 
@@ -557,9 +563,10 @@ impl BufferLineHeight {
 impl ThemeSettings {
     /// Returns the buffer font size.
     pub fn buffer_font_size(&self, cx: &App) -> Pixels {
-        cx.try_global::<AdjustedBufferFontSize>()
-            .map_or(self.buffer_font_size, |size| size.0)
-            .max(MIN_FONT_SIZE)
+        let font_size = cx
+            .try_global::<AdjustedBufferFontSize>()
+            .map_or(self.buffer_font_size, |size| size.0);
+        clamp_font_size(font_size)
     }
 
     // TODO: Rename: `line_height` -> `buffer_line_height`
@@ -577,9 +584,14 @@ impl ThemeSettings {
 
         let mut new_theme = None;
 
-        if let Some(theme) = themes.get(theme).log_err() {
-            self.active_theme = theme.clone();
-            new_theme = Some(theme);
+        match themes.get(theme) {
+            Ok(theme) => {
+                self.active_theme = theme.clone();
+                new_theme = Some(theme);
+            }
+            Err(err @ ThemeNotFoundError(_)) => {
+                log::error!("{err}");
+            }
         }
 
         self.apply_theme_overrides();
@@ -644,14 +656,16 @@ pub fn observe_buffer_font_size_adjustment<V: 'static>(
 
 /// Sets the adjusted buffer font size.
 pub fn adjusted_font_size(size: Pixels, cx: &App) -> Pixels {
-    if let Some(AdjustedBufferFontSize(adjusted_size)) = cx.try_global::<AdjustedBufferFontSize>() {
+    let adjusted_font_size = if let Some(AdjustedBufferFontSize(adjusted_size)) =
+        cx.try_global::<AdjustedBufferFontSize>()
+    {
         let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
         let delta = *adjusted_size - buffer_font_size;
         size + delta
     } else {
         size
-    }
-    .max(MIN_FONT_SIZE)
+    };
+    clamp_font_size(adjusted_font_size)
 }
 
 /// Returns the adjusted buffer font size.
@@ -669,8 +683,7 @@ pub fn adjust_buffer_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
         .map_or(buffer_font_size, |adjusted_size| adjusted_size.0);
 
     f(&mut adjusted_size);
-    adjusted_size = adjusted_size.max(MIN_FONT_SIZE);
-    cx.set_global(AdjustedBufferFontSize(adjusted_size));
+    cx.set_global(AdjustedBufferFontSize(clamp_font_size(adjusted_size)));
     cx.refresh_windows();
 }
 
@@ -715,8 +728,7 @@ pub fn adjust_ui_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
         .map_or(ui_font_size, |adjusted_size| adjusted_size.0);
 
     f(&mut adjusted_size);
-    adjusted_size = adjusted_size.max(MIN_FONT_SIZE);
-    cx.set_global(AdjustedUiFontSize(adjusted_size));
+    cx.set_global(AdjustedUiFontSize(clamp_font_size(adjusted_size)));
     cx.refresh_windows();
 }
 
@@ -731,6 +743,11 @@ pub fn reset_ui_font_size(cx: &mut App) {
         cx.remove_global::<AdjustedUiFontSize>();
         cx.refresh_windows();
     }
+}
+
+/// Ensures font size is within the valid range.
+pub fn clamp_font_size(size: Pixels) -> Pixels {
+    size.max(MIN_FONT_SIZE)
 }
 
 fn clamp_font_weight(weight: f32) -> FontWeight {
@@ -832,8 +849,15 @@ impl settings::Settings for ThemeSettings {
 
                 let theme_name = value.theme(*system_appearance);
 
-                if let Some(theme) = themes.get(theme_name).log_err() {
-                    this.active_theme = theme;
+                match themes.get(theme_name) {
+                    Ok(theme) => {
+                        this.active_theme = theme;
+                    }
+                    Err(err @ ThemeNotFoundError(_)) => {
+                        if themes.extensions_loaded() {
+                            log::error!("{err}");
+                        }
+                    }
                 }
             }
 
@@ -845,8 +869,15 @@ impl settings::Settings for ThemeSettings {
 
                 let icon_theme_name = value.icon_theme(*system_appearance);
 
-                if let Some(icon_theme) = themes.get_icon_theme(icon_theme_name).log_err() {
-                    this.active_icon_theme = icon_theme;
+                match themes.get_icon_theme(icon_theme_name) {
+                    Ok(icon_theme) => {
+                        this.active_icon_theme = icon_theme;
+                    }
+                    Err(err @ IconThemeNotFoundError(_)) => {
+                        if themes.extensions_loaded() {
+                            log::error!("{err}");
+                        }
+                    }
                 }
             }
 

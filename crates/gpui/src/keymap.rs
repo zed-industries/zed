@@ -188,6 +188,25 @@ impl Keymap {
 
         true
     }
+
+    /// WARN: Assumes the bindings are in the order they were added to the keymap
+    /// returns the last binding for the given bindings, which
+    /// should be the user's binding in their keymap.json if they've set one,
+    /// otherwise, the last declared binding for this action in the base keymaps
+    /// (with Vim mode bindings being considered as declared later if Vim mode
+    /// is enabled)
+    ///
+    /// If you are considering changing the behavior of this function
+    /// (especially to fix a user reported issue) see issues #23621, #24931,
+    /// and possibly others as evidence that it has swapped back and forth a
+    /// couple times. The decision as of now is to pick a side and leave it
+    /// as is, until we have a better way to decide which binding to display
+    /// that is consistent and not confusing.
+    pub fn binding_to_display_from_bindings<'a>(
+        bindings: impl IntoIterator<Item = &'a KeyBinding>,
+    ) -> Option<&'a KeyBinding> {
+        return bindings.into_iter().last();
+    }
 }
 
 #[cfg(test)]
