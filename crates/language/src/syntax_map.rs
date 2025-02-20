@@ -1579,13 +1579,9 @@ impl<'a> SyntaxLayer<'a> {
         }
     }
 
-
-    pub fn next_prev_sibling(&self, range: Range<usize>, direction: &SiblingDirection) -> Option<Node<'a>> {
+    pub fn next_prev_sibling(&self, range: Range<usize>, direction: &SiblingDirection, named_only: bool) -> Option<Node<'a>> {
         let mut current_node = self.smallest_containing_node(range);
-        dbg!(direction);
-        dbg!(&current_node);
         loop {
-            dbg!(&current_node);
             match current_node {
                 Some(node) => {
                     match match direction {
@@ -1593,10 +1589,17 @@ impl<'a> SyntaxLayer<'a> {
                         SiblingDirection::Previous => node.prev_sibling(),
                     } {
                         Some(sibling) => {
-                            break Some(sibling);
+                            if named_only{
+                                if sibling.is_named() {
+                                    break Some(sibling);
+                                }else{
+                                    current_node = Some(sibling);
+                                }
+                            } else {
+                                break Some(sibling);
+                            }
                         }
                         None => {
-                            dbg!("no sibling");
                             current_node = node.parent();
                         }
                     }

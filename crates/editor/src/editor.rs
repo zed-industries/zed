@@ -10084,6 +10084,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
         direction: SyntaxMovement,
+        named_only: bool,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
@@ -10104,9 +10105,9 @@ impl Editor {
                         match direction {
                             SyntaxMovement::Parent => buffer.syntax_ancestor(new_range.clone()),
                             SyntaxMovement::NextSibling => 
-                                buffer.syntax_sibling(new_range.clone(), SiblingDirection::Next),
+                                buffer.syntax_sibling(new_range.clone(), SiblingDirection::Next, named_only),
                             SyntaxMovement::PreviousSibling => 
-                                buffer.syntax_sibling(new_range.clone(), SiblingDirection::Previous),
+                                buffer.syntax_sibling(new_range.clone(), SiblingDirection::Previous, named_only),
                         }
                 {
                     new_node = Some(node);
@@ -10155,7 +10156,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select_syntax_helper(window, cx, SyntaxMovement::Parent);
+        self.select_syntax_helper(window, cx, SyntaxMovement::Parent, false);
     }
 
     pub fn select_next_syntax_node(
@@ -10164,7 +10165,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select_syntax_helper(window, cx, SyntaxMovement::NextSibling);
+        self.select_syntax_helper(window, cx, SyntaxMovement::NextSibling, true);
     }
 
     pub fn select_previous_syntax_node(
@@ -10173,7 +10174,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select_syntax_helper(window, cx, SyntaxMovement::PreviousSibling);
+        self.select_syntax_helper(window, cx, SyntaxMovement::PreviousSibling, true);
     }
     
 

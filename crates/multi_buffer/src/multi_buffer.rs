@@ -5691,12 +5691,13 @@ impl MultiBufferSnapshot {
         &self,
         range: Range<T>,
         direction: SiblingDirection,
+        named_only: bool,
     ) -> Option<(tree_sitter::Node, Range<usize>)> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut excerpt = self.excerpt_containing(range.clone())?;
         let node = excerpt
             .buffer()
-            .syntax_sibling(excerpt.map_range_to_buffer(range), direction)?;
+            .syntax_sibling(excerpt.map_range_to_buffer(range), direction, named_only)?;
         Some((node, excerpt.map_range_from_buffer(node.byte_range())))
     }
 

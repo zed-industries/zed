@@ -3228,6 +3228,7 @@ impl BufferSnapshot {
         &'a self,
         range: Range<T>,
         direction: SiblingDirection,
+        named_only: bool,
     ) -> Option<tree_sitter::Node<'a>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut result: Option<tree_sitter::Node<'a>> = None;
@@ -3235,7 +3236,7 @@ impl BufferSnapshot {
             .syntax
             .layers_for_range(range.clone(), &self.text, true)
         {
-            match layer.next_prev_sibling(range.clone(), &direction) {
+            match layer.next_prev_sibling(range.clone(), &direction, named_only) {
                 Some(node) => {
                     result = Some(node);
                     break;
