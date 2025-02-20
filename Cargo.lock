@@ -2235,7 +2235,7 @@ dependencies = [
  "cap-primitives",
  "cap-std",
  "io-lifetimes",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2263,7 +2263,7 @@ dependencies = [
  "ipnet",
  "maybe-owned",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
  "winx",
 ]
 
@@ -4283,7 +4283,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4944,7 +4944,7 @@ checksum = "5e2e6123af26f0f2c51cc66869137080199406754903cc926a7690401ce09cb4"
 dependencies = [
  "io-lifetimes",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6574,7 +6574,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2285ddfe3054097ef4b2fe909ef8c3bcd1ea52a8f0d274416caebeef39f04a65"
 dependencies = [
  "io-lifetimes",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -10529,7 +10529,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11451,7 +11451,7 @@ dependencies = [
  "libc",
  "linux-raw-sys",
  "once_cell",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -13201,7 +13201,7 @@ dependencies = [
  "fd-lock",
  "io-lifetimes",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
  "winx",
 ]
 
@@ -13332,16 +13332,16 @@ dependencies = [
 
 [[package]]
 name = "tempfile"
-version = "3.16.0"
+version = "3.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38c246215d7d24f48ae091a2902398798e05d978b24315d6efbc00ede9a8bb91"
+checksum = "22e5a0acb1f3f55f65cc4a866c361b2fb2a0ff6366785ae6fbb5f85df07ba230"
 dependencies = [
  "cfg-if",
  "fastrand 2.3.0",
  "getrandom 0.3.1",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -16131,7 +16131,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f3fd376f71958b862e7afb20cfe5a22830e1963462f3a17f49d82a6c1d1f42d"
 dependencies = [
  "bitflags 2.8.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
