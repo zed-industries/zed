@@ -569,6 +569,7 @@ pub enum IsVimMode {
     No,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum SyntaxMovement {
     Parent,
     NextSibling,
@@ -10091,7 +10092,7 @@ impl Editor {
         let old_selections = self.selections.all::<usize>(cx).into_boxed_slice();
 
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
-        let mut selected_larger_node = false;
+        let mut selected_next_node = false;
         let new_selections = old_selections
             .iter()
             .map(|selection| {
@@ -10130,7 +10131,7 @@ impl Editor {
                     log::info!("Grandparent: {grandparent:?}");
                 }
 
-                selected_larger_node |= new_range != old_range;
+                selected_next_node |= new_range != old_range;
                 Selection {
                     id: selection.id,
                     start: new_range.start,
@@ -10141,8 +10142,10 @@ impl Editor {
             })
             .collect::<Vec<_>>();
 
-        if selected_larger_node {
-            stack.push(old_selections);
+        if selected_next_node {
+            if direction == SyntaxMovement::Parent {
+                stack.push(old_selections);
+            }
             self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select(new_selections);
             });
