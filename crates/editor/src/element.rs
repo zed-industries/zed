@@ -1617,6 +1617,7 @@ impl EditorElement {
         crease_trailers: &[Option<CreaseTrailerLayout>],
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
+        inline_completion_popover_origin: Option<gpui::Point<Pixels>>,
         start_row: DisplayRow,
         end_row: DisplayRow,
         line_height: Pixels,
@@ -1724,12 +1725,24 @@ impl EditorElement {
                 cmp::max(padded_line, min_start)
             };
 
+            let behind_inline_completion_popover = inline_completion_popover_origin
+                .as_ref()
+                .map_or(false, |inline_completion_popover_origin| {
+                    (pos_y..pos_y + line_height).contains(&inline_completion_popover_origin.y)
+                });
+            let opacity = if behind_inline_completion_popover {
+                0.5
+            } else {
+                1.0
+            };
+
             let mut element = h_flex()
                 .id(("diagnostic", row.0))
                 .h(line_height)
                 .w_full()
                 .px_1()
                 .rounded_sm()
+                .opacity(opacity)
                 .bg(severity_to_color(&diagnostic_to_render.severity)
                     .color(cx)
                     .opacity(0.05))
@@ -3710,7 +3723,7 @@ impl EditorElement {
         style: &EditorStyle,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<AnyElement> {
+    ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
         const PADDING_X: Pixels = Pixels(24.);
         const PADDING_Y: Pixels = Pixels(2.);
 
@@ -3763,7 +3776,7 @@ impl EditorElement {
                         let origin = start_point + point(cursor_character_x, PADDING_Y);
 
                         element.prepaint_at(origin, window, cx);
-                        return Some(element);
+                        return Some((element, origin));
                     } else if target_display_point.row() >= visible_row_range.end {
                         let mut element = editor
                             .render_edit_prediction_line_popover(
@@ -3791,7 +3804,7 @@ impl EditorElement {
                             );
 
                         element.prepaint_at(origin, window, cx);
-                        return Some(element);
+                        return Some((element, origin));
                     } else {
                         const POLE_WIDTH: Pixels = px(2.);
 
@@ -3831,7 +3844,7 @@ impl EditorElement {
 
                         element.prepaint_at(origin, window, cx);
 
-                        return Some(element);
+                        return Some((element, origin));
                     }
                 }
 
@@ -3848,8 +3861,9 @@ impl EditorElement {
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
 
-                    element.prepaint_at(text_bounds.origin + offset, window, cx);
-                    Some(element)
+                    let origin = text_bounds.origin + offset;
+                    element.prepaint_at(origin, window, cx);
+                    Some((element, origin))
                 } else if (target_display_point.row().as_f32() + 1.) > scroll_bottom {
                     let mut element = editor
                         .render_edit_prediction_line_popover(
@@ -3866,8 +3880,9 @@ impl EditorElement {
                         text_bounds.size.height - size.height - PADDING_Y,
                     );
 
-                    element.prepaint_at(text_bounds.origin + offset, window, cx);
-                    Some(element)
+                    let origin = text_bounds.origin + offset;
+                    element.prepaint_at(origin, window, cx);
+                    Some((element, origin))
                 } else {
                     let mut element = editor
                         .render_edit_prediction_line_popover("Jump to Edit", None, window, cx)?
@@ -3880,13 +3895,9 @@ impl EditorElement {
                         editor.display_to_pixel_point(target_line_end, editor_snapshot, window)
                     })?;
 
-                    element.prepaint_as_root(
-                        clamp_start(start_point + origin + point(PADDING_X, px(0.))),
-                        AvailableSpace::min_size(),
-                        window,
-                        cx,
-                    );
-                    Some(element)
+                    let origin = clamp_start(start_point + origin + point(PADDING_X, px(0.)));
+                    element.prepaint_as_root(origin, AvailableSpace::min_size(), window, cx);
+                    Some((element, origin))
                 }
             }
             InlineCompletion::Edit {
@@ -3942,13 +3953,9 @@ impl EditorElement {
                             ))
                         })?;
 
-                        element.prepaint_as_root(
-                            clamp_start(start_point + origin + point(PADDING_X, px(0.))),
-                            AvailableSpace::min_size(),
-                            window,
-                            cx,
-                        );
-                        return Some(element);
+                        let origin = clamp_start(start_point + origin + point(PADDING_X, px(0.)));
+                        element.prepaint_as_root(origin, AvailableSpace::min_size(), window, cx);
+                        return Some((element, origin));
                     }
                     EditDisplayMode::Inline => return None,
                     EditDisplayMode::DiffPopover => {}
@@ -7370,11 +7377,31 @@ impl Element for EditorElement {
                             )
                         });
 
+                    let (inline_completion_popover, inline_completion_popover_origin) = self
+                        .layout_edit_prediction_popover(
+                            &text_hitbox.bounds,
+                            content_origin,
+                            &snapshot,
+                            start_row..end_row,
+                            scroll_position.y,
+                            scroll_position.y + height_in_lines,
+                            &line_layouts,
+                            line_height,
+                            scroll_pixel_position,
+                            newest_selection_head,
+                            editor_width,
+                            &style,
+                            window,
+                            cx,
+                        )
+                        .unzip();
+
                     let mut inline_diagnostics = self.layout_inline_diagnostics(
                         &line_layouts,
                         &crease_trailers,
                         content_origin,
                         scroll_pixel_position,
+                        inline_completion_popover_origin,
                         start_row,
                         end_row,
                         line_height,
@@ -7643,23 +7670,6 @@ impl Element for EditorElement {
                             cx,
                         );
                     }
-
-                    let inline_completion_popover = self.layout_edit_prediction_popover(
-                        &text_hitbox.bounds,
-                        content_origin,
-                        &snapshot,
-                        start_row..end_row,
-                        scroll_position.y,
-                        scroll_position.y + height_in_lines,
-                        &line_layouts,
-                        line_height,
-                        scroll_pixel_position,
-                        newest_selection_head,
-                        editor_width,
-                        &style,
-                        window,
-                        cx,
-                    );
 
                     let mouse_context_menu = self.layout_mouse_context_menu(
                         &snapshot,
