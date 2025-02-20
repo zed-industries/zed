@@ -9,6 +9,7 @@ pub use position::{TypedOffset, TypedPoint, TypedRow};
 use anyhow::{anyhow, Result};
 use buffer_diff::{
     BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffHunkSecondaryStatus, DiffHunkStatus,
+    DiffHunkStatusKind,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
@@ -135,12 +136,16 @@ pub struct MultiBufferDiffHunk {
 
 impl MultiBufferDiffHunk {
     pub fn status(&self) -> DiffHunkStatus {
-        if self.buffer_range.start == self.buffer_range.end {
-            DiffHunkStatus::Removed(self.secondary_status)
+        let kind = if self.buffer_range.start == self.buffer_range.end {
+            DiffHunkStatusKind::Deleted
         } else if self.diff_base_byte_range.is_empty() {
-            DiffHunkStatus::Added(self.secondary_status)
+            DiffHunkStatusKind::Added
         } else {
-            DiffHunkStatus::Modified(self.secondary_status)
+            DiffHunkStatusKind::Modified
+        };
+        DiffHunkStatus {
+            kind,
+            secondary: self.secondary_status,
         }
     }
 }
@@ -2902,6 +2907,7 @@ impl MultiBuffer {
         snapshot.check_invariants();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn recompute_diff_transforms_for_edit(
         &self,
         edit: &Edit<TypedOffset<Excerpt>>,
@@ -5160,11 +5166,11 @@ impl MultiBufferSnapshot {
             excerpt
                 .buffer()
                 .enclosing_bracket_ranges(excerpt.map_range_to_buffer(range))
-                .filter_map(move |(open, close)| {
-                    if excerpt.contains_buffer_range(open.start..close.end) {
+                .filter_map(move |pair| {
+                    if excerpt.contains_buffer_range(pair.open_range.start..pair.close_range.end) {
                         Some((
-                            excerpt.map_range_from_buffer(open),
-                            excerpt.map_range_from_buffer(close),
+                            excerpt.map_range_from_buffer(pair.open_range),
+                            excerpt.map_range_from_buffer(pair.close_range),
                         ))
                     } else {
                         None
@@ -5211,12 +5217,12 @@ impl MultiBufferSnapshot {
             excerpt
                 .buffer()
                 .bracket_ranges(excerpt.map_range_to_buffer(range))
-                .filter_map(move |(start_bracket_range, close_bracket_range)| {
-                    let buffer_range = start_bracket_range.start..close_bracket_range.end;
+                .filter_map(move |pair| {
+                    let buffer_range = pair.open_range.start..pair.close_range.end;
                     if excerpt.contains_buffer_range(buffer_range) {
                         Some((
-                            excerpt.map_range_from_buffer(start_bracket_range),
-                            excerpt.map_range_from_buffer(close_bracket_range),
+                            excerpt.map_range_from_buffer(pair.open_range),
+                            excerpt.map_range_from_buffer(pair.close_range),
                         ))
                     } else {
                         None
@@ -6219,7 +6225,7 @@ where
                     excerpt,
                     has_trailing_newline: *has_trailing_newline,
                     is_main_buffer: false,
-                    diff_hunk_status: Some(DiffHunkStatus::Removed(
+                    diff_hunk_status: Some(DiffHunkStatus::deleted(
                         hunk_info.hunk_secondary_status,
                     )),
                     buffer_range: buffer_start..buffer_end,
@@ -6265,7 +6271,7 @@ where
                     has_trailing_newline,
                     is_main_buffer: true,
                     diff_hunk_status: inserted_hunk_info
-                        .map(|info| DiffHunkStatus::Added(info.hunk_secondary_status)),
+                        .map(|info| DiffHunkStatus::added(info.hunk_secondary_status)),
                     buffer_range: buffer_start..buffer_end,
                     range: start..end,
                 })

@@ -7,6 +7,7 @@ import { IncomingWebhook } from "@slack/webhook";
  * [Slack Docs](https://api.slack.com/reference/block-kit/blocks#section)
  */
 const SECTION_BLOCK_TEXT_LIMIT = 3000;
+const GITHUB_ISSUES_URL = "https://github.com/zed-industries/zed/issues";
 
 async function main() {
   const octokit = new Octokit({
@@ -92,6 +93,16 @@ async function main() {
       text: section.join("").trimEnd(),
     },
   }));
+
+  const issuesUrl = `${GITHUB_ISSUES_URL}?q=${encodeURIComponent(q.join(" "))}`;
+
+  blocks.push({
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: `<${issuesUrl}|View on GitHub>`,
+    },
+  });
 
   await webhook.send({ blocks });
 }

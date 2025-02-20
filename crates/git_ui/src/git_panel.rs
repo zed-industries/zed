@@ -13,10 +13,10 @@ use editor::{
 };
 use git::repository::{CommitDetails, ResetMode};
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
-use git::{DiscardTrackedChanges, StageAll, TrashUntrackedFiles, UnstageAll};
+use git::{RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::*;
 use itertools::Itertools;
-use language::{markdown, Buffer, File, ParsedMarkdown};
+use language::{Buffer, File};
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use multi_buffer::ExcerptInfo;
 use panel::{panel_editor_container, panel_editor_style, panel_filled_button, PanelHeader};
@@ -625,7 +625,7 @@ impl GitPanel {
 
     fn revert_selected(
         &mut self,
-        _: &editor::actions::RevertFile,
+        _: &git::RestoreFile,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -763,7 +763,7 @@ impl GitPanel {
 
     fn discard_tracked_changes(
         &mut self,
-        _: &DiscardTrackedChanges,
+        _: &RestoreTrackedFiles,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1539,7 +1539,7 @@ impl GitPanel {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> Option<impl IntoElement> {
         let all_repositories = self
             .project
             .read(cx)
@@ -1554,17 +1554,21 @@ impl GitPanel {
                 .is_above_project()
         });
 
-        self.panel_header_container(window, cx).when(
-            all_repositories.len() > 1 || has_repo_above,
-            |el| {
-                el.child(
-                    Label::new("Repository")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .child(self.render_repository_selector(cx))
-            },
-        )
+        let has_visible_repo = all_repositories.len() > 0 || has_repo_above;
+
+        if has_visible_repo {
+            Some(
+                self.panel_header_container(window, cx)
+                    .child(
+                        Label::new("Repository")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(self.render_repository_selector(cx)),
+            )
+        } else {
+            None
+        }
     }
 
     pub fn render_repository_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1690,6 +1694,7 @@ impl GitPanel {
             .border_t_1()
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().editor_background)
+            .cursor_text()
             .on_click(cx.listener(move |_, _: &ClickEvent, window, _cx| {
                 window.focus(&editor_focus_handle);
             }))
@@ -2014,7 +2019,7 @@ impl GitPanel {
         let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
             context_menu
                 .action("Stage File", ToggleStaged.boxed_clone())
-                .action(revert_title, editor::actions::RevertFile.boxed_clone())
+                .action(revert_title, git::RestoreFile.boxed_clone())
                 .separator()
                 .action("Open Diff", Confirm.boxed_clone())
                 .action("Open File", SecondaryConfirm.boxed_clone())
@@ -2035,10 +2040,7 @@ impl GitPanel {
                 .action("Unstage All", UnstageAll.boxed_clone())
                 .action("Open Diff", project_diff::Diff.boxed_clone())
                 .separator()
-                .action(
-                    "Discard Tracked Changes",
-                    DiscardTrackedChanges.boxed_clone(),
-                )
+                .action("Discard Tracked Changes", RestoreTrackedFiles.boxed_clone())
                 .action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
         });
         self.set_context_menu(context_menu, position, window, cx);
@@ -2260,7 +2262,7 @@ impl Render for GitPanel {
             .size_full()
             .overflow_hidden()
             .bg(ElevationIndex::Surface.bg(cx))
-            .child(self.render_panel_header(window, cx))
+            .children(self.render_panel_header(window, cx))
             .child(if has_entries {
                 self.render_entries(has_write_access, window, cx)
                     .into_any_element()
@@ -2292,7 +2294,7 @@ impl EventEmitter<Event> for GitPanel {}
 impl EventEmitter<PanelEvent> for GitPanel {}
 
 pub(crate) struct GitPanelAddon {
-    pub(crate) git_panel: Entity<GitPanel>,
+    pub(crate) workspace: WeakEntity<Workspace>,
 }
 
 impl editor::Addon for GitPanelAddon {
@@ -2307,9 +2309,11 @@ impl editor::Addon for GitPanelAddon {
         cx: &App,
     ) -> Option<AnyElement> {
         let file = excerpt_info.buffer.file()?;
-        let git_panel = self.git_panel.read(cx);
+        let git_panel = self.workspace.upgrade()?.read(cx).panel::<GitPanel>(cx)?;
 
-        git_panel.render_buffer_header_controls(&self.git_panel, &file, window, cx)
+        git_panel
+            .read(cx)
+            .render_buffer_header_controls(&git_panel, &file, window, cx)
     }
 }
 
@@ -2375,30 +2379,13 @@ impl GitPanelMessageTooltip {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        let workspace = git_panel.read(cx).workspace.clone();
         cx.new(|cx| {
             cx.spawn_in(window, |this, mut cx| async move {
-                let language_registry = workspace.update(&mut cx, |workspace, _cx| {
-                    workspace.app_state().languages.clone()
-                })?;
-
                 let details = git_panel
                     .update(&mut cx, |git_panel, cx| {
                         git_panel.load_commit_details(&sha, cx)
                     })?
                     .await?;
-
-                let mut parsed_message = ParsedMarkdown::default();
-                markdown::parse_markdown_block(
-                    &details.message,
-                    Some(&language_registry),
-                    None,
-                    &mut parsed_message.text,
-                    &mut parsed_message.highlights,
-                    &mut parsed_message.region_ranges,
-                    &mut parsed_message.regions,
-                )
-                .await;
 
                 let commit_details = editor::commit_tooltip::CommitDetails {
                     sha: details.sha.clone(),
@@ -2407,19 +2394,13 @@ impl GitPanelMessageTooltip {
                     commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
                     message: Some(editor::commit_tooltip::ParsedCommitMessage {
                         message: details.message.clone(),
-                        parsed_message,
                         ..Default::default()
                     }),
                 };
 
                 this.update_in(&mut cx, |this: &mut GitPanelMessageTooltip, window, cx| {
-                    this.commit_tooltip = Some(cx.new(move |cx| {
-                        CommitTooltip::new(
-                            commit_details,
-                            panel_editor_style(true, window, cx),
-                            Some(workspace),
-                        )
-                    }));
+                    this.commit_tooltip =
+                        Some(cx.new(move |cx| CommitTooltip::new(commit_details, window, cx)));
                     cx.notify();
                 })
             })

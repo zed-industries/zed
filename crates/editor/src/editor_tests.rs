@@ -21,17 +21,16 @@ use language::{
     BracketPairConfig,
     Capability::ReadWrite,
     FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName,
-    Override, ParsedMarkdown, Point,
+    Override, Point,
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use multi_buffer::IndentGuide;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
-use project::FakeFs;
 use project::{
     debugger::breakpoint_store::BreakpointKind,
-    lsp_command::SIGNATURE_HELP_HIGHLIGHT_CURRENT,
     project_settings::{LspSettings, ProjectSettings},
+    FakeFs,
 };
 use serde_json::{self, json};
 use std::{cell::RefCell, future::Future, rc::Rc, time::Instant};
@@ -4325,7 +4324,24 @@ fn test_transpose(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_rewrap(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
+    init_test(cx, |settings| {
+        settings.languages.extend([
+            (
+                "Markdown".into(),
+                LanguageSettingsContent {
+                    allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
+                    ..Default::default()
+                },
+            ),
+            (
+                "Plain Text".into(),
+                LanguageSettingsContent {
+                    allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
+                    ..Default::default()
+                },
+            ),
+        ])
+    });
 
     let mut cx = EditorTestContext::new(cx).await;
 
@@ -8119,12 +8135,10 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
 
     cx.editor(|editor, _, _| {
         let signature_help_state = editor.signature_help_state.popover().cloned();
-        assert!(signature_help_state.is_some());
-        let ParsedMarkdown {
-            text, highlights, ..
-        } = signature_help_state.unwrap().parsed_content;
-        assert_eq!(text, "param1: u8, param2: u8");
-        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
+        assert_eq!(
+            signature_help_state.unwrap().label,
+            "param1: u8, param2: u8"
+        );
     });
 }
 
@@ -8292,11 +8306,10 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui:
     cx.update_editor(|editor, _, _| {
         let signature_help_state = editor.signature_help_state.popover().cloned();
         assert!(signature_help_state.is_some());
-        let ParsedMarkdown {
-            text, highlights, ..
-        } = signature_help_state.unwrap().parsed_content;
-        assert_eq!(text, "param1: u8, param2: u8");
-        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
+        assert_eq!(
+            signature_help_state.unwrap().label,
+            "param1: u8, param2: u8"
+        );
         editor.signature_help_state = SignatureHelpState::default();
     });
 
@@ -8334,11 +8347,10 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut gpui:
     cx.editor(|editor, _, _| {
         let signature_help_state = editor.signature_help_state.popover().cloned();
         assert!(signature_help_state.is_some());
-        let ParsedMarkdown {
-            text, highlights, ..
-        } = signature_help_state.unwrap().parsed_content;
-        assert_eq!(text, "param1: u8, param2: u8");
-        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
+        assert_eq!(
+            signature_help_state.unwrap().label,
+            "param1: u8, param2: u8"
+        );
     });
 }
 
@@ -8396,11 +8408,10 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
     cx.editor(|editor, _, _| {
         let signature_help_state = editor.signature_help_state.popover().cloned();
         assert!(signature_help_state.is_some());
-        let ParsedMarkdown {
-            text, highlights, ..
-        } = signature_help_state.unwrap().parsed_content;
-        assert_eq!(text, "param1: u8, param2: u8");
-        assert_eq!(highlights, vec![(0..10, SIGNATURE_HELP_HIGHLIGHT_CURRENT)]);
+        assert_eq!(
+            signature_help_state.unwrap().label,
+            "param1: u8, param2: u8"
+        );
     });
 
     // When exiting outside from inside the brackets, `signature_help` is closed.
@@ -12251,7 +12262,7 @@ async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row9.2;
                    struct Row9.3;
                    struct Row10;"#},
-        vec![DiffHunkStatus::added(), DiffHunkStatus::added()],
+        vec![DiffHunkStatus::added_none(), DiffHunkStatus::added_none()],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row1.1;
@@ -12289,7 +12300,7 @@ async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row8;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::added(), DiffHunkStatus::added()],
+        vec![DiffHunkStatus::added_none(), DiffHunkStatus::added_none()],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row2;
@@ -12336,11 +12347,11 @@ async fn test_addition_reverts(cx: &mut gpui::TestAppContext) {
                    «ˇ// something on bottom»
                    struct Row10;"#},
         vec![
-            DiffHunkStatus::added(),
-            DiffHunkStatus::added(),
-            DiffHunkStatus::added(),
-            DiffHunkStatus::added(),
-            DiffHunkStatus::added(),
+            DiffHunkStatus::added_none(),
+            DiffHunkStatus::added_none(),
+            DiffHunkStatus::added_none(),
+            DiffHunkStatus::added_none(),
+            DiffHunkStatus::added_none(),
         ],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
@@ -12388,7 +12399,10 @@ async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::modified(), DiffHunkStatus::modified()],
+        vec![
+            DiffHunkStatus::modified_none(),
+            DiffHunkStatus::modified_none(),
+        ],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -12415,7 +12429,10 @@ async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::modified(), DiffHunkStatus::modified()],
+        vec![
+            DiffHunkStatus::modified_none(),
+            DiffHunkStatus::modified_none(),
+        ],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -12444,12 +12461,12 @@ async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
                    struct Row9;
                    struct Row1011;ˇ"#},
         vec![
-            DiffHunkStatus::modified(),
-            DiffHunkStatus::modified(),
-            DiffHunkStatus::modified(),
-            DiffHunkStatus::modified(),
-            DiffHunkStatus::modified(),
-            DiffHunkStatus::modified(),
+            DiffHunkStatus::modified_none(),
+            DiffHunkStatus::modified_none(),
+            DiffHunkStatus::modified_none(),
+            DiffHunkStatus::modified_none(),
+            DiffHunkStatus::modified_none(),
+            DiffHunkStatus::modified_none(),
         ],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
@@ -12527,7 +12544,10 @@ struct Row10;"#};
                    ˇ
                    struct Row8;
                    struct Row10;"#},
-        vec![DiffHunkStatus::removed(), DiffHunkStatus::removed()],
+        vec![
+            DiffHunkStatus::deleted_none(),
+            DiffHunkStatus::deleted_none(),
+        ],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -12550,7 +12570,10 @@ struct Row10;"#};
                    ˇ»
                    struct Row8;
                    struct Row10;"#},
-        vec![DiffHunkStatus::removed(), DiffHunkStatus::removed()],
+        vec![
+            DiffHunkStatus::deleted_none(),
+            DiffHunkStatus::deleted_none(),
+        ],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -12575,7 +12598,10 @@ struct Row10;"#};
 
                    struct Row8;ˇ
                    struct Row10;"#},
-        vec![DiffHunkStatus::removed(), DiffHunkStatus::removed()],
+        vec![
+            DiffHunkStatus::deleted_none(),
+            DiffHunkStatus::deleted_none(),
+        ],
         indoc! {r#"struct Row;
                    struct Row1;
                    ˇstruct Row2;
@@ -12600,9 +12626,9 @@ struct Row10;"#};
                    struct Row8;ˇ»
                    struct Row10;"#},
         vec![
-            DiffHunkStatus::removed(),
-            DiffHunkStatus::removed(),
-            DiffHunkStatus::removed(),
+            DiffHunkStatus::deleted_none(),
+            DiffHunkStatus::deleted_none(),
+            DiffHunkStatus::deleted_none(),
         ],
         indoc! {r#"struct Row;
                    struct Row1;
@@ -12696,7 +12722,10 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
         multibuffer
     });
 
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(multibuffer, window, cx));
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let (editor, cx) = cx
+        .add_window_view(|window, cx| build_editor_with_project(project, multibuffer, window, cx));
     editor.update_in(cx, |editor, _window, cx| {
         for (buffer, diff_base) in [
             (buffer_1.clone(), base_text_1),
@@ -12714,7 +12743,7 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
     editor.update_in(cx, |editor, window, cx| {
         assert_eq!(editor.text(cx), "Xaaa\nXbbb\nXccc\n\nXfff\nXggg\n\nXjjj\nXlll\nXmmm\nXnnn\n\nXqqq\nXrrr\n\nXuuu\nXvvv\nXwww\nXxxx\n\nX{{{\nX|||\n\nX\u{7f}\u{7f}\u{7f}");
         editor.select_all(&SelectAll, window, cx);
-        editor.revert_selected_hunks(&RevertSelectedHunks, window, cx);
+        editor.git_restore(&Default::default(), window, cx);
     });
     cx.executor().run_until_parked();
 
@@ -12740,7 +12769,7 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
         editor.change_selections(None, window, cx, |s| {
             s.select_ranges(Some(Point::new(0, 0)..Point::new(6, 0)));
         });
-        editor.revert_selected_hunks(&RevertSelectedHunks, window, cx);
+        editor.git_restore(&Default::default(), window, cx);
     });
 
     // Now, when all ranges selected belong to buffer_1, the revert should succeed,
@@ -14135,7 +14164,7 @@ async fn test_stage_and_unstage_added_file_hunk(
     cx.assert_index_text(None);
 
     cx.update_editor(|editor, window, cx| {
-        editor.toggle_staged_selected_diff_hunks(&ToggleStagedSelectedDiffHunks, window, cx);
+        editor.toggle_staged_selected_diff_hunks(&Default::default(), window, cx);
     });
     executor.run_until_parked();
     cx.assert_index_text(Some(&working_copy.replace("ˇ", "")));
@@ -14149,7 +14178,7 @@ async fn test_stage_and_unstage_added_file_hunk(
     );
 
     cx.update_editor(|editor, window, cx| {
-        editor.toggle_staged_selected_diff_hunks(&ToggleStagedSelectedDiffHunks, window, cx);
+        editor.toggle_staged_selected_diff_hunks(&Default::default(), window, cx);
     });
     executor.run_until_parked();
     cx.assert_index_text(None);
@@ -16251,6 +16280,60 @@ async fn test_rename_without_prepare(cx: &mut gpui::TestAppContext) {
     "});
 }
 
+#[gpui::test]
+async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_html::LANGUAGE.into()),
+        )
+        .with_brackets_query(
+            r#"
+            ("<" @open "/>" @close)
+            ("</" @open ">" @close)
+            ("<" @open ">" @close)
+            ("\"" @open "\"" @close)
+            ((element (start_tag) @open (end_tag) @close) (#set! newline.only))
+        "#,
+        )
+        .unwrap(),
+    );
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state(indoc! {"
+        <span>ˇ</span>
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <span>
+        ˇ
+        </span>
+    "});
+
+    cx.set_state(indoc! {"
+        <span><span></span>ˇ</span>
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <span><span></span>
+        ˇ</span>
+    "});
+
+    cx.set_state(indoc! {"
+        <span>ˇ
+        </span>
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <span>
+        ˇ
+        </span>
+    "});
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(DisplayRow(row as u32), column as u32);
     point..point
@@ -16423,7 +16506,7 @@ fn assert_hunk_revert(
             .map(|hunk| hunk.status())
             .collect::<Vec<_>>();
 
-        editor.revert_selected_hunks(&RevertSelectedHunks, window, cx);
+        editor.git_restore(&Default::default(), window, cx);
         reverted_hunk_statuses
     });
     cx.executor().run_until_parked();
