@@ -2,17 +2,28 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::{Arc, LazyLock};
 
 use anyhow::Result;
 use futures::FutureExt as _;
-use gpui::AsyncApp;
+use gpui::{App, AsyncApp};
+use release_channel::ReleaseChannel;
 use util::ResultExt as _;
+
+/// An environment variable whose presence indicates that the development auth
+/// provider should be used.
+///
+/// Only works in development. Setting this environment variable in other release
+/// channels is a no-op.
+pub static ZED_DEVELOPMENT_AUTH: LazyLock<bool> = LazyLock::new(|| {
+    std::env::var("ZED_DEVELOPMENT_AUTH").map_or(false, |value| !value.is_empty())
+});
 
 /// A provider for credentials.
 ///
 /// Used to abstract over reading and writing credentials to some form of
 /// persistence (like the system keychain).
-pub trait CredentialsProvider {
+pub trait CredentialsProvider: Send + Sync {
     /// Reads the credentials from the provider.
     fn read_credentials<'a>(
         &'a self,
@@ -35,6 +46,22 @@ pub trait CredentialsProvider {
         url: &'a str,
         cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>>;
+}
+
+impl dyn CredentialsProvider {
+    pub fn new(cx: &App) -> Arc<Self> {
+        let use_development_backend = match ReleaseChannel::try_global(cx) {
+            Some(ReleaseChannel::Dev) => *ZED_DEVELOPMENT_AUTH,
+            Some(ReleaseChannel::Nightly | ReleaseChannel::Preview | ReleaseChannel::Stable)
+            | None => false,
+        };
+
+        if use_development_backend {
+            Arc::new(DevelopmentCredentialsProvider::new())
+        } else {
+            Arc::new(KeychainCredentialsProvider)
+        }
+    }
 }
 
 /// A credentials provider that stores credentials in the system keychain.
@@ -93,6 +120,12 @@ struct DevelopmentCredentialsProvider {
 }
 
 impl DevelopmentCredentialsProvider {
+    fn new() -> Self {
+        let path = paths::config_dir().join("development_auth");
+
+        Self { path }
+    }
+
     fn load_credentials(&self) -> Result<HashMap<String, (String, Vec<u8>)>> {
         let json = std::fs::read(&self.path)?;
         let credentials: HashMap<String, (String, Vec<u8>)> = serde_json::from_slice(&json)?;

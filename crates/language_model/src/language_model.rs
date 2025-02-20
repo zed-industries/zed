@@ -251,10 +251,14 @@ pub trait LanguageModelProvider: 'static {
     }
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>>;
     fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &App) {}
-    fn is_authenticated(&self, cx: &App) -> bool;
+    fn is_authenticated(
+        &self,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &App,
+    ) -> bool;
     fn authenticate(
         &self,
-        credentials_provider: Arc<LanguageModelCredentialsProvider>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
         cx: &mut App,
     ) -> Task<Result<(), AuthenticateError>>;
     fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView;
@@ -268,7 +272,11 @@ pub trait LanguageModelProvider: 'static {
     ) -> Option<AnyElement> {
         None
     }
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
+    fn reset_credentials(
+        &self,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Task<Result<()>>;
 }
 
 #[derive(Debug, Clone)]
@@ -277,29 +285,51 @@ pub struct LanguageModelCredentials {
     pub api_key: String,
 }
 
-pub struct LanguageModelCredentialsProvider {}
+pub struct LanguageModelCredentialsProvider {
+    provider: Arc<dyn CredentialsProvider>,
+}
 
-impl CredentialsProvider<LanguageModelCredentials> for LanguageModelCredentialsProvider {
-    fn read_credentials<'a>(
+impl LanguageModelCredentialsProvider {
+    pub fn read_credentials<'a>(
         &'a self,
+        url: &'a str,
         cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Option<LanguageModelCredentials>> + 'a>> {
-        todo!()
+        async move {
+            let (_key, api_key) = self.provider.read_credentials(url, cx).await?;
+
+            Some(LanguageModelCredentials {
+                url: url.to_string(),
+                api_key: String::from_utf8(api_key).ok()?,
+            })
+        }
+        .boxed_local()
     }
 
-    fn write_credentials<'a>(
+    pub fn write_credentials<'a>(
         &'a self,
         credentials: LanguageModelCredentials,
         cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        todo!()
+        async move {
+            self.provider
+                .write_credentials(
+                    &credentials.url,
+                    "Bearer",
+                    credentials.api_key.as_bytes(),
+                    cx,
+                )
+                .await
+        }
+        .boxed_local()
     }
 
-    fn delete_credentials<'a>(
+    pub fn delete_credentials<'a>(
         &'a self,
+        url: &'a str,
         cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        todo!()
+        async move { self.provider.delete_credentials(url, cx).await }.boxed_local()
     }
 }
 

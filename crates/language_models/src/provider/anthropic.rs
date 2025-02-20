@@ -2,6 +2,7 @@ use crate::AllLanguageModelSettings;
 use anthropic::{AnthropicError, ContentDelta, Event, ResponseContent};
 use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
+use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::Stream;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryStreamExt as _};
@@ -83,14 +84,20 @@ impl State {
         })
     }
 
-    fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let write_credentials = cx.write_credentials(
+    fn set_api_key(
+        &mut self,
+        api_key: String,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let write_credentials = credentials_provider.write_credentials(
             AllLanguageModelSettings::get_global(cx)
                 .anthropic
                 .api_url
                 .as_str(),
             "Bearer",
             api_key.as_bytes(),
+            cx,
         );
         cx.spawn(|this, mut cx| async move {
             write_credentials.await?;
@@ -108,7 +115,7 @@ impl State {
 
     fn authenticate(
         &self,
-        credentials_provider: Arc<LanguageModelCredentialsProvider>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), AuthenticateError>> {
         if self.is_authenticated() {
@@ -124,9 +131,9 @@ impl State {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(ANTHROPIC_API_KEY_VAR) {
                 (api_key, true)
             } else {
-                let (_, api_key) = cx
-                    .update(|cx| credentials_provider.read_credentials(&api_url))?
-                    .await?
+                let (_, api_key) = credentials_provider
+                    .read_credentials(&api_url, &cx)
+                    .await
                     .ok_or(AuthenticateError::CredentialsNotFound)?;
                 (
                     String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
@@ -237,7 +244,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn authenticate(
         &self,
-        credentials_provider: Arc<LanguageModelCredentialsProvider>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
         cx: &mut App,
     ) -> Task<Result<(), AuthenticateError>> {
         self.state

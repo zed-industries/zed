@@ -58,14 +58,6 @@ static ZED_SERVER_URL: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("ZED_SERVER_URL").ok());
 static ZED_RPC_URL: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("ZED_RPC_URL").ok());
 
-/// An environment variable whose presence indicates that the development auth
-/// provider should be used.
-///
-/// Only works in development. Setting this environment variable in other release
-/// channels is a no-op.
-pub static ZED_DEVELOPMENT_AUTH: LazyLock<bool> = LazyLock::new(|| {
-    std::env::var("ZED_DEVELOPMENT_AUTH").map_or(false, |value| !value.is_empty())
-});
 pub static IMPERSONATE_LOGIN: LazyLock<Option<String>> = LazyLock::new(|| {
     std::env::var("ZED_IMPERSONATE")
         .ok()
@@ -194,7 +186,7 @@ pub struct Client {
     peer: Arc<Peer>,
     http: Arc<HttpClientWithUrl>,
     telemetry: Arc<Telemetry>,
-    credentials_provider: Arc<dyn CredentialsProvider<Credentials> + Send + Sync + 'static>,
+    credentials_provider: ClientCredentialsProvider,
     state: RwLock<ClientState>,
     handler_set: parking_lot::Mutex<ProtoMessageHandlerSet>,
 
@@ -302,6 +294,69 @@ pub struct Credentials {
 impl Credentials {
     pub fn authorization_header(&self) -> String {
         format!("{} {}", self.user_id, self.access_token)
+    }
+}
+
+pub struct ClientCredentialsProvider {
+    server_url: Arc<str>,
+    provider: Arc<dyn CredentialsProvider>,
+}
+
+impl ClientCredentialsProvider {
+    pub fn new(cx: &App) -> Self {
+        Self {
+            server_url: ClientSettings::get_global(cx).server_url.clone().into(),
+            provider: <dyn CredentialsProvider>::new(cx),
+        }
+    }
+
+    /// Reads the credentials from the provider.
+    fn read_credentials<'a>(
+        &'a self,
+        cx: &'a AsyncApp,
+    ) -> Pin<Box<dyn Future<Output = Option<Credentials>> + 'a>> {
+        async move {
+            if IMPERSONATE_LOGIN.is_some() {
+                return None;
+            }
+
+            let (user_id, access_token) =
+                self.provider.read_credentials(&self.server_url, cx).await?;
+
+            Some(Credentials {
+                user_id: user_id.parse().ok()?,
+                access_token: String::from_utf8(access_token).ok()?,
+            })
+        }
+        .boxed_local()
+    }
+
+    /// Writes the credentials to the provider.
+    fn write_credentials<'a>(
+        &'a self,
+        user_id: u64,
+        access_token: String,
+        cx: &'a AsyncApp,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        async move {
+            self.provider
+                .write_credentials(
+                    &self.server_url,
+                    &user_id.to_string(),
+                    access_token.as_bytes(),
+                    cx,
+                )
+                .await
+        }
+        .boxed_local()
+    }
+
+    /// Deletes the credentials from the provider.
+    fn delete_credentials<'a>(
+        &'a self,
+        cx: &'a AsyncApp,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        async move { self.provider.delete_credentials(&self.server_url, cx).await }.boxed_local()
     }
 }
 
@@ -459,28 +514,12 @@ impl Client {
         http: Arc<HttpClientWithUrl>,
         cx: &mut App,
     ) -> Arc<Self> {
-        let use_zed_development_auth = match ReleaseChannel::try_global(cx) {
-            Some(ReleaseChannel::Dev) => *ZED_DEVELOPMENT_AUTH,
-            Some(ReleaseChannel::Nightly | ReleaseChannel::Preview | ReleaseChannel::Stable)
-            | None => false,
-        };
-
-        let credentials_provider: Arc<
-            dyn CredentialsProvider<Credentials> + Send + Sync + 'static,
-        > = if use_zed_development_auth {
-            Arc::new(DevelopmentCredentialsProvider {
-                path: paths::config_dir().join("development_auth"),
-            })
-        } else {
-            Arc::new(KeychainCredentialsProvider)
-        };
-
         Arc::new(Self {
             id: AtomicU64::new(0),
             peer: Peer::new(0),
             telemetry: Telemetry::new(clock, http.clone(), cx),
             http,
-            credentials_provider,
+            credentials_provider: ClientCredentialsProvider::new(cx),
             state: Default::default(),
             handler_set: Default::default(),
 
@@ -818,8 +857,7 @@ impl Client {
                     Ok(conn) => {
                         self.state.write().credentials = Some(credentials.clone());
                         if !read_from_provider && IMPERSONATE_LOGIN.is_none() {
-                                self.credentials_provider.write_credentials(credentials, cx).await.log_err();
-
+                            self.credentials_provider.write_credentials(credentials.user_id, credentials.access_token, cx).await.log_err();
                         }
 
                         futures::select_biased! {
@@ -1561,128 +1599,6 @@ impl ProtoClient for Client {
 
     fn is_via_collab(&self) -> bool {
         true
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-struct DevelopmentCredentials {
-    user_id: u64,
-    access_token: String,
-}
-
-/// A credentials provider that stores credentials in a local file.
-///
-/// This MUST only be used in development, as this is not a secure way of storing
-/// credentials on user machines.
-///
-/// Its existence is purely to work around the annoyance of having to constantly
-/// re-allow access to the system keychain when developing Zed.
-struct DevelopmentCredentialsProvider {
-    path: PathBuf,
-}
-
-impl CredentialsProvider<Credentials> for DevelopmentCredentialsProvider {
-    fn read_credentials<'a>(
-        &'a self,
-        _cx: &'a AsyncApp,
-    ) -> Pin<Box<dyn Future<Output = Option<Credentials>> + 'a>> {
-        async move {
-            if IMPERSONATE_LOGIN.is_some() {
-                return None;
-            }
-
-            let json = std::fs::read(&self.path).log_err()?;
-
-            let credentials: DevelopmentCredentials = serde_json::from_slice(&json).log_err()?;
-
-            Some(Credentials {
-                user_id: credentials.user_id,
-                access_token: credentials.access_token,
-            })
-        }
-        .boxed_local()
-    }
-
-    fn write_credentials<'a>(
-        &'a self,
-        credentials: Credentials,
-        _cx: &'a AsyncApp,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        async move {
-            let json = serde_json::to_string(&DevelopmentCredentials {
-                user_id: credentials.user_id,
-                access_token: credentials.access_token,
-            })?;
-
-            std::fs::write(&self.path, json)?;
-
-            Ok(())
-        }
-        .boxed_local()
-    }
-
-    fn delete_credentials<'a>(
-        &'a self,
-        _cx: &'a AsyncApp,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        async move { Ok(std::fs::remove_file(&self.path)?) }.boxed_local()
-    }
-}
-
-/// A credentials provider that stores credentials in the system keychain.
-struct KeychainCredentialsProvider;
-
-impl CredentialsProvider<Credentials> for KeychainCredentialsProvider {
-    fn read_credentials<'a>(
-        &'a self,
-        cx: &'a AsyncApp,
-    ) -> Pin<Box<dyn Future<Output = Option<Credentials>> + 'a>> {
-        async move {
-            if IMPERSONATE_LOGIN.is_some() {
-                return None;
-            }
-
-            let (user_id, access_token) = cx
-                .update(|cx| cx.read_credentials(&ClientSettings::get_global(cx).server_url))
-                .log_err()?
-                .await
-                .log_err()??;
-
-            Some(Credentials {
-                user_id: user_id.parse().ok()?,
-                access_token: String::from_utf8(access_token).ok()?,
-            })
-        }
-        .boxed_local()
-    }
-
-    fn write_credentials<'a>(
-        &'a self,
-        credentials: Credentials,
-        cx: &'a AsyncApp,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        async move {
-            cx.update(move |cx| {
-                cx.write_credentials(
-                    &ClientSettings::get_global(cx).server_url,
-                    &credentials.user_id.to_string(),
-                    credentials.access_token.as_bytes(),
-                )
-            })?
-            .await
-        }
-        .boxed_local()
-    }
-
-    fn delete_credentials<'a>(
-        &'a self,
-        cx: &'a AsyncApp,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        async move {
-            cx.update(move |cx| cx.delete_credentials(&ClientSettings::get_global(cx).server_url))?
-                .await
-        }
-        .boxed_local()
     }
 }
 
