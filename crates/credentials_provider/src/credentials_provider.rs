@@ -8,7 +8,6 @@ use anyhow::Result;
 use futures::FutureExt as _;
 use gpui::{App, AsyncApp};
 use release_channel::ReleaseChannel;
-use util::ResultExt as _;
 
 /// An environment variable whose presence indicates that the development auth
 /// provider should be used.
@@ -29,7 +28,7 @@ pub trait CredentialsProvider: Send + Sync {
         &'a self,
         url: &'a str,
         cx: &'a AsyncApp,
-    ) -> Pin<Box<dyn Future<Output = Option<(String, Vec<u8>)>> + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>>;
 
     /// Writes the credentials to the provider.
     fn write_credentials<'a>(
@@ -49,7 +48,12 @@ pub trait CredentialsProvider: Send + Sync {
 }
 
 impl dyn CredentialsProvider {
-    pub fn new(cx: &App) -> Arc<Self> {
+    /// Returns the global [`CredentialsProvider`].
+    pub fn global(cx: &App) -> Arc<Self> {
+        Self::new(cx)
+    }
+
+    fn new(cx: &App) -> Arc<Self> {
         let use_development_backend = match ReleaseChannel::try_global(cx) {
             Some(ReleaseChannel::Dev) => *ZED_DEVELOPMENT_AUTH,
             Some(ReleaseChannel::Nightly | ReleaseChannel::Preview | ReleaseChannel::Stable)
@@ -72,17 +76,8 @@ impl CredentialsProvider for KeychainCredentialsProvider {
         &'a self,
         url: &'a str,
         cx: &'a AsyncApp,
-    ) -> Pin<Box<dyn Future<Output = Option<(String, Vec<u8>)>> + 'a>> {
-        async move {
-            let (user_id, access_token) = cx
-                .update(|cx| cx.read_credentials(url))
-                .log_err()?
-                .await
-                .log_err()??;
-
-            Some((user_id, access_token))
-        }
-        .boxed_local()
+    ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>> {
+        async move { cx.update(|cx| cx.read_credentials(url))?.await }.boxed_local()
     }
 
     fn write_credentials<'a>(
@@ -121,7 +116,7 @@ struct DevelopmentCredentialsProvider {
 
 impl DevelopmentCredentialsProvider {
     fn new() -> Self {
-        let path = paths::config_dir().join("development_auth");
+        let path = paths::config_dir().join("development_credentials");
 
         Self { path }
     }
@@ -146,8 +141,15 @@ impl CredentialsProvider for DevelopmentCredentialsProvider {
         &'a self,
         url: &'a str,
         _cx: &'a AsyncApp,
-    ) -> Pin<Box<dyn Future<Output = Option<(String, Vec<u8>)>> + 'a>> {
-        async move { self.load_credentials().log_err()?.get(url).cloned() }.boxed_local()
+    ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>> {
+        async move {
+            Ok(self
+                .load_credentials()
+                .unwrap_or_default()
+                .get(url)
+                .cloned())
+        }
+        .boxed_local()
     }
 
     fn write_credentials<'a>(
@@ -158,7 +160,7 @@ impl CredentialsProvider for DevelopmentCredentialsProvider {
         _cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
         async move {
-            let mut credentials = self.load_credentials()?;
+            let mut credentials = self.load_credentials().unwrap_or_default();
             credentials.insert(url.to_string(), (username.to_string(), password.to_vec()));
 
             self.save_credentials(&credentials)

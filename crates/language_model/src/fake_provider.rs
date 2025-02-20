@@ -1,10 +1,8 @@
 use crate::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionEvent,
-    LanguageModelCredentialsProvider, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest,
+    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest,
 };
-use credentials_provider::CredentialsProvider;
 use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, App, AsyncApp, Entity, Task, Window};
 use http_client::Result;
@@ -52,19 +50,11 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         vec![Arc::new(FakeLanguageModel::default())]
     }
 
-    fn is_authenticated(
-        &self,
-        _credentials_provider: Arc<dyn CredentialsProvider>,
-        _: &App,
-    ) -> bool {
+    fn is_authenticated(&self, _: &App) -> bool {
         true
     }
 
-    fn authenticate(
-        &self,
-        _credentials_provider: Arc<dyn CredentialsProvider>,
-        _: &mut App,
-    ) -> Task<Result<(), AuthenticateError>> {
+    fn authenticate(&self, _: &mut App) -> Task<Result<(), AuthenticateError>> {
         Task::ready(Ok(()))
     }
 
@@ -72,11 +62,7 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         unimplemented!()
     }
 
-    fn reset_credentials(
-        &self,
-        _credentials_provider: Arc<dyn CredentialsProvider>,
-        _: &mut App,
-    ) -> Task<Result<()>> {
+    fn reset_credentials(&self, _: &mut App) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
 }

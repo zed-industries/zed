@@ -306,7 +306,7 @@ impl ClientCredentialsProvider {
     pub fn new(cx: &App) -> Self {
         Self {
             server_url: ClientSettings::get_global(cx).server_url.clone().into(),
-            provider: <dyn CredentialsProvider>::new(cx),
+            provider: <dyn CredentialsProvider>::global(cx),
         }
     }
 
@@ -320,8 +320,12 @@ impl ClientCredentialsProvider {
                 return None;
             }
 
-            let (user_id, access_token) =
-                self.provider.read_credentials(&self.server_url, cx).await?;
+            let (user_id, access_token) = self
+                .provider
+                .read_credentials(&self.server_url, cx)
+                .await
+                .log_err()
+                .flatten()?;
 
             Some(Credentials {
                 user_id: user_id.parse().ok()?,

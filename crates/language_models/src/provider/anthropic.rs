@@ -11,10 +11,9 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCredentialsProvider, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, RateLimiter, Role,
+    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -72,10 +71,16 @@ pub struct State {
 
 impl State {
     fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let delete_credentials =
-            cx.delete_credentials(&AllLanguageModelSettings::get_global(cx).anthropic.api_url);
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .anthropic
+            .api_url
+            .clone();
         cx.spawn(|this, mut cx| async move {
-            delete_credentials.await.ok();
+            credentials_provider
+                .delete_credentials(&api_url, &cx)
+                .await
+                .ok();
             this.update(&mut cx, |this, cx| {
                 this.api_key = None;
                 this.api_key_from_env = false;
@@ -84,23 +89,17 @@ impl State {
         })
     }
 
-    fn set_api_key(
-        &mut self,
-        api_key: String,
-        credentials_provider: Arc<dyn CredentialsProvider>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let write_credentials = credentials_provider.write_credentials(
-            AllLanguageModelSettings::get_global(cx)
-                .anthropic
-                .api_url
-                .as_str(),
-            "Bearer",
-            api_key.as_bytes(),
-            cx,
-        );
+    fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .anthropic
+            .api_url
+            .clone();
         cx.spawn(|this, mut cx| async move {
-            write_credentials.await?;
+            credentials_provider
+                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
+                .await
+                .ok();
 
             this.update(&mut cx, |this, cx| {
                 this.api_key = Some(api_key);
@@ -113,15 +112,12 @@ impl State {
         self.api_key.is_some()
     }
 
-    fn authenticate(
-        &self,
-        credentials_provider: Arc<dyn CredentialsProvider>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<(), AuthenticateError>> {
+    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         if self.is_authenticated() {
             return Task::ready(Ok(()));
         }
 
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let api_url = AllLanguageModelSettings::get_global(cx)
             .anthropic
             .api_url
@@ -133,7 +129,7 @@ impl State {
             } else {
                 let (_, api_key) = credentials_provider
                     .read_credentials(&api_url, &cx)
-                    .await
+                    .await?
                     .ok_or(AuthenticateError::CredentialsNotFound)?;
                 (
                     String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
@@ -242,13 +238,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         self.state.read(cx).is_authenticated()
     }
 
-    fn authenticate(
-        &self,
-        credentials_provider: Arc<dyn CredentialsProvider>,
-        cx: &mut App,
-    ) -> Task<Result<(), AuthenticateError>> {
-        self.state
-            .update(cx, |state, cx| state.authenticate(credentials_provider, cx))
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+        self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
     fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {

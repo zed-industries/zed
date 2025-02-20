@@ -3483,6 +3483,7 @@ name = "credentials_provider"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -6982,6 +6983,7 @@ dependencies = [
 name = "language_model_selector"
 version = "0.1.0"
 dependencies = [
+ "credentials_provider",
  "feature_flags",
  "gpui",
  "language_model",
@@ -16700,6 +16702,7 @@ dependencies = [
  "command_palette_hooks",
  "component_preview",
  "copilot",
+ "credentials_provider",
  "db",
  "diagnostics",
  "editor",

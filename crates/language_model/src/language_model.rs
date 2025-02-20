@@ -8,7 +8,6 @@ mod role;
 pub mod fake_provider;
 
 use anyhow::Result;
-use credentials_provider::CredentialsProvider;
 use futures::FutureExt;
 use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
@@ -21,7 +20,6 @@ pub use role::*;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fmt;
-use std::pin::Pin;
 use std::{future::Future, sync::Arc};
 use thiserror::Error;
 use ui::IconName;
@@ -251,16 +249,8 @@ pub trait LanguageModelProvider: 'static {
     }
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>>;
     fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &App) {}
-    fn is_authenticated(
-        &self,
-        credentials_provider: Arc<dyn CredentialsProvider>,
-        cx: &App,
-    ) -> bool;
-    fn authenticate(
-        &self,
-        credentials_provider: Arc<dyn CredentialsProvider>,
-        cx: &mut App,
-    ) -> Task<Result<(), AuthenticateError>>;
+    fn is_authenticated(&self, cx: &App) -> bool;
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
     fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView;
     fn must_accept_terms(&self, _cx: &App) -> bool {
         false
@@ -272,65 +262,7 @@ pub trait LanguageModelProvider: 'static {
     ) -> Option<AnyElement> {
         None
     }
-    fn reset_credentials(
-        &self,
-        credentials_provider: Arc<dyn CredentialsProvider>,
-        cx: &mut App,
-    ) -> Task<Result<()>>;
-}
-
-#[derive(Debug, Clone)]
-pub struct LanguageModelCredentials {
-    pub url: String,
-    pub api_key: String,
-}
-
-pub struct LanguageModelCredentialsProvider {
-    provider: Arc<dyn CredentialsProvider>,
-}
-
-impl LanguageModelCredentialsProvider {
-    pub fn read_credentials<'a>(
-        &'a self,
-        url: &'a str,
-        cx: &'a AsyncApp,
-    ) -> Pin<Box<dyn Future<Output = Option<LanguageModelCredentials>> + 'a>> {
-        async move {
-            let (_key, api_key) = self.provider.read_credentials(url, cx).await?;
-
-            Some(LanguageModelCredentials {
-                url: url.to_string(),
-                api_key: String::from_utf8(api_key).ok()?,
-            })
-        }
-        .boxed_local()
-    }
-
-    pub fn write_credentials<'a>(
-        &'a self,
-        credentials: LanguageModelCredentials,
-        cx: &'a AsyncApp,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        async move {
-            self.provider
-                .write_credentials(
-                    &credentials.url,
-                    "Bearer",
-                    credentials.api_key.as_bytes(),
-                    cx,
-                )
-                .await
-        }
-        .boxed_local()
-    }
-
-    pub fn delete_credentials<'a>(
-        &'a self,
-        url: &'a str,
-        cx: &'a AsyncApp,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        async move { self.provider.delete_credentials(url, cx).await }.boxed_local()
-    }
+    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
 }
 
 #[derive(PartialEq, Eq)]

@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context as _, Result};
 use collections::BTreeMap;
+use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::{
@@ -94,6 +95,7 @@ impl State {
             return Task::ready(Ok(()));
         }
 
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let api_url = AllLanguageModelSettings::get_global(cx)
             .openai
             .api_url
@@ -102,8 +104,8 @@ impl State {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(OPENAI_API_KEY_VAR) {
                 (api_key, true)
             } else {
-                let (_, api_key) = cx
-                    .update(|cx| cx.read_credentials(&api_url))?
+                let (_, api_key) = credentials_provider
+                    .read_credentials(&api_url, &cx)
                     .await?
                     .ok_or(AuthenticateError::CredentialsNotFound)?;
                 (
