@@ -396,16 +396,6 @@ impl Vim {
                                     Point::new(row_of_selection_end_line, 1)
                                 };
                                 selection.end = new_selection_end.to_display_point(map);
-                            } else if matches!(
-                                object,
-                                Object::Parentheses
-                                    | Object::SquareBrackets
-                                    | Object::CurlyBrackets
-                                    | Object::AnyBrackets
-                                    | Object::AngleBrackets
-                            ) {
-                                // Reverse selection only for bracket objects
-                                selection.reversed = true;
                             }
                         }
                     });

@@ -1468,17 +1468,18 @@ fn surrounding_markers(
         }
     }
 
-    // Adjust selection to remove leading and trailing whitespace for inner brackets
+    // Adjust selection to remove leading and trailing whitespace for multiline inner brackets
     if !around && open_marker != close_marker {
         let start_point = opening.end.to_display_point(map);
         let end_point = closing.start.to_display_point(map);
         let start_offset = start_point.to_offset(map, Bias::Left);
         let end_offset = end_point.to_offset(map, Bias::Left);
-        // Check if there are any non-whitespace characters
-        if map
-            .buffer_chars_at(start_offset)
-            .take_while(|(_, offset)| offset < &end_offset)
-            .any(|(ch, _)| !ch.is_whitespace())
+
+        if start_point.row() != end_point.row()
+            && map
+                .buffer_chars_at(start_offset)
+                .take_while(|(_, offset)| offset < &end_offset)
+                .any(|(ch, _)| !ch.is_whitespace())
         {
             let mut first_non_ws = None;
             let mut last_non_ws = None;
