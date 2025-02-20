@@ -25,7 +25,6 @@ pub enum TabPosition {
 pub enum TabCloseSide {
     Start,
     End,
-    Hidden,
 }
 
 #[derive(IntoElement, IntoComponent)]
@@ -131,7 +130,6 @@ impl RenderOnce for Tab {
             match self.close_side {
                 TabCloseSide::End => (start_slot, end_slot),
                 TabCloseSide::Start => (end_slot, start_slot),
-                TabCloseSide::Hidden => (start_slot, end_slot),
             }
         };
 

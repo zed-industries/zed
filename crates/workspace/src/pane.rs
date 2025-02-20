@@ -1,7 +1,7 @@
 use crate::{
     item::{
         ActivateOnClose, ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
-        ShowDiagnostics, TabContentParams, TabTooltipContent, WeakItemHandle,
+        ShowCloseButton, ShowDiagnostics, TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
     notifications::NotifyResultExt,
@@ -2239,17 +2239,13 @@ impl Pane {
 
         let settings = ItemSettings::get_global(cx);
         let close_side = &settings.close_position;
-        let always_show_close_button = settings.always_show_close_button;
+        let show_close_button = &settings.show_close_button;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
         let item_id = item.item_id();
         let is_first_item = ix == 0;
         let is_last_item = ix == self.items.len() - 1;
         let is_pinned = self.is_tab_pinned(ix);
         let position_relative_to_active_item = ix.cmp(&self.active_item_index);
-        let never_show_close_button = match settings.close_position {
-            ClosePosition::Hidden => true,
-            _ => false,
-        };
 
         let tab = Tab::new(ix)
             .position(if is_first_item {
@@ -2262,7 +2258,6 @@ impl Pane {
             .close_side(match close_side {
                 ClosePosition::Left => ui::TabCloseSide::Start,
                 ClosePosition::Right => ui::TabCloseSide::End,
-                ClosePosition::Hidden => ui::TabCloseSide::Hidden,
             })
             .toggle_state(is_active)
             .on_click(cx.listener(move |pane: &mut Self, _, window, cx| {
@@ -2329,9 +2324,6 @@ impl Pane {
             })
             .start_slot::<Indicator>(indicator)
             .map(|this| {
-                if never_show_close_button {
-                    return this.end_slot(div());
-                };
                 let end_slot_action: &'static dyn Action;
                 let end_slot_tooltip_text: &'static str;
                 let end_slot = if is_pinned {
@@ -2351,18 +2343,21 @@ impl Pane {
                         close_pinned: false,
                     };
                     end_slot_tooltip_text = "Close Tab";
-                    IconButton::new("close tab", IconName::Close)
-                        .when(!always_show_close_button, |button| {
-                            button.visible_on_hover("")
-                        })
-                        .shape(IconButtonShape::Square)
-                        .icon_color(Color::Muted)
-                        .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
-                        .on_click(cx.listener(move |pane, _, window, cx| {
-                            pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
-                                .detach_and_log_err(cx);
-                        }))
+                    match show_close_button {
+                        ShowCloseButton::Always => IconButton::new("close tab", IconName::Close),
+                        ShowCloseButton::Hover => {
+                            IconButton::new("close tab", IconName::Close).visible_on_hover("")
+                        }
+                        ShowCloseButton::Hidden => return this,
+                    }
+                    .shape(IconButtonShape::Square)
+                    .icon_color(Color::Muted)
+                    .size(ButtonSize::None)
+                    .icon_size(IconSize::XSmall)
+                    .on_click(cx.listener(move |pane, _, window, cx| {
+                        pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
+                            .detach_and_log_err(cx);
+                    }))
                 }
                 .map(|this| {
                     if is_active {
