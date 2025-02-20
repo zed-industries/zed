@@ -13070,7 +13070,22 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(path) = self.target_file_abs_path(cx) {
+        let path = self.target_file_abs_path(cx);
+        self.copy_path_base(cx, path);
+    }
+
+    pub fn copy_relative_path(
+        &mut self,
+        _: &zed_actions::workspace::CopyRelativePath,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let path = self.target_file_path(cx);
+        self.copy_path_base(cx, path);
+    }
+
+    fn copy_path_base(&mut self, cx: &mut Context<Self>, path: Option<PathBuf>) {
+        if let Some(path) = path {
             if let Some(path) = path.to_str() {
                 cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
             }
@@ -13083,26 +13098,8 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(path) = self.target_file_abs_path(cx) {
-            if let Some(path) = path.to_str() {
-                let selection = self.selections.newest::<Point>(cx).start.row + 1;
-                let path_with_line_number = format!("{}:{}", path, selection);
-                cx.write_to_clipboard(ClipboardItem::new_string(path_with_line_number));
-            }
-        }
-    }
-
-    pub fn copy_relative_path(
-        &mut self,
-        _: &zed_actions::workspace::CopyRelativePath,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(path) = self.target_file_path(cx) {
-            if let Some(path) = path.to_str() {
-                cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
-            }
-        }
+        let path = self.target_file_abs_path(cx);
+        self.copy_path_with_line_number_base(cx, path);
     }
 
     pub fn copy_relative_path_with_line_number(
@@ -13111,7 +13108,12 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(path) = self.target_file_path(cx) {
+        let path = self.target_file_path(cx);
+        self.copy_path_with_line_number_base(cx, path);
+    }
+
+    fn copy_path_with_line_number_base(&mut self, cx: &mut Context<Self>, path: Option<PathBuf>) {
+        if let Some(path) = path {
             if let Some(path) = path.to_str() {
                 let selection = self.selections.newest::<Point>(cx).start.row + 1;
                 let path_with_line_number = format!("{}:{}", path, selection);
