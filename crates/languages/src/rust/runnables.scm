@@ -34,13 +34,11 @@
     (
         (line_comment) *
         (line_comment
-            outer: _
             doc: (_) @_comment_content
         ) @start
         (#match? @_comment_content "```")
         (line_comment) *
         (line_comment
-            outer: _
             doc: (_) @_end_comment_content
         ) @_end_code_block
         (#match? @_end_comment_content "```")
@@ -52,9 +50,10 @@
         [(function_item
             name: (_) @run
             body: _
+        ) (function_signature_item
+            name: (_) @run
         ) (struct_item
             name: (_) @run
-            body: _
         ) (enum_item
             name: (_) @run
             body: _
@@ -62,6 +61,8 @@
             (attribute_item) ?
             (macro_definition
                 name: (_) @run)
+        ) (mod_item
+            name: (_) @run
         )] @_end
     )
     (#set! tag rust-doc-test)
