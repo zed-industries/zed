@@ -5,8 +5,8 @@ use super::dap_command::{
     self, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand,
     Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, ModulesCommand, NextCommand,
     PauseCommand, RestartCommand, RestartStackFrameCommand, ScopesCommand, SetVariableValueCommand,
-    StepBackCommand, StepCommand, StepInCommand, StepOutCommand, TerminateCommand,
-    TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
+    StackTraceCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
+    TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
@@ -50,7 +50,7 @@ impl ThreadId {
     pub const MAX: ThreadId = ThreadId(u64::MAX);
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Variable {
     _dap: dap::Variable,
     _variables: Vec<Variable>,
@@ -65,7 +65,7 @@ impl From<dap::Variable> for Variable {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Scope {
     pub dap: dap::Scope,
     pub variables: Vec<Variable>,
@@ -80,7 +80,7 @@ impl From<dap::Scope> for Scope {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StackFrame {
     pub dap: dap::StackFrame,
     pub scopes: Vec<Scope>,
@@ -104,6 +104,7 @@ pub enum ThreadStatus {
     Ended,
 }
 
+#[derive(Debug)]
 pub struct Thread {
     dap: dap::Thread,
     stack_frames: Vec<StackFrame>,
@@ -867,6 +868,17 @@ impl Session {
         self.fetch(
             dap_command::ThreadsCommand,
             |this, result, cx| {
+                let v = this.threads.keys().copied().collect::<Vec<_>>();
+                for thread_id in v {
+                    this.invalidate_state(
+                        &StackTraceCommand {
+                            thread_id: thread_id.0,
+                            start_frame: None,
+                            levels: None,
+                        }
+                        .into(),
+                    );
+                }
                 this.threads.extend(
                     result
                         .iter()
