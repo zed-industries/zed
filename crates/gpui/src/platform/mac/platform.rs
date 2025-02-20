@@ -290,9 +290,10 @@ impl MacPlatform {
                 action,
                 os_action,
             } => {
-                let keystrokes = keymap
-                    .binding_to_display_for_action(action.as_ref())
-                    .map(|binding| binding.keystrokes());
+                let keystrokes = crate::Keymap::binding_to_display_from_bindings(
+                    keymap.bindings_for_action(action.as_ref()),
+                )
+                .map(|binding| binding.keystrokes());
 
                 let selector = match os_action {
                     Some(crate::OsAction::Cut) => selector("cut:"),
