@@ -795,10 +795,10 @@ jobs:
           $channel = $env:RELEASE_CHANNEL
           switch ($channel) {
             "stable" {
-              cargo build--release --features stable --no-default-features --package explorer_command_injector
+              cargo build --release --features stable --no-default-features --package explorer_command_injector
             }
             "preview" {
-              cargo build--release --features preview --no-default-features --package explorer_command_injector
+              cargo build --release --features preview --no-default-features --package explorer_command_injector
             }
             default {
               cargo build --release --package explorer_command_injector

@@ -50,7 +50,7 @@ impl IExplorerCommand_Impl for ExplorerCommandInjector_Impl {
     }
 
     fn GetIcon(&self, _: Option<&IShellItemArray>) -> windows_core::Result<windows_core::PWSTR> {
-        let Some(zed_exe) = get_zed_cli_path() else {
+        let Some(zed_exe) = get_zed_exe_path() else {
             return Err(E_FAIL.into());
         };
         unsafe { SHStrDupW(&HSTRING::from(zed_exe)) }
@@ -165,7 +165,7 @@ extern "system" fn DllGetClassObject(
     }
 }
 
-fn get_zed_cli_path() -> Option<String> {
+fn get_zed_install_folder() -> Option<PathBuf> {
     let mut buf = vec![0u16; MAX_PATH as usize];
     unsafe { GetModuleFileNameW(DLL_INSTANCE, &mut buf) };
 
@@ -175,14 +175,20 @@ fn get_zed_cli_path() -> Option<String> {
     }
     let len = unsafe { u_strlen(buf.as_ptr()) };
     let path: PathBuf = String::from_utf16_lossy(&buf[..len as usize]).into();
-    Some(
-        path.parent()?
-            .parent()?
-            .join("bin")
-            .join("zed.exe")
-            .to_string_lossy()
-            .to_string(),
-    )
+    Some(path.parent()?.parent()?.to_path_buf())
+}
+
+fn get_zed_exe_path() -> Option<String> {
+    let mut path = get_zed_install_folder()?;
+    path.push("Zed.exe");
+    path.to_str().map(|s| s.to_string())
+}
+
+fn get_zed_cli_path() -> Option<String> {
+    let mut path = get_zed_install_folder()?;
+    path.push("bin");
+    path.push("zed.exe");
+    path.to_str().map(|s| s.to_string())
 }
 
 #[inline]
