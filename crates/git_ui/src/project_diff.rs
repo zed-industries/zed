@@ -20,7 +20,7 @@ use language::{Anchor, Buffer, Capability, OffsetRangeExt, Point};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{git::GitStore, Project, ProjectPath};
 use theme::ActiveTheme;
-use ui::{prelude::*, Tooltip};
+use ui::{prelude::*, vertical_divider, Tooltip};
 use util::ResultExt as _;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
@@ -760,123 +760,134 @@ impl Render for ProjectDiffToolbar {
         let focus_handle = project_diff.focus_handle(cx);
         let button_states = project_diff.read(cx).button_states(cx);
 
-        h_flex()
+        h_group_xl()
+            .my_neg_1()
+            .items_center()
             .py_1()
             .pl_2()
             .pr_1()
             .flex_wrap()
             .justify_between()
-            .when(button_states.selection, |el| {
-                el.child(
-                    Button::new("stage", "Toggle Staged")
-                        .tooltip(Tooltip::for_action_title_in(
-                            "Toggle Staged",
-                            &ToggleStaged,
-                            &focus_handle,
-                        ))
-                        .disabled(!button_states.stage && !button_states.unstage)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.dispatch_action(&ToggleStaged, window, cx)
-                        })),
-                )
-            })
-            .when(!button_states.selection, |el| {
-                el.child(
-                    Button::new("stage", "Stage")
-                        .tooltip(Tooltip::for_action_title_in(
-                            "Stage",
-                            &StageAndNext,
-                            &focus_handle,
-                        ))
-                        // don't actually disable the button so it's mashable
-                        .color(if button_states.stage {
-                            Color::Default
-                        } else {
-                            Color::Disabled
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.dispatch_action(&StageAndNext, window, cx)
-                        })),
-                )
-                .child(
-                    Button::new("unstage", "Unstage")
-                        .tooltip(Tooltip::for_action_title_in(
-                            "Unstage",
-                            &UnstageAndNext,
-                            &focus_handle,
-                        ))
-                        .color(if button_states.unstage {
-                            Color::Default
-                        } else {
-                            Color::Disabled
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.dispatch_action(&UnstageAndNext, window, cx)
-                        })),
-                )
-            })
+            .child(
+                h_group_sm()
+                    .when(button_states.selection, |el| {
+                        el.child(
+                            Button::new("stage", "Toggle Staged")
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "Toggle Staged",
+                                    &ToggleStaged,
+                                    &focus_handle,
+                                ))
+                                .disabled(!button_states.stage && !button_states.unstage)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.dispatch_action(&ToggleStaged, window, cx)
+                                })),
+                        )
+                    })
+                    .when(!button_states.selection, |el| {
+                        el.child(
+                            Button::new("stage", "Stage")
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "Stage",
+                                    &StageAndNext,
+                                    &focus_handle,
+                                ))
+                                // don't actually disable the button so it's mashable
+                                .color(if button_states.stage {
+                                    Color::Default
+                                } else {
+                                    Color::Disabled
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.dispatch_action(&StageAndNext, window, cx)
+                                })),
+                        )
+                        .child(
+                            Button::new("unstage", "Unstage")
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "Unstage",
+                                    &UnstageAndNext,
+                                    &focus_handle,
+                                ))
+                                .color(if button_states.unstage {
+                                    Color::Default
+                                } else {
+                                    Color::Disabled
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.dispatch_action(&UnstageAndNext, window, cx)
+                                })),
+                        )
+                    }),
+            )
             // n.b. the only reason these arrows are here is because we don't
             // support "undo" for staging so we need a way to go back.
             .child(
-                IconButton::new("up", IconName::ArrowUp)
-                    .tooltip(Tooltip::for_action_title_in(
-                        "Go to previous hunk",
-                        &GoToPrevHunk,
-                        &focus_handle,
-                    ))
-                    .disabled(!button_states.prev_next)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.dispatch_action(&GoToPrevHunk, window, cx)
-                    })),
-            )
-            .child(
-                IconButton::new("down", IconName::ArrowDown)
-                    .tooltip(Tooltip::for_action_title_in(
-                        "Go to next hunk",
-                        &GoToHunk,
-                        &focus_handle,
-                    ))
-                    .disabled(!button_states.prev_next)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.dispatch_action(&GoToHunk, window, cx)
-                    })),
-            )
-            .child(div().border_l_2().h_full().border_color(gpui::black()))
-            .when(
-                button_states.unstage_all && !button_states.stage_all,
-                |el| {
-                    el.child(
-                        Button::new("unstage-all", "Unstage All").on_click(cx.listener(
-                            |this, _, window, cx| {
-                                this.dispatch_panel_action(&UnstageAll, window, cx)
-                            },
-                        )),
+                h_group_sm()
+                    .child(
+                        IconButton::new("up", IconName::ArrowUp)
+                            .shape(ui::IconButtonShape::Square)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Go to previous hunk",
+                                &GoToPrevHunk,
+                                &focus_handle,
+                            ))
+                            .disabled(!button_states.prev_next)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&GoToPrevHunk, window, cx)
+                            })),
                     )
-                },
+                    .child(
+                        IconButton::new("down", IconName::ArrowDown)
+                            .shape(ui::IconButtonShape::Square)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Go to next hunk",
+                                &GoToHunk,
+                                &focus_handle,
+                            ))
+                            .disabled(!button_states.prev_next)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&GoToHunk, window, cx)
+                            })),
+                    ),
             )
-            .when(
-                !button_states.unstage_all || button_states.stage_all,
-                |el| {
-                    el.child(
-                        // todo make it so that changing to say "Unstaged"
-                        // doesn't change the position.
-                        div().ml(rems(0.75)).child(
-                            Button::new("stage-all", "Stage All")
-                                .disabled(!button_states.stage_all)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_panel_action(&StageAll, window, cx)
-                                })),
-                        ),
-                    )
-                },
-            )
+            .child(vertical_divider())
             .child(
-                Button::new("commit", "Commit")
-                    .disabled(!button_states.commit)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        // todo this should open modal, not focus panel.
-                        this.dispatch_action(&Commit, window, cx);
-                    })),
+                h_group_sm()
+                    .when(
+                        button_states.unstage_all && !button_states.stage_all,
+                        |el| {
+                            el.child(Button::new("unstage-all", "Unstage All").on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.dispatch_panel_action(&UnstageAll, window, cx)
+                                }),
+                            ))
+                        },
+                    )
+                    .when(
+                        !button_states.unstage_all || button_states.stage_all,
+                        |el| {
+                            el.child(
+                                // todo make it so that changing to say "Unstaged"
+                                // doesn't change the position.
+                                div().child(
+                                    Button::new("stage-all", "Stage All")
+                                        .disabled(!button_states.stage_all)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.dispatch_panel_action(&StageAll, window, cx)
+                                        })),
+                                ),
+                            )
+                        },
+                    )
+                    .child(
+                        Button::new("commit", "Commit")
+                            .disabled(!button_states.commit)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                // todo this should open modal, not focus panel.
+                                this.dispatch_action(&Commit, window, cx);
+                            })),
+                    ),
             )
     }
 }
