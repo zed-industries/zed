@@ -122,8 +122,11 @@ impl Vim {
         } else {
             // Save the last anchor so as to jump to it later.
             let anchor: Option<Anchor> = anchors.last_mut().map(|last| last.clone());
+            let should_jump = self.mode == Mode::Visual
+                || self.mode == Mode::VisualLine
+                || self.mode == Mode::VisualBlock;
 
-            self.update_editor(window, cx, |vim, editor, window, cx| {
+            self.update_editor(window, cx, |_, editor, window, cx| {
                 let map = editor.snapshot(window, cx);
                 let mut ranges: Vec<Range<Anchor>> = Vec::new();
                 for mut anchor in anchors {
@@ -141,18 +144,22 @@ impl Vim {
                     }
                 }
 
-                if vim.mode != Mode::Visual
-                    && vim.mode != Mode::VisualLine
-                    && vim.mode != Mode::VisualBlock
-                {
+                if !should_jump {
                     editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                         s.select_anchor_ranges(ranges)
                     });
                 }
             });
 
-            if let Some(anchor) = anchor {
-                self.motion(Motion::Jump { anchor, line }, window, cx)
+            if should_jump && anchor.is_some() {
+                self.motion(
+                    Motion::Jump {
+                        anchor: anchor.unwrap(),
+                        line,
+                    },
+                    window,
+                    cx,
+                )
             }
         }
     }
