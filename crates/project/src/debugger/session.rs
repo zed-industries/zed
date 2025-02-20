@@ -787,6 +787,12 @@ impl Session {
         process_result: impl FnOnce(&mut Self, &T::Response, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) {
+        const {
+            assert!(
+                T::CACHEABLE,
+                "Only requests marked as cacheable should invoke `fetch`"
+            );
+        }
         if let Entry::Vacant(vacant) = self.requests.entry(request.into()) {
             let command = vacant.key().0.clone().as_any_arc().downcast::<T>().unwrap();
 

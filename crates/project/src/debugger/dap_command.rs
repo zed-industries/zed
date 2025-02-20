@@ -17,6 +17,7 @@ use util::ResultExt;
 pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     type Response: 'static + Send + std::fmt::Debug;
     type DapRequest: 'static + Send + dap::requests::Request;
+    const CACHEABLE: bool = false;
 
     fn is_supported(_capabilities: &Capabilities) -> bool {
         true
@@ -843,6 +844,7 @@ pub struct VariablesCommand {
 impl LocalDapCommand for VariablesCommand {
     type Response = Vec<Variable>;
     type DapRequest = dap::requests::Variables;
+    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::VariablesArguments {
@@ -1069,6 +1071,7 @@ pub(crate) struct ModulesCommand;
 impl LocalDapCommand for ModulesCommand {
     type Response = Vec<dap::Module>;
     type DapRequest = dap::requests::Modules;
+    const CACHEABLE: bool = true;
 
     fn is_supported(capabilities: &Capabilities) -> bool {
         capabilities.supports_modules_request.unwrap_or_default()
@@ -1142,6 +1145,8 @@ pub(crate) struct LoadedSourcesCommand;
 impl LocalDapCommand for LoadedSourcesCommand {
     type Response = Vec<dap::Source>;
     type DapRequest = dap::requests::LoadedSources;
+    const CACHEABLE: bool = true;
+
     fn is_supported(capabilities: &Capabilities) -> bool {
         capabilities
             .supports_loaded_sources_request
@@ -1216,6 +1221,7 @@ pub(crate) struct StackTraceCommand {
 impl LocalDapCommand for StackTraceCommand {
     type Response = Vec<dap::StackFrame>;
     type DapRequest = dap::requests::StackTrace;
+    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::StackTraceArguments {
@@ -1289,6 +1295,7 @@ pub(crate) struct ScopesCommand {
 impl LocalDapCommand for ScopesCommand {
     type Response = Vec<dap::Scope>;
     type DapRequest = dap::requests::Scopes;
+    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::ScopesArguments {
@@ -1347,6 +1354,7 @@ impl DapCommand for ScopesCommand {
 impl LocalDapCommand for super::session::CompletionsQuery {
     type Response = dap::CompletionsResponse;
     type DapRequest = dap::requests::Completions;
+    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::CompletionsArguments {
@@ -1512,6 +1520,7 @@ pub(crate) struct ThreadsCommand;
 impl LocalDapCommand for ThreadsCommand {
     type Response = Vec<dap::Thread>;
     type DapRequest = dap::requests::Threads;
+    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         ()
