@@ -1681,6 +1681,11 @@ impl EditorElement {
 
         let mut elements = HashMap::default();
         for (row, mut diagnostics) in diagnostics_by_rows {
+            // Active diagnostics are all shown in the editor already, no need to display them inline
+            diagnostics.retain(|diagnostic| match active_diagnostics_group {
+                Some(active_diagnostics_group) => diagnostic.group_id != active_diagnostics_group,
+                None => true,
+            });
             diagnostics.sort_by_key(|diagnostic| {
                 (
                     diagnostic.severity,
@@ -1689,29 +1694,19 @@ impl EditorElement {
                     diagnostic.start.column,
                 )
             });
-            let Some(diagnostic_to_render) = (match active_diagnostics_group {
-                // TODO kb do not show primary diagnostic that is active
-                Some(active_diagnostics_group) => diagnostics
-                    .iter()
-                    .find(|diagnostic| diagnostic.group_id == active_diagnostics_group)
-                    .or_else(|| {
-                        diagnostics
-                            .iter()
-                            .filter(|diagnostic| diagnostic.is_primary)
-                            .next()
-                    }),
-                None => diagnostics
-                    .iter()
-                    .filter(|diagnostic| diagnostic.is_primary)
-                    .next(),
-            }) else {
+
+            let Some(diagnostic_to_render) = diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.is_primary)
+                .next()
+                .or_else(|| diagnostics.first())
+            else {
                 continue;
             };
 
             let pos_y = content_origin.y
                 + line_height * (row.0 as f32 - scroll_pixel_position.y / line_height);
 
-            // TODO kb move diagnostics down the line for "wrapping"
             let window_ix = row.minus(start_row) as usize;
             let pos_x = {
                 let crease_trailer_layout = &crease_trailers[window_ix];
