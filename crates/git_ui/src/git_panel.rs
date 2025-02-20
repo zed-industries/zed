@@ -1101,23 +1101,41 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
+        let confirmation = if self.commit_editor.read(cx).is_empty(cx) {
+            Task::ready(true)
+        } else {
+            let prompt = window.prompt(
+                PromptLevel::Warning,
+                "Uncomitting will replace the current commit message with the previous commit's message",
+                None,
+                &["Ok", "Cancel"],
+                cx,
+            );
+            cx.spawn(|_, _| async move { prompt.await.is_ok_and(|i| i == 0) })
+        };
+
         let prior_head = self.load_commit_details("HEAD", cx);
 
-        let task = cx.spawn(|_, mut cx| async move {
-            let prior_head = prior_head.await?;
-
-            repo.update(&mut cx, |repo, _| repo.reset("HEAD^", ResetMode::Soft))?
-                .await??;
-
-            Ok(prior_head)
-        });
-
         let task = cx.spawn_in(window, |this, mut cx| async move {
-            let result = task.await;
+            let result = maybe!(async {
+                if !confirmation.await {
+                    Ok(None)
+                } else {
+                    let prior_head = prior_head.await?;
+
+                    repo.update(&mut cx, |repo, _| repo.reset("HEAD^", ResetMode::Soft))?
+                        .await??;
+
+                    Ok(Some(prior_head))
+                }
+            })
+            .await;
+
             this.update_in(&mut cx, |this, window, cx| {
                 this.pending_commit.take();
                 match result {
-                    Ok(prior_commit) => {
+                    Ok(None) => {}
+                    Ok(Some(prior_commit)) => {
                         this.commit_editor.update(cx, |editor, cx| {
                             editor.set_text(prior_commit.message, window, cx)
                         });
@@ -1606,8 +1624,6 @@ impl GitPanel {
             && !self.has_unstaged_conflicts()
             && self.has_write_access(cx);
 
-        // let can_commit_all =
-        //     !self.commit_pending && self.can_commit_all && !editor.read(cx).is_empty(cx);
         let panel_editor_style = panel_editor_style(true, window, cx);
 
         let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
