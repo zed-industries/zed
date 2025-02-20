@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use release_channel::app_identifier;
 use util::ResultExt;
 use windows::{
-    core::HSTRING,
+    core::{HSTRING, PCWSTR},
     Win32::{
         Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, GENERIC_WRITE, HANDLE},
         Storage::FileSystem::{
