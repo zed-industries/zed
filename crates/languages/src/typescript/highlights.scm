@@ -31,8 +31,8 @@
   (identifier)
   (shorthand_property_identifier)
   (shorthand_property_identifier_pattern)
- ] @constant
- (#match? @constant "^_*[A-Z_][A-Z\\d_]*$"))
+ ] @constant.variable
+ (#match? @constant.variable "^_*[A-Z_][A-Z\\d_]*$"))
 
 ; Properties
 
@@ -83,12 +83,9 @@
 [
   (null)
   (undefined)
-] @constant.builtin
-
-[
   (true)
   (false)
-] @boolean
+] @constant.builtin
 
 (literal_type
   [
@@ -198,6 +195,8 @@
 (type_arguments
   "<" @punctuation.bracket
   ">" @punctuation.bracket)
+
+(decorator "@" @punctuation.special)
 
 ; Keywords
 

@@ -12,7 +12,12 @@
   (true)
   (false)
   (null)
-] @constant
+] @constant.builtin
+
+[
+  ","
+  ":"
+] @punctuation.delimiter
 
 [
   "{"

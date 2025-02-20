@@ -54,8 +54,8 @@
   (identifier)
   (shorthand_property_identifier)
   (shorthand_property_identifier_pattern)
- ] @constant
- (#match? @constant "^_*[A-Z_][A-Z\\d_]*$"))
+ ] @constant.variable
+ (#match? @constant.variable "^_*[A-Z_][A-Z\\d_]*$"))
 
 ; Literals
 
@@ -65,12 +65,9 @@
 [
   (null)
   (undefined)
-] @constant.builtin
-
-[
   (true)
   (false)
-] @boolean
+] @constant.builtin
 
 (comment) @comment
 
@@ -82,6 +79,7 @@
 (escape_sequence) @string.escape
 
 (regex) @string.regex
+(regex_flags) @keyword.regex
 (number) @number
 
 ; Tokens
@@ -210,6 +208,8 @@
   "<" @punctuation.bracket
   ">" @punctuation.bracket)
 
+(decorator "@" @punctuation.special)
+
 ; Keywords
 
 [ "abstract"
@@ -229,11 +229,13 @@
 ] @keyword
 
 ; JSX elements
-(jsx_opening_element (identifier) @tag (#match? @tag "^[a-z][^.]*$"))
-(jsx_closing_element (identifier) @tag (#match? @tag "^[a-z][^.]*$"))
-(jsx_self_closing_element (identifier) @tag (#match? @tag "^[a-z][^.]*$"))
+(jsx_opening_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
+(jsx_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
+(jsx_self_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
 
-(jsx_attribute (property_identifier) @attribute)
-(jsx_opening_element (["<" ">"]) @punctuation.bracket)
-(jsx_closing_element (["</" ">"]) @punctuation.bracket)
-(jsx_self_closing_element (["<" "/>"]) @punctuation.bracket)
+(jsx_attribute (property_identifier) @attribute.jsx)
+(jsx_opening_element (["<" ">"]) @punctuation.jsx.bracket)
+(jsx_closing_element (["</" ">"]) @punctuation.jsx.bracket)
+(jsx_self_closing_element (["<" "/>"]) @punctuation.jsx.bracket)
+(jsx_attribute "=" @punctuation.jsx.delimiter)
+(jsx_text) @text.jsx

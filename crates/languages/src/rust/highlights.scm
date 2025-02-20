@@ -1,3 +1,4 @@
+(identifier) @variable
 (type_identifier) @type
 (primitive_type) @type.builtin
 (self) @variable.special
@@ -47,8 +48,8 @@
  (#match? @type "^[A-Z]"))
 
 ; Assume all-caps names are constants
-((identifier) @constant
- (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
+((identifier) @constant.variable
+ (#match? @constant.variable "^_*[A-Z][A-Z\\d_]*$"))
 
 [
   "("
@@ -129,7 +130,7 @@
   (float_literal)
 ] @number
 
-(boolean_literal) @constant
+(boolean_literal) @constant.builtin
 
 [
   (line_comment)
