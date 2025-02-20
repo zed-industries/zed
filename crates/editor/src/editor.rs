@@ -5672,7 +5672,7 @@ impl Editor {
             if let Some(project_path) = buffer.project_path(cx) {
                 if let Some(breakpoints) = breakpoints.get(&project_path) {
                     for breakpoint in breakpoints {
-                        let point = breakpoint.point_for_buffer(&buffer);
+                        let point = breakpoint.point_for_buffer(&buffer.text_snapshot());
 
                         breakpoint_display_points
                             .insert(point.to_display_point(&snapshot).row(), breakpoint.clone());
@@ -7565,11 +7565,14 @@ impl Editor {
         };
 
         let Some(cache_position) = self.buffer.read_with(cx, |buffer, cx| {
-            buffer.buffer(buffer_id).map(|buffer| {
-                buffer
-                    .read(cx)
-                    .summary_for_anchor::<Point>(&breakpoint_position)
-                    .row
+            buffer.buffer(buffer_id).and_then(|buffer| {
+                NonZeroU32::new(
+                    buffer
+                        .read(cx)
+                        .summary_for_anchor::<Point>(&breakpoint_position)
+                        .row
+                        + 1,
+                )
             })
         }) else {
             return;

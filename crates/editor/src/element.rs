@@ -64,6 +64,7 @@ use std::{
     cmp::{self, Ordering},
     fmt::{self, Write},
     iter, mem,
+    num::NonZeroU32,
     ops::{Deref, Range},
     rc::Rc,
     sync::Arc,
@@ -7116,14 +7117,25 @@ impl Element for EditorElement {
                     if let Some(gutter_breakpoint_point) = gutter_breakpoint_indicator {
                         breakpoint_rows
                             .entry(gutter_breakpoint_point.row())
-                            .or_insert(Breakpoint {
-                                active_position: Some(
-                                    snapshot
-                                        .display_point_to_breakpoint_anchor(gutter_breakpoint_point)
-                                        .text_anchor,
-                                ),
-                                cached_position: 0,
-                                kind: BreakpointKind::Standard,
+                            .or_insert_with(|| {
+                                let position = snapshot
+                                    .display_point_to_breakpoint_anchor(gutter_breakpoint_point);
+                                let mut breakpoint = Breakpoint {
+                                    active_position: Some(position.text_anchor),
+                                    cached_position: NonZeroU32::new(u32::MAX).unwrap(),
+                                    kind: BreakpointKind::Standard,
+                                };
+                                let buffer = snapshot
+                                    .buffer_snapshot
+                                    .buffer_for_excerpt(position.excerpt_id);
+                                if let Some(buffer) = buffer {
+                                    breakpoint.cached_position = NonZeroU32::new(
+                                        breakpoint.point_for_buffer(buffer).row + 1,
+                                    )
+                                    .unwrap();
+                                }
+
+                                breakpoint
                             });
                     }
 

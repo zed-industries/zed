@@ -15,6 +15,7 @@ use settings::Settings;
 use settings::WorktreeId;
 use std::{
     hash::{Hash, Hasher},
+    num::NonZeroU32,
     path::Path,
     sync::Arc,
 };
@@ -285,10 +286,14 @@ impl BreakpointStore {
         };
 
         if let Some(breakpoint_set) = self.breakpoints.remove(&project_path) {
-            let breakpoint_iter = breakpoint_set.into_iter().map(|mut breakpoint| {
-                breakpoint.cached_position = breakpoint.point_for_buffer(buffer.read(cx)).row;
+            let breakpoint_iter = breakpoint_set.into_iter().filter_map(|mut breakpoint| {
+                let position = NonZeroU32::new(
+                    breakpoint.point_for_buffer(&buffer.read(cx).snapshot()).row + 1,
+                );
+                debug_assert!(position.is_some());
+                breakpoint.cached_position = position?;
                 breakpoint.active_position = None;
-                breakpoint
+                Some(breakpoint)
             });
 
             self.breakpoints.insert(
@@ -573,7 +578,7 @@ impl Hash for BreakpointKind {
 #[derive(Clone, Debug)]
 pub struct Breakpoint {
     pub active_position: Option<text::Anchor>,
-    pub cached_position: u32,
+    pub cached_position: NonZeroU32,
     pub kind: BreakpointKind,
 }
 
@@ -605,68 +610,23 @@ impl Hash for Breakpoint {
 }
 
 impl Breakpoint {
-    pub fn to_source_breakpoint(&self, buffer: &Buffer) -> SourceBreakpoint {
-        let line = self
-            .active_position
-            .map(|position| buffer.summary_for_anchor::<Point>(&position).row)
-            .unwrap_or(self.cached_position) as u64;
-
-        let log_message = match &self.kind {
-            BreakpointKind::Standard => None,
-            BreakpointKind::Log(message) => Some(message.clone().to_string()),
-        };
-
-        SourceBreakpoint {
-            line,
-            condition: None,
-            hit_condition: None,
-            log_message,
-            column: None,
-            mode: None,
-        }
-    }
-
     pub fn set_active_position(&mut self, buffer: &Buffer) {
         if self.active_position.is_none() {
             self.active_position =
-                Some(buffer.breakpoint_anchor(Point::new(self.cached_position, 0)));
+                Some(buffer.breakpoint_anchor(Point::new(self.cached_position.get() - 1, 0)));
         }
     }
 
-    pub fn point_for_buffer(&self, buffer: &Buffer) -> Point {
+    pub fn point_for_buffer(&self, buffer: &text::BufferSnapshot) -> Point {
         self.active_position
             .map(|position| buffer.summary_for_anchor::<Point>(&position))
-            .unwrap_or(Point::new(self.cached_position, 0))
+            .unwrap_or(Point::new(self.cached_position.get() - 1, 0))
     }
 
     pub fn point_for_buffer_snapshot(&self, buffer_snapshot: &BufferSnapshot) -> Point {
         self.active_position
             .map(|position| buffer_snapshot.summary_for_anchor::<Point>(&position))
-            .unwrap_or(Point::new(self.cached_position, 0))
-    }
-
-    pub fn source_for_snapshot(&self, snapshot: Option<&BufferSnapshot>) -> SourceBreakpoint {
-        let line = match snapshot {
-            Some(snapshot) => self
-                .active_position
-                .map(|position| snapshot.summary_for_anchor::<Point>(&position).row)
-                .unwrap_or(self.cached_position) as u64,
-            None => self.cached_position as u64,
-        };
-
-        let log_message = match &self.kind {
-            BreakpointKind::Standard => None,
-            BreakpointKind::Log(log_message) => Some(log_message.clone().to_string()),
-        };
-
-        SourceBreakpoint {
-            line,
-            condition: None,
-            hit_condition: None,
-            log_message,
-            column: None,
-            mode: None,
-        }
+            .unwrap_or(Point::new(self.cached_position.get() - 1, 0))
     }
 
     pub fn to_serialized(&self, buffer: Option<&Buffer>, path: Arc<Path>) -> SerializedBreakpoint {
@@ -674,7 +634,15 @@ impl Breakpoint {
             Some(buffer) => SerializedBreakpoint {
                 position: self
                     .active_position
-                    .map(|position| buffer.summary_for_anchor::<Point>(&position).row)
+                    .and_then(|position| {
+                        let ret =
+                            NonZeroU32::new(buffer.summary_for_anchor::<Point>(&position).row + 1);
+                        debug_assert!(
+                            ret.is_some(),
+                            "Serializing breakpoint close to u32::MAX position failed"
+                        );
+                        ret
+                    })
                     .unwrap_or(self.cached_position),
                 path,
                 kind: self.kind.clone(),
@@ -694,7 +662,7 @@ impl Breakpoint {
             } else {
                 None
             },
-            cached_position: self.cached_position,
+            cached_position: self.cached_position.get(),
             kind: match self.kind {
                 BreakpointKind::Standard => proto::BreakpointKind::Standard.into(),
                 BreakpointKind::Log(_) => proto::BreakpointKind::Log.into(),
@@ -714,7 +682,7 @@ impl Breakpoint {
             } else {
                 None
             },
-            cached_position: breakpoint.cached_position,
+            cached_position: NonZeroU32::new(breakpoint.cached_position)?,
             kind: match proto::BreakpointKind::from_i32(breakpoint.kind) {
                 Some(proto::BreakpointKind::Log) => {
                     BreakpointKind::Log(breakpoint.message.clone().unwrap_or_default().into())
@@ -727,7 +695,7 @@ impl Breakpoint {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct SerializedBreakpoint {
-    pub position: u32,
+    pub position: NonZeroU32,
     pub path: Arc<Path>,
     pub kind: BreakpointKind,
 }
@@ -740,7 +708,7 @@ impl SerializedBreakpoint {
         };
 
         SourceBreakpoint {
-            line: self.position as u64,
+            line: self.position.get() as u64,
             condition: None,
             hit_condition: None,
             log_message,
