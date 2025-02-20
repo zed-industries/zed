@@ -6390,15 +6390,18 @@ impl LineWithInvisibles {
             )
         };
 
+        let is_highlighted = layout.highlighted_rows.contains_key(&row);
+
         let invisible_iter = self.invisibles.iter().map(extract_whitespace_info);
         match whitespace_setting {
             ShowWhitespaceSetting::None => (),
             ShowWhitespaceSetting::All => invisible_iter.for_each(|(_, paint)| paint(window, cx)),
             ShowWhitespaceSetting::Selection => invisible_iter.for_each(|([start, _], paint)| {
                 let invisible_point = DisplayPoint::new(row, start as u32);
-                if !selection_ranges
-                    .iter()
-                    .any(|region| region.start <= invisible_point && invisible_point < region.end)
+                if !is_highlighted
+                    && !selection_ranges.iter().any(|region| {
+                        region.start <= invisible_point && invisible_point < region.end
+                    })
                 {
                     return;
                 }
