@@ -46,7 +46,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smol::channel;
 use theme::{SyntaxTheme, ThemeSettings};
-use ui::{prelude::*, DynamicSpacing, IndentGuideColors, IndentGuideLayout};
+use ui::{DynamicSpacing, IndentGuideColors, IndentGuideLayout};
 use util::{debug_panic, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
