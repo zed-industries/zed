@@ -202,7 +202,7 @@ impl Database {
         .await
     }
 
-    pub async fn get_known_extension_versions<'a>(&self) -> Result<HashMap<String, Vec<String>>> {
+    pub async fn get_known_extension_versions(&self) -> Result<HashMap<String, Vec<String>>> {
         self.transaction(|tx| async move {
             let mut extension_external_ids_by_id = HashMap::default();
 

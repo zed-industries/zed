@@ -781,7 +781,7 @@ impl Ord for NumericPrefixWithSuffix<'_> {
     }
 }
 
-impl<'a> PartialOrd for NumericPrefixWithSuffix<'a> {
+impl PartialOrd for NumericPrefixWithSuffix<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }

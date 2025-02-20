@@ -11,7 +11,7 @@ pub enum ArcCow<'a, T: ?Sized> {
     Owned(Arc<T>),
 }
 
-impl<'a, T: ?Sized + PartialEq> PartialEq for ArcCow<'a, T> {
+impl<T: ?Sized + PartialEq> PartialEq for ArcCow<'_, T> {
     fn eq(&self, other: &Self) -> bool {
         let a = self.as_ref();
         let b = other.as_ref();
@@ -19,21 +19,21 @@ impl<'a, T: ?Sized + PartialEq> PartialEq for ArcCow<'a, T> {
     }
 }
 
-impl<'a, T: ?Sized + PartialOrd> PartialOrd for ArcCow<'a, T> {
+impl<T: ?Sized + PartialOrd> PartialOrd for ArcCow<'_, T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.as_ref().partial_cmp(other.as_ref())
     }
 }
 
-impl<'a, T: ?Sized + Ord> Ord for ArcCow<'a, T> {
+impl<T: ?Sized + Ord> Ord for ArcCow<'_, T> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.as_ref().cmp(other.as_ref())
     }
 }
 
-impl<'a, T: ?Sized + Eq> Eq for ArcCow<'a, T> {}
+impl<T: ?Sized + Eq> Eq for ArcCow<'_, T> {}
 
-impl<'a, T: ?Sized + Hash> Hash for ArcCow<'a, T> {
+impl<T: ?Sized + Hash> Hash for ArcCow<'_, T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
             Self::Borrowed(borrowed) => Hash::hash(borrowed, state),
@@ -42,7 +42,7 @@ impl<'a, T: ?Sized + Hash> Hash for ArcCow<'a, T> {
     }
 }
 
-impl<'a, T: ?Sized> Clone for ArcCow<'a, T> {
+impl<T: ?Sized> Clone for ArcCow<'_, T> {
     fn clone(&self) -> Self {
         match self {
             Self::Borrowed(borrowed) => Self::Borrowed(borrowed),
@@ -102,7 +102,7 @@ impl<'a> From<&'a str> for ArcCow<'a, [u8]> {
     }
 }
 
-impl<'a, T: ?Sized + ToOwned> std::borrow::Borrow<T> for ArcCow<'a, T> {
+impl<T: ?Sized + ToOwned> std::borrow::Borrow<T> for ArcCow<'_, T> {
     fn borrow(&self) -> &T {
         match self {
             ArcCow::Borrowed(borrowed) => borrowed,
@@ -131,7 +131,7 @@ impl<T: ?Sized> AsRef<T> for ArcCow<'_, T> {
     }
 }
 
-impl<'a, T: ?Sized + Debug> Debug for ArcCow<'a, T> {
+impl<T: ?Sized + Debug> Debug for ArcCow<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             ArcCow::Borrowed(borrowed) => Debug::fmt(borrowed, f),

@@ -979,7 +979,7 @@ impl<'a> Deref for ConnectionPoolGuard<'a> {
     }
 }
 
-impl<'a> DerefMut for ConnectionPoolGuard<'a> {
+impl DerefMut for ConnectionPoolGuard<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.guard
     }
