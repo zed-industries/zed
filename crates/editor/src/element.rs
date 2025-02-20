@@ -1637,12 +1637,26 @@ impl EditorElement {
                 project_settings::DiagnosticSeverity::Hint => DiagnosticSeverity::HINT,
             });
 
+        let active_diagnostics_group = self
+            .editor
+            .read(cx)
+            .active_diagnostics
+            .as_ref()
+            .map(|active_diagnostics| active_diagnostics.group_id);
+
         let diagnostics_by_rows = self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(window, cx);
             editor
                 .inline_diagnostics
                 .iter()
                 .filter(|(_, diagnostic)| diagnostic.severity <= max_severity)
+                .filter(|(_, diagnostic)| match active_diagnostics_group {
+                    Some(active_diagnostics_group) => {
+                        // Active diagnostics are all shown in the editor already, no need to display them inline
+                        diagnostic.group_id != active_diagnostics_group
+                    }
+                    None => true,
+                })
                 .map(|(point, diag)| (point.to_display_point(&snapshot), diag.clone()))
                 .skip_while(|(point, _)| point.row() < start_row)
                 .take_while(|(point, _)| point.row() < end_row)
@@ -1673,20 +1687,8 @@ impl EditorElement {
             .min_column as f32
             * em_width;
 
-        let active_diagnostics_group = self
-            .editor
-            .read(cx)
-            .active_diagnostics
-            .as_ref()
-            .map(|active_diagnostics| active_diagnostics.group_id);
-
         let mut elements = HashMap::default();
         for (row, mut diagnostics) in diagnostics_by_rows {
-            // Active diagnostics are all shown in the editor already, no need to display them inline
-            diagnostics.retain(|diagnostic| match active_diagnostics_group {
-                Some(active_diagnostics_group) => diagnostic.group_id != active_diagnostics_group,
-                None => true,
-            });
             diagnostics.sort_by_key(|diagnostic| {
                 (
                     diagnostic.severity,
@@ -1698,8 +1700,7 @@ impl EditorElement {
 
             let Some(diagnostic_to_render) = diagnostics
                 .iter()
-                .filter(|diagnostic| diagnostic.is_primary)
-                .next()
+                .find(|diagnostic| diagnostic.is_primary)
                 .or_else(|| diagnostics.first())
             else {
                 continue;
