@@ -1,5 +1,4 @@
 pub mod items;
-mod project_diagnostics_settings;
 mod toolbar_controls;
 
 #[cfg(test)]
@@ -24,8 +23,7 @@ use language::{
     Point, Selection, SelectionGoal, ToTreeSitterPoint,
 };
 use lsp::LanguageServerId;
-use project::{DiagnosticSummary, Project, ProjectPath};
-use project_diagnostics_settings::ProjectDiagnosticsSettings;
+use project::{project_settings::ProjectSettings, DiagnosticSummary, Project, ProjectPath};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
@@ -52,7 +50,6 @@ struct IncludeWarnings(bool);
 impl Global for IncludeWarnings {}
 
 pub fn init(cx: &mut App) {
-    ProjectDiagnosticsSettings::register(cx);
     cx.observe_new(ProjectDiagnosticsEditor::register).detach();
 }
 
@@ -178,6 +175,7 @@ impl ProjectDiagnosticsEditor {
                 cx,
             );
             editor.set_vertical_scroll_margin(5, cx);
+            editor.disable_inline_diagnostics();
             editor
         });
         cx.subscribe_in(
@@ -287,7 +285,7 @@ impl ProjectDiagnosticsEditor {
 
             let include_warnings = match cx.try_global::<IncludeWarnings>() {
                 Some(include_warnings) => include_warnings.0,
-                None => ProjectDiagnosticsSettings::get_global(cx).include_warnings,
+                None => ProjectSettings::get_global(cx).diagnostics.include_warnings,
             };
 
             let diagnostics = cx.new(|cx| {

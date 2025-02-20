@@ -3851,7 +3851,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rand 0.8.5",
- "schemars",
  "serde",
  "serde_json",
  "settings",

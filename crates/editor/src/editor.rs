@@ -464,6 +464,15 @@ enum EditPredictionSettings {
 
 enum InlineCompletionHighlight {}
 
+#[derive(Debug, Clone)]
+struct InlineDiagnostic {
+    message: SharedString,
+    group_id: usize,
+    is_primary: bool,
+    start: Point,
+    severity: DiagnosticSeverity,
+}
+
 pub enum MenuInlineCompletionsPolicy {
     Never,
     ByProvider,
@@ -594,6 +603,10 @@ pub struct Editor {
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
+    show_inline_diagnostics: bool,
+    inline_diagnostics_update: Task<()>,
+    inline_diagnostics_enabled: bool,
+    inline_diagnostics: Vec<(Anchor, InlineDiagnostic)>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
 
     // TODO: make this a access method
@@ -1304,6 +1317,9 @@ impl Editor {
             select_larger_syntax_node_stack: Vec::new(),
             ime_transaction: Default::default(),
             active_diagnostics: None,
+            show_inline_diagnostics: ProjectSettings::get_global(cx).diagnostics.inline.enabled,
+            inline_diagnostics_update: Task::ready(()),
+            inline_diagnostics: Vec::new(),
             soft_wrap_mode_override,
             completion_provider: project.clone().map(|project| Box::new(project) as _),
             semantics_provider: project.clone().map(|project| Rc::new(project) as _),
@@ -1368,6 +1384,7 @@ impl Editor {
             active_inline_completion: None,
             stale_inline_completion_in_menu: None,
             edit_prediction_preview: EditPredictionPreview::Inactive,
+            inline_diagnostics_enabled: mode == EditorMode::Full,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -11868,6 +11885,106 @@ impl Editor {
         }
     }
 
+    /// Disable inline diagnostics rendering for this editor.
+    pub fn disable_inline_diagnostics(&mut self) {
+        self.inline_diagnostics_enabled = false;
+        self.inline_diagnostics_update = Task::ready(());
+        self.inline_diagnostics.clear();
+    }
+
+    pub fn inline_diagnostics_enabled(&self) -> bool {
+        self.inline_diagnostics_enabled
+    }
+
+    pub fn show_inline_diagnostics(&self) -> bool {
+        self.show_inline_diagnostics
+    }
+
+    pub fn toggle_inline_diagnostics(
+        &mut self,
+        _: &ToggleInlineDiagnostics,
+        window: &mut Window,
+        cx: &mut Context<'_, Editor>,
+    ) {
+        self.show_inline_diagnostics = !self.show_inline_diagnostics;
+        self.refresh_inline_diagnostics(false, window, cx);
+    }
+
+    fn refresh_inline_diagnostics(
+        &mut self,
+        debounce: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.inline_diagnostics_enabled || !self.show_inline_diagnostics {
+            self.inline_diagnostics_update = Task::ready(());
+            self.inline_diagnostics.clear();
+            return;
+        }
+
+        let debounce_ms = ProjectSettings::get_global(cx)
+            .diagnostics
+            .inline
+            .update_debounce_ms;
+        let debounce = if debounce && debounce_ms > 0 {
+            Some(Duration::from_millis(debounce_ms))
+        } else {
+            None
+        };
+        self.inline_diagnostics_update = cx.spawn_in(window, |editor, mut cx| async move {
+            if let Some(debounce) = debounce {
+                cx.background_executor().timer(debounce).await;
+            }
+            let Some(snapshot) = editor
+                .update(&mut cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
+                .ok()
+            else {
+                return;
+            };
+
+            let new_inline_diagnostics = cx
+                .background_spawn(async move {
+                    let mut inline_diagnostics = Vec::<(Anchor, InlineDiagnostic)>::new();
+                    for diagnostic_entry in snapshot.diagnostics_in_range(0..snapshot.len()) {
+                        let message = diagnostic_entry
+                            .diagnostic
+                            .message
+                            .split_once('\n')
+                            .map(|(line, _)| line)
+                            .map(SharedString::new)
+                            .unwrap_or_else(|| {
+                                SharedString::from(diagnostic_entry.diagnostic.message)
+                            });
+                        let start_anchor = snapshot.anchor_before(diagnostic_entry.range.start);
+                        let (Ok(i) | Err(i)) = inline_diagnostics
+                            .binary_search_by(|(probe, _)| probe.cmp(&start_anchor, &snapshot));
+                        inline_diagnostics.insert(
+                            i,
+                            (
+                                start_anchor,
+                                InlineDiagnostic {
+                                    message,
+                                    group_id: diagnostic_entry.diagnostic.group_id,
+                                    start: diagnostic_entry.range.start.to_point(&snapshot),
+                                    is_primary: diagnostic_entry.diagnostic.is_primary,
+                                    severity: diagnostic_entry.diagnostic.severity,
+                                },
+                            ),
+                        );
+                    }
+                    inline_diagnostics
+                })
+                .await;
+
+            editor
+                .update(&mut cx, |editor, cx| {
+                    editor.inline_diagnostics = new_inline_diagnostics;
+                    cx.notify();
+                })
+                .ok();
+        });
+    }
+
     pub fn set_selections_from_remote(
         &mut self,
         selections: Vec<Selection<Anchor>>,
@@ -14333,6 +14450,7 @@ impl Editor {
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
+                self.refresh_inline_diagnostics(true, window, cx);
                 self.scrollbar_marker_state.dirty = true;
                 cx.notify();
             }
@@ -14383,7 +14501,13 @@ impl Editor {
         self.serialize_dirty_buffers = project_settings.session.restore_unsaved_buffers;
 
         if self.mode == EditorMode::Full {
+            let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;
             let inline_blame_enabled = project_settings.git.inline_blame_enabled();
+            if self.show_inline_diagnostics != show_inline_diagnostics {
+                self.show_inline_diagnostics = show_inline_diagnostics;
+                self.refresh_inline_diagnostics(false, window, cx);
+            }
+
             if self.git_blame_inline_enabled != inline_blame_enabled {
                 self.toggle_git_blame_inline_internal(false, window, cx);
             }
