@@ -238,7 +238,8 @@ actions!(
     [
         AcceptEditPrediction,
         AcceptPartialCopilotSuggestion,
-        AcceptPartialEditPrediction,
+        AcceptNextWordEditPrediction,
+        AcceptNextLineEditPrediction,
         AddSelectionAbove,
         AddSelectionBelow,
         ApplyAllDiffHunks,

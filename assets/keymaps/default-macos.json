@@ -193,7 +193,8 @@
     "bindings": {
       "alt-tab": "editor::NextEditPrediction",
       "alt-shift-tab": "editor::PreviousEditPrediction",
-      "ctrl-cmd-right": "editor::AcceptPartialEditPrediction"
+      "ctrl-cmd-right": "editor::AcceptNextWordEditPrediction",
+      "ctrl-cmd-down": "editor::AcceptNextLineEditPrediction"
     }
   },
   {

@@ -5990,11 +5990,29 @@ impl Editor {
         self.edit_prediction_requires_modifier_in_indent_conflict = false;
     }
 
-    pub fn accept_partial_inline_completion(
+    pub fn accept_next_word_inline_completion(
         &mut self,
-        _: &AcceptPartialEditPrediction,
+        _: &AcceptNextWordEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
+    ) {
+        self.accept_partial_inline_completion(window, cx, ' ');
+    }
+
+    pub fn accept_next_line_inline_completion(
+        &mut self,
+        _: &AcceptNextLineEditPrediction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.accept_partial_inline_completion(window, cx, '\n');
+    }
+
+    fn accept_partial_inline_completion(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        separator: char,
     ) {
         let Some(active_inline_completion) = self.active_inline_completion.as_ref() else {
             return;
@@ -6033,7 +6051,7 @@ impl Editor {
                     let mut partial_completion = text
                         .chars()
                         .by_ref()
-                        .take_while(|c| c.is_alphabetic())
+                        .take_while(|c| *c != separator)
                         .collect::<String>();
                     if partial_completion.is_empty() {
                         partial_completion = text
