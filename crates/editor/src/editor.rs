@@ -601,7 +601,8 @@ pub struct Editor {
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     show_inline_diagnostics: bool,
-    show_inline_diagnostics_delay_task: Option<Task<()>>,
+    inline_diagnostics_update: Task<()>,
+    inline_diagnostics_disabled: bool,
     inline_diagnostics: BTreeMap<DisplayRow, InlineDiagnostic>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
 
@@ -1313,8 +1314,8 @@ impl Editor {
             select_larger_syntax_node_stack: Vec::new(),
             ime_transaction: Default::default(),
             active_diagnostics: None,
-            show_inline_diagnostics: ProjectSettings::get_global(cx).diagnostics.inline().enabled,
-            show_inline_diagnostics_delay_task: None,
+            show_inline_diagnostics: ProjectSettings::get_global(cx).diagnostics.inline.enabled,
+            inline_diagnostics_update: Task::ready(()),
             inline_diagnostics: Default::default(),
             soft_wrap_mode_override,
             completion_provider: project.clone().map(|project| Box::new(project) as _),
@@ -1380,6 +1381,7 @@ impl Editor {
             active_inline_completion: None,
             stale_inline_completion_in_menu: None,
             edit_prediction_preview: EditPredictionPreview::Inactive,
+            inline_diagnostics_disabled: mode != EditorMode::Full,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -1416,7 +1418,6 @@ impl Editor {
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe_in(&buffer, window, Self::on_buffer_event),
-                cx.subscribe_in(&buffer, window, Self::on_diagnostics_updated),
                 cx.observe_in(&display_map, window, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                 cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
@@ -11885,110 +11886,101 @@ impl Editor {
         self.show_inline_diagnostics
     }
 
-    /// Used to disable the inline diagnostics rendering in the ProjectDiagnostics
-    /// multi-buffer.
-    pub fn set_show_inline_diagnostics(&mut self, enabled: bool) {
-        self.show_inline_diagnostics = enabled;
+    /// Disable inline diagnostics rendering for this editor.
+    pub fn disable_inline_diagnostics(&mut self) {
+        self.inline_diagnostics_disabled = true;
+        self.inline_diagnostics_update = Task::ready(());
+        self.inline_diagnostics.clear();
     }
 
-    pub fn toggle_show_inline_diagnostics(&mut self, _cx: &mut Context<Self>) {
-        self.show_inline_diagnostics = !self.show_inline_diagnostics;
-
-        // ToDo: if !show, clear preprocessed diagnostics, else, kick off timer
-        // to collect new diagnostics.
-    }
-
-    fn on_diagnostics_updated(
-        &mut self,
-        _: &Entity<MultiBuffer>,
-        event: &multi_buffer::Event,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !matches!(event, multi_buffer::Event::DiagnosticsUpdated) {
+    fn refresh_inline_diagnostics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.inline_diagnostics_disabled {
             return;
         }
 
         let settings = ProjectSettings::get_global(cx);
-        if !settings.diagnostics.inline().enabled() {
+        if !settings.diagnostics.inline.enabled {
             return;
         }
 
-        if let Some(delay) = settings.diagnostics.inline().update_debounce_ms() {
-            self.show_inline_diagnostics_delay_task =
-                Some(cx.spawn_in(window, |this, mut cx| async move {
-                    cx.background_executor().timer(delay).await;
-                    this.update(&mut cx, |this, cx| {
-                        this.update_inline_diagnostics(cx);
-                        cx.notify();
-                    })
-                    .log_err();
-                }));
-        }
-    }
-
-    fn update_inline_diagnostics(&mut self, cx: &mut Context<Self>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx).snapshot(cx);
-        let diagnostics = buffer
-            .diagnostics_in_range::<_, Point>(0..buffer.len())
-            .sorted_by_key(|diagnostic| {
-                (
-                    diagnostic.diagnostic.severity,
-                    std::cmp::Reverse(diagnostic.diagnostic.is_primary),
-                    diagnostic.range.start.row,
-                    diagnostic.range.start.column,
-                )
-            })
-            .collect::<Vec<_>>();
-
-        self.inline_diagnostics.clear();
-        let mut prev_diagnostic_line = None;
-        for diagnostic in diagnostics {
-            let curr_line = diagnostic.range.start.row;
-
-            // We only show one inline diagnostic per line, so continue on
-            // if we've already seen one for the current line.
-            if prev_diagnostic_line.map_or(false, |l| l >= curr_line) {
-                continue;
-            } else {
-                prev_diagnostic_line = Some(curr_line);
+        let debounce = settings.diagnostics.inline.update_debounce_ms;
+        let debounce = if debounce > 0 {
+            Some(Duration::from_millis(debounce))
+        } else {
+            None
+        };
+        self.inline_diagnostics_update = cx.spawn_in(window, |editor, mut cx| async move {
+            if let Some(debounce) = debounce {
+                cx.background_executor().timer(debounce).await;
             }
+            editor
+                .update(&mut cx, |editor, cx| {
+                    let display_snapshot =
+                        editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+                    let buffer = editor.buffer.read(cx).snapshot(cx);
+                    let diagnostics = buffer
+                        .diagnostics_in_range(Point::zero()..buffer.len().to_point(&buffer))
+                        .sorted_by_key(|diagnostic| {
+                            (
+                                diagnostic.diagnostic.severity,
+                                std::cmp::Reverse(diagnostic.diagnostic.is_primary),
+                                diagnostic.range.start.row,
+                                diagnostic.range.start.column,
+                            )
+                        })
+                        .collect::<Vec<_>>();
 
-            let message = diagnostic
-                .diagnostic
-                .message
-                .split_once('\n')
-                .map(|(line, _)| line.to_string())
-                .unwrap_or(diagnostic.diagnostic.message.to_string());
+                    editor.inline_diagnostics.clear();
+                    let mut prev_diagnostic_line = None;
+                    for diagnostic in diagnostics {
+                        let curr_line = diagnostic.range.start.row;
 
-            let mut disp_point =
-                display_map.point_to_display_point(diagnostic.range.start, Bias::Right);
+                        // We only show one inline diagnostic per line, so continue on
+                        // if we've already seen one for the current line.
+                        if prev_diagnostic_line.map_or(false, |l| l >= curr_line) {
+                            continue;
+                        } else {
+                            prev_diagnostic_line = Some(curr_line);
+                        }
 
-            // Show the inline diagnostic after the last wrapped line, if any.
-            let mut wrapped_lines = 0u32;
-            display_map
-                .row_infos(disp_point.row())
-                .skip(1)
-                .try_fold((), |_, next| {
-                    if next.buffer_row.is_none() {
-                        wrapped_lines += 1;
-                        Some(())
-                    } else {
-                        None
+                        let message = diagnostic
+                            .diagnostic
+                            .message
+                            .split_once('\n')
+                            .map(|(line, _)| line.to_string())
+                            .unwrap_or(diagnostic.diagnostic.message.to_string());
+
+                        let mut disp_point = display_snapshot
+                            .point_to_display_point(diagnostic.range.start, Bias::Right);
+
+                        // Show the inline diagnostic after the last wrapped line, if any.
+                        let mut wrapped_lines = 0u32;
+                        display_snapshot
+                            .row_infos(disp_point.row())
+                            .skip(1)
+                            .try_fold((), |_, next| {
+                                if next.buffer_row.is_none() {
+                                    wrapped_lines += 1;
+                                    Some(())
+                                } else {
+                                    None
+                                }
+                            });
+
+                        *disp_point.row_mut() += wrapped_lines;
+
+                        editor.inline_diagnostics.insert(
+                            disp_point.row(),
+                            InlineDiagnostic {
+                                message,
+                                severity: diagnostic.diagnostic.severity,
+                            },
+                        );
                     }
-                });
-
-            *disp_point.row_mut() += wrapped_lines;
-
-            self.inline_diagnostics.insert(
-                disp_point.row(),
-                InlineDiagnostic {
-                    message,
-                    severity: diagnostic.diagnostic.severity,
-                },
-            );
-        }
+                    cx.notify();
+                })
+                .log_err();
+        });
     }
 
     pub fn set_selections_from_remote(
@@ -14456,6 +14448,7 @@ impl Editor {
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
+                self.refresh_inline_diagnostics(window, cx);
                 self.scrollbar_marker_state.dirty = true;
                 cx.notify();
             }
@@ -14506,11 +14499,15 @@ impl Editor {
         self.serialize_dirty_buffers = project_settings.session.restore_unsaved_buffers;
 
         if self.mode == EditorMode::Full {
-            let show_inline_diagnostics = project_settings.diagnostics.inline().enabled();
+            let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;
             let inline_blame_enabled = project_settings.git.inline_blame_enabled();
-
             if self.show_inline_diagnostics != show_inline_diagnostics {
-                self.toggle_show_inline_diagnostics(cx);
+                if show_inline_diagnostics {
+                    self.refresh_inline_diagnostics(window, cx);
+                } else {
+                    self.inline_diagnostics_update = Task::ready(());
+                    self.inline_diagnostics.clear();
+                }
             }
 
             if self.git_blame_inline_enabled != inline_blame_enabled {
