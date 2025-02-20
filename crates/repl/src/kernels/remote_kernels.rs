@@ -1,5 +1,5 @@
 use futures::{channel::mpsc, SinkExt as _};
-use gpui::{App, Entity, Task, Window};
+use gpui::{App, AppContext as _, Entity, Task, Window};
 use http_client::{AsyncBody, HttpClient, Request};
 use jupyter_protocol::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
 
@@ -189,7 +189,7 @@ impl RemoteRunningKernel {
             let (request_tx, mut request_rx) =
                 futures::channel::mpsc::channel::<JupyterMessage>(100);
 
-            let routing_task = cx.background_executor().spawn({
+            let routing_task = cx.background_spawn({
                 async move {
                     while let Some(message) = request_rx.next().await {
                         w.send(message).await.ok();

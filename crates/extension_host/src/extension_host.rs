@@ -325,10 +325,7 @@ impl ExtensionStore {
                 load_initial_extensions.await;
 
                 let mut index_changed = false;
-                let mut debounce_timer = cx
-                    .background_executor()
-                    .spawn(futures::future::pending())
-                    .fuse();
+                let mut debounce_timer = cx.background_spawn(futures::future::pending()).fuse();
                 loop {
                     select_biased! {
                         _ = debounce_timer => {
@@ -371,7 +368,7 @@ impl ExtensionStore {
         // Watch the installed extensions directory for changes. Whenever changes are
         // detected, rebuild the extension index, and load/unload any extensions that
         // have been added, removed, or modified.
-        this.tasks.push(cx.background_executor().spawn({
+        this.tasks.push(cx.background_spawn({
             let fs = this.fs.clone();
             let reload_tx = this.reload_tx.clone();
             let installed_dir = this.installed_dir.clone();
@@ -887,20 +884,19 @@ impl ExtensionStore {
                 }
             });
 
-            cx.background_executor()
-                .spawn({
-                    let extension_source_path = extension_source_path.clone();
-                    async move {
-                        builder
-                            .compile_extension(
-                                &extension_source_path,
-                                &mut extension_manifest,
-                                CompileExtensionOptions { release: false },
-                            )
-                            .await
-                    }
-                })
-                .await?;
+            cx.background_spawn({
+                let extension_source_path = extension_source_path.clone();
+                async move {
+                    builder
+                        .compile_extension(
+                            &extension_source_path,
+                            &mut extension_manifest,
+                            CompileExtensionOptions { release: false },
+                        )
+                        .await
+                }
+            })
+            .await?;
 
             let output_path = &extensions_dir.join(extension_id.as_ref());
             if let Some(metadata) = fs.metadata(output_path).await? {
@@ -938,7 +934,7 @@ impl ExtensionStore {
         };
 
         cx.notify();
-        let compile = cx.background_executor().spawn(async move {
+        let compile = cx.background_spawn(async move {
             let mut manifest = ExtensionManifest::load(fs, &path).await?;
             builder
                 .compile_extension(
@@ -1193,35 +1189,33 @@ impl ExtensionStore {
         cx.emit(Event::ExtensionsUpdated);
 
         cx.spawn(|this, mut cx| async move {
-            cx.background_executor()
-                .spawn({
-                    let fs = fs.clone();
-                    async move {
-                        for theme_path in themes_to_add.into_iter() {
-                            proxy
-                                .load_user_theme(theme_path, fs.clone())
-                                .await
-                                .log_err();
-                        }
+            cx.background_spawn({
+                let fs = fs.clone();
+                async move {
+                    for theme_path in themes_to_add.into_iter() {
+                        proxy
+                            .load_user_theme(theme_path, fs.clone())
+                            .await
+                            .log_err();
+                    }
 
-                        for (icon_theme_path, icons_root_path) in icon_themes_to_add.into_iter() {
-                            proxy
-                                .load_icon_theme(icon_theme_path, icons_root_path, fs.clone())
-                                .await
-                                .log_err();
-                        }
+                    for (icon_theme_path, icons_root_path) in icon_themes_to_add.into_iter() {
+                        proxy
+                            .load_icon_theme(icon_theme_path, icons_root_path, fs.clone())
+                            .await
+                            .log_err();
+                    }
 
-                        for snippets_path in &snippets_to_add {
-                            if let Some(snippets_contents) = fs.load(snippets_path).await.log_err()
-                            {
-                                proxy
-                                    .register_snippet(snippets_path, &snippets_contents)
-                                    .log_err();
-                            }
+                    for snippets_path in &snippets_to_add {
+                        if let Some(snippets_contents) = fs.load(snippets_path).await.log_err() {
+                            proxy
+                                .register_snippet(snippets_path, &snippets_contents)
+                                .log_err();
                         }
                     }
-                })
-                .await;
+                }
+            })
+            .await;
 
             let mut wasm_extensions = Vec::new();
             for extension in extension_entries {
@@ -1291,6 +1285,7 @@ impl ExtensionStore {
                 }
 
                 this.wasm_extensions.extend(wasm_extensions);
+                this.proxy.set_extensions_loaded();
                 this.proxy.reload_current_theme(cx);
                 this.proxy.reload_current_icon_theme(cx);
             })
@@ -1304,7 +1299,7 @@ impl ExtensionStore {
         let extensions_dir = self.installed_dir.clone();
         let index_path = self.index_path.clone();
         let proxy = self.proxy.clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let start_time = Instant::now();
             let mut index = ExtensionIndex::default();
 
@@ -1494,7 +1489,7 @@ impl ExtensionStore {
             return Task::ready(Err(anyhow!("extension no longer installed")));
         };
         let fs = self.fs.clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             const EXTENSION_TOML: &str = "extension.toml";
             const EXTENSION_WASM: &str = "extension.wasm";
             const CONFIG_TOML: &str = "config.toml";

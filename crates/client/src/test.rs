@@ -85,7 +85,7 @@ impl FakeServer {
                             Connection::in_memory(cx.background_executor().clone());
                         let (connection_id, io, incoming) =
                             peer.add_test_connection(server_conn, cx.background_executor().clone());
-                        cx.background_executor().spawn(io).detach();
+                        cx.background_spawn(io).detach();
                         {
                             let mut state = state.lock();
                             state.connection_id = Some(connection_id);

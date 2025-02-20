@@ -3,23 +3,23 @@ use std::any::{Any, TypeId};
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use collections::HashSet;
-use editor::{scroll::Autoscroll, Editor, EditorEvent};
+use editor::{scroll::Autoscroll, Editor, EditorEvent, ToPoint};
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
 use gpui::{
-    actions, AnyElement, AnyView, App, AppContext, AsyncWindowContext, Entity, EventEmitter,
+    actions, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt, Point};
 use multi_buffer::{MultiBuffer, PathKey};
-use project::{git::GitState, Project, ProjectPath};
+use project::{git::GitStore, Project, ProjectPath};
 use theme::ActiveTheme;
 use ui::prelude::*;
 use util::ResultExt as _;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     searchable::SearchableItemHandle,
-    ItemNavHistory, ToolbarItemLocation, Workspace,
+    ItemNavHistory, SerializableItem, ToolbarItemLocation, Workspace,
 };
 
 use crate::git_panel::{GitPanel, GitPanelAddon, GitStatusEntry};
@@ -30,8 +30,7 @@ pub(crate) struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
     project: Entity<Project>,
-    git_panel: Entity<GitPanel>,
-    git_state: Entity<GitState>,
+    git_store: Entity<GitStore>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     update_needed: postage::watch::Sender<()>,
@@ -61,6 +60,8 @@ impl ProjectDiff {
         cx.when_flag_enabled::<feature_flags::GitUiFeatureFlag>(window, |workspace, _, _cx| {
             workspace.register_action(Self::deploy);
         });
+
+        workspace::register_serializable_item::<ProjectDiff>(cx);
     }
 
     fn deploy(
@@ -69,6 +70,7 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        workspace.open_panel::<GitPanel>(window, cx);
         Self::deploy_at(workspace, None, window, cx)
     }
 
@@ -83,15 +85,8 @@ impl ProjectDiff {
             existing
         } else {
             let workspace_handle = cx.entity();
-            let project_diff = cx.new(|cx| {
-                Self::new(
-                    workspace.project().clone(),
-                    workspace_handle,
-                    workspace.panel::<GitPanel>(cx).unwrap(),
-                    window,
-                    cx,
-                )
-            });
+            let project_diff =
+                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
             workspace.add_item_to_active_pane(
                 Box::new(project_diff.clone()),
                 None,
@@ -111,7 +106,6 @@ impl ProjectDiff {
     fn new(
         project: Entity<Project>,
         workspace: Entity<Workspace>,
-        git_panel: Entity<GitPanel>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -129,18 +123,18 @@ impl ProjectDiff {
             diff_display_editor.set_distinguish_unstaged_diff_hunks();
             diff_display_editor.set_expand_all_diff_hunks(cx);
             diff_display_editor.register_addon(GitPanelAddon {
-                git_panel: git_panel.clone(),
+                workspace: workspace.downgrade(),
             });
             diff_display_editor
         });
         cx.subscribe_in(&editor, window, Self::handle_editor_event)
             .detach();
 
-        let git_state = project.read(cx).git_state().clone();
-        let git_state_subscription = cx.subscribe_in(
-            &git_state,
+        let git_store = project.read(cx).git_store().clone();
+        let git_store_subscription = cx.subscribe_in(
+            &git_store,
             window,
-            move |this, _git_state, _event, _window, _cx| {
+            move |this, _git_store, _event, _window, _cx| {
                 *this.update_needed.borrow_mut() = ();
             },
         );
@@ -155,8 +149,7 @@ impl ProjectDiff {
 
         Self {
             project,
-            git_state: git_state.clone(),
-            git_panel: git_panel.clone(),
+            git_store: git_store.clone(),
             workspace: workspace.downgrade(),
             focus_handle,
             editor,
@@ -164,7 +157,7 @@ impl ProjectDiff {
             pending_scroll: None,
             update_needed: send,
             _task: worker,
-            _subscription: git_state_subscription,
+            _subscription: git_store_subscription,
         }
     }
 
@@ -174,17 +167,10 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(git_repo) = self.git_state.read(cx).active_repository() else {
+        let Some(git_repo) = self.git_store.read(cx).active_repository() else {
             return;
         };
         let repo = git_repo.read(cx);
-
-        let Some(abs_path) = repo
-            .repo_path_to_project_path(&entry.repo_path)
-            .and_then(|project_path| self.project.read(cx).absolute_path(&project_path, cx))
-        else {
-            return;
-        };
 
         let namespace = if repo.has_conflict(&entry.repo_path) {
             CONFLICT_NAMESPACE
@@ -194,7 +180,7 @@ impl ProjectDiff {
             TRACKED_NAMESPACE
         };
 
-        let path_key = PathKey::namespaced(namespace, &abs_path);
+        let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
 
         self.scroll_to_path(path_key, window, cx)
     }
@@ -221,7 +207,12 @@ impl ProjectDiff {
         match event {
             EditorEvent::ScrollPositionChanged { .. } => editor.update(cx, |editor, cx| {
                 let anchor = editor.scroll_manager.anchor().anchor;
-                let Some((_, buffer, _)) = self.multibuffer.read(cx).excerpt_containing(anchor, cx)
+                let multibuffer = self.multibuffer.read(cx);
+                let snapshot = multibuffer.snapshot(cx);
+                let mut point = anchor.to_point(&snapshot);
+                point.row = (point.row + 1).min(snapshot.max_row().0);
+
+                let Some((_, buffer, _)) = self.multibuffer.read(cx).excerpt_containing(point, cx)
                 else {
                     return;
                 };
@@ -247,7 +238,7 @@ impl ProjectDiff {
     }
 
     fn load_buffers(&mut self, cx: &mut Context<Self>) -> Vec<Task<Result<DiffBuffer>>> {
-        let Some(repo) = self.git_state.read(cx).active_repository() else {
+        let Some(repo) = self.git_store.read(cx).active_repository() else {
             self.multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.clear(cx);
             });
@@ -265,9 +256,6 @@ impl ProjectDiff {
                 let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path) else {
                     continue;
                 };
-                let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
-                    continue;
-                };
                 let namespace = if repo.has_conflict(&entry.repo_path) {
                     CONFLICT_NAMESPACE
                 } else if entry.status.is_created() {
@@ -275,7 +263,7 @@ impl ProjectDiff {
                 } else {
                     TRACKED_NAMESPACE
                 };
-                let path_key = PathKey::namespaced(namespace, &abs_path);
+                let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
 
                 previous_paths.remove(&path_key);
                 let load_buffer = self
@@ -335,6 +323,19 @@ impl ProjectDiff {
                 cx,
             );
         });
+        if self.multibuffer.read(cx).is_empty()
+            && self
+                .editor
+                .read(cx)
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+        {
+            self.focus_handle.focus(window);
+        } else if self.focus_handle.is_focused(window) && !self.multibuffer.read(cx).is_empty() {
+            self.editor.update(cx, |editor, cx| {
+                editor.focus_handle(cx).focus(window);
+            });
+        }
         if self.pending_scroll.as_ref() == Some(&path_key) {
             self.scroll_to_path(path_key, window, cx);
         }
@@ -365,13 +366,21 @@ impl ProjectDiff {
 impl EventEmitter<EditorEvent> for ProjectDiff {}
 
 impl Focusable for ProjectDiff {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        if self.multibuffer.read(cx).is_empty() {
+            self.focus_handle.clone()
+        } else {
+            self.editor.focus_handle(cx)
+        }
     }
 }
 
 impl Item for ProjectDiff {
     type Event = EditorEvent;
+
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
+        Some(Icon::new(IconName::GitBranch).color(Color::Muted))
+    }
 
     fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
@@ -407,7 +416,7 @@ impl Item for ProjectDiff {
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("project diagnostics")
+        Some("Project Diff Opened")
     }
 
     fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
@@ -447,15 +456,7 @@ impl Item for ProjectDiff {
         Self: Sized,
     {
         let workspace = self.workspace.upgrade()?;
-        Some(cx.new(|cx| {
-            ProjectDiff::new(
-                self.project.clone(),
-                workspace,
-                self.git_panel.clone(),
-                window,
-                cx,
-            )
-        }))
+        Some(cx.new(|cx| ProjectDiff::new(self.project.clone(), workspace, window, cx)))
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
@@ -537,22 +538,63 @@ impl Item for ProjectDiff {
 impl Render for ProjectDiff {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
-        if is_empty {
-            div()
-                .bg(cx.theme().colors().editor_background)
-                .flex()
-                .items_center()
-                .justify_center()
-                .size_full()
-                .child(Label::new("No uncommitted changes"))
-        } else {
-            div()
-                .bg(cx.theme().colors().editor_background)
-                .flex()
-                .items_center()
-                .justify_center()
-                .size_full()
-                .child(self.editor.clone())
-        }
+
+        div()
+            .track_focus(&self.focus_handle)
+            .bg(cx.theme().colors().editor_background)
+            .flex()
+            .items_center()
+            .justify_center()
+            .size_full()
+            .when(is_empty, |el| {
+                el.child(Label::new("No uncommitted changes"))
+            })
+            .when(!is_empty, |el| el.child(self.editor.clone()))
+    }
+}
+
+impl SerializableItem for ProjectDiff {
+    fn serialized_item_kind() -> &'static str {
+        "ProjectDiff"
+    }
+
+    fn cleanup(
+        _: workspace::WorkspaceId,
+        _: Vec<workspace::ItemId>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
+
+    fn deserialize(
+        _project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
+        _workspace_id: workspace::WorkspaceId,
+        _item_id: workspace::ItemId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
+        window.spawn(cx, |mut cx| async move {
+            workspace.update_in(&mut cx, |workspace, window, cx| {
+                let workspace_handle = cx.entity();
+                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx))
+            })
+        })
+    }
+
+    fn serialize(
+        &mut self,
+        _workspace: &mut Workspace,
+        _item_id: workspace::ItemId,
+        _closing: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        None
+    }
+
+    fn should_serialize(&self, _: &Self::Event) -> bool {
+        false
     }
 }

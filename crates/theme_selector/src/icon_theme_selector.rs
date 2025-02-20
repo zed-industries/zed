@@ -7,10 +7,11 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use settings::{update_settings_file, Settings as _, SettingsStore};
 use std::sync::Arc;
-use theme::{IconTheme, ThemeMeta, ThemeRegistry, ThemeSettings};
+use theme::{Appearance, IconTheme, ThemeMeta, ThemeRegistry, ThemeSettings};
 use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, ModalView};
+use zed_actions::Extensions;
 
 pub(crate) struct IconThemeSelector {
     picker: Entity<Picker<IconThemeSelectorDelegate>>,
@@ -151,7 +152,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
     fn confirm(
         &mut self,
         _: bool,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<IconThemeSelectorDelegate>>,
     ) {
         self.selection_completed = true;
@@ -165,8 +166,10 @@ impl PickerDelegate for IconThemeSelectorDelegate {
             value = theme_name
         );
 
+        let appearance = Appearance::from(window.appearance());
+
         update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, _| {
-            settings.icon_theme = Some(theme_name.to_string());
+            settings.set_icon_theme(theme_name.to_string(), appearance);
         });
 
         self.selector
@@ -269,6 +272,40 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                     theme_match.string.clone(),
                     theme_match.positions.clone(),
                 )),
+        )
+    }
+
+    fn render_footer(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<gpui::AnyElement> {
+        Some(
+            h_flex()
+                .p_2()
+                .w_full()
+                .justify_between()
+                .gap_2()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    Button::new("docs", "View Icon Theme Docs")
+                        .icon(IconName::ArrowUpRight)
+                        .icon_position(IconPosition::End)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .on_click(|_event, _window, cx| {
+                            cx.open_url("https://zed.dev/docs/icon-themes");
+                        }),
+                )
+                .child(
+                    Button::new("more-icon-themes", "Install Icon Themes").on_click(
+                        move |_event, window, cx| {
+                            window.dispatch_action(Box::new(Extensions), cx);
+                        },
+                    ),
+                )
+                .into_any_element(),
         )
     }
 }

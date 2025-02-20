@@ -34,7 +34,7 @@ use project::project_settings::ProjectSettings;
 use recent_projects::{open_ssh_project, SshSettings};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
-use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
+use settings::{watch_config_file, Settings, SettingsStore};
 use simplelog::ConfigBuilder;
 use std::{
     env,
@@ -52,8 +52,9 @@ use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, derive_paths_with_position, handle_cli_connection,
-    handle_keymap_file_changes, handle_settings_changed, initialize_workspace,
-    inline_completion_registry, open_paths_with_positions, OpenListener, OpenRequest,
+    handle_keymap_file_changes, handle_settings_changed, handle_settings_file_changes,
+    initialize_workspace, inline_completion_registry, open_paths_with_positions, OpenListener,
+    OpenRequest,
 };
 
 #[cfg(unix)]
@@ -487,9 +488,9 @@ fn main() {
         tab_switcher::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
-        project_panel::init(Assets, cx);
+        project_panel::init(cx);
         git_ui::git_panel::init(cx);
-        outline_panel::init(Assets, cx);
+        outline_panel::init(cx);
         component_preview::init(cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
@@ -554,7 +555,6 @@ fn main() {
         load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);
         watch_languages(fs.clone(), app_state.languages.clone(), cx);
-        watch_file_types(fs.clone(), cx);
 
         cx.set_menus(app_menus());
         initialize_workspace(app_state.clone(), prompt_builder, cx);
@@ -1157,35 +1157,3 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
 
 #[cfg(not(debug_assertions))]
 fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>, _cx: &mut App) {}
-
-#[cfg(debug_assertions)]
-fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut App) {
-    use std::time::Duration;
-
-    use file_icons::FileIcons;
-    use gpui::UpdateGlobal;
-
-    let path = {
-        let p = Path::new("assets").join(file_icons::FILE_TYPES_ASSET);
-        let Ok(full_path) = p.canonicalize() else {
-            return;
-        };
-        full_path
-    };
-
-    cx.spawn(|cx| async move {
-        let (mut events, _) = fs.watch(path.as_path(), Duration::from_millis(100)).await;
-        while (events.next().await).is_some() {
-            cx.update(|cx| {
-                FileIcons::update_global(cx, |file_types, _cx| {
-                    *file_types = file_icons::FileIcons::new(Assets);
-                });
-            })
-            .ok();
-        }
-    })
-    .detach()
-}
-
-#[cfg(not(debug_assertions))]
-fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut App) {}

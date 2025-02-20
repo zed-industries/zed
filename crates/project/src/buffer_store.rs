@@ -189,6 +189,7 @@ impl BufferDiffState {
         buffer: text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
+        log::debug!("recalculate diffs");
         let (tx, rx) = oneshot::channel();
         self.diff_updated_futures.push(tx);
 
@@ -263,16 +264,17 @@ impl BufferDiffState {
                             uncommitted_diff.range_to_hunk_range(unstaged_range, &buffer, cx)
                         }
                         (None, Some(uncommitted_range)) => Some(uncommitted_range),
-                        (Some(unstaged_range), Some(uncommitted_range)) => maybe!({
-                            let expanded_range = uncommitted_diff.range_to_hunk_range(
-                                unstaged_range,
-                                &buffer,
-                                cx,
-                            )?;
-                            let start = expanded_range.start.min(&uncommitted_range.start, &buffer);
-                            let end = expanded_range.end.max(&uncommitted_range.end, &buffer);
+                        (Some(unstaged_range), Some(uncommitted_range)) => {
+                            let mut start = uncommitted_range.start;
+                            let mut end = uncommitted_range.end;
+                            if let Some(unstaged_range) =
+                                uncommitted_diff.range_to_hunk_range(unstaged_range, &buffer, cx)
+                            {
+                                start = unstaged_range.start.min(&uncommitted_range.start, &buffer);
+                                end = unstaged_range.end.max(&uncommitted_range.end, &buffer);
+                            }
                             Some(start..end)
-                        }),
+                        }
                     };
                     cx.emit(BufferDiffEvent::DiffChanged { changed_range });
                 })?;
@@ -344,7 +346,7 @@ impl RemoteBufferStore {
     fn open_unstaged_diff(&self, buffer_id: BufferId, cx: &App) -> Task<Result<Option<String>>> {
         let project_id = self.project_id;
         let client = self.upstream_client.clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let response = client
                 .request(proto::OpenUnstagedDiff {
                     project_id,
@@ -364,7 +366,7 @@ impl RemoteBufferStore {
 
         let project_id = self.project_id;
         let client = self.upstream_client.clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let response = client
                 .request(proto::OpenUncommittedDiff {
                     project_id,
@@ -400,9 +402,7 @@ impl RemoteBufferStore {
                 return Ok(buffer);
             }
 
-            cx.background_executor()
-                .spawn(async move { rx.await? })
-                .await
+            cx.background_spawn(async move { rx.await? }).await
         })
     }
 
@@ -841,8 +841,7 @@ impl LocalBufferStore {
             let snapshot =
                 worktree_handle.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
             let diff_bases_changes_by_buffer = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     diff_state_updates
                         .into_iter()
                         .filter_map(
@@ -1127,8 +1126,7 @@ impl LocalBufferStore {
             cx.spawn(move |_, mut cx| async move {
                 let loaded = load_file.await?;
                 let text_buffer = cx
-                    .background_executor()
-                    .spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
+                    .background_spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
                     .await;
                 cx.insert_entity(reservation, |_| {
                     Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite)
@@ -1345,8 +1343,7 @@ impl BufferStore {
             }
         };
 
-        cx.background_executor()
-            .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
     pub fn open_unstaged_diff(
@@ -1386,8 +1383,7 @@ impl BufferStore {
             }
         };
 
-        cx.background_executor()
-            .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
     pub fn open_uncommitted_diff(
@@ -1407,7 +1403,7 @@ impl BufferStore {
                     BufferStoreState::Local(this) => {
                         let committed_text = this.load_committed_text(&buffer, cx);
                         let staged_text = this.load_staged_text(&buffer, cx);
-                        cx.background_executor().spawn(async move {
+                        cx.background_spawn(async move {
                             let committed_text = committed_text.await?;
                             let staged_text = staged_text.await?;
                             let diff_bases_change = if committed_text == staged_text {
@@ -1443,8 +1439,7 @@ impl BufferStore {
             }
         };
 
-        cx.background_executor()
-            .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
     async fn open_diff_internal(
@@ -1585,7 +1580,7 @@ impl BufferStore {
                     anyhow::Ok(Some((repo, relative_path, content)))
                 });
 
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     let Some((repo, relative_path, content)) = blame_params? else {
                         return Ok(None);
                     };
@@ -2104,24 +2099,23 @@ impl BufferStore {
                     })
                     .log_err();
 
-                cx.background_executor()
-                    .spawn(
-                        async move {
-                            let operations = operations.await;
-                            for chunk in split_operations(operations) {
-                                client
-                                    .request(proto::UpdateBuffer {
-                                        project_id,
-                                        buffer_id: buffer_id.into(),
-                                        operations: chunk,
-                                    })
-                                    .await?;
-                            }
-                            anyhow::Ok(())
+                cx.background_spawn(
+                    async move {
+                        let operations = operations.await;
+                        for chunk in split_operations(operations) {
+                            client
+                                .request(proto::UpdateBuffer {
+                                    project_id,
+                                    buffer_id: buffer_id.into(),
+                                    operations: chunk,
+                                })
+                                .await?;
                         }
-                        .log_err(),
-                    )
-                    .detach();
+                        anyhow::Ok(())
+                    }
+                    .log_err(),
+                )
+                .detach();
             }
         }
         Ok(response)
@@ -2556,27 +2550,26 @@ impl BufferStore {
 
             if client.send(initial_state).log_err().is_some() {
                 let client = client.clone();
-                cx.background_executor()
-                    .spawn(async move {
-                        let mut chunks = split_operations(operations).peekable();
-                        while let Some(chunk) = chunks.next() {
-                            let is_last = chunks.peek().is_none();
-                            client.send(proto::CreateBufferForPeer {
-                                project_id,
-                                peer_id: Some(peer_id),
-                                variant: Some(proto::create_buffer_for_peer::Variant::Chunk(
-                                    proto::BufferChunk {
-                                        buffer_id: buffer_id.into(),
-                                        operations: chunk,
-                                        is_last,
-                                    },
-                                )),
-                            })?;
-                        }
-                        anyhow::Ok(())
-                    })
-                    .await
-                    .log_err();
+                cx.background_spawn(async move {
+                    let mut chunks = split_operations(operations).peekable();
+                    while let Some(chunk) = chunks.next() {
+                        let is_last = chunks.peek().is_none();
+                        client.send(proto::CreateBufferForPeer {
+                            project_id,
+                            peer_id: Some(peer_id),
+                            variant: Some(proto::create_buffer_for_peer::Variant::Chunk(
+                                proto::BufferChunk {
+                                    buffer_id: buffer_id.into(),
+                                    operations: chunk,
+                                    is_last,
+                                },
+                            )),
+                        })?;
+                    }
+                    anyhow::Ok(())
+                })
+                .await
+                .log_err();
             }
             Ok(())
         })
@@ -2720,8 +2713,8 @@ fn serialize_blame_buffer_response(blame: Option<git::blame::Blame>) -> proto::B
             author_mail: entry.author_mail.clone(),
             author_time: entry.author_time,
             author_tz: entry.author_tz.clone(),
-            committer: entry.committer.clone(),
-            committer_mail: entry.committer_mail.clone(),
+            committer: entry.committer_name.clone(),
+            committer_mail: entry.committer_email.clone(),
             committer_time: entry.committer_time,
             committer_tz: entry.committer_tz.clone(),
             summary: entry.summary.clone(),
@@ -2770,10 +2763,10 @@ fn deserialize_blame_buffer_response(
                 sha: git::Oid::from_bytes(&entry.sha).ok()?,
                 range: entry.start_line..entry.end_line,
                 original_line_number: entry.original_line_number,
-                committer: entry.committer,
+                committer_name: entry.committer,
                 committer_time: entry.committer_time,
                 committer_tz: entry.committer_tz,
-                committer_mail: entry.committer_mail,
+                committer_email: entry.committer_mail,
                 author: entry.author,
                 author_mail: entry.author_mail,
                 author_time: entry.author_time,
