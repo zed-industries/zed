@@ -1261,21 +1261,28 @@ mod test {
 
     #[gpui::test]
     async fn test_visual_object(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.set_state("hello (in [parˇens] o)", Mode::Normal);
-        cx.simulate_keystrokes("ctrl-v l");
-        cx.simulate_keystrokes("a ]");
-        cx.assert_state("hello (in «ˇ[parens]» o)", Mode::Visual);
-        cx.simulate_keystrokes("i (");
-        cx.assert_state("hello («ˇin [parens] o»)", Mode::Visual);
+        cx.set_shared_state("hello (in [parˇens] o)").await;
+        cx.simulate_shared_keystrokes("ctrl-v l").await;
+        cx.simulate_shared_keystrokes("a ]").await;
+        cx.shared_state()
+            .await
+            .assert_eq("hello (in «[parens]ˇ» o)");
+        cx.simulate_shared_keystrokes("i (").await;
+        cx.shared_state()
+            .await
+            .assert_eq("hello («in [parens] oˇ»)");
 
-        cx.set_state("hello in a wˇord again.", Mode::Normal);
-        cx.simulate_keystrokes("ctrl-v l i w");
-        cx.assert_state("hello in a w«ordˇ» again.", Mode::VisualBlock);
-        assert_eq!(cx.mode(), Mode::VisualBlock);
-        cx.simulate_keystrokes("o a s");
-        cx.assert_state("«ˇhello in a word» again.", Mode::VisualBlock);
+        cx.set_shared_state("hello in a wˇord again.").await;
+        cx.simulate_shared_keystrokes("ctrl-v l i w").await;
+        cx.shared_state()
+            .await
+            .assert_eq("hello in a w«ordˇ» again.");
+        cx.simulate_shared_keystrokes("o a s").await;
+        cx.shared_state()
+            .await
+            .assert_eq("«ˇhello in a word» again.");
     }
 
     #[gpui::test]

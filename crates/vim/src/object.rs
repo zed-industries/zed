@@ -1853,10 +1853,10 @@ mod test {
         cx.assert_state(
             indoc! {
                 "func empty(a string) bool {
-                   «ˇif a == \"\" {
+                   «if a == \"\" {
                       return true
                    }
-                   return false»
+                   return falseˇ»
                 }"
             },
             Mode::Visual,
@@ -1878,7 +1878,7 @@ mod test {
             indoc! {
                 "func empty(a string) bool {
                      if a == \"\" {
-                         «ˇreturn true»
+                         «return trueˇ»
                      }
                      return false
                 }"
@@ -2570,34 +2570,15 @@ mod test {
 
     #[gpui::test]
     async fn test_anybrackets_trailing_space(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
-        cx.set_state(
-            indoc! {
-                "(trailingˇ whitespace          )"
-            },
-            Mode::Normal,
-        );
-        cx.simulate_keystrokes("v i b");
-        cx.assert_state(
-            indoc! {
-                "(«ˇtrailing whitespace          »)"
-            },
-            Mode::Visual,
-        );
-
-        cx.set_state(
-            indoc! {
-                "(trailingˇ whitespace          )"
-            },
-            Mode::Normal,
-        );
-        cx.simulate_keystrokes("y i b");
-        cx.assert_state(
-            indoc! {
-                "(ˇtrailing whitespace          )"
-            },
-            Mode::Normal,
-        );
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("(trailingˇ whitespace          )")
+            .await;
+        cx.simulate_shared_keystrokes("v i b").await;
+        cx.shared_state().await.assert_matches();
+        cx.simulate_shared_keystrokes("escape y i b").await;
+        cx.shared_clipboard()
+            .await
+            .assert_eq("trailing whitespace          ");
     }
 
     #[gpui::test]
