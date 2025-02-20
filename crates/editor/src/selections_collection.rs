@@ -843,14 +843,14 @@ impl<'a> MutableSelectionsCollection<'a> {
     }
 }
 
-impl<'a> Deref for MutableSelectionsCollection<'a> {
+impl Deref for MutableSelectionsCollection<'_> {
     type Target = SelectionsCollection;
     fn deref(&self) -> &Self::Target {
         self.collection
     }
 }
 
-impl<'a> DerefMut for MutableSelectionsCollection<'a> {
+impl DerefMut for MutableSelectionsCollection<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.collection
     }

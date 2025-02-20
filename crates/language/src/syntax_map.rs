@@ -836,7 +836,7 @@ impl SyntaxSnapshot {
     }
 
     #[cfg(test)]
-    pub fn layers<'a>(&'a self, buffer: &'a BufferSnapshot) -> Vec<SyntaxLayer> {
+    pub fn layers<'a>(&'a self, buffer: &'a BufferSnapshot) -> Vec<SyntaxLayer<'a>> {
         self.layers_for_range(0..buffer.len(), buffer, true)
             .collect()
     }
@@ -1765,9 +1765,7 @@ impl SeekTarget<'_, SyntaxLayerSummary, SyntaxLayerSummary> for ChangeStartPosit
     }
 }
 
-impl SeekTarget<'_, SyntaxLayerSummary, SyntaxLayerSummary>
-    for SyntaxLayerPositionBeforeChange
-{
+impl SeekTarget<'_, SyntaxLayerSummary, SyntaxLayerSummary> for SyntaxLayerPositionBeforeChange {
     fn cmp(&self, cursor_location: &SyntaxLayerSummary, buffer: &BufferSnapshot) -> Ordering {
         if self.change.cmp(cursor_location, buffer).is_le() {
             Ordering::Less

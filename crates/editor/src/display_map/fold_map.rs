@@ -132,7 +132,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldPoint {
 
 pub(crate) struct FoldMapWriter<'a>(&'a mut FoldMap);
 
-impl<'a> FoldMapWriter<'a> {
+impl FoldMapWriter<'_> {
     pub(crate) fn fold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = (Range<T>, FoldPlaceholder)>,
@@ -1121,7 +1121,7 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for FoldRange {
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, FoldSummary, FoldRange> for FoldRange {
+impl sum_tree::SeekTarget<'_, FoldSummary, FoldRange> for FoldRange {
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
         AnchorRangeExt::cmp(&self.0, &other.0, buffer)
     }
@@ -1144,7 +1144,7 @@ pub struct FoldRows<'a> {
     fold_point: FoldPoint,
 }
 
-impl<'a> FoldRows<'a> {
+impl FoldRows<'_> {
     pub(crate) fn seek(&mut self, row: u32) {
         let fold_point = FoldPoint::new(row, 0);
         self.cursor.seek(&fold_point, Bias::Left, &());
@@ -1155,7 +1155,7 @@ impl<'a> FoldRows<'a> {
     }
 }
 
-impl<'a> Iterator for FoldRows<'a> {
+impl Iterator for FoldRows<'_> {
     type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1190,7 +1190,7 @@ pub struct FoldChunks<'a> {
     max_output_offset: FoldOffset,
 }
 
-impl<'a> FoldChunks<'a> {
+impl FoldChunks<'_> {
     pub(crate) fn seek(&mut self, range: Range<FoldOffset>) {
         self.transform_cursor.seek(&range.start, Bias::Right, &());
 
