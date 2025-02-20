@@ -2043,6 +2043,15 @@ impl ContextEditor {
         });
     }
 
+    fn toggle_model_selector(
+        &mut self,
+        _: &ToggleModelSelector,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.language_model_selector_menu_handle.toggle(window, cx);
+    }
+
     fn save(&mut self, _: &Save, _window: &mut Window, cx: &mut Context<Self>) {
         self.context.update(cx, |context, cx| {
             context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx)
@@ -2886,6 +2895,7 @@ impl Render for ContextEditor {
             .on_action(cx.listener(ContextEditor::edit))
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
+            .on_action(cx.listener(ContextEditor::toggle_model_selector))
             .size_full()
             .children(self.render_notice(cx))
             .child(
