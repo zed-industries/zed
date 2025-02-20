@@ -15,7 +15,7 @@ use git::{
     PullRequest, RemoteUrl,
 };
 
-static CHROMIUM_REVIEW_URL: &str = "https://chromium-review.googlesource.com";
+const CHROMIUM_REVIEW_URL: &str = "https://chromium-review.googlesource.com";
 
 /// Parses Gerrit URLs like
 /// https://chromium-review.googlesource.com/c/chromium/src/+/3310961.
