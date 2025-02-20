@@ -24,7 +24,6 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        println!("1");
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let anchors = editor
                 .selections
@@ -32,13 +31,9 @@ impl Vim {
                 .iter()
                 .map(|s| if tail { s.tail() } else { s.head() })
                 .collect::<Vec<_>>();
-            println!("2");
             if let Some(workspace) = vim.workspace(window) {
-                println!("3");
                 if let Some(id) = workspace.read(cx).database_id() {
-                    println!("4");
                     if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                        println!("5");
                         vim.set_mark(text.to_string(), anchors, &buffer, id, cx);
                     }
                 }
@@ -94,7 +89,6 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.pop_operator(window, cx);
-        println!("0here");
         let anchors = match &*text {
             "{" | "}" => self.update_editor(window, cx, |_, editor, _, cx| {
                 let (map, selections) = editor.selections.all_display(cx);
@@ -155,9 +149,7 @@ impl Vim {
             }
             m if m.starts_with(|c: char| c.is_uppercase()) => {
                 if let Some((path, points)) = self.get_global_mark(text.to_string(), window, cx) {
-                    println!("path {:?}", path.clone());
                     if let Some(workspace) = self.workspace(window) {
-                        println!("has workspace");
                         workspace.update(cx, |workspace, cx| {
                             let Some(worktree) = workspace.worktrees(cx).next() else {
                                 return;
@@ -174,7 +166,6 @@ impl Vim {
                                 window,
                                 cx,
                             );
-                            println!("1here");
                             cx.spawn_in(window, |_, mut cx| async move {
                                 let item = task.await?;
 
@@ -188,9 +179,8 @@ impl Vim {
                                             window,
                                             cx,
                                             |s| {
-                                                println!("2here");
                                                 s.select_anchor_ranges(points.iter().map(|p| {
-                                                    dbg!(p);
+                                                    dbg!(text.to_string(), p);
                                                     let anchor = buffer_snapshot.anchor_before(*p);
                                                     anchor..anchor
                                                 }));
