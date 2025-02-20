@@ -39,8 +39,8 @@ struct Author {
 
 #[derive(Debug, Deserialize)]
 struct User {
-    id: u64,
-    avatar_url: String,
+    pub id: u64,
+    pub avatar_url: String,
 }
 
 pub struct Github;
