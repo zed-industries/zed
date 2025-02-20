@@ -29,8 +29,7 @@ use gpui::{
 use http_client::{HttpClient, Method};
 use input_excerpt::excerpt_for_cursor_position;
 use language::{
-    text_diff, Anchor, Buffer, BufferSnapshot, CharClassifier, CharKind, EditPreview,
-    OffsetRangeExt, ToOffset, ToPoint,
+    text_diff, Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToOffset, ToPoint,
 };
 use language_models::LlmApiToken;
 use postage::watch;
@@ -919,30 +918,7 @@ and then another
         offset: usize,
         snapshot: &BufferSnapshot,
     ) -> Vec<(Range<Anchor>, String)> {
-        fn tokenize(text: &str) -> Vec<&str> {
-            let classifier = CharClassifier::new(None).for_completion(true);
-            let mut chars = text.chars().peekable();
-            let mut prev_ch = chars.peek().copied();
-            let mut tokens = Vec::new();
-            let mut start = 0;
-            let mut end = 0;
-            while let Some(ch) = chars.next() {
-                let prev_kind = prev_ch.map(|ch| classifier.kind(ch));
-                let kind = classifier.kind(ch);
-                if Some(kind) != prev_kind || (kind == CharKind::Punctuation && Some(ch) != prev_ch)
-                {
-                    tokens.push(&text[start..end]);
-                    start = end;
-                }
-                end += ch.len_utf8();
-                prev_ch = Some(ch);
-            }
-            tokens.push(&text[start..end]);
-            tokens
-        }
-
-        let edits = text_diff(&old_text, &new_text);
-        edits
+        text_diff(&old_text, &new_text)
             .into_iter()
             .map(|(mut old_range, new_text)| {
                 old_range.start += offset;
