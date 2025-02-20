@@ -146,9 +146,9 @@ pub struct ProjectPanelSettingsContent {
     pub show_diagnostics: Option<ShowDiagnostics>,
     /// Settings related to indent guides in the project panel.
     pub indent_guides: Option<IndentGuidesSettingsContent>,
-    /// Default: false
-    /// 
     /// Hide main root dir
+    /// 
+    /// Default: false
     pub hide_root: Option<bool>,
 }
 
