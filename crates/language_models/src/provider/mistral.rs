@@ -69,7 +69,10 @@ impl State {
             .api_url
             .clone();
         cx.spawn(|this, mut cx| async move {
-            credentials_provider.delete_credentials(&api_url, &cx).await.log_err();
+            credentials_provider
+                .delete_credentials(&api_url, &cx)
+                .await
+                .log_err();
             this.update(&mut cx, |this, cx| {
                 this.api_key = None;
                 this.api_key_from_env = false;
