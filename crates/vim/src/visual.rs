@@ -1279,6 +1279,7 @@ mod test {
         cx.shared_state()
             .await
             .assert_eq("hello in a w«ordˇ» again.");
+        assert_eq!(cx.mode(), Mode::VisualBlock);
         cx.simulate_shared_keystrokes("o a s").await;
         cx.shared_state()
             .await

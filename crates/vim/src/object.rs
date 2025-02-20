@@ -1902,7 +1902,7 @@ mod test {
             indoc! {
                 "func empty(a string) bool {
                      if a == \"\" {
-                         «ˇreturn true»
+                         «return trueˇ»
                      }
                      return false
                 }"
@@ -1925,10 +1925,10 @@ mod test {
         cx.assert_state(
             indoc! {
                 "func empty(a string) bool {
-                     «ˇif a == \"\" {
+                     «if a == \"\" {
                          return true
                      }
-                     return false»
+                     return falseˇ»
                 }"
             },
             Mode::Visual,
