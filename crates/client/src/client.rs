@@ -298,16 +298,18 @@ impl Credentials {
 }
 
 pub struct ClientCredentialsProvider {
-    server_url: Arc<str>,
     provider: Arc<dyn CredentialsProvider>,
 }
 
 impl ClientCredentialsProvider {
     pub fn new(cx: &App) -> Self {
         Self {
-            server_url: ClientSettings::get_global(cx).server_url.clone().into(),
             provider: <dyn CredentialsProvider>::global(cx),
         }
+    }
+
+    fn server_url(&self, cx: &AsyncApp) -> Result<String> {
+        cx.update(|cx| ClientSettings::get_global(cx).server_url.clone())
     }
 
     /// Reads the credentials from the provider.
@@ -320,9 +322,10 @@ impl ClientCredentialsProvider {
                 return None;
             }
 
+            let server_url = self.server_url(cx).ok()?;
             let (user_id, access_token) = self
                 .provider
-                .read_credentials(&self.server_url, cx)
+                .read_credentials(&server_url, cx)
                 .await
                 .log_err()
                 .flatten()?;
@@ -343,9 +346,10 @@ impl ClientCredentialsProvider {
         cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
         async move {
+            let server_url = self.server_url(cx)?;
             self.provider
                 .write_credentials(
-                    &self.server_url,
+                    &server_url,
                     &user_id.to_string(),
                     access_token.as_bytes(),
                     cx,
@@ -360,7 +364,11 @@ impl ClientCredentialsProvider {
         &'a self,
         cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-        async move { self.provider.delete_credentials(&self.server_url, cx).await }.boxed_local()
+        async move {
+            let server_url = self.server_url(cx)?;
+            self.provider.delete_credentials(&server_url, cx).await
+        }
+        .boxed_local()
     }
 }
 
