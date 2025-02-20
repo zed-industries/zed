@@ -50,6 +50,9 @@ pub trait CredentialsProvider: Send + Sync {
 impl dyn CredentialsProvider {
     /// Returns the global [`CredentialsProvider`].
     pub fn global(cx: &App) -> Arc<Self> {
+        // The `CredentialsProvider` trait has `Send + Sync` bounds on it, so it
+        // seems like this is a false positive from Clippy.
+        #[allow(clippy::arc_with_non_send_sync)]
         Self::new(cx)
     }
 
