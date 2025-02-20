@@ -8,11 +8,12 @@ use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use db::sqlez_macros::sql;
 use db::{define_connection, query};
-use editor::{Anchor, ClipboardSelection, Editor, ToPoint};
+use editor::{Anchor, ClipboardSelection, Editor, ExcerptId};
 use gpui::{
-    Action, App, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, Global, WeakEntity,
+    Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, Global,
+    WeakEntity,
 };
-use language::{BufferId, Buffer, BufferEvent, Point};
+use language::{Buffer, BufferEvent, BufferId, Point, ToPoint};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
@@ -209,64 +210,260 @@ pub struct VimGlobals {
 
     pub focused_vim: Option<WeakEntity<Vim>>,
 
-    pub marks: Hash<WorkspaceId, Entity<MarksState>>,
+    pub marks: HashMap<WorkspaceId, Entity<MarksState>>,
 }
 
-struct MarksState {
+#[derive(Clone)]
+pub struct MarksState {
+    pub workspace_id: WorkspaceId,
     // this allows for buffers that are not files to have global marks and for storing anchors in general
     pub loaded_marks: HashMap<BufferId, HashMap<String, Vec<Anchor>>>,
+    pub path_buf_id: HashMap<Arc<Path>, BufferId>,
     pub marks: HashMap<Arc<Path>, HashMap<String, Vec<Point>>>,
-    pub global_marks: HashMap<String, Arc<Path>>
+    pub global_marks: HashMap<String, Arc<Path>>,
 }
 
 impl MarksState {
+    pub fn new(workspace_id: WorkspaceId, cx: &mut App) -> Entity<MarksState> {
+        cx.new(|_| Self {
+            workspace_id,
+            loaded_marks: HashMap::default(),
+            path_buf_id: HashMap::default(),
+            marks: HashMap::default(),
+            global_marks: HashMap::default(),
+        })
+    }
+
+    pub fn load(
+        &mut self,
+        workspace_id: WorkspaceId,
+        marks: Vec<(Vec<u8>, String, String)>,
+        global_mark_paths: Vec<(Vec<u8>, String)>,
+    ) {
+        println!("loaded");
+        self.workspace_id = workspace_id;
+        for (path, name, values) in marks {
+            let Some(value) = serde_json::from_str::<Vec<(u32, u32)>>(&values).log_err() else {
+                continue;
+            };
+            let path = PathBuf::from(OsString::from_vec(path));
+            let marks = self.marks.entry(Arc::from(path)).or_default();
+            let points: Vec<Point> = value
+                .into_iter()
+                .map(|(row, col)| Point::new(row, col))
+                .collect();
+            marks.insert(name, points);
+        }
+        for (path, name) in global_mark_paths {
+            let path: Arc<Path> = Arc::from(PathBuf::from(OsString::from_vec(path)));
+            self.global_marks.insert(name, path);
+        }
+    }
+
     pub fn on_buffer_loaded(&mut self, buffer_handle: &Entity<Buffer>, cx: &mut Context<Self>) {
         let buffer = buffer_handle.read(cx);
         let id = buffer.remote_id();
         let Some(path) = buffer.file().map(|file| file.path().clone()) else {
-            return
+            return;
         };
+
+        self.path_buf_id.insert(path.clone(), id.clone());
+        println!("inserted");
+
         if !self.marks.contains_key(&path) {
-            return
+            return;
         }
+
         let snapshot = buffer.snapshot();
-        self.loaded_marks.insert(id, self.marks.get(&path).iter().map(|(name, points)| {
-            (name.clone(), points.iter().map(|p| snapshot.anchor_before(p)).collect())
-        }).collect());
-        cx.subscribe(buffer_handle, |buffer, event, cx| {
+        if let Some(map) = self.marks.get(&path) {
+            self.loaded_marks.insert(
+                id,
+                map.iter()
+                    .map(|(name, points)| {
+                        (
+                            name.clone(),
+                            points
+                                .iter()
+                                .map(|&p| {
+                                    Anchor::in_buffer(
+                                        ExcerptId::min(),
+                                        id,
+                                        snapshot.anchor_before(p),
+                                    )
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+            );
+        };
+
+        cx.subscribe(buffer_handle, move |this, buffer, event, cx| {
             match event {
                 BufferEvent::Edited => {
+                    if let Some(m) = this.loaded_marks.get(&id) {
+                        let mut updates = Vec::new();
+
+                        for (name, anchors) in m.iter() {
+                            let points_from_anchors: Vec<Point> = anchors
+                                .iter()
+                                .map(|anchor| anchor.text_anchor.to_point(&snapshot))
+                                .collect();
+
+                            if let Some(map) = this.marks.get(&path) {
+                                if let Some(old_points) = map.get(name) {
+                                    if points_from_anchors
+                                        .iter()
+                                        .zip(old_points.iter())
+                                        .any(|(&p1, &p2)| p1 != p2)
+                                    {
+                                        // Collect necessary data before mutable borrow
+                                        updates.push((name.clone(), anchors.clone()));
+                                    }
+                                }
+                            }
+                        }
+
+                        // Perform mutation after all immutable borrows are done
+                        for (name, anchors) in updates {
+                            this.set_mark(name, &buffer, anchors, cx);
+                        }
+                    }
+                    // if let Some(m) = this.loaded_marks.get(&id) {
+                    //     for (name, anchors) in m.iter() {
+                    //         let points_from_anchors: Vec<Point> = anchors
+                    //             .iter()
+                    //             .map(|anchor| anchor.text_anchor.to_point(&snapshot))
+                    //             .collect();
+                    //         let Some(map) = this.marks.get(&path) else {
+                    //             return;
+                    //         };
+                    //         let Some(old_points) = map.get(name) else {
+                    //             return;
+                    //         };
+                    //         if points_from_anchors
+                    //             .iter()
+                    //             .zip(old_points.iter())
+                    //             .any(|(&p1, &p2)| p1 != p2)
+                    //         {
+                    //             this.set_mark(name.clone(), &buffer, anchors.clone(), cx)
+                    //         }
+                    //     }
+                    // }
                     // recalculate marks for this buffer, and if they've changed update SQLite
                 }
+                // BufferEvent::Operation { operation, is_local } => todo!(),
+                // BufferEvent::DirtyChanged => todo!(),
+                // BufferEvent::Saved => todo!(),
+                BufferEvent::FileHandleChanged => {
+                    // I am not sure how to see what the name was previously in order to remove those marks
+                }
+                // BufferEvent::Reloaded => todo!(),
+                // BufferEvent::ReloadNeeded => todo!(),
+                // BufferEvent::LanguageChanged => todo!(),
+                // BufferEvent::Reparsed => todo!(),
+                // BufferEvent::DiagnosticsUpdated => todo!(),
+                // BufferEvent::CapabilityChanged => todo!(),
+                BufferEvent::Closed => {
+                    this.loaded_marks.remove(&id);
+                    this.path_buf_id.remove(&path.clone());
+                }
+                // BufferEvent::Discarded => todo!(),
+                _ => {}
             }
         });
-        cx.observe_release(buffer_handle, |buffer, cx| {
-            self.loaded_marks.remove(&id)
-        })
+        // cx.observe_release(buffer_handle, |buffer, cx| self.loaded_marks.remove(&id))
+        // I think ^ is covered by BufferEvent::Closed event
     }
 
-    pub fn set_mark(&mut self, name: String, buffer_handle: &Entity<Buffer>, points: Vec<Anchor>, cx: &mut Context<Self>) {
+    pub fn set_mark(
+        &mut self,
+        name: String,
+        buffer_handle: &Entity<Buffer>,
+        anchors: Vec<Anchor>,
+        cx: &mut Context<Self>,
+    ) {
         // the catch here is we may need to subscribe to the buffer.
 
+        let buffer = buffer_handle.read(cx);
+        let id = buffer.remote_id();
+
+        // This needs to happen before reading file so buffers without files can be jumped to
+        let mut map = self.loaded_marks.entry(id).or_default();
+        map.insert(name.clone(), anchors.clone());
+        println!("s1");
+        let Some(path) = buffer.file().map(|file| file.path().clone()) else {
+            return;
+        };
+
+        if name.starts_with(|c: char| c.is_uppercase())
+            || name.starts_with(|c: char| c.is_digit(10))
+        {
+            self.global_marks.insert(name.clone(), path.clone());
+            cx.background_executor()
+                .spawn(DB.set_global_mark_path(
+                    self.workspace_id,
+                    name.clone(),
+                    path.to_path_buf().into_os_string().into_vec(),
+                ))
+                .detach_and_log_err(cx);
+        }
+
+        let snapshot = buffer.snapshot();
+        let mut map = self.marks.entry(path.clone()).or_default();
+        let points: Vec<Point> = anchors
+            .iter()
+            .map(|anchor| anchor.text_anchor.to_point(&snapshot))
+            .collect();
+        map.insert(name.clone(), points.clone());
+        let locations: Vec<(u32, u32)> = points
+            .iter()
+            .map(|point| (point.row, point.column))
+            .collect();
+        let Ok(value) = serde_json::to_string(&locations) else {
+            return;
+        };
+
+        cx.background_executor()
+            .spawn(DB.set_mark(
+                self.workspace_id,
+                name,
+                path.to_path_buf().into_os_string().into_vec(),
+                value,
+            ))
+            .detach_and_log_err(cx);
     }
 
-    pub fn get_path_for_mark(&mut self, name: String) -> Option<Arc<Path>> {
-
+    pub fn get_path_for_mark(&self, name: String) -> Option<Arc<Path>> {
+        self.global_marks.get(&name).cloned()
     }
 
-    pub fn get_mark(&mut self, name: String, entity: Entity<Buffer>) -> Vec<Anchor> {
-
+    pub fn get_mark(&self, name: String, entity: Entity<Buffer>, cx: &App) -> Option<Vec<Anchor>> {
+        if name.starts_with(|c: char| c.is_uppercase())
+            || name.starts_with(|c: char| c.is_digit(10))
+        {
+            println!("g1");
+            let path = self.get_path_for_mark(name.clone())?;
+            println!("g2");
+            let buffer_id = self.path_buf_id.get(&path)?;
+            println!("g3");
+            self.loaded_marks.get(&buffer_id)?.get(&name).cloned()
+        } else {
+            let buffer = entity.read(cx);
+            let id = buffer.remote_id();
+            self.loaded_marks.get(&id)?.get(&name).cloned()
+        }
     }
 }
 
-enum MarkCollection {
-    Loaded {
-        anchor: HashMap<String, Vec<Anchor>>,
-        buffer: WeakEntity<Buffer>,
-        subscription: Subscription,
-    },
-    Unloaded(HashMap<String, Vec<Point>>),
-}
+// enum MarkCollection {
+//     Loaded {
+//         anchor: HashMap<String, Vec<Anchor>>,
+//         buffer: WeakEntity<Buffer>,
+//         subscription: Subscription,
+//     },
+//     Unloaded(HashMap<String, Vec<Point>>),
+// }
 
 impl Global for VimGlobals {}
 
@@ -308,32 +505,50 @@ impl VimGlobals {
                 return;
             };
             cx.spawn(|_, cx| async move {
-                let local_marks = cx
+                let marks = cx
                     .background_executor()
-                    .spawn(async move { DB.get_local_marks(workspace_id) })
+                    .spawn(async move { DB.get_marks(workspace_id) })
                     .await?;
-                let global_marks = cx
+                let global_mark_paths = cx
                     .background_executor()
-                    .spawn(async move { DB.get_global_marks(workspace_id) })
+                    .spawn(async move { DB.get_global_mark_path(workspace_id) })
                     .await?;
-                cx.update_global(|g: &mut VimGlobals, _cx: &mut App| {
-                    g.load_local_marks(workspace_id, local_marks);
-                    g.load_global_marks(workspace_id, global_marks);
+
+                cx.update_global(|g: &mut VimGlobals, cx: &mut App| {
+                    g.marks
+                        .insert(workspace_id, MarksState::new(workspace_id.clone(), cx));
+                    println!("we inserted workspace id");
+                    if let Some(marks_state) = g.marks.get(&workspace_id) {
+                        marks_state.update(cx, |ms, cx| {
+                            ms.load(workspace_id, marks, global_mark_paths);
+                        });
+                    }
+                    // g.load_local_marks(workspace_id, local_marks);
+                    // g.load_global_marks(workspace_id, global_marks);
                 })
             })
             .detach_and_log_err(cx);
 
             let buffer_store = workspace.project().read(cx).buffer_store().clone();
-            cx.subscribe(&buffer_store, |this, _, event, cx| {
+            println!("before buffer store");
+            cx.subscribe(&buffer_store, move |this, _, event, cx| {
                 match event {
-                    project::BufferStoreEvent::BufferAdded(buffer) => {
+                    project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
                         // if we have marks for this buffer, upgrade to anchors,
                         // watch for changes, and when the buffer is closed, convert back
-
+                        println!("added buffer");
+                        Vim::update_globals(cx, |globals, cx| {
+                            if let Some(marks_state) = globals.marks.get(&workspace_id) {
+                                marks_state.update(cx, |ms, cx| {
+                                    ms.on_buffer_loaded(buffer, cx);
+                                });
+                            }
+                        })
                     }
+                    _ => {}
                 }
-
-            }
+            })
+            .detach();
         })
         .detach()
     }
@@ -463,150 +678,155 @@ impl VimGlobals {
         }
     }
 
-    pub fn set_local_mark(editor: &Editor, name: String, positions: &Vec<Anchor>, cx: &mut App) {
-        let name = name.clone();
-        let snapshot = editor.buffer().read(cx).snapshot(cx);
-        let points: Vec<Point> = positions
-            .iter()
-            .map(|anchor| anchor.to_point(&snapshot))
-            .collect();
-        let locations: Vec<(u32, u32)> = points
-            .iter()
-            .map(|point| (point.row, point.column))
-            .collect();
-        let Ok(value) = serde_json::to_string(&locations) else {
-            return;
-        };
+    // pub fn set_local_mark(editor: &Editor, name: String, positions: &Vec<Anchor>, cx: &mut App) {
+    //     let name = name.clone();
+    //     let snapshot = editor.buffer().read(cx).snapshot(cx);
+    //     let points: Vec<Point> = positions
+    //         .iter()
+    //         .map(|anchor| anchor.to_point(&snapshot))
+    //         .collect();
+    //     let locations: Vec<(u32, u32)> = points
+    //         .iter()
+    //         .map(|point| (point.row, point.column))
+    //         .collect();
+    //     let Ok(value) = serde_json::to_string(&locations) else {
+    //         return;
+    //     };
 
-        let Some(workspace) = editor.workspace() else {
-            return;
-        };
-        let workspace = workspace.read(cx);
-        let Some(workspace_id) = workspace.database_id() else {
-            return;
-        };
+    //     let Some(workspace) = editor.workspace() else {
+    //         return;
+    //     };
+    //     let workspace = workspace.read(cx);
+    //     let Some(workspace_id) = workspace.database_id() else {
+    //         return;
+    //     };
 
-        let Some(file) = editor
-            .buffer()
-            .read(cx)
-            .as_singleton()
-            .and_then(|buffer| buffer.read(cx).file())
-        else {
-            return;
-        };
-        let path = file.path().to_path_buf();
+    //     let Some(file) = editor
+    //         .buffer()
+    //         .read(cx)
+    //         .as_singleton()
+    //         .and_then(|buffer| buffer.read(cx).file())
+    //     else {
+    //         return;
+    //     };
+    //     let path = file.path().to_path_buf();
 
-        cx.update_global(|g: &mut VimGlobals, _cx: &mut App| {
-            if !g
-                .local_marks
-                .contains_key(&(workspace_id.clone(), path.clone().into()))
-            {
-                g.local_marks.insert(
-                    (workspace_id.clone(), path.clone().into()),
-                    HashMap::<String, Vec<Point>>::default(),
-                );
-            }
-            let _ = g
-                .local_marks
-                .get_mut(&(workspace_id.clone(), path.clone().into()))
-                .and_then(|map| map.insert(name.clone(), points));
-        });
+    //     cx.update_global(|g: &mut VimGlobals, _cx: &mut App| {
+    //         if !g
+    //             .local_marks
+    //             .contains_key(&(workspace_id.clone(), path.clone().into()))
+    //         {
+    //             g.local_marks.insert(
+    //                 (workspace_id.clone(), path.clone().into()),
+    //                 HashMap::<String, Vec<Point>>::default(),
+    //             );
+    //         }
+    //         let _ = g
+    //             .local_marks
+    //             .get_mut(&(workspace_id.clone(), path.clone().into()))
+    //             .and_then(|map| map.insert(name.clone(), points));
+    //     });
 
-        cx.background_executor()
-            .spawn(DB.set_local_mark(workspace_id, name, path.into_os_string().into_vec(), value))
-            .detach_and_log_err(cx);
-    }
+    //     cx.background_executor()
+    //         .spawn(DB.set_mark(workspace_id, name, path.into_os_string().into_vec(), value))
+    //         .detach_and_log_err(cx);
+    // }
 
-    pub fn set_global_mark(editor: &Editor, name: String, positions: &Vec<Anchor>, cx: &mut App) {
-        let name = name.clone();
-        let snapshot = editor.buffer().read(cx).snapshot(cx);
-        let points: Vec<Point> = positions
-            .iter()
-            .map(|anchor| anchor.to_point(&snapshot))
-            .collect();
-        let locations: Vec<(u32, u32)> = points
-            .iter()
-            .map(|point| (point.row, point.column))
-            .collect();
-        let Ok(value) = serde_json::to_string(&locations) else {
-            return;
-        };
+    // pub fn set_global_mark(editor: &Editor, name: String, positions: &Vec<Anchor>, cx: &mut App) {
+    //     let name = name.clone();
+    //     let snapshot = editor.buffer().read(cx).snapshot(cx);
+    //     let points: Vec<Point> = positions
+    //         .iter()
+    //         .map(|anchor| anchor.to_point(&snapshot))
+    //         .collect();
+    //     let locations: Vec<(u32, u32)> = points
+    //         .iter()
+    //         .map(|point| (point.row, point.column))
+    //         .collect();
+    //     let Ok(value) = serde_json::to_string(&locations) else {
+    //         return;
+    //     };
 
-        let Some(workspace) = editor.workspace() else {
-            return;
-        };
-        let workspace = workspace.read(cx);
-        let Some(workspace_id) = workspace.database_id() else {
-            return;
-        };
+    //     let Some(workspace) = editor.workspace() else {
+    //         return;
+    //     };
+    //     let workspace = workspace.read(cx);
+    //     let Some(workspace_id) = workspace.database_id() else {
+    //         return;
+    //     };
 
-        let Some(file) = editor
-            .buffer()
-            .read(cx)
-            .as_singleton()
-            .and_then(|buffer| buffer.read(cx).file())
-        else {
-            return;
-        };
-        let path = file.path().to_path_buf();
+    //     let Some(file) = editor
+    //         .buffer()
+    //         .read(cx)
+    //         .as_singleton()
+    //         .and_then(|buffer| buffer.read(cx).file())
+    //     else {
+    //         return;
+    //     };
+    //     let path = file.path().to_path_buf();
 
-        cx.update_global(|g: &mut VimGlobals, _cx: &mut App| {
-            if !g.global_marks.contains_key(&workspace_id.clone()) {
-                g.global_marks.insert(
-                    workspace_id.clone(),
-                    HashMap::<String, (Arc<Path>, Vec<Point>)>::default(),
-                );
-            }
-            let _ = g
-                .global_marks
-                .get_mut(&workspace_id.clone())
-                .and_then(|map| map.insert(name.clone(), (path.clone().into(), points)));
-        });
-        cx.background_executor()
-            .spawn(DB.set_global_mark(workspace_id, name, path.into_os_string().into_vec(), value))
-            .detach_and_log_err(cx);
-    }
+    //     cx.update_global(|g: &mut VimGlobals, _cx: &mut App| {
+    //         if !g.global_marks.contains_key(&workspace_id.clone()) {
+    //             g.global_marks.insert(
+    //                 workspace_id.clone(),
+    //                 HashMap::<String, (Arc<Path>, Vec<Point>)>::default(),
+    //             );
+    //         }
+    //         let _ = g
+    //             .global_marks
+    //             .get_mut(&workspace_id.clone())
+    //             .and_then(|map| map.insert(name.clone(), (path.clone().into(), points)));
+    //     });
+    //     cx.background_executor()
+    //         .spawn(DB.set_global_mark_path(
+    //             workspace_id,
+    //             name,
+    //             path.into_os_string().into_vec(),
+    //             value,
+    //         ))
+    //         .detach_and_log_err(cx);
+    // }
 
-    fn load_local_marks(
-        &mut self,
-        workspace_id: WorkspaceId,
-        marks: Vec<(Vec<u8>, String, String)>,
-    ) {
-        for (abs_path, name, values) in marks {
-            let Some(value) = serde_json::from_str::<Vec<(u32, u32)>>(&values).log_err() else {
-                continue;
-            };
-            let path = PathBuf::from(OsString::from_vec(abs_path));
-            let marks = self
-                .local_marks
-                .entry((workspace_id, Arc::from(path)))
-                .or_default();
-            let points: Vec<Point> = value
-                .into_iter()
-                .map(|(row, col)| Point::new(row, col))
-                .collect();
-            marks.insert(name, points);
-        }
-    }
+    // fn load_local_marks(
+    //     &mut self,
+    //     workspace_id: WorkspaceId,
+    //     marks: Vec<(Vec<u8>, String, String)>,
+    // ) {
+    //     for (abs_path, name, values) in marks {
+    //         let Some(value) = serde_json::from_str::<Vec<(u32, u32)>>(&values).log_err() else {
+    //             continue;
+    //         };
+    //         let path = PathBuf::from(OsString::from_vec(abs_path));
+    //         let marks = self
+    //             .local_marks
+    //             .entry((workspace_id, Arc::from(path)))
+    //             .or_default();
+    //         let points: Vec<Point> = value
+    //             .into_iter()
+    //             .map(|(row, col)| Point::new(row, col))
+    //             .collect();
+    //         marks.insert(name, points);
+    //     }
+    // }
 
-    fn load_global_marks(
-        &mut self,
-        workspace_id: WorkspaceId,
-        marks: Vec<(Vec<u8>, String, String)>,
-    ) {
-        for (abs_path, name, values) in marks {
-            let Some(value) = serde_json::from_str::<Vec<(u32, u32)>>(&values).log_err() else {
-                continue;
-            };
-            let path = PathBuf::from(OsString::from_vec(abs_path));
-            let global_marks = self.global_marks.entry(workspace_id).or_default();
-            let points = value
-                .into_iter()
-                .map(|(row, col)| Point::new(row, col))
-                .collect();
-            global_marks.insert(name, (Arc::from(path), points));
-        }
-    }
+    // fn load_global_marks(
+    //     &mut self,
+    //     workspace_id: WorkspaceId,
+    //     marks: Vec<(Vec<u8>, String, String)>,
+    // ) {
+    //     for (abs_path, name, values) in marks {
+    //         let Some(value) = serde_json::from_str::<Vec<(u32, u32)>>(&values).log_err() else {
+    //             continue;
+    //         };
+    //         let path = PathBuf::from(OsString::from_vec(abs_path));
+    //         let global_marks = self.global_marks.entry(workspace_id).or_default();
+    //         let points = value
+    //             .into_iter()
+    //             .map(|(row, col)| Point::new(row, col))
+    //             .collect();
+    //         global_marks.insert(name, (Arc::from(path), points));
+    //     }
+    // }
 
     fn system_clipboard_is_newer(&self, cx: &mut Context<Editor>) -> bool {
         cx.read_from_clipboard().is_some_and(|item| {
@@ -811,74 +1031,72 @@ impl Operator {
 define_connection! (
     pub static ref DB: VimDb<WorkspaceDb> = &[
         sql! (
-            CREATE TABLE vim_local_marks (
+            CREATE TABLE vim_marks (
               workspace_id INTEGER,
               mark_name TEXT,
-              absolute_path BLOB,
+              path BLOB,
               value TEXT
             );
-            CREATE UNIQUE INDEX idx_vim_local_marks ON vim_local_marks (workspace_id, mark_name, absolute_path);
+            CREATE UNIQUE INDEX idx_vim_marks ON vim_marks (workspace_id, mark_name, path);
         ),
         sql! (
-            CREATE TABLE vim_global_marks(
+            CREATE TABLE vim_global_marks_paths(
                 workspace_id INTEGER,
                 mark_name TEXT,
-                absolute_path BLOB,
-                value TEXT
+                path BLOB
             );
-            CREATE UNIQUE INDEX idx_vim_global_marks
-            ON vim_global_marks(workspace_id, mark_name);
+            CREATE UNIQUE INDEX idx_vim_global_marks_paths
+            ON vim_global_marks_paths(workspace_id, mark_name);
         ),
     ];
 );
 
 impl VimDb {
-    pub(crate) async fn set_local_mark(
+    pub(crate) async fn set_mark(
         &self,
         workspace_id: WorkspaceId,
         mark_name: String,
-        absolute_path: Vec<u8>,
+        path: Vec<u8>,
         value: String,
     ) -> Result<()> {
         self.write(move |conn| {
             conn.exec_bound(sql!(
-                INSERT OR REPLACE INTO vim_local_marks
-                    (workspace_id, mark_name, absolute_path, value)
+                INSERT OR REPLACE INTO vim_marks
+                    (workspace_id, mark_name, path, value)
                 VALUES
                     (?, ?, ?, ?)
-            ))?((workspace_id, mark_name, absolute_path, value))
+            ))?((workspace_id, mark_name, path, value))
         })
         .await
     }
 
     query! {
-        pub fn get_local_marks(workspace_id: WorkspaceId) -> Result<Vec<(Vec<u8>, String, String)>> {
-            SELECT absolute_path, mark_name, value FROM vim_local_marks
+        pub fn get_marks(workspace_id: WorkspaceId) -> Result<Vec<(Vec<u8>, String, String)>> {
+            SELECT path, mark_name, value FROM vim_marks
                 WHERE workspace_id = ?
         }
     }
 
-    pub(crate) async fn set_global_mark(
+    pub(crate) async fn set_global_mark_path(
         &self,
         workspace_id: WorkspaceId,
         mark_name: String,
-        absolute_path: Vec<u8>,
-        value: String,
+        path: Vec<u8>,
     ) -> Result<()> {
         self.write(move |conn| {
             conn.exec_bound(sql!(
-                INSERT OR REPLACE INTO vim_global_marks
-                    (workspace_id, mark_name, absolute_path, value)
+                INSERT OR REPLACE INTO vim_global_marks_paths
+                    (workspace_id, mark_name, path)
                 VALUES
-                    (?, ?, ?, ?)
-            ))?((workspace_id, mark_name, absolute_path, value))
+                    (?, ?, ?)
+            ))?((workspace_id, mark_name, path))
         })
         .await
     }
 
     query! {
-        pub fn get_global_marks(workspace_id: WorkspaceId) -> Result<Vec<(Vec<u8>, String, String)>> {
-            SELECT absolute_path, mark_name, value FROM vim_global_marks
+        pub fn get_global_mark_path(workspace_id: WorkspaceId) -> Result<Vec<(Vec<u8>, String)>> {
+            SELECT path, mark_name FROM vim_global_marks_paths
                 WHERE workspace_id = ?
         }
     }

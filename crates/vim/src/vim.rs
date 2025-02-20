@@ -26,10 +26,11 @@ use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToOffset, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, App, AppContext as _, Axis, Context, Entity, EventEmitter,
-    KeyContext, KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window,
+    actions, impl_actions, Action, App, AppContext, Axis, Context, Entity, EventEmitter,
+    KeyContext, KeystrokeEvent, Render, Subscription, Task, UpdateGlobal, WeakEntity, Window,
 };
 use insert::{NormalBefore, TemporaryNormal};
+use language::Buffer;
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
@@ -44,9 +45,9 @@ use std::path::Path;
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
-use ui::{px, IntoElement, SharedString};
+use ui::{px, BorrowAppContext, IntoElement, SharedString};
 use vim_mode_setting::VimModeSetting;
-use workspace::{self, Pane, Workspace};
+use workspace::{self, Pane, Workspace, WorkspaceId};
 
 use crate::state::ReplayableAction;
 
@@ -794,25 +795,40 @@ impl Vim {
         }
     }
 
-    fn set_mark(&mut self, name: String, positions: Vec<Anchor>, cx: &mut App) {
-        let Some(editor) = self.editor() else {
-            return;
-        };
-        match name {
-            m if m.starts_with(|c: char| c.is_uppercase())
-                || m.starts_with(|c: char| c.is_digit(10)) =>
-            {
-                editor.update(cx, |editor, cx| {
-                    VimGlobals::set_global_mark(editor, m.clone(), &positions, cx);
-                });
-            } // global mark
-            m => {
-                editor.update(cx, |editor, cx| {
-                    VimGlobals::set_local_mark(editor, m.clone(), &positions, cx);
-                });
-                // let _ = self.marks.insert(m, positions);
-            } // local mark
-        };
+    fn set_mark(
+        &mut self,
+        name: String,
+        anchors: Vec<Anchor>,
+        buffer_entity: &Entity<Buffer>,
+        workspace_id: WorkspaceId,
+        cx: &mut App,
+    ) {
+        cx.update_global::<VimGlobals, ()>(|vim_globals, cx| {
+            println!("here1");
+            let marks_state = vim_globals.marks.get(&workspace_id);
+            marks_state.unwrap().update(cx, |ms, cx| {
+                println!("here2");
+                ms.set_mark(name.clone(), buffer_entity, anchors, cx);
+            });
+        });
+        // let Some(editor) = self.editor() else {
+        //     return;
+        // };
+        // match name {
+        //     m if m.starts_with(|c: char| c.is_uppercase())
+        //         || m.starts_with(|c: char| c.is_digit(10)) =>
+        //     {
+        //         editor.update(cx, |editor, cx| {
+        //             VimGlobals::set_global_mark(editor, m.clone(), &positions, cx);
+        //         });
+        //     } // global mark
+        //     m => {
+        //         editor.update(cx, |editor, cx| {
+        //             VimGlobals::set_local_mark(editor, m.clone(), &positions, cx);
+        //         });
+        //         // let _ = self.marks.insert(m, positions);
+        //     } // local mark
+        // };
     }
 
     fn get_local_mark(
@@ -821,33 +837,40 @@ impl Vim {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Vec<Anchor>> {
-        let workspace_id = self
-            .workspace(window)
-            .and_then(|w| w.read(cx).database_id())?;
+        // let workspace_id = self
+        //     .workspace(window)
+        //     .and_then(|w| w.read(cx).database_id())?;
 
-        let editor = self.editor()?.read(cx);
-        let path = editor
-            .buffer()
+        // let path = editor
+        //     .buffer()
+        //     .read(cx)
+        //     .as_singleton()
+        //     .and_then(|buffer| buffer.read(cx).file())?
+        //     .path()
+        //     .to_path_buf();
+        // let map = cx
+        //     .global::<VimGlobals>()
+        //     .local_marks
+        //     .get(&(workspace_id, path.into()))?;
+
+        // let points = map.get(&name)?;
+        // Some(
+        //     points
+        //         .iter()
+        //         .map(|point| {
+        //             let snapshot = editor.buffer().read(cx).snapshot(cx);
+        //             snapshot.anchor_before(point.to_offset(&snapshot))
+        //         })
+        //         .collect(),
+        // )
+
+        let buffer = self.editor()?.read(cx).buffer().read(cx).as_singleton()?;
+        let workspace_id = self.workspace(window)?.read(cx).database_id()?;
+        cx.global::<VimGlobals>()
+            .marks
+            .get(&workspace_id)?
             .read(cx)
-            .as_singleton()
-            .and_then(|buffer| buffer.read(cx).file())?
-            .path()
-            .to_path_buf();
-        let map = cx
-            .global::<VimGlobals>()
-            .local_marks
-            .get(&(workspace_id, path.into()))?;
-
-        let points = map.get(&name)?;
-        Some(
-            points
-                .iter()
-                .map(|point| {
-                    let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    snapshot.anchor_before(point.to_offset(&snapshot))
-                })
-                .collect(),
-        )
+            .get_mark(name, buffer, cx)
     }
 
     fn get_global_mark(
@@ -855,13 +878,21 @@ impl Vim {
         name: String,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<(Arc<Path>, Vec<Point>)> {
+    ) -> Option<(Arc<Path>, Vec<Anchor>)> {
         let workspace_id = self.workspace(window)?.read(cx).database_id()?;
-        cx.global::<VimGlobals>()
-            .global_marks
-            .get(&workspace_id)?
-            .get(&name)
-            .and_then(|t| Some(t.clone()))
+        let buffer = self.editor()?.read(cx).buffer().read(cx).as_singleton()?;
+        println!("1h");
+        VimGlobals::update_global(cx, |vim_globals, cx| {
+            println!("2h");
+            vim_globals.marks.get(&workspace_id)?.update(cx, |ms, cx| {
+                println!("3h");
+                let anchors = ms.get_mark(name.clone(), buffer, cx)?;
+                println!("4h");
+                let path = ms.get_path_for_mark(name)?;
+                println!("5h");
+                Some((path, anchors))
+            })
+        })
     }
 
     fn handle_editor_event(

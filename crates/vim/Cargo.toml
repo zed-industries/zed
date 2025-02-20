@@ -32,6 +32,7 @@ libc.workspace = true
 log.workspace = true
 multi_buffer.workspace = true
 nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", features = ["use_tokio"], optional = true }
+project.workspace = true
 regex.workspace = true
 schemars.workspace = true
 search.workspace = true
