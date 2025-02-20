@@ -16,6 +16,109 @@ fn init_logger() {
     }
 }
 
+#[test]
+fn test_custom_project_search_ordering_in_file_finder() {
+    let mut file_finder_sorted_output = vec![
+        ProjectPanelOrdMatch(PathMatch {
+            score: 0.5,
+            positions: Vec::new(),
+            worktree_id: 0,
+            path: Arc::from(Path::new("b0.5")),
+            path_prefix: Arc::default(),
+            distance_to_relative_ancestor: 0,
+            is_dir: false,
+        }),
+        ProjectPanelOrdMatch(PathMatch {
+            score: 1.0,
+            positions: Vec::new(),
+            worktree_id: 0,
+            path: Arc::from(Path::new("c1.0")),
+            path_prefix: Arc::default(),
+            distance_to_relative_ancestor: 0,
+            is_dir: false,
+        }),
+        ProjectPanelOrdMatch(PathMatch {
+            score: 1.0,
+            positions: Vec::new(),
+            worktree_id: 0,
+            path: Arc::from(Path::new("a1.0")),
+            path_prefix: Arc::default(),
+            distance_to_relative_ancestor: 0,
+            is_dir: false,
+        }),
+        ProjectPanelOrdMatch(PathMatch {
+            score: 0.5,
+            positions: Vec::new(),
+            worktree_id: 0,
+            path: Arc::from(Path::new("a0.5")),
+            path_prefix: Arc::default(),
+            distance_to_relative_ancestor: 0,
+            is_dir: false,
+        }),
+        ProjectPanelOrdMatch(PathMatch {
+            score: 1.0,
+            positions: Vec::new(),
+            worktree_id: 0,
+            path: Arc::from(Path::new("b1.0")),
+            path_prefix: Arc::default(),
+            distance_to_relative_ancestor: 0,
+            is_dir: false,
+        }),
+    ];
+    file_finder_sorted_output.sort_by(|a, b| b.cmp(a));
+
+    assert_eq!(
+        file_finder_sorted_output,
+        vec![
+            ProjectPanelOrdMatch(PathMatch {
+                score: 1.0,
+                positions: Vec::new(),
+                worktree_id: 0,
+                path: Arc::from(Path::new("a1.0")),
+                path_prefix: Arc::default(),
+                distance_to_relative_ancestor: 0,
+                is_dir: false,
+            }),
+            ProjectPanelOrdMatch(PathMatch {
+                score: 1.0,
+                positions: Vec::new(),
+                worktree_id: 0,
+                path: Arc::from(Path::new("b1.0")),
+                path_prefix: Arc::default(),
+                distance_to_relative_ancestor: 0,
+                is_dir: false,
+            }),
+            ProjectPanelOrdMatch(PathMatch {
+                score: 1.0,
+                positions: Vec::new(),
+                worktree_id: 0,
+                path: Arc::from(Path::new("c1.0")),
+                path_prefix: Arc::default(),
+                distance_to_relative_ancestor: 0,
+                is_dir: false,
+            }),
+            ProjectPanelOrdMatch(PathMatch {
+                score: 0.5,
+                positions: Vec::new(),
+                worktree_id: 0,
+                path: Arc::from(Path::new("a0.5")),
+                path_prefix: Arc::default(),
+                distance_to_relative_ancestor: 0,
+                is_dir: false,
+            }),
+            ProjectPanelOrdMatch(PathMatch {
+                score: 0.5,
+                positions: Vec::new(),
+                worktree_id: 0,
+                path: Arc::from(Path::new("b0.5")),
+                path_prefix: Arc::default(),
+                distance_to_relative_ancestor: 0,
+                is_dir: false,
+            }),
+        ]
+    );
+}
+
 #[gpui::test]
 async fn test_matching_paths(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
