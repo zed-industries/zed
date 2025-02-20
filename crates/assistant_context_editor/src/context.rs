@@ -650,6 +650,7 @@ impl AssistantContext {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: ContextId,
         replica_id: ReplicaId,
@@ -770,6 +771,7 @@ impl AssistantContext {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn deserialize(
         saved_context: SavedContext,
         path: PathBuf,
@@ -849,7 +851,7 @@ impl AssistantContext {
             .collect::<Vec<_>>();
         context_ops.extend(self.pending_ops.iter().cloned());
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let buffer_ops = buffer_ops.await;
             context_ops.sort_unstable_by_key(|op| op.timestamp());
             buffer_ops

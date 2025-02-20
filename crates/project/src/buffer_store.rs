@@ -346,7 +346,7 @@ impl RemoteBufferStore {
     fn open_unstaged_diff(&self, buffer_id: BufferId, cx: &App) -> Task<Result<Option<String>>> {
         let project_id = self.project_id;
         let client = self.upstream_client.clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let response = client
                 .request(proto::OpenUnstagedDiff {
                     project_id,
@@ -366,7 +366,7 @@ impl RemoteBufferStore {
 
         let project_id = self.project_id;
         let client = self.upstream_client.clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let response = client
                 .request(proto::OpenUncommittedDiff {
                     project_id,
@@ -402,9 +402,7 @@ impl RemoteBufferStore {
                 return Ok(buffer);
             }
 
-            cx.background_executor()
-                .spawn(async move { rx.await? })
-                .await
+            cx.background_spawn(async move { rx.await? }).await
         })
     }
 
@@ -843,8 +841,7 @@ impl LocalBufferStore {
             let snapshot =
                 worktree_handle.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
             let diff_bases_changes_by_buffer = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     diff_state_updates
                         .into_iter()
                         .filter_map(
@@ -1129,8 +1126,7 @@ impl LocalBufferStore {
             cx.spawn(move |_, mut cx| async move {
                 let loaded = load_file.await?;
                 let text_buffer = cx
-                    .background_executor()
-                    .spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
+                    .background_spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
                     .await;
                 cx.insert_entity(reservation, |_| {
                     Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite)
@@ -1347,8 +1343,7 @@ impl BufferStore {
             }
         };
 
-        cx.background_executor()
-            .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
     pub fn open_unstaged_diff(
@@ -1388,8 +1383,7 @@ impl BufferStore {
             }
         };
 
-        cx.background_executor()
-            .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
     pub fn open_uncommitted_diff(
@@ -1409,7 +1403,7 @@ impl BufferStore {
                     BufferStoreState::Local(this) => {
                         let committed_text = this.load_committed_text(&buffer, cx);
                         let staged_text = this.load_staged_text(&buffer, cx);
-                        cx.background_executor().spawn(async move {
+                        cx.background_spawn(async move {
                             let committed_text = committed_text.await?;
                             let staged_text = staged_text.await?;
                             let diff_bases_change = if committed_text == staged_text {
@@ -1445,8 +1439,7 @@ impl BufferStore {
             }
         };
 
-        cx.background_executor()
-            .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
     async fn open_diff_internal(
@@ -1587,7 +1580,7 @@ impl BufferStore {
                     anyhow::Ok(Some((repo, relative_path, content)))
                 });
 
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     let Some((repo, relative_path, content)) = blame_params? else {
                         return Ok(None);
                     };
@@ -2106,24 +2099,23 @@ impl BufferStore {
                     })
                     .log_err();
 
-                cx.background_executor()
-                    .spawn(
-                        async move {
-                            let operations = operations.await;
-                            for chunk in split_operations(operations) {
-                                client
-                                    .request(proto::UpdateBuffer {
-                                        project_id,
-                                        buffer_id: buffer_id.into(),
-                                        operations: chunk,
-                                    })
-                                    .await?;
-                            }
-                            anyhow::Ok(())
+                cx.background_spawn(
+                    async move {
+                        let operations = operations.await;
+                        for chunk in split_operations(operations) {
+                            client
+                                .request(proto::UpdateBuffer {
+                                    project_id,
+                                    buffer_id: buffer_id.into(),
+                                    operations: chunk,
+                                })
+                                .await?;
                         }
-                        .log_err(),
-                    )
-                    .detach();
+                        anyhow::Ok(())
+                    }
+                    .log_err(),
+                )
+                .detach();
             }
         }
         Ok(response)
@@ -2558,27 +2550,26 @@ impl BufferStore {
 
             if client.send(initial_state).log_err().is_some() {
                 let client = client.clone();
-                cx.background_executor()
-                    .spawn(async move {
-                        let mut chunks = split_operations(operations).peekable();
-                        while let Some(chunk) = chunks.next() {
-                            let is_last = chunks.peek().is_none();
-                            client.send(proto::CreateBufferForPeer {
-                                project_id,
-                                peer_id: Some(peer_id),
-                                variant: Some(proto::create_buffer_for_peer::Variant::Chunk(
-                                    proto::BufferChunk {
-                                        buffer_id: buffer_id.into(),
-                                        operations: chunk,
-                                        is_last,
-                                    },
-                                )),
-                            })?;
-                        }
-                        anyhow::Ok(())
-                    })
-                    .await
-                    .log_err();
+                cx.background_spawn(async move {
+                    let mut chunks = split_operations(operations).peekable();
+                    while let Some(chunk) = chunks.next() {
+                        let is_last = chunks.peek().is_none();
+                        client.send(proto::CreateBufferForPeer {
+                            project_id,
+                            peer_id: Some(peer_id),
+                            variant: Some(proto::create_buffer_for_peer::Variant::Chunk(
+                                proto::BufferChunk {
+                                    buffer_id: buffer_id.into(),
+                                    operations: chunk,
+                                    is_last,
+                                },
+                            )),
+                        })?;
+                    }
+                    anyhow::Ok(())
+                })
+                .await
+                .log_err();
             }
             Ok(())
         })

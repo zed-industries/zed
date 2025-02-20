@@ -123,7 +123,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         };
 
         let executor = cx.background_executor().clone();
-        let search_task = cx.background_executor().spawn(async move {
+        let search_task = cx.background_spawn(async move {
             if query.is_empty() {
                 threads
             } else {

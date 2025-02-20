@@ -493,7 +493,7 @@ impl CodegenAlternative {
                     let executor = cx.background_executor().clone();
                     let message_id = message_id.clone();
                     let line_based_stream_diff: Task<anyhow::Result<()>> =
-                        cx.background_executor().spawn(async move {
+                        cx.background_spawn(async move {
                             let mut response_latency = None;
                             let request_start = Instant::now();
                             let diff = async {
@@ -807,8 +807,7 @@ impl CodegenAlternative {
 
         cx.spawn(|codegen, mut cx| async move {
             let (deleted_row_ranges, inserted_row_ranges) = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     let old_text = old_snapshot
                         .text_for_range(
                             Point::new(old_range.start.row, 0)

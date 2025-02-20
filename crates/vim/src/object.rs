@@ -1546,7 +1546,9 @@ fn surrounding_markers(
         }
         // Adjust closing.start to exclude whitespace after a newline, if present
         if let Some(end) = last_newline_end {
-            closing.start = end;
+            if end > opening.end {
+                closing.start = end;
+            }
         }
     }
 

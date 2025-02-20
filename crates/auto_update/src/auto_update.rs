@@ -513,7 +513,7 @@ impl AutoUpdater {
         should_show: bool,
         cx: &App,
     ) -> Task<Result<()>> {
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             if should_show {
                 KEY_VALUE_STORE
                     .write_kvp(
@@ -531,7 +531,7 @@ impl AutoUpdater {
     }
 
     pub fn should_show_update_notification(&self, cx: &App) -> Task<Result<bool>> {
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             Ok(KEY_VALUE_STORE
                 .read_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?
                 .is_some())

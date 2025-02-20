@@ -50,6 +50,8 @@ impl Global for GlobalThemeRegistry {}
 struct ThemeRegistryState {
     themes: HashMap<SharedString, Arc<Theme>>,
     icon_themes: HashMap<SharedString, Arc<IconTheme>>,
+    /// Whether the extensions have been loaded yet.
+    extensions_loaded: bool,
 }
 
 /// The registry for themes.
@@ -82,6 +84,7 @@ impl ThemeRegistry {
             state: RwLock::new(ThemeRegistryState {
                 themes: HashMap::default(),
                 icon_themes: HashMap::default(),
+                extensions_loaded: false,
             }),
             assets,
         };
@@ -98,6 +101,16 @@ impl ThemeRegistry {
             .insert(default_icon_theme.name.clone(), default_icon_theme);
 
         registry
+    }
+
+    /// Returns whether the extensions have been loaded.
+    pub fn extensions_loaded(&self) -> bool {
+        self.state.read().extensions_loaded
+    }
+
+    /// Sets the flag indicating that the extensions have loaded.
+    pub fn set_extensions_loaded(&self) {
+        self.state.write().extensions_loaded = true;
     }
 
     fn insert_theme_families(&self, families: impl IntoIterator<Item = ThemeFamily>) {

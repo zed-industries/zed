@@ -353,6 +353,7 @@ where
 }
 
 impl X11WindowState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         handle: AnyWindowHandle,
         client: X11ClientStatePtr,
@@ -711,6 +712,7 @@ enum WmHintPropertyState {
 }
 
 impl X11Window {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         handle: AnyWindowHandle,
         client: X11ClientStatePtr,

@@ -517,6 +517,7 @@ impl ContextEditor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn run_command(
         &mut self,
         command_range: Range<language::Anchor>,
@@ -2057,6 +2058,7 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_patch_block(
         &mut self,
         range: Range<text::Anchor>,
@@ -2404,13 +2406,9 @@ impl ContextEditor {
                     h_flex()
                         .gap_0p5()
                         .child(
-                            div().max_w_32().child(
-                                Label::new(model_name)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                                    .text_ellipsis()
-                                    .into_any_element(),
-                            ),
+                            Label::new(model_name)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
                         )
                         .child(
                             Icon::new(IconName::ChevronDown)
@@ -2427,6 +2425,7 @@ impl ContextEditor {
                     cx,
                 )
             },
+            gpui::Corner::BottomLeft,
         )
         .with_handle(self.language_model_selector_menu_handle.clone())
     }

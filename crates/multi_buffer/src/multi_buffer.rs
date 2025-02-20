@@ -9,11 +9,12 @@ pub use position::{TypedOffset, TypedPoint, TypedRow};
 use anyhow::{anyhow, Result};
 use buffer_diff::{
     BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffHunkSecondaryStatus, DiffHunkStatus,
+    DiffHunkStatusKind,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
-use gpui::{App, Context, Entity, EntityId, EventEmitter, Task};
+use gpui::{App, AppContext as _, Context, Entity, EntityId, EventEmitter, Task};
 use itertools::Itertools;
 use language::{
     language_settings::{language_settings, IndentGuideSettings, LanguageSettings},
@@ -50,9 +51,6 @@ use text::{
 };
 use theme::SyntaxTheme;
 use util::post_inc;
-
-#[cfg(any(test, feature = "test-support"))]
-use gpui::AppContext as _;
 
 const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
 
@@ -138,12 +136,16 @@ pub struct MultiBufferDiffHunk {
 
 impl MultiBufferDiffHunk {
     pub fn status(&self) -> DiffHunkStatus {
-        if self.buffer_range.start == self.buffer_range.end {
-            DiffHunkStatus::Removed(self.secondary_status)
+        let kind = if self.buffer_range.start == self.buffer_range.end {
+            DiffHunkStatusKind::Deleted
         } else if self.diff_base_byte_range.is_empty() {
-            DiffHunkStatus::Added(self.secondary_status)
+            DiffHunkStatusKind::Added
         } else {
-            DiffHunkStatus::Modified(self.secondary_status)
+            DiffHunkStatusKind::Modified
+        };
+        DiffHunkStatus {
+            kind,
+            secondary: self.secondary_status,
         }
     }
 }
@@ -1580,20 +1582,19 @@ impl MultiBuffer {
 
             buffer_ids.push(buffer_id);
 
-            cx.background_executor()
-                .spawn({
-                    let mut excerpt_ranges_tx = excerpt_ranges_tx.clone();
+            cx.background_spawn({
+                let mut excerpt_ranges_tx = excerpt_ranges_tx.clone();
 
-                    async move {
-                        let (excerpt_ranges, counts) =
-                            build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
-                        excerpt_ranges_tx
-                            .send((buffer_id, buffer.clone(), ranges, excerpt_ranges, counts))
-                            .await
-                            .ok();
-                    }
-                })
-                .detach()
+                async move {
+                    let (excerpt_ranges, counts) =
+                        build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
+                    excerpt_ranges_tx
+                        .send((buffer_id, buffer.clone(), ranges, excerpt_ranges, counts))
+                        .await
+                        .ok();
+                }
+            })
+            .detach()
         }
 
         cx.spawn(move |this, mut cx| async move {
@@ -2906,6 +2907,7 @@ impl MultiBuffer {
         snapshot.check_invariants();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn recompute_diff_transforms_for_edit(
         &self,
         edit: &Edit<TypedOffset<Excerpt>>,
@@ -6213,7 +6215,7 @@ where
                     excerpt,
                     has_trailing_newline: *has_trailing_newline,
                     is_main_buffer: false,
-                    diff_hunk_status: Some(DiffHunkStatus::Removed(
+                    diff_hunk_status: Some(DiffHunkStatus::deleted(
                         hunk_info.hunk_secondary_status,
                     )),
                     buffer_range: buffer_start..buffer_end,
@@ -6259,7 +6261,7 @@ where
                     has_trailing_newline,
                     is_main_buffer: true,
                     diff_hunk_status: inserted_hunk_info
-                        .map(|info| DiffHunkStatus::Added(info.hunk_secondary_status)),
+                        .map(|info| DiffHunkStatus::added(info.hunk_secondary_status)),
                     buffer_range: buffer_start..buffer_end,
                     range: start..end,
                 })
