@@ -23,6 +23,8 @@ use windows::{
     core::HSTRING,
 };
 
+use crate::OpenListener;
+
 use crate::{Args, OpenListener};
 
 pub fn is_first_instance() -> bool {
