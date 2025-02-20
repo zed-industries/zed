@@ -206,7 +206,7 @@ impl StackFrameList {
             return Task::ready(Ok(()));
         };
 
-        let _row = (stack_frame.line.saturating_sub(1)) as u32;
+        let row = (stack_frame.line.saturating_sub(1)) as u32;
 
         let Some(project_path) = self.project_path_from_stack_frame(&stack_frame, cx) else {
             return Task::ready(Err(anyhow!("Project path not found")));
@@ -229,14 +229,25 @@ impl StackFrameList {
                 })??
                 .await?;
 
-                Ok(())
-
                 // TODO(debugger): make this work again
-                // this.update(&mut cx, |this, cx| {
-                //     this.dap_store.update(cx, |store, cx| {
-                //         store.set_active_debug_line(client_id, &project_path, row, cx);
-                //     })
-                // })
+                this.update(&mut cx, |this, cx| {
+                    this.workspace.update(cx, |workspace, cx| {
+                        workspace
+                            .project()
+                            .read(cx)
+                            .dap_store()
+                            .update(cx, |store, cx| {
+                                store.set_active_debug_line(
+                                    this.session.read(cx).session_id(),
+                                    &project_path,
+                                    row,
+                                    cx,
+                                );
+                            });
+                    });
+                });
+
+                Ok(())
             }
         })
     }

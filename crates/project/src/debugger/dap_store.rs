@@ -428,12 +428,12 @@ impl DapStore {
 
     pub fn set_active_debug_line(
         &mut self,
-        session_id: &SessionId,
+        session_id: SessionId,
         project_path: &ProjectPath,
         row: u32,
         cx: &mut Context<Self>,
     ) {
-        self.active_debug_line = Some((*session_id, project_path.clone(), row));
+        self.active_debug_line = Some((session_id, project_path.clone(), row));
         cx.emit(DapStoreEvent::ActiveDebugLineChanged);
         cx.notify();
     }
