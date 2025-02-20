@@ -113,6 +113,8 @@ pub fn app_menus() -> Vec<Menu> {
                 ),
                 MenuItem::action("Expand Selection", editor::actions::SelectLargerSyntaxNode),
                 MenuItem::action("Shrink Selection", editor::actions::SelectSmallerSyntaxNode),
+                MenuItem::action("Select Next Syntax Node", editor::actions::SelectNextSyntaxNode),
+                MenuItem::action("Select Previous Syntax Node", editor::actions::SelectPreviousSyntaxNode),
                 MenuItem::separator(),
                 MenuItem::action("Add Cursor Above", editor::actions::AddSelectionAbove),
                 MenuItem::action("Add Cursor Below", editor::actions::AddSelectionBelow),
