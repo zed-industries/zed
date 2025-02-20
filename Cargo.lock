@@ -16697,7 +16697,6 @@ dependencies = [
  "command_palette_hooks",
  "component_preview",
  "copilot",
- "credentials_provider",
  "db",
  "diagnostics",
  "editor",
