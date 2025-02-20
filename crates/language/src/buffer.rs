@@ -782,6 +782,13 @@ impl EditPreview {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BracketMatch {
+    pub open_range: Range<usize>,
+    pub close_range: Range<usize>,
+    pub newline_only: bool,
+}
+
 impl Buffer {
     /// Create a new buffer with the given base text.
     pub fn local<T: Into<String>>(base_text: T, cx: &Context<Self>) -> Self {
@@ -3556,15 +3563,10 @@ impl BufferSnapshot {
         self.syntax.matches(range, self, query)
     }
 
-    /// Returns bracket range pairs overlapping or adjacent to `range`
-    pub fn bracket_ranges<T: ToOffset>(
+    pub fn all_bracket_ranges(
         &self,
-        range: Range<T>,
-    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {
-        // Find bracket pairs that *inclusively* contain the given range.
-        let range = range.start.to_offset(self).saturating_sub(1)
-            ..self.len().min(range.end.to_offset(self) + 1);
-
+        range: Range<usize>,
+    ) -> impl Iterator<Item = BracketMatch> + '_ {
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.brackets_config.as_ref().map(|c| &c.query)
         });
@@ -3579,6 +3581,7 @@ impl BufferSnapshot {
                 let mut open = None;
                 let mut close = None;
                 let config = &configs[mat.grammar_index];
+                let pattern = &config.patterns[mat.pattern_index];
                 for capture in mat.captures {
                     if capture.index == config.open_capture_ix {
                         open = Some(capture.node.byte_range());
@@ -3589,19 +3592,35 @@ impl BufferSnapshot {
 
                 matches.advance();
 
-                let Some((open, close)) = open.zip(close) else {
+                let Some((open_range, close_range)) = open.zip(close) else {
                     continue;
                 };
 
-                let bracket_range = open.start..=close.end;
+                let bracket_range = open_range.start..=close_range.end;
                 if !bracket_range.overlaps(&range) {
                     continue;
                 }
 
-                return Some((open, close));
+                return Some(BracketMatch {
+                    open_range,
+                    close_range,
+                    newline_only: pattern.newline_only,
+                });
             }
             None
         })
+    }
+
+    /// Returns bracket range pairs overlapping or adjacent to `range`
+    pub fn bracket_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = BracketMatch> + '_ {
+        // Find bracket pairs that *inclusively* contain the given range.
+        let range = range.start.to_offset(self).saturating_sub(1)
+            ..self.len().min(range.end.to_offset(self) + 1);
+        self.all_bracket_ranges(range)
+            .filter(|pair| !pair.newline_only)
     }
 
     pub fn text_object_ranges<T: ToOffset>(
@@ -3674,11 +3693,12 @@ impl BufferSnapshot {
     pub fn enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {
+    ) -> impl Iterator<Item = BracketMatch> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
-        self.bracket_ranges(range.clone())
-            .filter(move |(open, close)| open.start <= range.start && close.end >= range.end)
+        self.bracket_ranges(range.clone()).filter(move |pair| {
+            pair.open_range.start <= range.start && pair.close_range.end >= range.end
+        })
     }
 
     /// Returns the smallest enclosing bracket ranges containing the given range or None if no brackets contain range
@@ -3694,14 +3714,14 @@ impl BufferSnapshot {
         // Get the ranges of the innermost pair of brackets.
         let mut result: Option<(Range<usize>, Range<usize>)> = None;
 
-        for (open, close) in self.enclosing_bracket_ranges(range.clone()) {
+        for pair in self.enclosing_bracket_ranges(range.clone()) {
             if let Some(range_filter) = range_filter {
-                if !range_filter(open.clone(), close.clone()) {
+                if !range_filter(pair.open_range.clone(), pair.close_range.clone()) {
                     continue;
                 }
             }
 
-            let len = close.end - open.start;
+            let len = pair.close_range.end - pair.open_range.start;
 
             if let Some((existing_open, existing_close)) = &result {
                 let existing_len = existing_close.end - existing_open.start;
@@ -3710,7 +3730,7 @@ impl BufferSnapshot {
                 }
             }
 
-            result = Some((open, close));
+            result = Some((pair.open_range, pair.close_range));
         }
 
         result

@@ -5156,11 +5156,11 @@ impl MultiBufferSnapshot {
             excerpt
                 .buffer()
                 .enclosing_bracket_ranges(excerpt.map_range_to_buffer(range))
-                .filter_map(move |(open, close)| {
-                    if excerpt.contains_buffer_range(open.start..close.end) {
+                .filter_map(move |pair| {
+                    if excerpt.contains_buffer_range(pair.open_range.start..pair.close_range.end) {
                         Some((
-                            excerpt.map_range_from_buffer(open),
-                            excerpt.map_range_from_buffer(close),
+                            excerpt.map_range_from_buffer(pair.open_range),
+                            excerpt.map_range_from_buffer(pair.close_range),
                         ))
                     } else {
                         None
@@ -5207,12 +5207,12 @@ impl MultiBufferSnapshot {
             excerpt
                 .buffer()
                 .bracket_ranges(excerpt.map_range_to_buffer(range))
-                .filter_map(move |(start_bracket_range, close_bracket_range)| {
-                    let buffer_range = start_bracket_range.start..close_bracket_range.end;
+                .filter_map(move |pair| {
+                    let buffer_range = pair.open_range.start..pair.close_range.end;
                     if excerpt.contains_buffer_range(buffer_range) {
                         Some((
-                            excerpt.map_range_from_buffer(start_bracket_range),
-                            excerpt.map_range_from_buffer(close_bracket_range),
+                            excerpt.map_range_from_buffer(pair.open_range),
+                            excerpt.map_range_from_buffer(pair.close_range),
                         ))
                     } else {
                         None

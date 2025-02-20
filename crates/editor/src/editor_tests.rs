@@ -15934,6 +15934,60 @@ async fn test_rename_without_prepare(cx: &mut gpui::TestAppContext) {
     "});
 }
 
+#[gpui::test]
+async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_html::LANGUAGE.into()),
+        )
+        .with_brackets_query(
+            r#"
+            ("<" @open "/>" @close)
+            ("</" @open ">" @close)
+            ("<" @open ">" @close)
+            ("\"" @open "\"" @close)
+            ((element (start_tag) @open (end_tag) @close) (#set! newline.only))
+        "#,
+        )
+        .unwrap(),
+    );
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state(indoc! {"
+        <span>ˇ</span>
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <span>
+        ˇ
+        </span>
+    "});
+
+    cx.set_state(indoc! {"
+        <span><span></span>ˇ</span>
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <span><span></span>
+        ˇ</span>
+    "});
+
+    cx.set_state(indoc! {"
+        <span>ˇ
+        </span>
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        <span>
+        ˇ
+        </span>
+    "});
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(DisplayRow(row as u32), column as u32);
     point..point
