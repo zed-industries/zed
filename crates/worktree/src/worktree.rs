@@ -2032,7 +2032,7 @@ impl LocalWorktree {
             };
         let abs_new_path = self.absolutize(&new_path);
         let fs = self.fs.clone();
-        let copy = cx.background_executor().spawn(async move {
+        let copy = cx.background_spawn(async move {
             let abs_old_path = abs_old_path?;
             let abs_new_path = abs_new_path?;
 
@@ -2042,6 +2042,14 @@ impl LocalWorktree {
                     abs_new_path
                 ));
             }
+            copy_recursive(
+                fs.as_ref(),
+                &abs_old_path,
+                &abs_new_path,
+                Default::default(),
+            )
+            .await
+        });
 
         cx.spawn(|this, mut cx| async move {
             copy.await?;
