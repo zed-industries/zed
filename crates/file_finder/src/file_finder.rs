@@ -25,7 +25,6 @@ use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use settings::Settings;
 use std::{
     cmp,
-    ops::Range,
     path::{Path, PathBuf},
     sync::{
         atomic::{self, AtomicBool},
@@ -382,7 +381,6 @@ impl PartialOrd for ProjectPanelOrdMatch {
 struct Matches {
     separate_history: bool,
     matches: Vec<Match>,
-    elided_byte_range: Option<Range<usize>>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
@@ -392,35 +390,6 @@ enum Match {
         panel_match: Option<ProjectPanelOrdMatch>,
     },
     Search(ProjectPanelOrdMatch),
-}
-
-struct MatchLabels {
-    path: String,
-    path_positions: Vec<usize>,
-    file_name: String,
-    file_name_positions: Vec<usize>,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct EmWidths {
-    normal: Pixels,
-    small: Pixels,
-}
-
-fn em_widths(window: &mut Window, cx: &mut App) -> EmWidths {
-    let style = window.text_style();
-    let font_id = window.text_system().resolve_font(&style.font());
-    let font_size = TextSize::Default.rems(cx).to_pixels(window.rem_size());
-    let normal = cx
-        .text_system()
-        .em_width(font_id, font_size)
-        .unwrap_or(px(16.));
-    let font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
-    let small = cx
-        .text_system()
-        .em_width(font_id, font_size)
-        .unwrap_or(px(10.));
-    EmWidths { normal, small }
 }
 
 impl Match {
@@ -436,43 +405,6 @@ impl Match {
             Match::History { panel_match, .. } => panel_match.as_ref(),
             Match::Search(panel_match) => Some(&panel_match),
         }
-    }
-
-    fn common_prefix<'a>(&self, other: &'a Path) -> &'a Path {
-        let mut prefix = other;
-        let path_positions = match self {
-            Match::History {
-                panel_match: Some(mat),
-                ..
-            }
-            | Match::Search(mat) => mat.0.positions.as_slice(),
-            Match::History {
-                panel_match: None, ..
-            } => &[],
-        };
-        let first_path_position = *path_positions.iter().min().unwrap_or(&0);
-        while self.path().strip_prefix(prefix).is_err()
-            || prefix.to_string_lossy().len() > first_path_position
-        {
-            let Some(parent) = prefix.parent() else {
-                break;
-            };
-            prefix = parent;
-        }
-        prefix
-    }
-
-    fn approx_width(&self, em_widths: EmWidths) -> Pixels {
-        let file_name = self.path().file_name().map_or_else(
-            || self.path().to_string_lossy(),
-            |file_name| file_name.to_string_lossy(),
-        );
-        let parent = self
-            .path()
-            .parent()
-            .map_or_else(|| "".into(), |parent| parent.to_string_lossy());
-        px(file_name.chars().count() as f32) * em_widths.normal
-            + px(parent.chars().count() as f32) * em_widths.small
     }
 }
 
@@ -519,11 +451,7 @@ impl Matches {
         query: Option<&FileSearchQuery>,
         new_search_matches: impl Iterator<Item = ProjectPanelOrdMatch>,
         extend_old_matches: bool,
-        em_widths: EmWidths,
-        max_width: Pixels,
     ) {
-        self.elided_byte_range = None;
-
         let Some(query) = query else {
             // assuming that if there's no query, then there's no search matches.
             self.matches.clear();
@@ -579,31 +507,6 @@ impl Matches {
                 }
             }
         }
-
-        let Some((first, rest)) = self.matches.split_first() else {
-            return;
-        };
-        let mut prefix = first.path().as_ref();
-        let mut widest_match = first.approx_width(em_widths);
-        for mat in rest {
-            widest_match = widest_match.max(mat.approx_width(em_widths));
-            prefix = mat.common_prefix(prefix);
-        }
-
-        if widest_match > max_width {
-            let components = prefix.components().collect::<Vec<_>>();
-            let prefix = prefix.to_string_lossy();
-            if components.len() > 3 {
-                let after_first = components[1..].iter().collect::<PathBuf>();
-                let after_first = after_first.to_string_lossy();
-                let start = prefix.len() - after_first.len();
-                let after_first_before_last = components[1..components.len() - 2]
-                    .iter()
-                    .collect::<PathBuf>();
-                let after_first_before_last = after_first_before_last.to_string_lossy();
-                self.elided_byte_range = Some(start..start + after_first_before_last.len());
-            }
-        }
     }
 
     /// If a < b, then a is a worse match, aligning with the `ProjectPanelOrdMatch` ordering.
@@ -628,25 +531,6 @@ impl Matches {
             (Match::Search(_), Match::History { .. }) if separate_history => cmp::Ordering::Less,
 
             _ => a.panel_match().cmp(&b.panel_match()),
-        }
-    }
-}
-
-impl MatchLabels {
-    fn check(&self) {
-        let file_name = &self.file_name;
-        for i in &self.file_name_positions {
-            assert!(
-                self.file_name.is_char_boundary(*i),
-                "{i} is not a valid char boundary in file name {file_name:?}"
-            );
-        }
-        let path = &self.path;
-        for i in &self.path_positions {
-            assert!(
-                self.path.is_char_boundary(*i),
-                "{i} is not a valid char boundary in path {path:?}"
-            );
         }
     }
 }
@@ -760,6 +644,7 @@ impl FileSearchQuery {
 }
 
 impl FileFinderDelegate {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         file_finder: WeakEntity<FileFinder>,
         workspace: WeakEntity<Workspace>,
@@ -860,10 +745,10 @@ impl FileFinderDelegate {
             .map(ProjectPanelOrdMatch);
             let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
             picker
-                .update_in(&mut cx, |picker, window, cx| {
+                .update(&mut cx, |picker, cx| {
                     picker
                         .delegate
-                        .set_search_matches(search_id, did_cancel, query, matches, window, cx)
+                        .set_search_matches(search_id, did_cancel, query, matches, cx)
                 })
                 .log_err();
         })
@@ -875,13 +760,9 @@ impl FileFinderDelegate {
         did_cancel: bool,
         query: FileSearchQuery,
         matches: impl IntoIterator<Item = ProjectPanelOrdMatch>,
-        window: &mut Window,
+
         cx: &mut Context<Picker<Self>>,
     ) {
-        let em_widths = em_widths(window, cx);
-        let file_finder_settings = FileFinderSettings::get_global(cx);
-        let max_width = FileFinder::modal_max_width(file_finder_settings.modal_max_width, window);
-
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
             let query_changed = Some(query.path_query())
@@ -903,8 +784,6 @@ impl FileFinderDelegate {
                 Some(&query),
                 matches.into_iter(),
                 extend_old_matches,
-                em_widths,
-                max_width,
             );
 
             self.selected_index = selected_match.map_or_else(
@@ -923,8 +802,13 @@ impl FileFinderDelegate {
         }
     }
 
-    fn labels_for_match(&self, path_match: &Match, cx: &App, ix: usize) -> MatchLabels {
-        let mut labels = match &path_match {
+    fn labels_for_match(
+        &self,
+        path_match: &Match,
+        cx: &App,
+        ix: usize,
+    ) -> (String, Vec<usize>, String, Vec<usize>) {
+        let (file_name, file_name_positions, full_path, full_path_positions) = match &path_match {
             Match::History {
                 path: entry_path,
                 panel_match,
@@ -939,18 +823,18 @@ impl FileFinderDelegate {
 
                 if !has_worktree {
                     if let Some(absolute_path) = &entry_path.absolute {
-                        return MatchLabels {
-                            file_name: absolute_path
+                        return (
+                            absolute_path
                                 .file_name()
                                 .map_or_else(
                                     || project_relative_path.to_string_lossy(),
                                     |file_name| file_name.to_string_lossy(),
                                 )
                                 .to_string(),
-                            file_name_positions: Vec::new(),
-                            path: absolute_path.to_string_lossy().to_string(),
-                            path_positions: Vec::new(),
-                        };
+                            Vec::new(),
+                            absolute_path.to_string_lossy().to_string(),
+                            Vec::new(),
+                        );
                     }
                 }
 
@@ -981,39 +865,44 @@ impl FileFinderDelegate {
             Match::Search(path_match) => self.labels_for_path_match(&path_match.0),
         };
 
-        if labels.file_name_positions.is_empty() {
+        if file_name_positions.is_empty() {
             if let Some(user_home_path) = std::env::var("HOME").ok() {
                 let user_home_path = user_home_path.trim();
                 if !user_home_path.is_empty() {
-                    if labels.path.starts_with(user_home_path) {
-                        labels.path.replace_range(0..user_home_path.len(), "~");
-                        labels.path_positions.retain_mut(|position| {
-                            if *position >= user_home_path.len() {
-                                *position -= user_home_path.len();
-                                *position += 1;
-                                true
-                            } else {
-                                false
-                            }
-                        })
+                    if (&full_path).starts_with(user_home_path) {
+                        return (
+                            file_name,
+                            file_name_positions,
+                            full_path.replace(user_home_path, "~"),
+                            full_path_positions,
+                        );
                     }
                 }
             }
         }
 
-        labels.check();
-        labels
+        (
+            file_name,
+            file_name_positions,
+            full_path,
+            full_path_positions,
+        )
     }
 
-    fn labels_for_path_match(&self, path_match: &PathMatch) -> MatchLabels {
+    fn labels_for_path_match(
+        &self,
+        path_match: &PathMatch,
+    ) -> (String, Vec<usize>, String, Vec<usize>) {
+        let path = &path_match.path;
+        let path_string = path.to_string_lossy();
+        let full_path = [path_match.path_prefix.as_ref(), path_string.as_ref()].join("");
         let mut path_positions = path_match.positions.clone();
 
-        let file_name = path_match.path.file_name().map_or_else(
+        let file_name = path.file_name().map_or_else(
             || path_match.path_prefix.to_string(),
             |file_name| file_name.to_string_lossy().to_string(),
         );
-        let mut path = path_match.path.to_string_lossy().to_string();
-        let file_name_start = path_match.path_prefix.len() + path.len() - file_name.len();
+        let file_name_start = path_match.path_prefix.len() + path_string.len() - file_name.len();
         let file_name_positions = path_positions
             .iter()
             .filter_map(|pos| {
@@ -1025,31 +914,10 @@ impl FileFinderDelegate {
             })
             .collect();
 
-        path.drain(file_name_start.saturating_sub(path_match.path_prefix.len())..);
-        path_positions.retain_mut(|idx| {
-            if *idx < path.len() {
-                if let Some(elided_range) = &self.matches.elided_byte_range {
-                    if *idx >= elided_range.end {
-                        *idx += '…'.len_utf8();
-                        *idx -= elided_range.len();
-                    }
-                }
-                true
-            } else {
-                false
-            }
-        });
+        let full_path = full_path.trim_end_matches(&file_name).to_string();
+        path_positions.retain(|idx| *idx < full_path.len());
 
-        if let Some(elided_range) = &self.matches.elided_byte_range {
-            path.replace_range(elided_range.clone(), "…");
-        }
-
-        MatchLabels {
-            file_name,
-            file_name_positions,
-            path,
-            path_positions,
-        }
+        (file_name, file_name_positions, full_path, path_positions)
     }
 
     fn lookup_absolute_path(
@@ -1101,17 +969,10 @@ impl FileFinderDelegate {
             }
 
             picker
-                .update_in(&mut cx, |picker, window, cx| {
+                .update_in(&mut cx, |picker, _, cx| {
                     let picker_delegate = &mut picker.delegate;
                     let search_id = util::post_inc(&mut picker_delegate.search_count);
-                    picker_delegate.set_search_matches(
-                        search_id,
-                        false,
-                        query,
-                        path_matches,
-                        window,
-                        cx,
-                    );
+                    picker_delegate.set_search_matches(search_id, false, query, path_matches, cx);
 
                     anyhow::Ok(())
                 })
@@ -1188,10 +1049,6 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let em_widths = em_widths(window, cx);
-        let file_finder_settings = FileFinderSettings::get_global(cx);
-        let max_width = FileFinder::modal_max_width(file_finder_settings.modal_max_width, window);
-
         let raw_query = raw_query.replace(' ', "");
         let raw_query = raw_query.trim();
         if raw_query.is_empty() {
@@ -1219,8 +1076,6 @@ impl PickerDelegate for FileFinderDelegate {
                     None,
                     None.into_iter(),
                     false,
-                    em_widths,
-                    max_width,
                 );
 
                 self.first_update = false;
@@ -1414,10 +1269,11 @@ impl PickerDelegate for FileFinderDelegate {
                 .size(IconSize::Small.rems())
                 .into_any_element(),
         };
-        let labels = self.labels_for_match(path_match, cx, ix);
+        let (file_name, file_name_positions, full_path, full_path_positions) =
+            self.labels_for_match(path_match, cx, ix);
 
         let file_icon = if settings.file_icons {
-            FileIcons::get_icon(Path::new(&labels.file_name), cx)
+            FileIcons::get_icon(Path::new(&file_name), cx)
                 .map(Icon::from_path)
                 .map(|icon| icon.color(Color::Muted))
         } else {
@@ -1435,12 +1291,9 @@ impl PickerDelegate for FileFinderDelegate {
                     h_flex()
                         .gap_2()
                         .py_px()
-                        .child(HighlightedLabel::new(
-                            labels.file_name,
-                            labels.file_name_positions,
-                        ))
+                        .child(HighlightedLabel::new(file_name, file_name_positions))
                         .child(
-                            HighlightedLabel::new(labels.path, labels.path_positions)
+                            HighlightedLabel::new(full_path, full_path_positions)
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         ),

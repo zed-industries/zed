@@ -19,7 +19,6 @@ mod toolchain;
 
 #[cfg(test)]
 pub mod buffer_tests;
-pub mod markdown;
 
 pub use crate::language_settings::EditPredictionsMode;
 use crate::language_settings::SoftWrap;

@@ -207,8 +207,7 @@ impl SshPrompt {
             selection_background_color: cx.theme().players().local().selection,
             ..Default::default()
         };
-        let markdown =
-            cx.new(|cx| Markdown::new_text(prompt.into(), markdown_style, None, None, window, cx));
+        let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), markdown_style, cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();
         window.focus(&self.editor.focus_handle(cx));

@@ -355,6 +355,7 @@ impl Zeta {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn request_completion_impl<F, R>(
         &mut self,
         workspace: Option<Entity<Workspace>>,
@@ -792,6 +793,7 @@ and then another
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_completion_response(
         prediction_response: PredictEditsResponse,
         buffer: Entity<Buffer>,

@@ -59,11 +59,11 @@ pub struct ProjectSettings {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct NodeBinarySettings {
-    /// The path to the node binary
+    /// The path to the Node binary.
     pub path: Option<String>,
-    ///  The path to the npm binary Zed should use (defaults to .path/../npm)
+    /// The path to the npm binary Zed should use (defaults to `.path/../npm`).
     pub npm_path: Option<String>,
-    /// If disabled, zed will download its own copy of node.
+    /// If disabled, Zed will download its own copy of Node.
     #[serde(default)]
     pub ignore_system_version: Option<bool>,
 }

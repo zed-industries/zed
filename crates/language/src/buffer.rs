@@ -1,7 +1,6 @@
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
-    markdown::ParsedMarkdown,
     proto, Grammar, Language, LanguageRegistry,
 };
 use crate::{
@@ -2767,10 +2766,12 @@ impl Deref for Buffer {
 }
 
 impl BufferSnapshot {
-    /// Returns [`IndentSize`] for a given line that respects user settings and /// language preferences.
+    /// Returns [`IndentSize`] for a given line that respects user settings and
+    /// language preferences.
     pub fn indent_size_for_line(&self, row: u32) -> IndentSize {
         indent_size_for_line(self, row)
     }
+
     /// Returns [`IndentSize`] for a given position that respects user settings
     /// and language preferences.
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &App) -> IndentSize {

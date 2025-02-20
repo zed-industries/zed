@@ -48,14 +48,7 @@ pub fn fallback_prompt_renderer(
                         selection_background_color: { cx.theme().players().local().selection },
                         ..Default::default()
                     };
-                    Markdown::new(
-                        SharedString::new(text),
-                        markdown_style,
-                        None,
-                        None,
-                        window,
-                        cx,
-                    )
+                    Markdown::new(SharedString::new(text), markdown_style, None, None, cx)
                 })
             }),
         }
