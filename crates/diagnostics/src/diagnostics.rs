@@ -251,7 +251,7 @@ impl ProjectDiagnosticsEditor {
                     this.update_in(&mut cx, |this, window, cx| {
                         this.update_excerpts(path, language_server_id, buffer, window, cx)
                     })?
-                    .await;
+                    .await?;
                 }
             }
             Ok(())
@@ -559,7 +559,7 @@ impl ProjectDiagnosticsEditor {
                 } else if let Some((_, group_state)) = to_remove {
                     excerpts.update(&mut cx, |excerpts, cx| {
                         excerpts.remove_excerpts(group_state.excerpts.iter().copied(), cx)
-                    });
+                    })?;
                     blocks_to_remove.extend(group_state.blocks.iter().copied());
                 } else if let Some((_, group_state)) = to_keep {
                     prev_excerpt_id = *group_state.excerpts.last().unwrap();
@@ -569,7 +569,7 @@ impl ProjectDiagnosticsEditor {
                         this.path_states[path_ix]
                             .diagnostic_groups
                             .push(group_state)
-                    });
+                    })?;
                 }
             }
 
@@ -1054,145 +1054,144 @@ fn context_range_for_entry(
 ///
 /// If there is a containing outline item that is less than `max_row_count`, it will be returned.
 /// Otherwise fairly arbitrary heuristics are applied to attempt to return a logical block of code.
-fn heuristic_syntactic_expand<'a>(
+async fn heuristic_syntactic_expand(
     input_range: Range<Point>,
     max_row_count: u32,
     snapshot: BufferSnapshot,
     cx: AsyncApp,
-) -> Task<Option<RangeInclusive<BufferRow>>> {
-    cx.spawn(|cx| async move {
-        let input_row_count = input_range.end.row - input_range.start.row;
-        if input_row_count > max_row_count {
-            return None;
-        }
+) -> Option<RangeInclusive<BufferRow>> {
+    let input_row_count = input_range.end.row - input_range.start.row;
+    if input_row_count > max_row_count {
+        return None;
+    }
 
-        // If the outline node contains the diagnostic and is small enough, just use that.
-        let outline_range = snapshot.outline_range_containing(input_range.clone());
-        if let Some(outline_range) = outline_range.clone() {
-            // Remove blank lines from start and end
-            if let Some(start_row) = (outline_range.start.row..outline_range.end.row)
+    // If the outline node contains the diagnostic and is small enough, just use that.
+    let outline_range = snapshot.outline_range_containing(input_range.clone());
+    if let Some(outline_range) = outline_range.clone() {
+        // Remove blank lines from start and end
+        if let Some(start_row) = (outline_range.start.row..outline_range.end.row)
+            .find(|row| !snapshot.line_indent_for_row(*row).is_line_blank())
+        {
+            if let Some(end_row) = (outline_range.start.row..outline_range.end.row + 1)
+                .rev()
                 .find(|row| !snapshot.line_indent_for_row(*row).is_line_blank())
             {
-                if let Some(end_row) = (outline_range.start.row..outline_range.end.row + 1)
-                    .rev()
-                    .find(|row| !snapshot.line_indent_for_row(*row).is_line_blank())
-                {
-                    let row_count = end_row.saturating_sub(start_row);
-                    if row_count <= max_row_count {
-                        return Some(RangeInclusive::new(
-                            outline_range.start.row,
-                            outline_range.end.row,
-                        ));
-                    }
+                let row_count = end_row.saturating_sub(start_row);
+                if row_count <= max_row_count {
+                    return Some(RangeInclusive::new(
+                        outline_range.start.row,
+                        outline_range.end.row,
+                    ));
                 }
             }
         }
+    }
 
-        let mut node = snapshot.syntax_ancestor(input_range.clone())?;
+    let mut node = snapshot.syntax_ancestor(input_range.clone())?;
 
+    loop {
+        let node_start = Point::from_ts_point(node.start_position());
+        let node_end = Point::from_ts_point(node.end_position());
+        let node_range = node_start..node_end;
+        let row_count = node_end.row - node_start.row + 1;
+        let mut xd = None;
+        let reached_outline_node = cx.background_executor().scoped({
+                 let node_range = node_range.clone();
+                 let outline_range = outline_range.clone();
+                 let mut xd =  &mut xd;
+                |scope| {scope.spawn(async move {
+                    // Stop if we've exceeded the row count or reached an outline node. Then, find the interval
+                    // of node children which contains the query range. For example, this allows just returning
+                    // the header of a declaration rather than the entire declaration.
+                    if row_count > max_row_count || outline_range == Some(node_range.clone()) {
+                        let mut cursor = node.walk();
+                        let mut included_child_start = None;
+                        let mut included_child_end = None;
+                        let mut previous_end = node_start;
+                        if cursor.goto_first_child() {
+                            loop {
+                                let child_node = cursor.node();
+                                let child_range = previous_end..Point::from_ts_point(child_node.end_position());
+                                if included_child_start.is_none() && child_range.contains(&input_range.start) {
+                                    included_child_start = Some(child_range.start);
+                                }
+                                if child_range.contains(&input_range.end) {
+                                    included_child_end = Some(child_range.end);
+                                }
+                                previous_end = child_range.end;
+                                if !cursor.goto_next_sibling() {
+                                    break;
+                                }
+                            }
+                        }
+                        let end = included_child_end.unwrap_or(node_range.end);
+                        if let Some(start) = included_child_start {
+                            let row_count = end.row - start.row;
+                            if row_count < max_row_count {
+                                *xd = Some(Some(RangeInclusive::new(start.row, end.row)));
+                                return;
+                            }
+                        }
 
-
-        loop {
-            let node_start = Point::from_ts_point(node.start_position());
-            let node_end = Point::from_ts_point(node.end_position());
-            let node_range = node_start..node_end;
-            let row_count = node_end.row - node_start.row + 1;
-
-            //  let reached_outline_node = cx.background_spawn({
-            //      let node_range = node_range.clone();
-            //      let outline_range = outline_range.clone();
-
-            //     async move {
-            //         // Stop if we've exceeded the row count or reached an outline node. Then, find the interval
-            //         // of node children which contains the query range. For example, this allows just returning
-            //         // the header of a declaration rather than the entire declaration.
-            //         if row_count > max_row_count || outline_range == Some(node_range.clone()) {
-            //             let mut cursor = node.walk();
-            //             let mut included_child_start = None;
-            //             let mut included_child_end = None;
-            //             let mut previous_end = node_start;
-            //             if cursor.goto_first_child() {
-            //                 loop {
-            //                     let child_node = cursor.node();
-            //                     let child_range = previous_end..Point::from_ts_point(child_node.end_position());
-            //                     if included_child_start.is_none() && child_range.contains(&input_range.start) {
-            //                         included_child_start = Some(child_range.start);
-            //                     }
-            //                     if child_range.contains(&input_range.end) {
-            //                         included_child_end = Some(child_range.end);
-            //                     }
-            //                     previous_end = child_range.end;
-            //                     if !cursor.goto_next_sibling() {
-            //                         break;
-            //                     }
-            //                 }
-            //             }
-            //             let end = included_child_end.unwrap_or(node_range.end);
-            //             if let Some(start) = included_child_start {
-            //                 let row_count = end.row - start.row;
-            //                 if row_count < max_row_count {
-            //                     return Some(Some(RangeInclusive::new(start.row, end.row)));
-            //                 }
-            //             }
-
-            //             log::info!(
-            //                 "Expanding to ancestor started on {} node exceeding row limit of {max_row_count}.",
-            //                 node.grammar_name()
-            //             );
-            //             Some(None)
-            //         } else {
-            //             None
-            //         }
-            //     }
-            // });
-            //  if let Some(node) = reached_outline_node.await {
-            //     return node;
-            //  }
-
-
-            let node_name = node.grammar_name();
-            let node_row_range = RangeInclusive::new(node_range.start.row, node_range.end.row);
-            if node_name.ends_with("block") {
-                return Some(node_row_range);
-            } else if node_name.ends_with("statement") || node_name.ends_with("declaration") {
-                // Expand to the nearest dedent or blank line for statements and declarations.
-                let tab_size = cx.update(|cx| snapshot.settings_at(node_range.start, cx).tab_size.get()).ok()?;
-                let indent_level = snapshot
-                    .line_indent_for_row(node_range.start.row)
-                    .len(tab_size);
-                let rows_remaining = max_row_count.saturating_sub(row_count);
-                let Some(start_row) = (node_range.start.row.saturating_sub(rows_remaining)
-                    ..node_range.start.row)
-                    .rev()
-                    .find(|row| is_line_blank_or_indented_less(indent_level, *row, tab_size, &snapshot.clone()))
-                else {
-                    return Some(node_row_range);
-                };
-                let rows_remaining = max_row_count.saturating_sub(node_range.end.row - start_row);
-                let Some(end_row) = (node_range.end.row + 1
-                    ..cmp::min(
-                        node_range.end.row + rows_remaining + 1,
-                        snapshot.row_count(),
-                    ))
-                    .find(|row| is_line_blank_or_indented_less(indent_level, *row, tab_size, &snapshot.clone()))
-                else {
-                    return Some(node_row_range);
-                };
-                return Some(RangeInclusive::new(start_row, end_row));
-            }
-
-            // TODO: doing this instead of walking a cursor as that doesn't work - why?
-            let Some(parent) = node.parent() else {
-                log::info!(
-                    "Expanding to ancestor reached the top node, so using default context line count.",
-                );
-                return None;
-            };
-            node = parent;
+                        log::info!(
+                            "Expanding to ancestor started on {} node exceeding row limit of {max_row_count}.",
+                            node.grammar_name()
+                        );
+                        *xd = Some(None);
+                    }
+                })
+            }});
+        reached_outline_node.await;
+        if let Some(node) = xd {
+            return node;
         }
 
+        let node_name = node.grammar_name();
+        let node_row_range = RangeInclusive::new(node_range.start.row, node_range.end.row);
+        if node_name.ends_with("block") {
+            return Some(node_row_range);
+        } else if node_name.ends_with("statement") || node_name.ends_with("declaration") {
+            // Expand to the nearest dedent or blank line for statements and declarations.
+            let tab_size = cx
+                .update(|cx| snapshot.settings_at(node_range.start, cx).tab_size.get())
+                .ok()?;
+            let indent_level = snapshot
+                .line_indent_for_row(node_range.start.row)
+                .len(tab_size);
+            let rows_remaining = max_row_count.saturating_sub(row_count);
+            let Some(start_row) = (node_range.start.row.saturating_sub(rows_remaining)
+                ..node_range.start.row)
+                .rev()
+                .find(|row| {
+                    is_line_blank_or_indented_less(indent_level, *row, tab_size, &snapshot.clone())
+                })
+            else {
+                return Some(node_row_range);
+            };
+            let rows_remaining = max_row_count.saturating_sub(node_range.end.row - start_row);
+            let Some(end_row) = (node_range.end.row + 1
+                ..cmp::min(
+                    node_range.end.row + rows_remaining + 1,
+                    snapshot.row_count(),
+                ))
+                .find(|row| {
+                    is_line_blank_or_indented_less(indent_level, *row, tab_size, &snapshot.clone())
+                })
+            else {
+                return Some(node_row_range);
+            };
+            return Some(RangeInclusive::new(start_row, end_row));
+        }
 
-    })
+        // TODO: doing this instead of walking a cursor as that doesn't work - why?
+        let Some(parent) = node.parent() else {
+            log::info!(
+                "Expanding to ancestor reached the top node, so using default context line count.",
+            );
+            return None;
+        };
+        node = parent;
+    }
 }
 
 fn is_line_blank_or_indented_less(
