@@ -1,6 +1,6 @@
 #![cfg(target_os = "windows")]
 
-use std::path::PathBuf;
+use std::{os::windows::ffi::OsStringExt, path::PathBuf};
 
 use windows::{
     core::implement,
@@ -174,21 +174,26 @@ fn get_zed_install_folder() -> Option<PathBuf> {
         unsafe { GetModuleFileNameW(DLL_INSTANCE, &mut buf) };
     }
     let len = unsafe { u_strlen(buf.as_ptr()) };
-    let path: PathBuf = String::from_utf16_lossy(&buf[..len as usize]).into();
+    let path: PathBuf = std::ffi::OsString::from_wide(&buf[..len as usize])
+        .into_string()
+        .ok()?
+        .into();
     Some(path.parent()?.parent()?.to_path_buf())
 }
 
+#[inline]
 fn get_zed_exe_path() -> Option<String> {
-    let mut path = get_zed_install_folder()?;
-    path.push("Zed.exe");
-    path.to_str().map(|s| s.to_string())
+    get_zed_install_folder().map(|path| path.join("Zed.exe").to_string_lossy().to_string())
 }
 
+#[inline]
 fn get_zed_cli_path() -> Option<String> {
-    let mut path = get_zed_install_folder()?;
-    path.push("bin");
-    path.push("zed.exe");
-    path.to_str().map(|s| s.to_string())
+    get_zed_install_folder().map(|path| {
+        path.join("bin")
+            .join("zed.exe")
+            .to_string_lossy()
+            .to_string()
+    })
 }
 
 #[inline]
