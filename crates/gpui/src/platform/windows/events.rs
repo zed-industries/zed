@@ -1127,11 +1127,16 @@ fn handle_nc_mouse_up_msg(
 }
 
 fn handle_cursor_changed(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    state_ptr.state.borrow_mut().current_cursor = if lparam.0 == 0 {
-        None
+    let mut state = state_ptr.state.borrow_mut();
+    if lparam.0 == 0 {
+        if state.current_cursor.is_some() {
+            unsafe { SetCursor(None) };
+        }
+        state.current_cursor = None;
     } else {
-        Some(HCURSOR(lparam.0 as _))
+        state.current_cursor = Some(HCURSOR(lparam.0 as _));
     };
+
     Some(0)
 }
 
