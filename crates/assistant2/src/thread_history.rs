@@ -20,7 +20,6 @@ impl ThreadHistory {
     pub(crate) fn new(
         assistant_panel: WeakEntity<AssistantPanel>,
         thread_store: Entity<ThreadStore>,
-
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
