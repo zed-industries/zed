@@ -104,19 +104,19 @@ impl Render for QuickActionBar {
             let editor = editor.read(cx);
             let selection_menu_enabled = editor.selection_menu_enabled(cx);
             let inlay_hints_enabled = editor.inlay_hints_enabled();
-            let inline_diagnostics_enabled = editor.inline_diagnostics_enabled();
+            let show_inline_diagnostics = editor.show_inline_diagnostics();
+            let supports_inline_diagnostics = editor.inline_diagnostics_enabled();
             let git_blame_inline_enabled = editor.git_blame_inline_enabled();
             let show_git_blame_gutter = editor.show_git_blame_gutter();
             let auto_signature_help_enabled = editor.auto_signature_help_enabled(cx);
             let show_edit_predictions = editor.edit_predictions_enabled();
             let inline_completion_enabled = editor.inline_completions_enabled(cx);
-            let supports_inline_diagnostics = editor.supports_inline_diagnostics();
 
             (
                 selection_menu_enabled,
                 inlay_hints_enabled,
                 supports_inlay_hints,
-                inline_diagnostics_enabled,
+                show_inline_diagnostics,
                 supports_inline_diagnostics,
                 git_blame_inline_enabled,
                 show_git_blame_gutter,

@@ -605,7 +605,7 @@ pub struct Editor {
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     show_inline_diagnostics: bool,
     inline_diagnostics_update: Task<()>,
-    inline_diagnostics_disabled: bool,
+    inline_diagnostics_enabled: bool,
     inline_diagnostics: Vec<(Anchor, InlineDiagnostic)>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
 
@@ -1319,7 +1319,7 @@ impl Editor {
             active_diagnostics: None,
             show_inline_diagnostics: ProjectSettings::get_global(cx).diagnostics.inline.enabled,
             inline_diagnostics_update: Task::ready(()),
-            inline_diagnostics: Default::default(),
+            inline_diagnostics: Vec::new(),
             soft_wrap_mode_override,
             completion_provider: project.clone().map(|project| Box::new(project) as _),
             semantics_provider: project.clone().map(|project| Rc::new(project) as _),
@@ -1384,7 +1384,7 @@ impl Editor {
             active_inline_completion: None,
             stale_inline_completion_in_menu: None,
             edit_prediction_preview: EditPredictionPreview::Inactive,
-            inline_diagnostics_disabled: mode != EditorMode::Full,
+            inline_diagnostics_enabled: mode == EditorMode::Full,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -11885,15 +11885,29 @@ impl Editor {
         }
     }
 
-    pub fn show_inline_diagnostics(&mut self) -> bool {
+    /// Disable inline diagnostics rendering for this editor.
+    pub fn disable_inline_diagnostics(&mut self) {
+        self.inline_diagnostics_enabled = false;
+        self.inline_diagnostics_update = Task::ready(());
+        self.inline_diagnostics.clear();
+    }
+
+    pub fn inline_diagnostics_enabled(&self) -> bool {
+        self.inline_diagnostics_enabled
+    }
+
+    pub fn show_inline_diagnostics(&self) -> bool {
         self.show_inline_diagnostics
     }
 
-    /// Disable inline diagnostics rendering for this editor.
-    pub fn disable_inline_diagnostics(&mut self) {
-        self.inline_diagnostics_disabled = true;
-        self.inline_diagnostics_update = Task::ready(());
-        self.inline_diagnostics.clear();
+    pub fn toggle_inline_diagnostics(
+        &mut self,
+        _: &ToggleInlineDiagnostics,
+        window: &mut Window,
+        cx: &mut Context<'_, Editor>,
+    ) {
+        self.show_inline_diagnostics = !self.show_inline_diagnostics;
+        self.refresh_inline_diagnostics(false, window, cx);
     }
 
     fn refresh_inline_diagnostics(
@@ -11902,11 +11916,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.inline_diagnostics_disabled {
-            return;
-        }
-
-        if !self.show_inline_diagnostics {
+        if !self.inline_diagnostics_enabled || !self.show_inline_diagnostics {
             self.inline_diagnostics_update = Task::ready(());
             self.inline_diagnostics.clear();
             return;
@@ -14494,6 +14504,7 @@ impl Editor {
             let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;
             let inline_blame_enabled = project_settings.git.inline_blame_enabled();
             if self.show_inline_diagnostics != show_inline_diagnostics {
+                self.show_inline_diagnostics = show_inline_diagnostics;
                 self.refresh_inline_diagnostics(false, window, cx);
             }
 
@@ -14974,14 +14985,6 @@ impl Editor {
         supports
     }
 
-    pub fn inline_diagnostics_enabled(&self) -> bool {
-        self.show_inline_diagnostics
-    }
-
-    pub fn supports_inline_diagnostics(&self) -> bool {
-        !self.inline_diagnostics_disabled
-    }
-
     pub fn is_focused(&self, window: &Window) -> bool {
         self.focus_handle.is_focused(window)
     }
@@ -15202,19 +15205,6 @@ impl Editor {
                 snapshot.clip_offset(start, Bias::Left)..snapshot.clip_offset(end, Bias::Right)
             }));
         });
-    }
-
-    pub fn toggle_inline_diagnostics(
-        &mut self,
-        _: &ToggleInlineDiagnostics,
-        window: &mut Window,
-        cx: &mut Context<'_, Editor>,
-    ) {
-        if self.inline_diagnostics_disabled {
-            return;
-        }
-        self.show_inline_diagnostics = !self.show_inline_diagnostics;
-        self.refresh_inline_diagnostics(false, window, cx);
     }
 }
 
