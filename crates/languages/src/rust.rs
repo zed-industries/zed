@@ -469,9 +469,6 @@ const RUST_BIN_NAME_TASK_VARIABLE: VariableName =
 const RUST_BIN_KIND_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("RUST_BIN_KIND"));
 
-const RUST_MAIN_FUNCTION_TASK_VARIABLE: VariableName =
-    VariableName::Custom(Cow::Borrowed("_rust_main_function_end"));
-
 const RUST_TEST_FRAGMENT_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("RUST_TEST_FRAGMENT"));
 
