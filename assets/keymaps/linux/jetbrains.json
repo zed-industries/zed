@@ -2,8 +2,8 @@
   {
     "bindings": {
       "ctrl-alt-s": "zed::OpenSettings",
-      "ctrl-shift-[": "pane::ActivatePrevItem",
-      "ctrl-shift-]": "pane::ActivateNextItem"
+      "ctrl-{": "pane::ActivatePrevItem",
+      "ctrl-}": "pane::ActivateNextItem"
     }
   },
   {

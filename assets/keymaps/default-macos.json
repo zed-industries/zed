@@ -465,7 +465,7 @@
       "ctrl-9": ["pane::ActivateItem", 8],
       "ctrl-0": "pane::ActivateLastItem",
       "ctrl--": "pane::GoBack",
-      "ctrl-shift--": "pane::GoForward",
+      "ctrl-_": "pane::GoForward",
       "cmd-shift-f": "pane::DeploySearch"
     }
   },

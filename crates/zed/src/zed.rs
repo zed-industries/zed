@@ -3964,7 +3964,7 @@ mod tests {
         assert_key_bindings_for(
             workspace.into(),
             cx,
-            vec![("backspace", &B), ("[", &ActivatePrevItem)],
+            vec![("backspace", &B), ("{", &ActivatePrevItem)],
             line!(),
         );
     }
