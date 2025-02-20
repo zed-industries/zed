@@ -2,6 +2,10 @@
     any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
     allow(dead_code)
 )]
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
@@ -127,6 +131,12 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
 }
 
 fn main() -> Result<()> {
+    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    unsafe {
+        use ::windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
     // Exit flatpak sandbox if needed
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
