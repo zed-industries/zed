@@ -147,7 +147,7 @@ pub struct ProjectPanelSettingsContent {
     /// Settings related to indent guides in the project panel.
     pub indent_guides: Option<IndentGuidesSettingsContent>,
     /// Hide main root dir
-    /// 
+    ///
     /// Default: false
     pub hide_root: Option<bool>,
 }
