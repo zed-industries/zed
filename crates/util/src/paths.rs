@@ -3,7 +3,6 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::cmp;
 use std::cmp::Ordering;
 use std::path::StripPrefixError;
 use std::sync::{Arc, OnceLock};
