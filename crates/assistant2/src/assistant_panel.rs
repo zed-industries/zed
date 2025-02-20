@@ -192,7 +192,7 @@ impl AssistantPanel {
                 )
             }),
             message_editor,
-            context_store,
+            context_store: context_store.clone(),
             context_editor: None,
             context_history: None,
             configuration: None,
@@ -202,7 +202,7 @@ impl AssistantPanel {
                 chrono::Local::now().offset().local_minus_utc(),
             )
             .unwrap(),
-            history: cx.new(|cx| ThreadHistory::new(weak_self, thread_store, cx)),
+            history: cx.new(|cx| ThreadHistory::new(weak_self, thread_store, context_store, cx)),
             new_item_context_menu_handle: PopoverMenuHandle::default(),
             open_history_context_menu_handle: PopoverMenuHandle::default(),
             width: None,
@@ -350,7 +350,7 @@ impl AssistantPanel {
         cx.notify();
     }
 
-    fn open_saved_prompt_editor(
+    pub(crate) fn open_saved_prompt_editor(
         &mut self,
         path: PathBuf,
         window: &mut Window,
