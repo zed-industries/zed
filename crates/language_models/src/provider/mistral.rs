@@ -63,10 +63,13 @@ impl State {
     }
 
     fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let settings = &AllLanguageModelSettings::get_global(cx).mistral;
-        let delete_credentials = cx.delete_credentials(&settings.api_url);
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .mistral
+            .api_url
+            .clone();
         cx.spawn(|this, mut cx| async move {
-            delete_credentials.await.log_err();
+            credentials_provider.delete_credentials(&api_url, &cx).await.log_err();
             this.update(&mut cx, |this, cx| {
                 this.api_key = None;
                 this.api_key_from_env = false;
@@ -76,12 +79,15 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let settings = &AllLanguageModelSettings::get_global(cx).mistral;
-        let write_credentials =
-            cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
-
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .mistral
+            .api_url
+            .clone();
         cx.spawn(|this, mut cx| async move {
-            write_credentials.await?;
+            credentials_provider
+                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
+                .await?;
             this.update(&mut cx, |this, cx| {
                 this.api_key = Some(api_key);
                 cx.notify();
