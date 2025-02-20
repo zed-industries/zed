@@ -2619,6 +2619,7 @@ dependencies = [
  "clock",
  "cocoa 0.26.0",
  "collections",
+ "credentials_provider",
  "feature_flags",
  "futures 0.3.31",
  "gpui",
@@ -3475,6 +3476,15 @@ checksum = "d5e2ee08013e3f228d6d2394116c4549a6df77708442c62d887d83f68ef2ee37"
 dependencies = [
  "cbindgen 0.27.0",
  "crc",
+]
+
+[[package]]
+name = "credentials_provider"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fs",
+ "gpui",
 ]
 
 [[package]]

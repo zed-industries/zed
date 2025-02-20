@@ -15,6 +15,7 @@ use async_tungstenite::tungstenite::{
 };
 use chrono::{DateTime, Utc};
 use clock::SystemClock;
+use credentials_provider::CredentialsProvider;
 use futures::{
     channel::oneshot, future::BoxFuture, AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt,
     TryFutureExt as _, TryStreamExt,
@@ -193,7 +194,7 @@ pub struct Client {
     peer: Arc<Peer>,
     http: Arc<HttpClientWithUrl>,
     telemetry: Arc<Telemetry>,
-    credentials_provider: Arc<dyn CredentialsProvider + Send + Sync + 'static>,
+    credentials_provider: Arc<dyn CredentialsProvider<Credentials> + Send + Sync + 'static>,
     state: RwLock<ClientState>,
     handler_set: parking_lot::Mutex<ProtoMessageHandlerSet>,
 
@@ -302,32 +303,6 @@ impl Credentials {
     pub fn authorization_header(&self) -> String {
         format!("{} {}", self.user_id, self.access_token)
     }
-}
-
-/// A provider for [`Credentials`].
-///
-/// Used to abstract over reading and writing credentials to some form of
-/// persistence (like the system keychain).
-trait CredentialsProvider {
-    /// Reads the credentials from the provider.
-    fn read_credentials<'a>(
-        &'a self,
-        cx: &'a AsyncApp,
-    ) -> Pin<Box<dyn Future<Output = Option<Credentials>> + 'a>>;
-
-    /// Writes the credentials to the provider.
-    fn write_credentials<'a>(
-        &'a self,
-        user_id: u64,
-        access_token: String,
-        cx: &'a AsyncApp,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>>;
-
-    /// Deletes the credentials from the provider.
-    fn delete_credentials<'a>(
-        &'a self,
-        cx: &'a AsyncApp,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>>;
 }
 
 impl Default for ClientState {
@@ -490,14 +465,15 @@ impl Client {
             | None => false,
         };
 
-        let credentials_provider: Arc<dyn CredentialsProvider + Send + Sync + 'static> =
-            if use_zed_development_auth {
-                Arc::new(DevelopmentCredentialsProvider {
-                    path: paths::config_dir().join("development_auth"),
-                })
-            } else {
-                Arc::new(KeychainCredentialsProvider)
-            };
+        let credentials_provider: Arc<
+            dyn CredentialsProvider<Credentials> + Send + Sync + 'static,
+        > = if use_zed_development_auth {
+            Arc::new(DevelopmentCredentialsProvider {
+                path: paths::config_dir().join("development_auth"),
+            })
+        } else {
+            Arc::new(KeychainCredentialsProvider)
+        };
 
         Arc::new(Self {
             id: AtomicU64::new(0),
@@ -842,7 +818,7 @@ impl Client {
                     Ok(conn) => {
                         self.state.write().credentials = Some(credentials.clone());
                         if !read_from_provider && IMPERSONATE_LOGIN.is_none() {
-                                self.credentials_provider.write_credentials(credentials.user_id, credentials.access_token, cx).await.log_err();
+                                self.credentials_provider.write_credentials(credentials, cx).await.log_err();
 
                         }
 
@@ -1605,7 +1581,7 @@ struct DevelopmentCredentialsProvider {
     path: PathBuf,
 }
 
-impl CredentialsProvider for DevelopmentCredentialsProvider {
+impl CredentialsProvider<Credentials> for DevelopmentCredentialsProvider {
     fn read_credentials<'a>(
         &'a self,
         _cx: &'a AsyncApp,
@@ -1629,14 +1605,13 @@ impl CredentialsProvider for DevelopmentCredentialsProvider {
 
     fn write_credentials<'a>(
         &'a self,
-        user_id: u64,
-        access_token: String,
+        credentials: Credentials,
         _cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
         async move {
             let json = serde_json::to_string(&DevelopmentCredentials {
-                user_id,
-                access_token,
+                user_id: credentials.user_id,
+                access_token: credentials.access_token,
             })?;
 
             std::fs::write(&self.path, json)?;
@@ -1657,7 +1632,7 @@ impl CredentialsProvider for DevelopmentCredentialsProvider {
 /// A credentials provider that stores credentials in the system keychain.
 struct KeychainCredentialsProvider;
 
-impl CredentialsProvider for KeychainCredentialsProvider {
+impl CredentialsProvider<Credentials> for KeychainCredentialsProvider {
     fn read_credentials<'a>(
         &'a self,
         cx: &'a AsyncApp,
@@ -1683,16 +1658,15 @@ impl CredentialsProvider for KeychainCredentialsProvider {
 
     fn write_credentials<'a>(
         &'a self,
-        user_id: u64,
-        access_token: String,
+        credentials: Credentials,
         cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
         async move {
             cx.update(move |cx| {
                 cx.write_credentials(
                     &ClientSettings::get_global(cx).server_url,
-                    &user_id.to_string(),
-                    access_token.as_bytes(),
+                    &credentials.user_id.to_string(),
+                    credentials.access_token.as_bytes(),
                 )
             })?
             .await
