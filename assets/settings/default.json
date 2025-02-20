@@ -604,7 +604,9 @@
       // 2. Never show indent guides:
       //    "never"
       "show": "always"
-    }
+    },
+    /// Hide main root dir
+    "hide_root": false
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar

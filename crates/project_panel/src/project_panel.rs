@@ -2825,6 +2825,12 @@ impl ProjectPanel {
                 GitTraversal::new(&repo_snapshots, worktree_snapshot.entries(true, 0));
             let mut auto_folded_ancestors = vec![];
             while let Some(entry) = entry_iter.entry() {
+                let hide_root = ProjectPanelSettings::get_global(cx).hide_root;
+                if hide_root && Some(entry.entry) == worktree.read(cx).root_entry() {
+                    entry_iter.advance();
+                    continue;
+                }
+
                 if auto_collapse_dirs && entry.kind.is_dir() {
                     auto_folded_ancestors.push(entry.id);
                     if !self.unfolded_dir_ids.contains(&entry.id) {
