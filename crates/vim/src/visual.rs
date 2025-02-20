@@ -338,7 +338,6 @@ impl Vim {
     pub fn visual_object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Vim>) {
         if let Some(Operator::Object { around }) = self.active_operator() {
             self.pop_operator(window, cx);
-            let was_visual_block = self.mode == Mode::VisualBlock;
             let current_mode = self.mode;
             let target_mode = object.target_visual_mode(current_mode, around);
             if target_mode != current_mode {
@@ -402,10 +401,7 @@ impl Vim {
                     });
                 });
             });
-            // Restore visual block mode if we started in it
-            if was_visual_block {
-                self.switch_mode(Mode::VisualBlock, true, window, cx);
-            }
+            self.switch_mode(current_mode, true, window, cx);
         }
     }
 
@@ -1271,9 +1267,9 @@ mod test {
         cx.set_state("hello (in [parˇens] o)", Mode::Normal);
         cx.simulate_keystrokes("ctrl-v l");
         cx.simulate_keystrokes("a ]");
-        cx.assert_state("hello (in «ˇ[parens]» o)", Mode::VisualBlock);
+        cx.assert_state("hello (in «[parens]ˇ» o)", Mode::VisualBlock);
         cx.simulate_keystrokes("i (");
-        cx.assert_state("hello («ˇin [parens] o»)", Mode::VisualBlock);
+        cx.assert_state("hello («in [parens] oˇ»)", Mode::VisualBlock);
 
         cx.set_state("hello in a wˇord again.", Mode::Normal);
         cx.simulate_keystrokes("ctrl-v l i w");
