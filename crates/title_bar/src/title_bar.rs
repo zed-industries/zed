@@ -9,15 +9,15 @@ mod stories;
 use crate::application_menu::ApplicationMenu;
 
 #[cfg(not(target_os = "macos"))]
-use crate::application_menu::{NavigateApplicationMenuInDirection, OpenApplicationMenu};
+use crate::application_menu::{
+    ActivateDirection, ActivateMenuLeft, ActivateMenuRight, OpenApplicationMenu,
+};
 
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
-use feature_flags::{FeatureFlagAppExt, GitUiFeatureFlag, ZedPro};
-use git_ui::repository_selector::RepositorySelector;
-use git_ui::repository_selector::RepositorySelectorPopoverMenu;
+use feature_flags::{FeatureFlagAppExt, ZedPro};
 use gpui::{
     actions, div, px, Action, AnyElement, App, Context, Decorations, Element, Entity,
     InteractiveElement, Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
@@ -27,7 +27,6 @@ use project::Project;
 use rpc::proto;
 use settings::Settings as _;
 use smallvec::SmallVec;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
@@ -37,6 +36,7 @@ use ui::{
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
+use zeta::ZedPredictBanner;
 
 #[cfg(feature = "stories")]
 pub use stories::*;
@@ -80,22 +80,36 @@ pub fn init(cx: &mut App) {
         });
 
         #[cfg(not(target_os = "macos"))]
-        workspace.register_action(
-            |workspace, action: &NavigateApplicationMenuInDirection, window, cx| {
-                if let Some(titlebar) = workspace
-                    .titlebar_item()
-                    .and_then(|item| item.downcast::<TitleBar>().ok())
-                {
-                    titlebar.update(cx, |titlebar, cx| {
-                        if let Some(ref menu) = titlebar.application_menu {
-                            menu.update(cx, |menu, cx| {
-                                menu.navigate_menus_in_direction(action, window, cx)
-                            });
-                        }
-                    });
-                }
-            },
-        );
+        workspace.register_action(|workspace, _: &ActivateMenuRight, window, cx| {
+            if let Some(titlebar) = workspace
+                .titlebar_item()
+                .and_then(|item| item.downcast::<TitleBar>().ok())
+            {
+                titlebar.update(cx, |titlebar, cx| {
+                    if let Some(ref menu) = titlebar.application_menu {
+                        menu.update(cx, |menu, cx| {
+                            menu.navigate_menus_in_direction(ActivateDirection::Right, window, cx)
+                        });
+                    }
+                });
+            }
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        workspace.register_action(|workspace, _: &ActivateMenuLeft, window, cx| {
+            if let Some(titlebar) = workspace
+                .titlebar_item()
+                .and_then(|item| item.downcast::<TitleBar>().ok())
+            {
+                titlebar.update(cx, |titlebar, cx| {
+                    if let Some(ref menu) = titlebar.application_menu {
+                        menu.update(cx, |menu, cx| {
+                            menu.navigate_menus_in_direction(ActivateDirection::Left, window, cx)
+                        });
+                    }
+                });
+            }
+        });
     })
     .detach();
 }
@@ -104,7 +118,6 @@ pub struct TitleBar {
     platform_style: PlatformStyle,
     content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
-    repository_selector: Entity<RepositorySelector>,
     project: Entity<Project>,
     user_store: Entity<UserStore>,
     client: Arc<Client>,
@@ -112,7 +125,7 @@ pub struct TitleBar {
     should_move: bool,
     application_menu: Option<Entity<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
-    git_ui_enabled: Arc<AtomicBool>,
+    zed_predict_banner: Entity<ZedPredictBanner>,
 }
 
 impl Render for TitleBar {
@@ -165,6 +178,7 @@ impl Render for TitleBar {
                     .id("titlebar-content")
                     .flex()
                     .flex_row()
+                    .items_center()
                     .justify_between()
                     .w_full()
                     // Note: On Windows the title bar behavior is handled by the platform implementation.
@@ -189,13 +203,13 @@ impl Render for TitleBar {
                                         title_bar
                                             .children(self.render_project_host(cx))
                                             .child(self.render_project_name(cx))
-                                            .children(self.render_current_repository(cx))
                                             .children(self.render_project_branch(cx))
                                     })
                             })
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()),
                     )
                     .child(self.render_collaborator_list(window, cx))
+                    .child(self.zed_predict_banner.clone())
                     .child(
                         h_flex()
                             .gap_1()
@@ -298,27 +312,20 @@ impl TitleBar {
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
-        let is_git_ui_enabled = Arc::new(AtomicBool::new(false));
-        subscriptions.push(cx.observe_flag::<GitUiFeatureFlag, _>({
-            let is_git_ui_enabled = is_git_ui_enabled.clone();
-            move |enabled, _cx| {
-                is_git_ui_enabled.store(enabled, Ordering::SeqCst);
-            }
-        }));
+        let zed_predict_banner = cx.new(ZedPredictBanner::new);
 
         Self {
             platform_style,
             content: div().id(id.into()),
             children: SmallVec::new(),
             application_menu,
-            repository_selector: cx.new(|cx| RepositorySelector::new(project.clone(), window, cx)),
             workspace: workspace.weak_handle(),
             should_move: false,
             project,
             user_store,
             client,
             _subscriptions: subscriptions,
-            git_ui_enabled: is_git_ui_enabled,
+            zed_predict_banner,
         }
     }
 
@@ -500,41 +507,6 @@ impl TitleBar {
             }))
     }
 
-    // NOTE: Not sure we want to keep this in the titlebar, but for while we are working on Git it is helpful in the short term
-    pub fn render_current_repository(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        if !self.git_ui_enabled.load(Ordering::SeqCst) {
-            return None;
-        }
-
-        let active_repository = self.project.read(cx).active_repository(cx)?;
-        let display_name = active_repository.display_name(self.project.read(cx), cx);
-
-        // TODO: what to render if no active repository?
-        Some(RepositorySelectorPopoverMenu::new(
-            self.repository_selector.clone(),
-            ButtonLike::new("active-repository")
-                .style(ButtonStyle::Subtle)
-                .child(
-                    h_flex().w_full().gap_0p5().child(
-                        div()
-                            .overflow_x_hidden()
-                            .flex_grow()
-                            .whitespace_nowrap()
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(
-                                        Label::new(display_name)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .into_any_element(),
-                            ),
-                    ),
-                ),
-        ))
-    }
-
     pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let entry = {
             let mut names_and_branches =
@@ -549,6 +521,7 @@ impl TitleBar {
         let branch_name = entry
             .as_ref()
             .and_then(|entry| entry.branch())
+            .map(|branch| branch.name.clone())
             .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
         Some(
             Button::new("project_branch_trigger", branch_name)
@@ -558,7 +531,7 @@ impl TitleBar {
                 .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         "Recent Branches",
-                        Some(&zed_actions::branches::OpenRecent),
+                        Some(&zed_actions::git::Branch),
                         "Local branches only",
                         window,
                         cx,
@@ -566,7 +539,7 @@ impl TitleBar {
                 })
                 .on_click(move |_, window, cx| {
                     let _ = workspace.update(cx, |_this, cx| {
-                        window.dispatch_action(zed_actions::branches::OpenRecent.boxed_clone(), cx);
+                        window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
                     });
                 }),
         )
@@ -701,6 +674,10 @@ impl TitleBar {
                             "Themes…",
                             zed_actions::theme_selector::Toggle::default().boxed_clone(),
                         )
+                        .action(
+                            "Icon Themes…",
+                            zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
+                        )
                         .action("Extensions", zed_actions::Extensions.boxed_clone())
                         .separator()
                         .link(
@@ -714,7 +691,7 @@ impl TitleBar {
                     })
                     .into()
                 })
-                .trigger(
+                .trigger_with_tooltip(
                     ButtonLike::new("user-menu")
                         .child(
                             h_flex()
@@ -730,8 +707,8 @@ impl TitleBar {
                                         .color(Color::Muted),
                                 ),
                         )
-                        .style(ButtonStyle::Subtle)
-                        .tooltip(Tooltip::text("Toggle User Menu")),
+                        .style(ButtonStyle::Subtle),
+                    Tooltip::text("Toggle User Menu"),
                 )
                 .anchor(gpui::Corner::TopRight)
         } else {
@@ -743,6 +720,10 @@ impl TitleBar {
                             .action(
                                 "Themes…",
                                 zed_actions::theme_selector::Toggle::default().boxed_clone(),
+                            )
+                            .action(
+                                "Icon Themes…",
+                                zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                             )
                             .action("Extensions", zed_actions::Extensions.boxed_clone())
                             .separator()
@@ -756,10 +737,9 @@ impl TitleBar {
                     })
                     .into()
                 })
-                .trigger(
-                    IconButton::new("user-menu", IconName::ChevronDown)
-                        .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text("Toggle User Menu")),
+                .trigger_with_tooltip(
+                    IconButton::new("user-menu", IconName::ChevronDown).icon_size(IconSize::Small),
+                    Tooltip::text("Toggle User Menu"),
                 )
         }
     }

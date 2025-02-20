@@ -3,6 +3,7 @@ use crate::{
     DefiniteLength, Element, ElementId, GlobalElementId, Hitbox, Image, InteractiveElement,
     Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
     SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, Window,
+    SMOOTH_SVG_SCALE_FACTOR,
 };
 use anyhow::{anyhow, Result};
 
@@ -114,9 +115,9 @@ impl From<Arc<Image>> for ImageSource {
     }
 }
 
-impl<
-        F: Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>> + 'static,
-    > From<F> for ImageSource
+impl<F> From<F> for ImageSource
+where
+    F: Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>> + 'static,
 {
     fn from(value: F) -> Self {
         Self::Custom(Arc::new(value))
@@ -353,11 +354,11 @@ impl Element for Img {
                                         }
                                     }
                                 } else {
-                                    let parent_view_id = window.parent_view_id().unwrap();
+                                    let current_view = window.current_view();
                                     let task = window.spawn(cx, |mut cx| async move {
                                         cx.background_executor().timer(LOADING_DELAY).await;
                                         cx.update(move |_, cx| {
-                                            cx.notify(parent_view_id);
+                                            cx.notify(current_view);
                                         })
                                         .ok();
                                     });
@@ -610,7 +611,7 @@ impl Asset for ImageAssetLoader {
             } else {
                 let pixmap =
                     // TODO: Can we make svgs always rescale?
-                    svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(1.0))?;
+                    svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(SMOOTH_SVG_SCALE_FACTOR))?;
 
                 let mut buffer =
                     ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();

@@ -7,7 +7,8 @@ use editor::{
     scroll::Autoscroll,
     Bias, Editor, ToPoint,
 };
-use gpui::{actions, impl_internal_actions, Action, App, Context, Global, Window};
+use gpui::{actions, impl_internal_actions, Action, App, AppContext as _, Context, Global, Window};
+use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
@@ -64,6 +65,95 @@ pub struct WithCount {
     action: WrappedAction,
 }
 
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+pub enum VimOption {
+    Wrap(bool),
+    Number(bool),
+    RelativeNumber(bool),
+}
+
+impl VimOption {
+    fn possible_commands(query: &str) -> Vec<CommandInterceptResult> {
+        let mut prefix_of_options = Vec::new();
+        let mut options = query.split(" ").collect::<Vec<_>>();
+        let prefix = options.pop().unwrap_or_default();
+        for option in options {
+            if let Some(opt) = Self::from(option) {
+                prefix_of_options.push(opt)
+            } else {
+                return vec![];
+            }
+        }
+
+        Self::possibilities(&prefix)
+            .map(|possible| {
+                let mut options = prefix_of_options.clone();
+                options.push(possible);
+
+                CommandInterceptResult {
+                    string: format!(
+                        "set {}",
+                        options.iter().map(|opt| opt.to_string()).join(" ")
+                    ),
+                    action: VimSet { options }.boxed_clone(),
+                    positions: vec![],
+                }
+            })
+            .collect()
+    }
+
+    fn possibilities(query: &str) -> impl Iterator<Item = Self> + '_ {
+        [
+            (None, VimOption::Wrap(true)),
+            (None, VimOption::Wrap(false)),
+            (None, VimOption::Number(true)),
+            (None, VimOption::Number(false)),
+            (None, VimOption::RelativeNumber(true)),
+            (None, VimOption::RelativeNumber(false)),
+            (Some("rnu"), VimOption::RelativeNumber(true)),
+            (Some("nornu"), VimOption::RelativeNumber(false)),
+        ]
+        .into_iter()
+        .filter(move |(prefix, option)| prefix.unwrap_or(option.to_string()).starts_with(query))
+        .map(|(_, option)| option)
+    }
+
+    fn from(option: &str) -> Option<Self> {
+        match option {
+            "wrap" => Some(Self::Wrap(true)),
+            "nowrap" => Some(Self::Wrap(false)),
+
+            "number" => Some(Self::Number(true)),
+            "nu" => Some(Self::Number(true)),
+            "nonumber" => Some(Self::Number(false)),
+            "nonu" => Some(Self::Number(false)),
+
+            "relativenumber" => Some(Self::RelativeNumber(true)),
+            "rnu" => Some(Self::RelativeNumber(true)),
+            "norelativenumber" => Some(Self::RelativeNumber(false)),
+            "nornu" => Some(Self::RelativeNumber(false)),
+
+            _ => None,
+        }
+    }
+
+    fn to_string(&self) -> &'static str {
+        match self {
+            VimOption::Wrap(true) => "wrap",
+            VimOption::Wrap(false) => "nowrap",
+            VimOption::Number(true) => "number",
+            VimOption::Number(false) => "nonumber",
+            VimOption::RelativeNumber(true) => "relativenumber",
+            VimOption::RelativeNumber(false) => "norelativenumber",
+        }
+    }
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+pub struct VimSet {
+    options: Vec<VimOption>,
+}
+
 #[derive(Debug)]
 struct WrappedAction(Box<dyn Action>);
 
@@ -76,7 +166,8 @@ impl_internal_actions!(
         WithRange,
         WithCount,
         OnMatchingLines,
-        ShellExec
+        ShellExec,
+        VimSet,
     ]
 );
 
@@ -100,6 +191,26 @@ impl Deref for WrappedAction {
 }
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
+    // Vim::action(editor, cx, |vim, action: &StartOfLine, window, cx| {
+    Vim::action(editor, cx, |vim, action: &VimSet, window, cx| {
+        for option in action.options.iter() {
+            vim.update_editor(window, cx, |_, editor, _, cx| match option {
+                VimOption::Wrap(true) => {
+                    editor
+                        .set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+                }
+                VimOption::Wrap(false) => {
+                    editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+                }
+                VimOption::Number(enabled) => {
+                    editor.set_show_line_numbers(*enabled, cx);
+                }
+                VimOption::RelativeNumber(enabled) => {
+                    editor.set_relative_line_number(Some(*enabled), cx);
+                }
+            });
+        }
+    });
     Vim::action(editor, cx, |vim, _: &VisualCommand, window, cx| {
         let Some(workspace) = vim.workspace(window) else {
             return;
@@ -567,37 +678,45 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             ("q", "uit"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Close),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Skip),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("wq", ""),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Save),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Overwrite),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("x", "it"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::SaveAll),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Overwrite),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("ex", "it"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::SaveAll),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Overwrite),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("up", "date"),
@@ -657,10 +776,12 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             ("bd", "elete"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Close),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Skip),
+            close_pinned: true,
         }),
         VimCommand::new(("bn", "ext"), workspace::ActivateNextItem).count(),
         VimCommand::new(("bN", "ext"), workspace::ActivatePrevItem).count(),
@@ -679,6 +800,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             ("tabc", "lose"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Close),
+                close_pinned: false,
             },
         ),
         VimCommand::new(
@@ -719,7 +841,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             .range(act_on_range),
         VimCommand::new(("dif", "fupdate"), editor::actions::ToggleSelectedDiffHunks)
             .range(act_on_range),
-        VimCommand::new(("rev", "ert"), editor::actions::RevertSelectedHunks).range(act_on_range),
+        VimCommand::str(("rev", "ert"), "git::Restore").range(act_on_range),
         VimCommand::new(("d", "elete"), VisualDeleteLine).range(select_range),
         VimCommand::new(("y", "ank"), gpui::NoAction).range(|_, range| {
             Some(
@@ -797,7 +919,7 @@ fn wrap_count(action: Box<dyn Action>, range: &CommandRange) -> Option<Box<dyn A
     })
 }
 
-pub fn command_interceptor(mut input: &str, cx: &App) -> Option<CommandInterceptResult> {
+pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptResult> {
     // NOTE: We also need to support passing arguments to commands like :w
     // (ideally with filename autocompletion).
     while input.starts_with(':') {
@@ -823,6 +945,8 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Option<CommandIntercept
             }
             .boxed_clone(),
         )
+    } else if query.starts_with("se ") || query.starts_with("set ") {
+        return VimOption::possible_commands(query.split_once(" ").unwrap().1);
     } else if query.starts_with('s') {
         let mut substitute = "substitute".chars().peekable();
         let mut query = query.chars().peekable();
@@ -875,11 +999,11 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Option<CommandIntercept
     if let Some(action) = action {
         let string = input.to_string();
         let positions = generate_positions(&string, &(range_prefix + query));
-        return Some(CommandInterceptResult {
+        return vec![CommandInterceptResult {
             action,
             string,
             positions,
-        });
+        }];
     }
 
     for command in commands(cx).iter() {
@@ -890,14 +1014,14 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Option<CommandIntercept
             }
             let positions = generate_positions(&string, &(range_prefix + query));
 
-            return Some(CommandInterceptResult {
+            return vec![CommandInterceptResult {
                 action,
                 string,
                 positions,
-            });
+            }];
         }
     }
-    None
+    return Vec::default();
 }
 
 fn generate_positions(string: &str, query: &str) -> Vec<usize> {
@@ -971,7 +1095,12 @@ impl OnMatchingLines {
 
         let command: String = chars.collect();
 
-        let action = WrappedAction(command_interceptor(&command, cx)?.action);
+        let action = WrappedAction(
+            command_interceptor(&command, cx)
+                .first()?
+                .action
+                .boxed_clone(),
+        );
 
         Some(Self {
             range,
@@ -1056,8 +1185,7 @@ impl OnMatchingLines {
                     .clip_point(Point::new(range.end.0 + 1, 0), Bias::Left);
             cx.spawn_in(window, |editor, mut cx| async move {
                 let new_selections = cx
-                    .background_executor()
-                    .spawn(async move {
+                    .background_spawn(async move {
                         let mut line = String::new();
                         let mut new_selections = Vec::new();
                         let chunks = snapshot
@@ -1384,22 +1512,20 @@ impl ShellExec {
             if let Some(mut stdin) = running.stdin.take() {
                 if let Some(snapshot) = input_snapshot {
                     let range = range.clone();
-                    cx.background_executor()
-                        .spawn(async move {
-                            for chunk in snapshot.text_for_range(range) {
-                                if stdin.write_all(chunk.as_bytes()).log_err().is_none() {
-                                    return;
-                                }
+                    cx.background_spawn(async move {
+                        for chunk in snapshot.text_for_range(range) {
+                            if stdin.write_all(chunk.as_bytes()).log_err().is_none() {
+                                return;
                             }
-                            stdin.flush().log_err();
-                        })
-                        .detach();
+                        }
+                        stdin.flush().log_err();
+                    })
+                    .detach();
                 }
             };
 
             let output = cx
-                .background_executor()
-                .spawn(async move { running.wait_with_output() })
+                .background_spawn(async move { running.wait_with_output() })
                 .await;
 
             let Some(output) = output.log_err() else {
@@ -1455,6 +1581,7 @@ mod test {
     use editor::Editor;
     use gpui::{Context, TestAppContext};
     use indoc::indoc;
+    use util::path;
     use workspace::Workspace;
 
     #[gpui::test]
@@ -1516,7 +1643,8 @@ mod test {
             dd
             dd
             ˇcc"});
-        cx.simulate_shared_keystrokes("k : s / dd / ee enter").await;
+        cx.simulate_shared_keystrokes("k : s / d d / e e enter")
+            .await;
         cx.shared_state().await.assert_eq(indoc! {"
             aa
             dd
@@ -1551,28 +1679,26 @@ mod test {
     #[gpui::test]
     async fn test_command_write(cx: &mut TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
-        let path = Path::new("/root/dir/file.rs");
+        let path = Path::new(path!("/root/dir/file.rs"));
         let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
 
         cx.simulate_keystrokes("i @ escape");
         cx.simulate_keystrokes(": w enter");
 
-        assert_eq!(fs.load(path).await.unwrap(), "@\n");
+        assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "@\n");
 
         fs.as_fake().insert_file(path, b"oops\n".to_vec()).await;
 
         // conflict!
         cx.simulate_keystrokes("i @ escape");
         cx.simulate_keystrokes(": w enter");
-        assert!(cx.has_pending_prompt());
-        // "Cancel"
-        cx.simulate_prompt_answer(0);
-        assert_eq!(fs.load(path).await.unwrap(), "oops\n");
+        cx.simulate_prompt_answer("Cancel");
+
+        assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "oops\n");
         assert!(!cx.has_pending_prompt());
-        // force overwrite
         cx.simulate_keystrokes(": w ! enter");
         assert!(!cx.has_pending_prompt());
-        assert_eq!(fs.load(path).await.unwrap(), "@@\n");
+        assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "@@\n");
     }
 
     #[gpui::test]
@@ -1664,7 +1790,7 @@ mod test {
         let file_path = file.as_local().unwrap().abs_path(cx);
 
         assert_eq!(text, expected_text);
-        assert_eq!(file_path.to_str().unwrap(), expected_path);
+        assert_eq!(file_path, Path::new(expected_path));
     }
 
     #[gpui::test]
@@ -1673,16 +1799,22 @@ mod test {
 
         // Assert base state, that we're in /root/dir/file.rs
         cx.workspace(|workspace, _, cx| {
-            assert_active_item(workspace, "/root/dir/file.rs", "", cx);
+            assert_active_item(workspace, path!("/root/dir/file.rs"), "", cx);
         });
 
         // Insert a new file
         let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
         fs.as_fake()
-            .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
+            .insert_file(
+                path!("/root/dir/file2.rs"),
+                "This is file2.rs".as_bytes().to_vec(),
+            )
             .await;
         fs.as_fake()
-            .insert_file("/root/dir/file3.rs", "go to file3".as_bytes().to_vec())
+            .insert_file(
+                path!("/root/dir/file3.rs"),
+                "go to file3".as_bytes().to_vec(),
+            )
             .await;
 
         // Put the path to the second file into the currently open buffer
@@ -1694,7 +1826,12 @@ mod test {
         // We now have two items
         cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
         cx.workspace(|workspace, _, cx| {
-            assert_active_item(workspace, "/root/dir/file2.rs", "This is file2.rs", cx);
+            assert_active_item(
+                workspace,
+                path!("/root/dir/file2.rs"),
+                "This is file2.rs",
+                cx,
+            );
         });
 
         // Update editor to point to `file2.rs`
@@ -1711,7 +1848,7 @@ mod test {
         // We now have three items
         cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 3));
         cx.workspace(|workspace, _, cx| {
-            assert_active_item(workspace, "/root/dir/file3.rs", "go to file3", cx);
+            assert_active_item(workspace, path!("/root/dir/file3.rs"), "go to file3", cx);
         });
     }
 

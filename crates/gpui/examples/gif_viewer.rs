@@ -25,15 +25,8 @@ impl Render for GifViewer {
 fn main() {
     env_logger::init();
     Application::new().run(|cx: &mut App| {
-        let cwd = std::env::current_dir().expect("Failed to get current working directory");
-        let gif_path = cwd.join("crates/gpui/examples/image/black-cat-typing.gif");
-
-        if !gif_path.exists() {
-            eprintln!("Image file not found at {:?}", gif_path);
-            eprintln!("Make sure you're running this example from the root of the gpui crate");
-            cx.quit();
-            return;
-        }
+        let gif_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/image/black-cat-typing.gif");
 
         cx.open_window(
             WindowOptions {

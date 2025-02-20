@@ -3,11 +3,11 @@ title: Zed Terms of Use
 slug: terms
 ---
 
-PLEASE READ THESE TERMS AND CONDITIONS CAREFULLY BEFORE USING THE SERVICE OR SOFTWARE OFFERED BY ZED INDUSTRIES, INC. ("ZED", OR "WE"). BY ACCESSING OR USING THE SOLUTION (AS DEFINED BELOW) IN ANY MANNER, YOU ("YOU" OR "CUSTOMER") AGREE TO BE BOUND BY THESE TERMS (THE "AGREEMENT") TO THE EXCLUSION OF ALL OTHER TERMS. YOU REPRESENT AND WARRANT THAT YOU HAVE THE AUTHORITY TO ENTER INTO THIS AGREEMENT; IF YOU ARE ENTERING INTO THIS AGREEMENT ON BEHALF OF AN ORGANIZATION OR ENTITY, REFERENCES TO "CUSTOMER" AND "YOU" IN THIS AGREEMENT, REFER TO THAT ORGANIZATION OR ENTITY. IF YOU DO NOT AGREE TO ALL OF THE FOLLOWING, YOU MAY NOT USE OR ACCESS THE SOLUTION IN ANY MANNER.  IF THE TERMS OF THIS AGREEMENT ARE CONSIDERED AN OFFER, ACCEPTANCE IS EXPRESSLY LIMITED TO SUCH TERMS.
+PLEASE READ THESE TERMS AND CONDITIONS CAREFULLY BEFORE USING THE SERVICE OR SOFTWARE OFFERED BY ZED INDUSTRIES, INC. ("ZED", OR "WE"). BY ACCESSING OR USING THE SOLUTION (AS DEFINED BELOW) IN ANY MANNER, YOU ("YOU" OR "CUSTOMER") AGREE TO BE BOUND BY THESE TERMS (THE "AGREEMENT") TO THE EXCLUSION OF ALL OTHER TERMS. YOU REPRESENT AND WARRANT THAT YOU HAVE THE AUTHORITY TO ENTER INTO THIS AGREEMENT; IF YOU ARE ENTERING INTO THIS AGREEMENT ON BEHALF OF AN ORGANIZATION OR ENTITY, REFERENCES TO "CUSTOMER" AND "YOU" IN THIS AGREEMENT, REFER TO THAT ORGANIZATION OR ENTITY. IF YOU DO NOT AGREE TO ALL OF THE FOLLOWING, YOU MAY NOT USE OR ACCESS THE SOLUTION IN ANY MANNER. IF THE TERMS OF THIS AGREEMENT ARE CONSIDERED AN OFFER, ACCEPTANCE IS EXPRESSLY LIMITED TO SUCH TERMS.
 
 ## 1. ACCESS TO AND USE OF THE SOLUTION
 
-Subject to the terms and conditions in this Agreement, Zed will make available to You the Zed Editor Software (the "Editor"), and the Zed Collaboration Service (the "Zed Service"). The Zed Service may be used in conjunction with the Editor (the Zed Service and Editor, collectively the "Solution"). The Zed Service is designed to allow for collaboration, but the use of the Zed Service is not required to make use of the Editor; Your use of the Zed Service is optional.
+Subject to the terms and conditions of this Agreement, Zed hereby grants to You, and You hereby accept from Zed, a term-limited, non-exclusive, non-transferable, non-assignable and non-sublicensable license to make use of the Editor for Your internal use only, and subject to the use limitations in Section 2.2.
 
 ## 2. TERMS APPLICABLE TO THE EDITOR
 
@@ -35,7 +35,7 @@ You will use the Zed Service only in accordance with all applicable laws, includ
 
 ### 3.3. Customer Data
 
-You are solely responsible for Customer Data including, but not limited to: (a) compliance with all applicable laws and this Agreement; (b) any claims relating to Customer Data; and (c) any claims that Customer Data infringes, misappropriates, or otherwise violates the rights of any third party. You agree and acknowledge that Customer Data may be irretrievably deleted if Your account is terminated. For purposes of this Agreement, "Customer Data" shall mean any data, information or other material provided, uploaded, or submitted by You to the Zed Service in the course of using the Zed Service.
+You are solely responsible for Customer Data including, but not limited to: (a) compliance with all applicable laws and this Agreement; (b) any claims relating to Customer Data; and (c) any claims that Customer Data infringes, misappropriates, or otherwise violates the rights of any third party. You agree and acknowledge that Customer Data may be irretrievably deleted if Your account is terminated. For purposes of this Agreement, "Customer Data" shall mean any data, information or other material provided, uploaded, or submitted by You to the Zed Service in the course of using the Zed Service. Notwithstanding anything to the contrary, You represent and warrant that You will not transfer or make available to Zed any personally identifiable information or related information subject to applicable data privacy laws or regulations, unless otherwise agreed to in writing by Zed.
 
 #### 3.3.1. Customer Data Made Available to Zed
 
@@ -60,7 +60,41 @@ Customer Data consisting of data related to the behavior of the Solution prior t
 
 #### 3.3.4. User Content
 
-Customer Data consisting of User content created while using the Solution is classified as "User Content". User Content is transmitted from Your environment only if You collaborate with other Zed users by electing to share a project in the Editor. Once You share a project, Zed may transmit User Content consisting of file paths, file contents, and metadata regarding the code returned by language servers. Currently, Zed does not persist any User Content beyond the Your collaboration session. If You unshare a project or disconnect from the Solution, all information associated with such project will be deleted from Zed servers. In the future, Zed may save User Content regarding projects beyond the scope of a single collaboration session. We may share such User Content with those users You elected to grant access to. Zed's access to such User Content is limited to debugging and making improvements to the Solution.
+• You may access, modify or create certain data or information in connection with your access or use of the Zed Editor or the Solution. Such data and information may include, but is not limited to any of the following:
+
+- (a) file contents and associated metadata (e.g., filename, paths, size, timestamps);
+- (b) source control history, comments and metadata (e.g., git history, commit messages);
+- (c) configuration data (e.g., settings, keymaps);
+- (d) anything typed, pasted and/or displayed on screen while using the Editor;
+- (e) derivative works of the above generated by the Editor (e.g., format conversions, summaries, indexes, caches);
+- (f) metadata, code and other derivative works of the above returned by language servers and other local tooling; and
+- (g) metadata, code and other derivative works of the above returned by services integrated with the Zed Editor
+
+(a-g collectively, "User Content").
+
+#### 3.3.5 Handling of User Content
+
+Zed will make use of or transfer User Content only as specified in this Agreement, or as necessary to comply with applicable law.
+
+#### 3.3.5.1 Zed Collaboration Services
+
+When using Zed Collaboration Services, User Content is transmitted from Your environment only if You collaborate with other Zed users by electing to share a project in the Editor. Once You share a project, Zed may transmit User Content consisting of file paths, file contents, and metadata regarding the code returned by language servers. Currently, Zed does not persist any User Content beyond the Your collaboration session. If You unshare a project or disconnect from the Solution, all information associated with such project will be deleted from Zed servers. In the future, Zed may save User Content regarding projects beyond the scope of a single collaboration session. We may share such User Content with those users You elected to grant access to. Zed's access to such User Content is limited to debugging and making improvements to the Solution.
+
+#### 3.3.5.2 Other Services
+
+The Zed Editor supports integration with API-based services maintained and not operated by Zed (the "Other Services"). By way of example, Other Services includes those made available by GitHub, Anthropic, OpenAI, and similar providers, or those You host or manage directly. You may configure the Zed Editor to interoperate, communicate with, and exchange data (including User Content) directly with the Other Services. . Zed is not responsible or otherwise liable with respect to Your use of any Other Service, including but not limited to the exchange of data between the Other Service and the Zed Editor. The terms and conditions, including the applicable privacy policy, with respect to the Other Service are those made available by the applicable Other Service, not these Terms of Use.
+
+#### 3.3.5.3 Zed AI Services
+
+The Zed Editor supports integration with API-based services maintained and operated by Zed (the "Zed AI Services"). You may elect to use Zed AI Services as the provider for various Zed Editor features (e.g., AI Assistant Panel, Code Completions, Edit Predictions, and similar features). In connection with Your use of these features, the Zed Editor and Zed AI Services may make use of User Content to generate contextually relevant responses (the “Output”). Other than as specified in Section 3.3.5.4 of these Terms of Use, Zed will not use User Content for training of its models, or disclose User Content.
+
+Output is provided "as is" without any warranties or guarantees of functionality, security, or fitness for a particular purpose. While efforts are made to ensure the accuracy and reliability, Output may include errors, vulnerabilities, and defects. You are responsible for reviewing, testing, and validating Output before use in any production or critical environment. Zed assumes no liability for any damages, losses, or liability arising from the use, modification, reliance on, or deployment of Output. Any such use is at Your own risk.
+
+#### 3.3.5.4 Model Improvement Feedback
+
+When using Zed AI Services to provide Edit Predictions in connection with certain open source software projects, You may elect to share requests, responses and feedback comments (collectively "Model Improvement Feedback") with Zed, and Zed may use the same to improve Zed Edit Predictions models. You may opt-out of sharing Model Improvement Feedback at any time.
+
+For more information on Zed Edit Predictions please see: [https://zed.dev/docs/model-improvement](https://zed.dev/docs/model-improvement)
 
 #### 3.3.5. Privacy Policy
 
@@ -94,7 +128,7 @@ Zed does not represent or warrant that the operation of the Zed Service or Edito
 
 ## 8. LIMITATIONS OF LIABILITY
 
-IN NO EVENT SHALL ZED BE LIABLE FOR ANY LOST DATA, LOST PROFITS, BUSINESS INTERRUPTION, REPLACEMENT SERVICE OR OTHER SPECIAL, INCIDENTAL, CONSEQUENTIAL, PUNITIVE OR INDIRECT DAMAGES, HOWEVER CAUSED AND REGARDLESS OF THEORY OF LIABILITY.  ZED'S LIABILITY FOR ALL CLAIMS ARISING UNDER THIS AGREEMENT, WHETHER IN CONTRACT, TORT OR OTHERWISE, SHALL NOT EXCEED ONE THOUSAND US DOLLARS ($1,000).
+IN NO EVENT SHALL ZED BE LIABLE FOR ANY LOST DATA, LOST PROFITS, BUSINESS INTERRUPTION, REPLACEMENT SERVICE OR OTHER SPECIAL, INCIDENTAL, CONSEQUENTIAL, PUNITIVE OR INDIRECT DAMAGES, HOWEVER CAUSED AND REGARDLESS OF THEORY OF LIABILITY. ZED'S LIABILITY FOR ALL CLAIMS ARISING UNDER THIS AGREEMENT, WHETHER IN CONTRACT, TORT OR OTHERWISE, SHALL NOT EXCEED ONE THOUSAND US DOLLARS ($1,000).
 
 ## 9. Third Party Services
 
@@ -112,11 +146,11 @@ You shall comply with all applicable laws and regulations in its use of the Solu
 
 ### 10.3. Assignment
 
-Neither party may transfer and assign its rights and obligations under this Agreement without the prior written consent of the other party.  Notwithstanding the foregoing, Zed may transfer and assign its rights under this Agreement without consent from the other party in connection with a change in control, acquisition or sale of all or substantially all of its assets.
+Neither party may transfer and assign its rights and obligations under this Agreement without the prior written consent of the other party. Notwithstanding the foregoing, Zed may transfer and assign its rights under this Agreement without consent from the other party in connection with a change in control, acquisition or sale of all or substantially all of its assets.
 
 ### 10.4. Force Majeure
 
-Neither party shall be responsible for failure or delay in performance by events out of their reasonable control, including but not limited to, acts of God, Internet outage, terrorism, war, fires, earthquakes and other disasters (each a "Force Majeure").  Notwithstanding the foregoing: if a Force Majeure continues for more than thirty (30) days, either party may to terminate this agreement by written notice to the other party.
+Neither party shall be responsible for failure or delay in performance by events out of their reasonable control, including but not limited to, acts of God, Internet outage, terrorism, war, fires, earthquakes and other disasters (each a "Force Majeure"). Notwithstanding the foregoing: if a Force Majeure continues for more than thirty (30) days, either party may to terminate this agreement by written notice to the other party.
 
 ### 10.5. Notice
 
@@ -124,11 +158,11 @@ All notices between the parties shall be in writing and shall be deemed to have 
 
 ### 10.6. No Agency
 
-Both parties agree that no agency, partnership, joint venture, or employment is created as a result of this Agreement.  You do not have any authority of any kind to bind Zed.
+Both parties agree that no agency, partnership, joint venture, or employment is created as a result of this Agreement. You do not have any authority of any kind to bind Zed.
 
 ### 10.7. Governing Law
 
-This Agreement shall be governed exclusively by, and construed exclusively in accordance with, the laws of the United States and the State of California, without regard to its conflict of laws provisions.  The federal courts of the United States in the Northern District of California and the state courts of the State of California shall have exclusive jurisdiction to adjudicate any dispute arising out of or relating to this Agreement.  Each party hereby consents to the jurisdiction of such courts and waives any right it may otherwise have to challenge the appropriateness of such forums, whether on the basis of the doctrine of forum non conveniens or otherwise.  The United Nations Convention on Contracts for the International Sale of Goods shall not apply to this Agreement or any Purchase Order issued under this Agreement.
+This Agreement shall be governed exclusively by, and construed exclusively in accordance with, the laws of the United States and the State of California, without regard to its conflict of laws provisions. The federal courts of the United States in the Northern District of California and the state courts of the State of California shall have exclusive jurisdiction to adjudicate any dispute arising out of or relating to this Agreement. Each party hereby consents to the jurisdiction of such courts and waives any right it may otherwise have to challenge the appropriateness of such forums, whether on the basis of the doctrine of forum non conveniens or otherwise. The United Nations Convention on Contracts for the International Sale of Goods shall not apply to this Agreement or any Purchase Order issued under this Agreement.
 
 ### 10.8. Updated Agreement
 
@@ -138,4 +172,4 @@ Zed reserves the right to update this Agreement at any time. The terms and condi
 
 This Agreement is the complete and exclusive statement of the mutual understanding of the parties and supersedes and cancels all previous written and oral agreements, communications, and other understandings relating to the subject matter of this Agreement, and all waivers and modifications must be in a writing signed by both parties, except as otherwise provided herein. Any term or provision of this Agreement held to be illegal or unenforceable shall be, to the fullest extent possible, interpreted so as to be construed as valid, but in any event the validity or enforceability of the remainder hereof shall not be affected.
 
-**DATE: August 19, 2024**
+**DATE: February 13, 2025**

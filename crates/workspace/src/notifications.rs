@@ -1,7 +1,7 @@
 use crate::{Toast, Workspace};
 use gpui::{
     svg, AnyView, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
-    Entity, EventEmitter, Global, PromptLevel, Render, ScrollHandle, Task,
+    Entity, EventEmitter, PromptLevel, Render, ScrollHandle, Task,
 };
 use parking_lot::Mutex;
 use std::sync::{Arc, LazyLock};
@@ -124,8 +124,8 @@ impl Workspace {
                 Some((click_msg, on_click)) => {
                     let on_click = on_click.clone();
                     simple_message_notification::MessageNotification::new(toast.msg.clone())
-                        .with_click_message(click_msg.clone())
-                        .on_click(move |window, cx| on_click(window, cx))
+                        .primary_message(click_msg.clone())
+                        .primary_on_click(move |window, cx| on_click(window, cx))
                 }
                 None => simple_message_notification::MessageNotification::new(toast.msg.clone()),
             })
@@ -156,10 +156,11 @@ impl Workspace {
 
     pub fn show_initial_notifications(&mut self, cx: &mut Context<Self>) {
         // Allow absence of the global so that tests don't need to initialize it.
-        let app_notifications = cx
-            .try_global::<AppNotifications>()
+        let app_notifications = GLOBAL_APP_NOTIFICATIONS
+            .lock()
+            .app_notifications
             .iter()
-            .flat_map(|global| global.app_notifications.iter().cloned())
+            .cloned()
             .collect::<Vec<_>>();
         for (id, build_notification) in app_notifications {
             self.show_notification_without_handling_dismiss_events(&id, cx, |cx| {
@@ -375,10 +376,18 @@ pub mod simple_message_notification {
 
     pub struct MessageNotification {
         build_content: Box<dyn Fn(&mut Window, &mut Context<Self>) -> AnyElement>,
-        on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
-        click_message: Option<SharedString>,
-        secondary_click_message: Option<SharedString>,
+        primary_message: Option<SharedString>,
+        primary_icon: Option<IconName>,
+        primary_icon_color: Option<Color>,
+        primary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
+        secondary_message: Option<SharedString>,
+        secondary_icon: Option<IconName>,
+        secondary_icon_color: Option<Color>,
         secondary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
+        more_info_message: Option<SharedString>,
+        more_info_url: Option<Arc<str>>,
+        show_close_button: bool,
+        title: Option<SharedString>,
     }
 
     impl EventEmitter<DismissEvent> for MessageNotification {}
@@ -398,38 +407,74 @@ pub mod simple_message_notification {
         {
             Self {
                 build_content: Box::new(content),
-                on_click: None,
-                click_message: None,
+                primary_message: None,
+                primary_icon: None,
+                primary_icon_color: None,
+                primary_on_click: None,
+                secondary_message: None,
+                secondary_icon: None,
+                secondary_icon_color: None,
                 secondary_on_click: None,
-                secondary_click_message: None,
+                more_info_message: None,
+                more_info_url: None,
+                show_close_button: true,
+                title: None,
             }
         }
 
-        pub fn with_click_message<S>(mut self, message: S) -> Self
+        pub fn primary_message<S>(mut self, message: S) -> Self
         where
             S: Into<SharedString>,
         {
-            self.click_message = Some(message.into());
+            self.primary_message = Some(message.into());
             self
         }
 
-        pub fn on_click<F>(mut self, on_click: F) -> Self
+        pub fn primary_icon(mut self, icon: IconName) -> Self {
+            self.primary_icon = Some(icon);
+            self
+        }
+
+        pub fn primary_icon_color(mut self, color: Color) -> Self {
+            self.primary_icon_color = Some(color);
+            self
+        }
+
+        pub fn primary_on_click<F>(mut self, on_click: F) -> Self
         where
             F: 'static + Fn(&mut Window, &mut Context<Self>),
         {
-            self.on_click = Some(Arc::new(on_click));
+            self.primary_on_click = Some(Arc::new(on_click));
             self
         }
 
-        pub fn with_secondary_click_message<S>(mut self, message: S) -> Self
+        pub fn primary_on_click_arc<F>(mut self, on_click: Arc<F>) -> Self
+        where
+            F: 'static + Fn(&mut Window, &mut Context<Self>),
+        {
+            self.primary_on_click = Some(on_click);
+            self
+        }
+
+        pub fn secondary_message<S>(mut self, message: S) -> Self
         where
             S: Into<SharedString>,
         {
-            self.secondary_click_message = Some(message.into());
+            self.secondary_message = Some(message.into());
             self
         }
 
-        pub fn on_secondary_click<F>(mut self, on_click: F) -> Self
+        pub fn secondary_icon(mut self, icon: IconName) -> Self {
+            self.secondary_icon = Some(icon);
+            self
+        }
+
+        pub fn secondary_icon_color(mut self, color: Color) -> Self {
+            self.secondary_icon_color = Some(color);
+            self
+        }
+
+        pub fn secondary_on_click<F>(mut self, on_click: F) -> Self
         where
             F: 'static + Fn(&mut Window, &mut Context<Self>),
         {
@@ -437,14 +482,52 @@ pub mod simple_message_notification {
             self
         }
 
+        pub fn secondary_on_click_arc<F>(mut self, on_click: Arc<F>) -> Self
+        where
+            F: 'static + Fn(&mut Window, &mut Context<Self>),
+        {
+            self.secondary_on_click = Some(on_click);
+            self
+        }
+
+        pub fn more_info_message<S>(mut self, message: S) -> Self
+        where
+            S: Into<SharedString>,
+        {
+            self.more_info_message = Some(message.into());
+            self
+        }
+
+        pub fn more_info_url<S>(mut self, url: S) -> Self
+        where
+            S: Into<Arc<str>>,
+        {
+            self.more_info_url = Some(url.into());
+            self
+        }
+
         pub fn dismiss(&mut self, cx: &mut Context<Self>) {
             cx.emit(DismissEvent);
+        }
+
+        pub fn show_close_button(mut self, show: bool) -> Self {
+            self.show_close_button = show;
+            self
+        }
+
+        pub fn with_title<S>(mut self, title: S) -> Self
+        where
+            S: Into<SharedString>,
+        {
+            self.title = Some(title.into());
+            self
         }
     }
 
     impl Render for MessageNotification {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             v_flex()
+                .occlude()
                 .p_3()
                 .gap_2()
                 .elevation_3(cx)
@@ -453,43 +536,82 @@ pub mod simple_message_notification {
                         .gap_4()
                         .justify_between()
                         .items_start()
-                        .child(div().max_w_96().child((self.build_content)(window, cx)))
                         .child(
-                            IconButton::new("close", IconName::Close)
-                                .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
-                        ),
+                            v_flex()
+                                .gap_0p5()
+                                .when_some(self.title.clone(), |element, title| {
+                                    element.child(Label::new(title))
+                                })
+                                .child(div().max_w_96().child((self.build_content)(window, cx))),
+                        )
+                        .when(self.show_close_button, |this| {
+                            this.child(
+                                IconButton::new("close", IconName::Close)
+                                    .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
+                            )
+                        }),
                 )
                 .child(
                     h_flex()
-                        .gap_2()
-                        .children(self.click_message.iter().map(|message| {
-                            Button::new(message.clone(), message.clone())
+                        .gap_1()
+                        .children(self.primary_message.iter().map(|message| {
+                            let mut button = Button::new(message.clone(), message.clone())
                                 .label_size(LabelSize::Small)
-                                .icon(IconName::Check)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Success)
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    if let Some(on_click) = this.on_click.as_ref() {
+                                    if let Some(on_click) = this.primary_on_click.as_ref() {
                                         (on_click)(window, cx)
                                     };
                                     this.dismiss(cx)
-                                }))
+                                }));
+
+                            if let Some(icon) = self.primary_icon {
+                                button = button
+                                    .icon(icon)
+                                    .icon_color(self.primary_icon_color.unwrap_or(Color::Muted))
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::Small);
+                            }
+
+                            button
                         }))
-                        .children(self.secondary_click_message.iter().map(|message| {
-                            Button::new(message.clone(), message.clone())
+                        .children(self.secondary_message.iter().map(|message| {
+                            let mut button = Button::new(message.clone(), message.clone())
                                 .label_size(LabelSize::Small)
-                                .icon(IconName::Close)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Small)
-                                .icon_color(Color::Error)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     if let Some(on_click) = this.secondary_on_click.as_ref() {
                                         (on_click)(window, cx)
                                     };
                                     this.dismiss(cx)
-                                }))
-                        })),
+                                }));
+
+                            if let Some(icon) = self.secondary_icon {
+                                button = button
+                                    .icon(icon)
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::Small)
+                                    .icon_color(self.secondary_icon_color.unwrap_or(Color::Muted));
+                            }
+
+                            button
+                        }))
+                        .child(
+                            h_flex().w_full().justify_end().children(
+                                self.more_info_message
+                                    .iter()
+                                    .zip(self.more_info_url.iter())
+                                    .map(|(message, url)| {
+                                        let url = url.clone();
+                                        Button::new(message.clone(), message.clone())
+                                            .label_size(LabelSize::Small)
+                                            .icon(IconName::ArrowUpRight)
+                                            .icon_size(IconSize::Indicator)
+                                            .icon_color(Color::Muted)
+                                            .on_click(cx.listener(move |_, _, _, cx| {
+                                                cx.open_url(&url);
+                                            }))
+                                    }),
+                            ),
+                        ),
                 )
         }
     }
@@ -508,8 +630,6 @@ struct AppNotifications {
         Arc<dyn Fn(&mut Context<Workspace>) -> AnyView + Send + Sync>,
     )>,
 }
-
-impl Global for AppNotifications {}
 
 impl AppNotifications {
     pub fn insert(

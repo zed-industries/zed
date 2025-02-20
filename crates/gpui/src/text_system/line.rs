@@ -1,6 +1,7 @@
 use crate::{
     black, fill, point, px, size, App, Bounds, Half, Hsla, LineLayout, Pixels, Point, Result,
-    SharedString, StrikethroughStyle, UnderlineStyle, Window, WrapBoundary, WrappedLineLayout,
+    SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary,
+    WrappedLineLayout,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -70,6 +71,8 @@ impl ShapedLine {
             origin,
             &self.layout,
             line_height,
+            TextAlign::default(),
+            None,
             &self.decoration_runs,
             &[],
             window,
@@ -103,13 +106,22 @@ impl WrappedLine {
         &self,
         origin: Point<Pixels>,
         line_height: Pixels,
+        align: TextAlign,
+        bounds: Option<Bounds<Pixels>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<()> {
+        let align_width = match bounds {
+            Some(bounds) => Some(bounds.size.width),
+            None => self.layout.wrap_width,
+        };
+
         paint_line(
             origin,
             &self.layout.unwrapped_layout,
             line_height,
+            align,
+            align_width,
             &self.decoration_runs,
             &self.wrap_boundaries,
             window,
@@ -120,10 +132,13 @@ impl WrappedLine {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_line(
     origin: Point<Pixels>,
     layout: &LineLayout,
     line_height: Pixels,
+    align: TextAlign,
+    align_width: Option<Pixels>,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
     window: &mut Window,
@@ -147,7 +162,17 @@ fn paint_line(
         let mut current_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
         let mut current_background: Option<(Point<Pixels>, Hsla)> = None;
         let text_system = cx.text_system().clone();
-        let mut glyph_origin = origin;
+        let mut glyph_origin = point(
+            aligned_origin_x(
+                origin,
+                align_width.unwrap_or(layout.width),
+                px(0.0),
+                &align,
+                layout,
+                wraps.peek(),
+            ),
+            origin.y,
+        );
         let mut prev_glyph_position = Point::default();
         let mut max_glyph_size = size(px(0.), px(0.));
         for (run_ix, run) in layout.runs.iter().enumerate() {
@@ -200,7 +225,14 @@ fn paint_line(
                         strikethrough_origin.y += line_height;
                     }
 
-                    glyph_origin.x = origin.x;
+                    glyph_origin.x = aligned_origin_x(
+                        origin,
+                        align_width.unwrap_or(layout.width),
+                        glyph.position.x,
+                        &align,
+                        layout,
+                        wraps.peek(),
+                    );
                     glyph_origin.y += line_height;
                 }
                 prev_glyph_position = glyph.position;
@@ -389,4 +421,27 @@ fn paint_line(
 
         Ok(())
     })
+}
+
+fn aligned_origin_x(
+    origin: Point<Pixels>,
+    align_width: Pixels,
+    last_glyph_x: Pixels,
+    align: &TextAlign,
+    layout: &LineLayout,
+    wrap_boundary: Option<&&WrapBoundary>,
+) -> Pixels {
+    let end_of_line = if let Some(WrapBoundary { run_ix, glyph_ix }) = wrap_boundary {
+        layout.runs[*run_ix].glyphs[*glyph_ix].position.x
+    } else {
+        layout.width
+    };
+
+    let line_width = end_of_line - last_glyph_x;
+
+    match align {
+        TextAlign::Left => origin.x,
+        TextAlign::Center => (2.0 * origin.x + align_width - line_width) / 2.0,
+        TextAlign::Right => origin.x + align_width - line_width,
+    }
 }

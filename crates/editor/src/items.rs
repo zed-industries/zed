@@ -36,10 +36,13 @@ use std::{
 };
 use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
-use ui::{h_flex, prelude::*, IconDecorationKind, Label};
+use ui::{prelude::*, IconDecorationKind};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
-use workspace::item::{BreadcrumbText, FollowEvent};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
+use workspace::{
+    item::{BreadcrumbText, FollowEvent},
+    searchable::SearchOptions,
+};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -676,8 +679,8 @@ impl Item for Editor {
             .child(
                 Label::new(self.title(cx).to_string())
                     .color(label_color)
-                    .italic(params.preview)
-                    .strikethrough(was_deleted),
+                    .when(params.preview, |this| this.italic())
+                    .when(was_deleted, |this| this.strikethrough()),
             )
             .when_some(description, |this, description| {
                 this.child(
@@ -700,6 +703,10 @@ impl Item for Editor {
     }
 
     fn is_singleton(&self, cx: &App) -> bool {
+        self.buffer.read(cx).is_singleton()
+    }
+
+    fn can_save_as(&self, cx: &App) -> bool {
         self.buffer.read(cx).is_singleton()
     }
 
@@ -1040,10 +1047,10 @@ impl SerializableItem for Editor {
             } => window.spawn(cx, |mut cx| {
                 let project = project.clone();
                 async move {
-                    let language = if let Some(language_name) = language {
-                        let language_registry =
-                            project.update(&mut cx, |project, _| project.languages().clone())?;
+                    let language_registry =
+                        project.update(&mut cx, |project, _| project.languages().clone())?;
 
+                    let language = if let Some(language_name) = language {
                         // We don't fail here, because we'd rather not set the language if the name changed
                         // than fail to restore the buffer.
                         language_registry
@@ -1061,16 +1068,21 @@ impl SerializableItem for Editor {
 
                     // Then set the text so that the dirty bit is set correctly
                     buffer.update(&mut cx, |buffer, cx| {
+                        buffer.set_language_registry(language_registry);
                         if let Some(language) = language {
                             buffer.set_language(Some(language), cx);
                         }
                         buffer.set_text(contents, cx);
+                        if let Some(entry) = buffer.peek_undo_stack() {
+                            buffer.forget_transaction(entry.transaction_id());
+                        }
                     })?;
 
                     cx.update(|window, cx| {
                         cx.new(|cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
 
+                            editor.read_selections_from_db(item_id, workspace_id, window, cx);
                             editor.read_scroll_position_from_db(item_id, workspace_id, window, cx);
                             editor
                         })
@@ -1118,6 +1130,9 @@ impl SerializableItem for Editor {
                                         );
                                     }
                                     buffer.set_text(buffer_text, cx);
+                                    if let Some(entry) = buffer.peek_undo_stack() {
+                                        buffer.forget_transaction(entry.transaction_id());
+                                    }
                                 })?;
                             }
 
@@ -1126,6 +1141,12 @@ impl SerializableItem for Editor {
                                     let mut editor =
                                         Editor::for_buffer(buffer, Some(project), window, cx);
 
+                                    editor.read_selections_from_db(
+                                        item_id,
+                                        workspace_id,
+                                        window,
+                                        cx,
+                                    );
                                     editor.read_scroll_position_from_db(
                                         item_id,
                                         workspace_id,
@@ -1144,6 +1165,7 @@ impl SerializableItem for Editor {
                         window.spawn(cx, |mut cx| async move {
                             let editor = open_by_abs_path?.await?.downcast::<Editor>().with_context(|| format!("Failed to downcast to Editor after opening abs path {abs_path:?}"))?;
                             editor.update_in(&mut cx, |editor, window, cx| {
+                                editor.read_selections_from_db(item_id, workspace_id, window, cx);
                                 editor.read_scroll_position_from_db(item_id, workspace_id, window, cx);
                             })?;
                             Ok(editor)
@@ -1203,28 +1225,27 @@ impl SerializableItem for Editor {
         let snapshot = buffer.read(cx).snapshot();
 
         Some(cx.spawn_in(window, |_this, cx| async move {
-            cx.background_executor()
-                .spawn(async move {
-                    let (contents, language) = if serialize_dirty_buffers && is_dirty {
-                        let contents = snapshot.text();
-                        let language = snapshot.language().map(|lang| lang.name().to_string());
-                        (Some(contents), language)
-                    } else {
-                        (None, None)
-                    };
+            cx.background_spawn(async move {
+                let (contents, language) = if serialize_dirty_buffers && is_dirty {
+                    let contents = snapshot.text();
+                    let language = snapshot.language().map(|lang| lang.name().to_string());
+                    (Some(contents), language)
+                } else {
+                    (None, None)
+                };
 
-                    let editor = SerializedEditor {
-                        abs_path,
-                        contents,
-                        language,
-                        mtime,
-                    };
-                    DB.save_serialized_editor(item_id, workspace_id, editor)
-                        .await
-                        .context("failed to save serialized editor")
-                })
-                .await
-                .context("failed to save contents of buffer")?;
+                let editor = SerializedEditor {
+                    abs_path,
+                    contents,
+                    language,
+                    mtime,
+                };
+                DB.save_serialized_editor(item_id, workspace_id, editor)
+                    .await
+                    .context("failed to save serialized editor")
+            })
+            .await
+            .context("failed to save contents of buffer")?;
 
             Ok(())
         }))
@@ -1323,6 +1344,28 @@ impl SearchableItem for Editor {
         }
     }
 
+    fn supported_options(&self) -> SearchOptions {
+        if self.in_project_search {
+            SearchOptions {
+                case: true,
+                word: true,
+                regex: true,
+                replacement: false,
+                selection: false,
+                find_in_results: true,
+            }
+        } else {
+            SearchOptions {
+                case: true,
+                word: true,
+                regex: true,
+                replacement: true,
+                selection: true,
+                find_in_results: false,
+            }
+        }
+    }
+
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
         let setting = EditorSettings::get_global(cx).seed_search_query_from_cursor;
         let snapshot = &self.snapshot(window, cx).buffer_snapshot;
@@ -1375,11 +1418,9 @@ impl SearchableItem for Editor {
         cx: &mut Context<Self>,
     ) {
         self.unfold_ranges(matches, false, false, cx);
-        let mut ranges = Vec::new();
-        for m in matches {
-            ranges.push(self.range_for_match(m))
-        }
-        self.change_selections(None, window, cx, |s| s.select_ranges(ranges));
+        self.change_selections(None, window, cx, |s| {
+            s.select_ranges(matches.iter().cloned())
+        });
     }
     fn replace(
         &mut self,
@@ -1498,7 +1539,7 @@ impl SearchableItem for Editor {
                 ranges.iter().cloned().collect::<Vec<_>>()
             });
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let mut ranges = Vec::new();
 
             let search_within_ranges = if search_within_ranges.is_empty() {
@@ -1691,6 +1732,7 @@ mod tests {
     use language::{LanguageMatcher, TestFile};
     use project::FakeFs;
     use std::path::{Path, PathBuf};
+    use util::path;
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut App) {
@@ -1745,24 +1787,24 @@ mod tests {
         init_test(cx, |_| {});
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_file("/file.rs", Default::default()).await;
+        fs.insert_file(path!("/file.rs"), Default::default()).await;
 
         // Test case 1: Deserialize with path and contents
         {
-            let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (workspace, cx) =
                 cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
             let item_id = 1234 as ItemId;
             let mtime = fs
-                .metadata(Path::new("/file.rs"))
+                .metadata(Path::new(path!("/file.rs")))
                 .await
                 .unwrap()
                 .unwrap()
                 .mtime;
 
             let serialized_editor = SerializedEditor {
-                abs_path: Some(PathBuf::from("/file.rs")),
+                abs_path: Some(PathBuf::from(path!("/file.rs"))),
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(mtime),
@@ -1786,7 +1828,7 @@ mod tests {
 
         // Test case 2: Deserialize with only path
         {
-            let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (workspace, cx) =
                 cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
@@ -1794,7 +1836,7 @@ mod tests {
 
             let item_id = 5678 as ItemId;
             let serialized_editor = SerializedEditor {
-                abs_path: Some(PathBuf::from("/file.rs")),
+                abs_path: Some(PathBuf::from(path!("/file.rs"))),
                 contents: None,
                 language: None,
                 mtime: None,
@@ -1819,7 +1861,7 @@ mod tests {
 
         // Test case 3: Deserialize with no path (untitled buffer, with content and language)
         {
-            let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             // Add Rust to the language, so that we can restore the language of the buffer
             project.update(cx, |project, _| project.languages().add(rust_language()));
 
@@ -1858,7 +1900,7 @@ mod tests {
 
         // Test case 4: Deserialize with path, content, and old mtime
         {
-            let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (workspace, cx) =
                 cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
@@ -1867,7 +1909,7 @@ mod tests {
             let item_id = 9345 as ItemId;
             let old_mtime = MTime::from_seconds_and_nanos(0, 50);
             let serialized_editor = SerializedEditor {
-                abs_path: Some(PathBuf::from("/file.rs")),
+                abs_path: Some(PathBuf::from(path!("/file.rs"))),
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(old_mtime),

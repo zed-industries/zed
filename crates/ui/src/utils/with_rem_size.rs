@@ -22,6 +22,8 @@ impl WithRemSize {
 
     /// Block the mouse from interacting with this element or any of its children
     /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
+    ///
+    /// [`Interactivity::occlude_mouse`]: gpui::Interactivity::occlude_mouse
     pub fn occlude(mut self) -> Self {
         self.div = self.div.occlude();
         self

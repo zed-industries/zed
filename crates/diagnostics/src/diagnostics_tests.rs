@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use unindent::Unindent as _;
-use util::{post_inc, RandomCharIter};
+use util::{path, post_inc, RandomCharIter};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -33,7 +33,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/test",
+        path!("/test"),
         json!({
             "consts.rs": "
                 const a: i32 = 'a';
@@ -59,7 +59,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     .await;
 
     let language_server_id = LanguageServerId(0);
-    let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
@@ -70,7 +70,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         lsp_store
             .update_diagnostic_entries(
                 language_server_id,
-                PathBuf::from("/test/main.rs"),
+                PathBuf::from(path!("/test/main.rs")),
                 None,
                 vec![
                     DiagnosticEntry {
@@ -150,7 +150,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     // Open the project diagnostics view while there are already diagnostics.
-    let diagnostics = window.build_model(cx, |window, cx| {
+    let diagnostics = window.build_entity(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
@@ -234,7 +234,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         lsp_store
             .update_diagnostic_entries(
                 language_server_id,
-                PathBuf::from("/test/consts.rs"),
+                PathBuf::from(path!("/test/consts.rs")),
                 None,
                 vec![DiagnosticEntry {
                     range: Unclipped(PointUtf16::new(0, 15))..Unclipped(PointUtf16::new(0, 15)),
@@ -341,7 +341,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         lsp_store
             .update_diagnostic_entries(
                 language_server_id,
-                PathBuf::from("/test/consts.rs"),
+                PathBuf::from(path!("/test/consts.rs")),
                 None,
                 vec![
                     DiagnosticEntry {
@@ -464,7 +464,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/test",
+        path!("/test"),
         json!({
             "main.js": "
                 a();
@@ -479,13 +479,13 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 
     let server_id_1 = LanguageServerId(100);
     let server_id_2 = LanguageServerId(101);
-    let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
 
-    let diagnostics = window.build_model(cx, |window, cx| {
+    let diagnostics = window.build_entity(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
@@ -504,7 +504,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         lsp_store
             .update_diagnostic_entries(
                 server_id_1,
-                PathBuf::from("/test/main.js"),
+                PathBuf::from(path!("/test/main.js")),
                 None,
                 vec![DiagnosticEntry {
                     range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 1)),
@@ -557,7 +557,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         lsp_store
             .update_diagnostic_entries(
                 server_id_2,
-                PathBuf::from("/test/main.js"),
+                PathBuf::from(path!("/test/main.js")),
                 None,
                 vec![DiagnosticEntry {
                     range: Unclipped(PointUtf16::new(1, 0))..Unclipped(PointUtf16::new(1, 1)),
@@ -619,7 +619,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         lsp_store
             .update_diagnostic_entries(
                 server_id_1,
-                PathBuf::from("/test/main.js"),
+                PathBuf::from(path!("/test/main.js")),
                 None,
                 vec![DiagnosticEntry {
                     range: Unclipped(PointUtf16::new(2, 0))..Unclipped(PointUtf16::new(2, 1)),
@@ -638,7 +638,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         lsp_store
             .update_diagnostic_entries(
                 server_id_2,
-                PathBuf::from("/test/main.rs"),
+                PathBuf::from(path!("/test/main.rs")),
                 None,
                 vec![],
                 cx,
@@ -689,7 +689,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
         lsp_store
             .update_diagnostic_entries(
                 server_id_2,
-                PathBuf::from("/test/main.js"),
+                PathBuf::from(path!("/test/main.js")),
                 None,
                 vec![DiagnosticEntry {
                     range: Unclipped(PointUtf16::new(3, 0))..Unclipped(PointUtf16::new(3, 1)),
@@ -755,15 +755,15 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
         .unwrap_or(10);
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/test", json!({})).await;
+    fs.insert_tree(path!("/test"), json!({})).await;
 
-    let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
 
-    let mutated_diagnostics = window.build_model(cx, |window, cx| {
+    let mutated_diagnostics = window.build_entity(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
@@ -817,7 +817,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
                         // insert a set of diagnostics for a new path
                         _ => {
                             let path: PathBuf =
-                                format!("/test/{}.rs", post_inc(&mut next_filename)).into();
+                                format!(path!("/test/{}.rs"), post_inc(&mut next_filename)).into();
                             let len = rng.gen_range(128..256);
                             let content =
                                 RandomCharIter::new(&mut rng).take(len).collect::<String>();
@@ -870,7 +870,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     cx.run_until_parked();
 
     log::info!("constructing reference diagnostics view");
-    let reference_diagnostics = window.build_model(cx, |window, cx| {
+    let reference_diagnostics = window.build_entity(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
@@ -891,7 +891,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
         for diagnostic in diagnostics {
             let found_excerpt = reference_excerpts.iter().any(|info| {
                 let row_range = info.range.context.start.row..info.range.context.end.row;
-                info.path == path.strip_prefix("/test").unwrap()
+                info.path == path.strip_prefix(path!("/test")).unwrap()
                     && info.language_server == language_server_id
                     && row_range.contains(&diagnostic.range.start.0.row)
             });

@@ -15,8 +15,8 @@ use util::ResultExt;
 pub const ACKNOWLEDGE_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
 
 pub(crate) fn init(client: &AnyProtoClient) {
-    client.add_model_message_handler(ChannelBuffer::handle_update_channel_buffer);
-    client.add_model_message_handler(ChannelBuffer::handle_update_channel_buffer_collaborators);
+    client.add_entity_message_handler(ChannelBuffer::handle_update_channel_buffer);
+    client.add_entity_message_handler(ChannelBuffer::handle_update_channel_buffer_collaborators);
 }
 
 pub struct ChannelBuffer {
@@ -81,7 +81,7 @@ impl ChannelBuffer {
                 collaborators: Default::default(),
                 acknowledge_task: None,
                 channel_id: channel.id,
-                subscription: Some(subscription.set_model(&cx.entity(), &mut cx.to_async())),
+                subscription: Some(subscription.set_entity(&cx.entity(), &mut cx.to_async())),
                 user_store,
                 channel_store,
             };

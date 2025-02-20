@@ -8,6 +8,7 @@ use anyhow::Result;
 use collections::FxHashSet;
 use refineable::Refineable;
 use std::mem;
+use std::rc::Rc;
 use std::{any::TypeId, fmt, ops::Range};
 
 struct AnyViewState {
@@ -39,7 +40,9 @@ impl<V: Render> Element for Entity<V> {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut element = self.update(cx, |view, cx| view.render(window, cx).into_any_element());
-        let layout_id = element.request_layout(window, cx);
+        let layout_id = window.with_rendered_view(self.entity_id(), |window| {
+            element.request_layout(window, cx)
+        });
         (layout_id, element)
     }
 
@@ -52,7 +55,7 @@ impl<V: Render> Element for Entity<V> {
         cx: &mut App,
     ) {
         window.set_view_id(self.entity_id());
-        element.prepaint(window, cx);
+        window.with_rendered_view(self.entity_id(), |window| element.prepaint(window, cx));
     }
 
     fn paint(
@@ -64,22 +67,22 @@ impl<V: Render> Element for Entity<V> {
         window: &mut Window,
         cx: &mut App,
     ) {
-        element.paint(window, cx);
+        window.with_rendered_view(self.entity_id(), |window| element.paint(window, cx));
     }
 }
 
-/// A dynamically-typed handle to a view, which can be downcast to a [View] for a specific type.
+/// A dynamically-typed handle to a view, which can be downcast to a [Entity] for a specific type.
 #[derive(Clone, Debug)]
 pub struct AnyView {
-    model: AnyEntity,
+    entity: AnyEntity,
     render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
-    cached_style: Option<StyleRefinement>,
+    cached_style: Option<Rc<StyleRefinement>>,
 }
 
 impl<V: Render> From<Entity<V>> for AnyView {
     fn from(value: Entity<V>) -> Self {
         AnyView {
-            model: value.into_any(),
+            entity: value.into_any(),
             render: any_view::render::<V>,
             cached_style: None,
         }
@@ -88,28 +91,28 @@ impl<V: Render> From<Entity<V>> for AnyView {
 
 impl AnyView {
     /// Indicate that this view should be cached when using it as an element.
-    /// When using this method, the view's previous layout and paint will be recycled from the previous frame if [ViewContext::notify] has not been called since it was rendered.
-    /// The one exception is when [WindowContext::refresh] is called, in which case caching is ignored.
+    /// When using this method, the view's previous layout and paint will be recycled from the previous frame if [Context::notify] has not been called since it was rendered.
+    /// The one exception is when [Window::refresh] is called, in which case caching is ignored.
     pub fn cached(mut self, style: StyleRefinement) -> Self {
-        self.cached_style = Some(style);
+        self.cached_style = Some(style.into());
         self
     }
 
     /// Convert this to a weak handle.
     pub fn downgrade(&self) -> AnyWeakView {
         AnyWeakView {
-            model: self.model.downgrade(),
+            entity: self.entity.downgrade(),
             render: self.render,
         }
     }
 
-    /// Convert this to a [View] of a specific type.
+    /// Convert this to a [Entity] of a specific type.
     /// If this handle does not contain a view of the specified type, returns itself in an `Err` variant.
     pub fn downcast<T: 'static>(self) -> Result<Entity<T>, Self> {
-        match self.model.downcast() {
-            Ok(model) => Ok(model),
-            Err(model) => Err(Self {
-                model,
+        match self.entity.downcast() {
+            Ok(entity) => Ok(entity),
+            Err(entity) => Err(Self {
+                entity,
                 render: self.render,
                 cached_style: self.cached_style,
             }),
@@ -118,18 +121,18 @@ impl AnyView {
 
     /// Gets the [TypeId] of the underlying view.
     pub fn entity_type(&self) -> TypeId {
-        self.model.entity_type
+        self.entity.entity_type
     }
 
     /// Gets the entity id of this handle.
     pub fn entity_id(&self) -> EntityId {
-        self.model.entity_id()
+        self.entity.entity_id()
     }
 }
 
 impl PartialEq for AnyView {
     fn eq(&self, other: &Self) -> bool {
-        self.model == other.model
+        self.entity == other.entity
     }
 }
 
@@ -149,16 +152,18 @@ impl Element for AnyView {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        if let Some(style) = self.cached_style.as_ref() {
-            let mut root_style = Style::default();
-            root_style.refine(style);
-            let layout_id = window.request_layout(root_style, None, cx);
-            (layout_id, None)
-        } else {
-            let mut element = (self.render)(self, window, cx);
-            let layout_id = element.request_layout(window, cx);
-            (layout_id, Some(element))
-        }
+        window.with_rendered_view(self.entity_id(), |window| {
+            if let Some(style) = self.cached_style.as_ref() {
+                let mut root_style = Style::default();
+                root_style.refine(style);
+                let layout_id = window.request_layout(root_style, None, cx);
+                (layout_id, None)
+            } else {
+                let mut element = (self.render)(self, window, cx);
+                let layout_id = element.request_layout(window, cx);
+                (layout_id, Some(element))
+            }
+        })
     }
 
     fn prepaint(
@@ -170,62 +175,66 @@ impl Element for AnyView {
         cx: &mut App,
     ) -> Option<AnyElement> {
         window.set_view_id(self.entity_id());
-        if self.cached_style.is_some() {
-            window.with_element_state::<AnyViewState, _>(
-                global_id.unwrap(),
-                |element_state, window| {
-                    let content_mask = window.content_mask();
-                    let text_style = window.text_style();
+        window.with_rendered_view(self.entity_id(), |window| {
+            if self.cached_style.is_some() {
+                window.with_element_state::<AnyViewState, _>(
+                    global_id.unwrap(),
+                    |element_state, window| {
+                        let content_mask = window.content_mask();
+                        let text_style = window.text_style();
 
-                    if let Some(mut element_state) = element_state {
-                        if element_state.cache_key.bounds == bounds
-                            && element_state.cache_key.content_mask == content_mask
-                            && element_state.cache_key.text_style == text_style
-                            && !window.dirty_views.contains(&self.entity_id())
-                            && !window.refreshing
-                        {
-                            let prepaint_start = window.prepaint_index();
-                            window.reuse_prepaint(element_state.prepaint_range.clone());
-                            cx.entities
-                                .extend_accessed(&element_state.accessed_entities);
-                            let prepaint_end = window.prepaint_index();
-                            element_state.prepaint_range = prepaint_start..prepaint_end;
+                        if let Some(mut element_state) = element_state {
+                            if element_state.cache_key.bounds == bounds
+                                && element_state.cache_key.content_mask == content_mask
+                                && element_state.cache_key.text_style == text_style
+                                && !window.dirty_views.contains(&self.entity_id())
+                                && !window.refreshing
+                            {
+                                let prepaint_start = window.prepaint_index();
+                                window.reuse_prepaint(element_state.prepaint_range.clone());
+                                cx.entities
+                                    .extend_accessed(&element_state.accessed_entities);
+                                let prepaint_end = window.prepaint_index();
+                                element_state.prepaint_range = prepaint_start..prepaint_end;
 
-                            return (None, element_state);
+                                return (None, element_state);
+                            }
                         }
-                    }
 
-                    let refreshing = mem::replace(&mut window.refreshing, true);
-                    let prepaint_start = window.prepaint_index();
-                    let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
-                        let mut element = (self.render)(self, window, cx);
-                        element.layout_as_root(bounds.size.into(), window, cx);
-                        element.prepaint_at(bounds.origin, window, cx);
-                        element
-                    });
-                    let prepaint_end = window.prepaint_index();
-                    window.refreshing = refreshing;
+                        let refreshing = mem::replace(&mut window.refreshing, true);
+                        let prepaint_start = window.prepaint_index();
+                        let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
+                            let mut element = (self.render)(self, window, cx);
+                            element.layout_as_root(bounds.size.into(), window, cx);
+                            element.prepaint_at(bounds.origin, window, cx);
+                            element
+                        });
 
-                    (
-                        Some(element),
-                        AnyViewState {
-                            accessed_entities,
-                            prepaint_range: prepaint_start..prepaint_end,
-                            paint_range: PaintIndex::default()..PaintIndex::default(),
-                            cache_key: ViewCacheKey {
-                                bounds,
-                                content_mask,
-                                text_style,
+                        let prepaint_end = window.prepaint_index();
+                        window.refreshing = refreshing;
+
+                        (
+                            Some(element),
+                            AnyViewState {
+                                accessed_entities,
+                                prepaint_range: prepaint_start..prepaint_end,
+                                paint_range: PaintIndex::default()..PaintIndex::default(),
+                                cache_key: ViewCacheKey {
+                                    bounds,
+                                    content_mask,
+                                    text_style,
+                                },
                             },
-                        },
-                    )
-                },
-            )
-        } else {
-            let mut element = element.take().unwrap();
-            element.prepaint(window, cx);
-            Some(element)
-        }
+                        )
+                    },
+                )
+            } else {
+                let mut element = element.take().unwrap();
+                element.prepaint(window, cx);
+
+                Some(element)
+            }
+        })
     }
 
     fn paint(
@@ -237,31 +246,33 @@ impl Element for AnyView {
         window: &mut Window,
         cx: &mut App,
     ) {
-        if self.cached_style.is_some() {
-            window.with_element_state::<AnyViewState, _>(
-                global_id.unwrap(),
-                |element_state, window| {
-                    let mut element_state = element_state.unwrap();
+        window.with_rendered_view(self.entity_id(), |window| {
+            if self.cached_style.is_some() {
+                window.with_element_state::<AnyViewState, _>(
+                    global_id.unwrap(),
+                    |element_state, window| {
+                        let mut element_state = element_state.unwrap();
 
-                    let paint_start = window.paint_index();
+                        let paint_start = window.paint_index();
 
-                    if let Some(element) = element {
-                        let refreshing = mem::replace(&mut window.refreshing, true);
-                        element.paint(window, cx);
-                        window.refreshing = refreshing;
-                    } else {
-                        window.reuse_paint(element_state.paint_range.clone());
-                    }
+                        if let Some(element) = element {
+                            let refreshing = mem::replace(&mut window.refreshing, true);
+                            element.paint(window, cx);
+                            window.refreshing = refreshing;
+                        } else {
+                            window.reuse_paint(element_state.paint_range.clone());
+                        }
 
-                    let paint_end = window.paint_index();
-                    element_state.paint_range = paint_start..paint_end;
+                        let paint_end = window.paint_index();
+                        element_state.paint_range = paint_start..paint_end;
 
-                    ((), element_state)
-                },
-            )
-        } else {
-            element.as_mut().unwrap().paint(window, cx);
-        }
+                        ((), element_state)
+                    },
+                )
+            } else {
+                element.as_mut().unwrap().paint(window, cx);
+            }
+        });
     }
 }
 
@@ -283,16 +294,16 @@ impl IntoElement for AnyView {
 
 /// A weak, dynamically-typed view handle that does not prevent the view from being released.
 pub struct AnyWeakView {
-    model: AnyWeakEntity,
+    entity: AnyWeakEntity,
     render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
 }
 
 impl AnyWeakView {
     /// Convert to a strongly-typed handle if the referenced view has not yet been released.
     pub fn upgrade(&self) -> Option<AnyView> {
-        let model = self.model.upgrade()?;
+        let entity = self.entity.upgrade()?;
         Some(AnyView {
-            model,
+            entity,
             render: self.render,
             cached_style: None,
         })
@@ -302,7 +313,7 @@ impl AnyWeakView {
 impl<V: 'static + Render> From<WeakEntity<V>> for AnyWeakView {
     fn from(view: WeakEntity<V>) -> Self {
         AnyWeakView {
-            model: view.into(),
+            entity: view.into(),
             render: any_view::render::<V>,
         }
     }
@@ -310,14 +321,14 @@ impl<V: 'static + Render> From<WeakEntity<V>> for AnyWeakView {
 
 impl PartialEq for AnyWeakView {
     fn eq(&self, other: &Self) -> bool {
-        self.model == other.model
+        self.entity == other.entity
     }
 }
 
 impl std::fmt::Debug for AnyWeakView {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AnyWeakView")
-            .field("entity_id", &self.model.entity_id)
+            .field("entity_id", &self.entity.entity_id)
             .finish_non_exhaustive()
     }
 }

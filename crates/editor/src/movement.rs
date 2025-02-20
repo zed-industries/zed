@@ -864,7 +864,7 @@ mod tests {
             })
             .collect();
         let snapshot = display_map.update(cx, |map, cx| {
-            map.splice_inlays(Vec::new(), inlays, cx);
+            map.splice_inlays(&[], inlays, cx);
             map.snapshot(cx)
         });
 
@@ -1184,6 +1184,7 @@ mod tests {
     fn init_test(cx: &mut gpui::App) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        workspace::init_settings(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         language::init(cx);
         crate::init(cx);

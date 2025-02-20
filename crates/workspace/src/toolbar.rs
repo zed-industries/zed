@@ -82,7 +82,7 @@ impl Toolbar {
     }
 
     fn secondary_items(&self) -> impl Iterator<Item = &dyn ToolbarItemViewHandle> {
-        self.items.iter().filter_map(|(item, location)| {
+        self.items.iter().rev().filter_map(|(item, location)| {
             if *location == ToolbarItemLocation::Secondary {
                 Some(item.as_ref())
             } else {
@@ -98,7 +98,7 @@ impl Render for Toolbar {
             return div();
         }
 
-        let secondary_item = self.secondary_items().next().map(|item| item.to_any());
+        let secondary_items = self.secondary_items().map(|item| item.to_any());
 
         let has_left_items = self.left_items().count() > 0;
         let has_right_items = self.right_items().count() > 0;
@@ -145,7 +145,7 @@ impl Render for Toolbar {
                         }),
                 )
             })
-            .children(secondary_item)
+            .children(secondary_items)
     }
 }
 

@@ -244,18 +244,17 @@ impl TestServer {
                             .await
                             .expect("retrieving user failed")
                             .unwrap();
-                        cx.background_executor()
-                            .spawn(server.handle_connection(
-                                server_conn,
-                                client_name,
-                                Principal::User(user),
-                                ZedVersion(SemanticVersion::new(1, 0, 0)),
-                                None,
-                                None,
-                                Some(connection_id_tx),
-                                Executor::Deterministic(cx.background_executor().clone()),
-                            ))
-                            .detach();
+                        cx.background_spawn(server.handle_connection(
+                            server_conn,
+                            client_name,
+                            Principal::User(user),
+                            ZedVersion(SemanticVersion::new(1, 0, 0)),
+                            None,
+                            None,
+                            Some(connection_id_tx),
+                            Executor::Deterministic(cx.background_executor().clone()),
+                        ))
+                        .detach();
                         let connection_id = connection_id_rx.await.map_err(|e| {
                             EstablishConnectionError::Other(anyhow!(
                                 "{} (is server shutting down?)",
@@ -849,10 +848,10 @@ impl TestClient {
     ) -> (Entity<Workspace>, &'a mut VisualTestContext) {
         let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
 
-        let model = window.root(cx).unwrap();
+        let entity = window.root(cx).unwrap();
         let cx = VisualTestContext::from_window(*window.deref(), cx).as_mut();
         // it might be nice to try and cleanup these at the end of each test.
-        (model, cx)
+        (entity, cx)
     }
 }
 
@@ -861,9 +860,9 @@ pub fn open_channel_notes(
     cx: &mut VisualTestContext,
 ) -> Task<anyhow::Result<Entity<ChannelView>>> {
     let window = cx.update(|_, cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
-    let model = window.root(cx).unwrap();
+    let entity = window.root(cx).unwrap();
 
-    cx.update(|window, cx| ChannelView::open(channel_id, None, model.clone(), window, cx))
+    cx.update(|window, cx| ChannelView::open(channel_id, None, entity.clone(), window, cx))
 }
 
 impl Drop for TestClient {

@@ -1,5 +1,6 @@
-use gpui::{App, Context, Entity};
+use gpui::{App, Context, Entity, SharedString};
 use language::Buffer;
+use project::Project;
 use std::ops::Range;
 
 // TODO: Find a better home for `Direction`.
@@ -14,17 +15,54 @@ pub enum Direction {
 
 #[derive(Clone)]
 pub struct InlineCompletion {
+    /// The ID of the completion, if it has one.
+    pub id: Option<SharedString>,
     pub edits: Vec<(Range<language::Anchor>, String)>,
+    pub edit_preview: Option<language::EditPreview>,
 }
 
-pub trait InlineCompletionProvider: 'static + Sized {
+pub enum DataCollectionState {
+    /// The provider doesn't support data collection.
+    Unsupported,
+    /// Data collection is enabled.
+    Enabled { is_project_open_source: bool },
+    /// Data collection is disabled or unanswered.
+    Disabled { is_project_open_source: bool },
+}
+
+impl DataCollectionState {
+    pub fn is_supported(&self) -> bool {
+        !matches!(self, DataCollectionState::Unsupported { .. })
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, DataCollectionState::Enabled { .. })
+    }
+
+    pub fn is_project_open_source(&self) -> bool {
+        match self {
+            Self::Enabled {
+                is_project_open_source,
+            }
+            | Self::Disabled {
+                is_project_open_source,
+            } => *is_project_open_source,
+            _ => false,
+        }
+    }
+}
+
+pub trait EditPredictionProvider: 'static + Sized {
     fn name() -> &'static str;
     fn display_name() -> &'static str;
     fn show_completions_in_menu() -> bool;
-    fn show_completions_in_normal_mode() -> bool;
     fn show_tab_accept_marker() -> bool {
         false
     }
+    fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
+        DataCollectionState::Unsupported
+    }
+    fn toggle_data_collection(&mut self, _cx: &mut App) {}
     fn is_enabled(
         &self,
         buffer: &Entity<Buffer>,
@@ -34,6 +72,7 @@ pub trait InlineCompletionProvider: 'static + Sized {
     fn is_refreshing(&self) -> bool;
     fn refresh(
         &mut self,
+        project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
@@ -69,12 +108,14 @@ pub trait InlineCompletionProviderHandle {
         cx: &App,
     ) -> bool;
     fn show_completions_in_menu(&self) -> bool;
-    fn show_completions_in_normal_mode(&self) -> bool;
     fn show_tab_accept_marker(&self) -> bool;
+    fn data_collection_state(&self, cx: &App) -> DataCollectionState;
+    fn toggle_data_collection(&self, cx: &mut App);
     fn needs_terms_acceptance(&self, cx: &App) -> bool;
     fn is_refreshing(&self, cx: &App) -> bool;
     fn refresh(
         &self,
+        project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
@@ -99,7 +140,7 @@ pub trait InlineCompletionProviderHandle {
 
 impl<T> InlineCompletionProviderHandle for Entity<T>
 where
-    T: InlineCompletionProvider,
+    T: EditPredictionProvider,
 {
     fn name(&self) -> &'static str {
         T::name()
@@ -113,12 +154,16 @@ where
         T::show_completions_in_menu()
     }
 
-    fn show_completions_in_normal_mode(&self) -> bool {
-        T::show_completions_in_normal_mode()
-    }
-
     fn show_tab_accept_marker(&self) -> bool {
         T::show_tab_accept_marker()
+    }
+
+    fn data_collection_state(&self, cx: &App) -> DataCollectionState {
+        self.read(cx).data_collection_state(cx)
+    }
+
+    fn toggle_data_collection(&self, cx: &mut App) {
+        self.update(cx, |this, cx| this.toggle_data_collection(cx))
     }
 
     fn is_enabled(
@@ -140,13 +185,14 @@ where
 
     fn refresh(
         &self,
+        project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
         cx: &mut App,
     ) {
         self.update(cx, |this, cx| {
-            this.refresh(buffer, cursor_position, debounce, cx)
+            this.refresh(project, buffer, cursor_position, debounce, cx)
         })
     }
 

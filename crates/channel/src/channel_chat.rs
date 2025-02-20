@@ -95,9 +95,9 @@ pub enum ChannelChatEvent {
 
 impl EventEmitter<ChannelChatEvent> for ChannelChat {}
 pub fn init(client: &AnyProtoClient) {
-    client.add_model_message_handler(ChannelChat::handle_message_sent);
-    client.add_model_message_handler(ChannelChat::handle_message_removed);
-    client.add_model_message_handler(ChannelChat::handle_message_updated);
+    client.add_entity_message_handler(ChannelChat::handle_message_sent);
+    client.add_entity_message_handler(ChannelChat::handle_message_removed);
+    client.add_entity_message_handler(ChannelChat::handle_message_updated);
 }
 
 impl ChannelChat {
@@ -132,7 +132,7 @@ impl ChannelChat {
                 last_acknowledged_id: None,
                 rng: StdRng::from_entropy(),
                 first_loaded_message_id: None,
-                _subscription: subscription.set_model(&cx.entity(), &mut cx.to_async()),
+                _subscription: subscription.set_entity(&cx.entity(), &mut cx.to_async()),
             }
         })?;
         Self::handle_loaded_messages(

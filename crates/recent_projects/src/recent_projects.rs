@@ -11,7 +11,7 @@ use gpui::{
 };
 use ordered_float::OrderedFloat;
 use picker::{
-    highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
+    highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
     Picker, PickerDelegate,
 };
 pub use remote_servers::RemoteServerProjects;
@@ -386,7 +386,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .unzip();
 
         let highlighted_match = HighlightedMatchWithPaths {
-            match_label: HighlightedText::join(match_labels.into_iter().flatten(), ", "),
+            match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
             paths,
         };
 
@@ -465,14 +465,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child(
                     Button::new("remote", "Open Remote Folder")
-                        .key_binding(KeyBinding::for_action(&OpenRemote, window))
+                        .key_binding(KeyBinding::for_action(&OpenRemote, window, cx))
                         .on_click(|_, window, cx| {
                             window.dispatch_action(OpenRemote.boxed_clone(), cx)
                         }),
                 )
                 .child(
                     Button::new("local", "Open Local Folder")
-                        .key_binding(KeyBinding::for_action(&workspace::Open, window))
+                        .key_binding(KeyBinding::for_action(&workspace::Open, window, cx))
                         .on_click(|_, window, cx| {
                             window.dispatch_action(workspace::Open.boxed_clone(), cx)
                         }),
@@ -487,7 +487,7 @@ fn highlights_for_path(
     path: &Path,
     match_positions: &Vec<usize>,
     path_start_offset: usize,
-) -> (Option<HighlightedText>, HighlightedText) {
+) -> (Option<HighlightedMatch>, HighlightedMatch) {
     let path_string = path.to_string_lossy();
     let path_char_count = path_string.chars().count();
     // Get the subset of match highlight positions that line up with the given path.
@@ -513,7 +513,7 @@ fn highlights_for_path(
             .take_while(|position| *position < file_name_start + char_count)
             .map(|position| position - file_name_start)
             .collect::<Vec<_>>();
-        HighlightedText {
+        HighlightedMatch {
             text: text.to_string(),
             highlight_positions,
             char_count,
@@ -523,7 +523,7 @@ fn highlights_for_path(
 
     (
         file_name_text_and_positions,
-        HighlightedText {
+        HighlightedMatch {
             text: path_string.to_string(),
             highlight_positions: path_positions,
             char_count: path_char_count,
@@ -595,6 +595,7 @@ mod tests {
     use project::{project_settings::ProjectSettings, Project};
     use serde_json::json;
     use settings::SettingsStore;
+    use util::path;
     use workspace::{open_paths, AppState};
 
     use super::*;
@@ -615,7 +616,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                "/dir",
+                path!("/dir"),
                 json!({
                     "main.ts": "a"
                 }),
@@ -623,7 +624,7 @@ mod tests {
             .await;
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/dir/main.ts")],
+                &[PathBuf::from(path!("/dir/main.ts"))],
                 app_state,
                 workspace::OpenOptions::default(),
                 cx,
@@ -670,7 +671,7 @@ mod tests {
                     }];
                     delegate.set_workspaces(vec![(
                         WorkspaceId::default(),
-                        SerializedWorkspaceLocation::from_local_paths(vec!["/test/path/"]),
+                        SerializedWorkspaceLocation::from_local_paths(vec![path!("/test/path/")]),
                     )]);
                 });
             })
@@ -693,8 +694,7 @@ mod tests {
             cx.has_pending_prompt(),
             "Dirty workspace should prompt before opening the new recent project"
         );
-        // Cancel
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Cancel");
         assert!(
             !cx.has_pending_prompt(),
             "Should have no pending prompt after cancelling"

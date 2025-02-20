@@ -39,8 +39,8 @@ pub struct ChannelStore {
     channel_states: HashMap<ChannelId, ChannelState>,
     outgoing_invites: HashSet<(ChannelId, UserId)>,
     update_channels_tx: mpsc::UnboundedSender<proto::UpdateChannels>,
-    opened_buffers: HashMap<ChannelId, OpenedModelHandle<ChannelBuffer>>,
-    opened_chats: HashMap<ChannelId, OpenedModelHandle<ChannelChat>>,
+    opened_buffers: HashMap<ChannelId, OpenEntityHandle<ChannelBuffer>>,
+    opened_chats: HashMap<ChannelId, OpenEntityHandle<ChannelChat>>,
     client: Arc<Client>,
     did_subscribe: bool,
     user_store: Entity<UserStore>,
@@ -142,7 +142,7 @@ pub enum ChannelEvent {
 
 impl EventEmitter<ChannelEvent> for ChannelStore {}
 
-enum OpenedModelHandle<E> {
+enum OpenEntityHandle<E> {
     Open(WeakEntity<E>),
     Loading(Shared<Task<Result<Entity<E>, Arc<anyhow::Error>>>>),
 }
@@ -292,7 +292,7 @@ impl ChannelStore {
 
     pub fn has_open_channel_buffer(&self, channel_id: ChannelId, _cx: &App) -> bool {
         if let Some(buffer) = self.opened_buffers.get(&channel_id) {
-            if let OpenedModelHandle::Open(buffer) = buffer {
+            if let OpenEntityHandle::Open(buffer) = buffer {
                 return buffer.upgrade().is_some();
             }
         }
@@ -453,7 +453,7 @@ impl ChannelStore {
     fn open_channel_resource<T, F, Fut>(
         &mut self,
         channel_id: ChannelId,
-        get_map: fn(&mut Self) -> &mut HashMap<ChannelId, OpenedModelHandle<T>>,
+        get_map: fn(&mut Self) -> &mut HashMap<ChannelId, OpenEntityHandle<T>>,
         load: F,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<T>>>
@@ -465,15 +465,15 @@ impl ChannelStore {
         let task = loop {
             match get_map(self).entry(channel_id) {
                 hash_map::Entry::Occupied(e) => match e.get() {
-                    OpenedModelHandle::Open(model) => {
-                        if let Some(model) = model.upgrade() {
-                            break Task::ready(Ok(model)).shared();
+                    OpenEntityHandle::Open(entity) => {
+                        if let Some(entity) = entity.upgrade() {
+                            break Task::ready(Ok(entity)).shared();
                         } else {
                             get_map(self).remove(&channel_id);
                             continue;
                         }
                     }
-                    OpenedModelHandle::Loading(task) => {
+                    OpenEntityHandle::Loading(task) => {
                         break task.clone();
                     }
                 },
@@ -490,7 +490,7 @@ impl ChannelStore {
                         })
                         .shared();
 
-                    e.insert(OpenedModelHandle::Loading(task.clone()));
+                    e.insert(OpenEntityHandle::Loading(task.clone()));
                     cx.spawn({
                         let task = task.clone();
                         move |this, mut cx| async move {
@@ -499,7 +499,7 @@ impl ChannelStore {
                                 Ok(model) => {
                                     get_map(this).insert(
                                         channel_id,
-                                        OpenedModelHandle::Open(model.downgrade()),
+                                        OpenEntityHandle::Open(model.downgrade()),
                                     );
                                 }
                                 Err(_) => {
@@ -514,8 +514,7 @@ impl ChannelStore {
                 }
             }
         };
-        cx.background_executor()
-            .spawn(async move { task.await.map_err(|error| anyhow!("{}", error)) })
+        cx.background_spawn(async move { task.await.map_err(|error| anyhow!("{}", error)) })
     }
 
     pub fn is_channel_admin(&self, channel_id: ChannelId) -> bool {
@@ -781,7 +780,7 @@ impl ChannelStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             client
                 .request(proto::RespondToChannelInvite {
                     channel_id: channel_id.0,
@@ -900,7 +899,7 @@ impl ChannelStore {
         self.disconnect_channel_buffers_task.take();
 
         for chat in self.opened_chats.values() {
-            if let OpenedModelHandle::Open(chat) = chat {
+            if let OpenEntityHandle::Open(chat) = chat {
                 if let Some(chat) = chat.upgrade() {
                     chat.update(cx, |chat, cx| {
                         chat.rejoin(cx);
@@ -911,7 +910,7 @@ impl ChannelStore {
 
         let mut buffer_versions = Vec::new();
         for buffer in self.opened_buffers.values() {
-            if let OpenedModelHandle::Open(buffer) = buffer {
+            if let OpenEntityHandle::Open(buffer) = buffer {
                 if let Some(buffer) = buffer.upgrade() {
                     let channel_buffer = buffer.read(cx);
                     let buffer = channel_buffer.buffer().read(cx);
@@ -937,7 +936,7 @@ impl ChannelStore {
 
             this.update(&mut cx, |this, cx| {
                 this.opened_buffers.retain(|_, buffer| match buffer {
-                    OpenedModelHandle::Open(channel_buffer) => {
+                    OpenEntityHandle::Open(channel_buffer) => {
                         let Some(channel_buffer) = channel_buffer.upgrade() else {
                             return false;
                         };
@@ -975,21 +974,18 @@ impl ChannelStore {
 
                                 if let Some(operations) = operations {
                                     let client = this.client.clone();
-                                    cx.background_executor()
-                                        .spawn(async move {
-                                            let operations = operations.await;
-                                            for chunk in
-                                                language::proto::split_operations(operations)
-                                            {
-                                                client
-                                                    .send(proto::UpdateChannelBuffer {
-                                                        channel_id: channel_id.0,
-                                                        operations: chunk,
-                                                    })
-                                                    .ok();
-                                            }
-                                        })
-                                        .detach();
+                                    cx.background_spawn(async move {
+                                        let operations = operations.await;
+                                        for chunk in language::proto::split_operations(operations) {
+                                            client
+                                                .send(proto::UpdateChannelBuffer {
+                                                    channel_id: channel_id.0,
+                                                    operations: chunk,
+                                                })
+                                                .ok();
+                                        }
+                                    })
+                                    .detach();
                                     return true;
                                 }
                             }
@@ -998,7 +994,7 @@ impl ChannelStore {
                             false
                         })
                     }
-                    OpenedModelHandle::Loading(_) => true,
+                    OpenEntityHandle::Loading(_) => true,
                 });
             })
             .ok();
@@ -1018,7 +1014,7 @@ impl ChannelStore {
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
                         for (_, buffer) in this.opened_buffers.drain() {
-                            if let OpenedModelHandle::Open(buffer) = buffer {
+                            if let OpenEntityHandle::Open(buffer) = buffer {
                                 if let Some(buffer) = buffer.upgrade() {
                                     buffer.update(cx, |buffer, cx| buffer.disconnect(cx));
                                 }
@@ -1082,7 +1078,7 @@ impl ChannelStore {
                     {
                         continue;
                     }
-                    if let Some(OpenedModelHandle::Open(buffer)) =
+                    if let Some(OpenEntityHandle::Open(buffer)) =
                         self.opened_buffers.remove(&channel_id)
                     {
                         if let Some(buffer) = buffer.upgrade() {
@@ -1098,7 +1094,7 @@ impl ChannelStore {
                 let channel_changed = index.insert(channel);
 
                 if channel_changed {
-                    if let Some(OpenedModelHandle::Open(buffer)) = self.opened_buffers.get(&id) {
+                    if let Some(OpenEntityHandle::Open(buffer)) = self.opened_buffers.get(&id) {
                         if let Some(buffer) = buffer.upgrade() {
                             buffer.update(cx, ChannelBuffer::channel_changed);
                         }

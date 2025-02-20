@@ -3,7 +3,7 @@ use gpui::{hsla, App, Styled};
 use crate::prelude::*;
 use crate::ElevationIndex;
 
-fn elevated<E: Styled>(this: E, cx: &mut App, index: ElevationIndex) -> E {
+fn elevated<E: Styled>(this: E, cx: &App, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
         .rounded_lg()
         .border_1()
@@ -42,9 +42,9 @@ pub trait StyledExt: Styled + Sized {
         elevated(self, cx, ElevationIndex::Surface)
     }
 
-    /// See [`elevation_1`].
+    /// See [`elevation_1`](Self::elevation_1).
     ///
-    /// Renders a borderless version [`elevation_1`].
+    /// Renders a borderless version [`elevation_1`](Self::elevation_1).
     fn elevation_1_borderless(self, cx: &mut App) -> Self {
         elevated_borderless(self, cx, ElevationIndex::Surface)
     }
@@ -54,13 +54,13 @@ pub trait StyledExt: Styled + Sized {
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Examples: Notifications, Palettes, Detached/Floating Windows, Detached/Floating Panels
-    fn elevation_2(self, cx: &mut App) -> Self {
+    fn elevation_2(self, cx: &App) -> Self {
         elevated(self, cx, ElevationIndex::ElevatedSurface)
     }
 
-    /// See [`elevation_2`].
+    /// See [`elevation_2`](Self::elevation_2).
     ///
-    /// Renders a borderless version [`elevation_2`].
+    /// Renders a borderless version [`elevation_2`](Self::elevation_2).
     fn elevation_2_borderless(self, cx: &mut App) -> Self {
         elevated_borderless(self, cx, ElevationIndex::ElevatedSurface)
     }
@@ -78,9 +78,9 @@ pub trait StyledExt: Styled + Sized {
         elevated(self, cx, ElevationIndex::ModalSurface)
     }
 
-    /// See [`elevation_3`].
+    /// See [`elevation_3`](Self::elevation_3).
     ///
-    /// Renders a borderless version [`elevation_3`].
+    /// Renders a borderless version [`elevation_3`](Self::elevation_3).
     fn elevation_3_borderless(self, cx: &mut App) -> Self {
         elevated_borderless(self, cx, ElevationIndex::ModalSurface)
     }

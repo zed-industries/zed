@@ -559,8 +559,8 @@ pub(crate) enum BackgroundTag {
 /// A color space for color interpolation.
 ///
 /// References:
-/// - https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method
-/// - https://www.w3.org/TR/css-color-4/#typedef-color-space
+/// - <https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method>
+/// - <https://www.w3.org/TR/css-color-4/#typedef-color-space>
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C)]
 pub enum ColorSpace {
@@ -587,7 +587,7 @@ pub struct Background {
     pub(crate) tag: BackgroundTag,
     pub(crate) color_space: ColorSpace,
     pub(crate) solid: Hsla,
-    pub(crate) angle: f32,
+    pub(crate) gradient_angle_or_pattern_height: f32,
     pub(crate) colors: [LinearColorStop; 2],
     /// Padding for alignment for repr(C) layout.
     pad: u32,
@@ -600,7 +600,7 @@ impl Default for Background {
             tag: BackgroundTag::Solid,
             solid: Hsla::default(),
             color_space: ColorSpace::default(),
-            angle: 0.0,
+            gradient_angle_or_pattern_height: 0.0,
             colors: [LinearColorStop::default(), LinearColorStop::default()],
             pad: 0,
         }
@@ -608,10 +608,11 @@ impl Default for Background {
 }
 
 /// Creates a hash pattern background
-pub fn pattern_slash(color: Hsla) -> Background {
+pub fn pattern_slash(color: Hsla, thickness: f32) -> Background {
     Background {
         tag: BackgroundTag::PatternSlash,
         solid: color,
+        gradient_angle_or_pattern_height: thickness,
         ..Default::default()
     }
 }
@@ -622,7 +623,7 @@ pub fn pattern_slash(color: Hsla) -> Background {
 ///
 /// The `angle` is in degrees value in the range 0.0 to 360.0.
 ///
-/// https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient
+/// <https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient>
 pub fn linear_gradient(
     angle: f32,
     from: impl Into<LinearColorStop>,
@@ -630,7 +631,7 @@ pub fn linear_gradient(
 ) -> Background {
     Background {
         tag: BackgroundTag::LinearGradient,
-        angle,
+        gradient_angle_or_pattern_height: angle,
         colors: [from.into(), to.into()],
         ..Default::default()
     }
@@ -638,7 +639,7 @@ pub fn linear_gradient(
 
 /// A color stop in a linear gradient.
 ///
-/// https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient#linear-color-stop
+/// <https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient#linear-color-stop>
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 #[repr(C)]
 pub struct LinearColorStop {
@@ -671,7 +672,7 @@ impl LinearColorStop {
 impl Background {
     /// Use specified color space for color interpolation.
     ///
-    /// https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method
+    /// <https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method>
     pub fn color_space(mut self, color_space: ColorSpace) -> Self {
         self.color_space = color_space;
         self

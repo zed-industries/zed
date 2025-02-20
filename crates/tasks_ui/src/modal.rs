@@ -7,7 +7,7 @@ use gpui::{
     Focusable, InteractiveElement, ParentElement, Render, SharedString, Styled, Subscription, Task,
     WeakEntity, Window,
 };
-use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
+use picker::{highlighted_match_with_paths::HighlightedMatch, Picker, PickerDelegate};
 use project::{task_store::TaskStore, TaskSourceKind};
 use task::{ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
 use ui::{
@@ -356,7 +356,7 @@ impl PickerDelegate for TasksModalDelegate {
             Some(Tooltip::simple(tooltip_label_text, cx))
         };
 
-        let highlighted_location = HighlightedText {
+        let highlighted_location = HighlightedMatch {
             text: hit.string.clone(),
             highlight_positions: hit.positions.clone(),
             char_count: hit.string.chars().count(),
@@ -511,7 +511,7 @@ impl PickerDelegate for TasksModalDelegate {
                 .child(
                     left_button
                         .map(|(label, action)| {
-                            let keybind = KeyBinding::for_action(&*action, window);
+                            let keybind = KeyBinding::for_action(&*action, window, cx);
 
                             Button::new("edit-current-task", label)
                                 .label_size(LabelSize::Small)
@@ -530,7 +530,7 @@ impl PickerDelegate for TasksModalDelegate {
                             secondary: current_modifiers.secondary(),
                         }
                         .boxed_clone();
-                        this.children(KeyBinding::for_action(&*action, window).map(|keybind| {
+                        this.children(KeyBinding::for_action(&*action, window, cx).map(|keybind| {
                             let spawn_oneshot_label = if current_modifiers.secondary() {
                                 "Spawn Oneshot Without History"
                             } else {
@@ -545,26 +545,28 @@ impl PickerDelegate for TasksModalDelegate {
                                 })
                         }))
                     } else if current_modifiers.secondary() {
-                        this.children(KeyBinding::for_action(&menu::SecondaryConfirm, window).map(
-                            |keybind| {
-                                let label = if is_recent_selected {
-                                    "Rerun Without History"
-                                } else {
-                                    "Spawn Without History"
-                                };
-                                Button::new("spawn", label)
-                                    .label_size(LabelSize::Small)
-                                    .key_binding(keybind)
-                                    .on_click(move |_, window, cx| {
-                                        window.dispatch_action(
-                                            menu::SecondaryConfirm.boxed_clone(),
-                                            cx,
-                                        )
-                                    })
-                            },
-                        ))
+                        this.children(
+                            KeyBinding::for_action(&menu::SecondaryConfirm, window, cx).map(
+                                |keybind| {
+                                    let label = if is_recent_selected {
+                                        "Rerun Without History"
+                                    } else {
+                                        "Spawn Without History"
+                                    };
+                                    Button::new("spawn", label)
+                                        .label_size(LabelSize::Small)
+                                        .key_binding(keybind)
+                                        .on_click(move |_, window, cx| {
+                                            window.dispatch_action(
+                                                menu::SecondaryConfirm.boxed_clone(),
+                                                cx,
+                                            )
+                                        })
+                                },
+                            ),
+                        )
                     } else {
-                        this.children(KeyBinding::for_action(&menu::Confirm, window).map(
+                        this.children(KeyBinding::for_action(&menu::Confirm, window, cx).map(
                             |keybind| {
                                 let run_entry_label =
                                     if is_recent_selected { "Rerun" } else { "Spawn" };
@@ -603,6 +605,7 @@ mod tests {
     use project::{ContextProviderWithTasks, FakeFs, Project};
     use serde_json::json;
     use task::TaskTemplates;
+    use util::path;
     use workspace::CloseInactiveTabsAndPanes;
 
     use crate::{modal::Spawn, tests::init_test};
@@ -614,7 +617,7 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 ".zed": {
                     "tasks.json": r#"[
@@ -635,7 +638,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
@@ -654,7 +657,7 @@ mod tests {
 
         let _ = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/a.ts"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(path!("/dir/a.ts")), true, window, cx)
             })
             .await
             .unwrap();
@@ -778,7 +781,7 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 ".zed": {
                     "tasks.json": r#"[
@@ -800,7 +803,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
@@ -819,7 +822,7 @@ mod tests {
         let _ = workspace
             .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
-                    PathBuf::from("/dir/file_with.odd_extension"),
+                    PathBuf::from(path!("/dir/file_with.odd_extension")),
                     true,
                     window,
                     cx,
@@ -832,8 +835,8 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec![
-                "hello from /dir/file_with.odd_extension:1:1".to_string(),
-                "opened now: /dir".to_string()
+                concat!("hello from ", path!("/dir/file_with.odd_extension:1:1")).to_string(),
+                concat!("opened now: ", path!("/dir")).to_string(),
             ],
             "Second opened buffer should fill the context, labels should be trimmed if long enough"
         );
@@ -846,7 +849,7 @@ mod tests {
         let second_item = workspace
             .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
-                    PathBuf::from("/dir/file_without_extension"),
+                    PathBuf::from(path!("/dir/file_without_extension")),
                     true,
                     window,
                     cx,
@@ -868,8 +871,8 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec![
-                "hello from /dir/file_without_extension:2:3".to_string(),
-                "opened now: /dir".to_string()
+                concat!("hello from ", path!("/dir/file_without_extension:2:3")).to_string(),
+                concat!("opened now: ", path!("/dir")).to_string(),
             ],
             "Opened buffer should fill the context, labels should be trimmed if long enough"
         );
@@ -885,7 +888,7 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "a1.ts": "// a1",
                 "a2.ts": "// a2",
@@ -894,7 +897,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         project.read_with(cx, |project, _| {
             let language_registry = project.languages();
             language_registry.add(Arc::new(
@@ -955,7 +958,7 @@ mod tests {
 
         let _ts_file_1 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/a1.ts"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(path!("/dir/a1.ts")), true, window, cx)
             })
             .await
             .unwrap();
@@ -963,23 +966,28 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec![
-                "Another task from file /dir/a1.ts",
-                "TypeScript task from file /dir/a1.ts",
+                concat!("Another task from file ", path!("/dir/a1.ts")),
+                concat!("TypeScript task from file ", path!("/dir/a1.ts")),
                 "Task without variables",
             ],
             "Should open spawn TypeScript tasks for the opened file, tasks with most template variables above, all groups sorted alphanumerically"
         );
+
         emulate_task_schedule(
             tasks_picker,
             &project,
-            "TypeScript task from file /dir/a1.ts",
+            concat!("TypeScript task from file ", path!("/dir/a1.ts")),
             cx,
         );
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["TypeScript task from file /dir/a1.ts", "Another task from file /dir/a1.ts", "Task without variables"],
+            vec![
+                concat!("TypeScript task from file ", path!("/dir/a1.ts")),
+                concat!("Another task from file ", path!("/dir/a1.ts")),
+                "Task without variables",
+            ],
             "After spawning the task and getting it into the history, it should be up in the sort as recently used.
             Tasks with the same labels and context are deduplicated."
         );
@@ -991,7 +999,7 @@ mod tests {
 
         let _ts_file_2 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/a2.ts"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(path!("/dir/a2.ts")), true, window, cx)
             })
             .await
             .unwrap();
@@ -999,10 +1007,10 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec![
-                "TypeScript task from file /dir/a1.ts",
-                "Another task from file /dir/a2.ts",
-                "TypeScript task from file /dir/a2.ts",
-                "Task without variables"
+                concat!("TypeScript task from file ", path!("/dir/a1.ts")),
+                concat!("Another task from file ", path!("/dir/a2.ts")),
+                concat!("TypeScript task from file ", path!("/dir/a2.ts")),
+                "Task without variables",
             ],
             "Even when both TS files are open, should only show the history (on the top), and tasks, resolved for the current file"
         );
@@ -1014,7 +1022,7 @@ mod tests {
 
         let _rs_file = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/b.rs"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(path!("/dir/b.rs")), true, window, cx)
             })
             .await
             .unwrap();
@@ -1029,7 +1037,7 @@ mod tests {
         emulate_task_schedule(tasks_picker, &project, "Rust task", cx);
         let _ts_file_2 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/a2.ts"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(path!("/dir/a2.ts")), true, window, cx)
             })
             .await
             .unwrap();
@@ -1037,10 +1045,10 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec![
-                "TypeScript task from file /dir/a1.ts",
-                "Another task from file /dir/a2.ts",
-                "TypeScript task from file /dir/a2.ts",
-                "Task without variables"
+                concat!("TypeScript task from file ", path!("/dir/a1.ts")),
+                concat!("Another task from file ", path!("/dir/a2.ts")),
+                concat!("TypeScript task from file ", path!("/dir/a2.ts")),
+                "Task without variables",
             ],
             "After closing all but *.rs tabs, running a Rust task and switching back to TS tasks, \
             same TS spawn history should be restored"

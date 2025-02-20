@@ -1,22 +1,21 @@
-mod update_notification;
-
 use auto_update::AutoUpdater;
+use client::proto::UpdateNotification;
 use editor::{Editor, MultiBuffer};
-use gpui::{actions, prelude::*, App, Context, Entity, SharedString, Window};
+use gpui::{actions, prelude::*, App, Context, DismissEvent, Entity, SharedString, Window};
 use http_client::HttpClient;
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use release_channel::{AppVersion, ReleaseChannel};
 use serde::Deserialize;
 use smol::io::AsyncReadExt;
 use util::ResultExt as _;
-use workspace::notifications::NotificationId;
+use workspace::notifications::simple_message_notification::MessageNotification;
+use workspace::notifications::{show_app_notification, NotificationId};
 use workspace::Workspace;
-
-use crate::update_notification::UpdateNotification;
 
 actions!(auto_update, [ViewReleaseNotesLocally]);
 
 pub fn init(cx: &mut App) {
+    notify_if_app_was_updated(cx);
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|workspace, _: &ViewReleaseNotesLocally, window, cx| {
             view_release_notes_locally(workspace, window, cx);
@@ -124,31 +123,48 @@ fn view_release_notes_locally(
         .detach();
 }
 
-pub fn notify_of_any_new_update(window: &mut Window, cx: &mut Context<Workspace>) -> Option<()> {
-    let updater = AutoUpdater::get(cx)?;
-    let version = updater.read(cx).current_version();
+/// Shows a notification across all workspaces if an update was previously automatically installed
+/// and this notification had not yet been shown.
+pub fn notify_if_app_was_updated(cx: &mut App) {
+    let Some(updater) = AutoUpdater::get(cx) else {
+        return;
+    };
     let should_show_notification = updater.read(cx).should_show_update_notification(cx);
-
-    cx.spawn_in(window, |workspace, mut cx| async move {
+    cx.spawn(|cx| async move {
         let should_show_notification = should_show_notification.await?;
         if should_show_notification {
-            workspace.update(&mut cx, |workspace, cx| {
-                let workspace_handle = workspace.weak_handle();
-                workspace.show_notification(
+            cx.update(|cx| {
+                let version = updater.read(cx).current_version();
+                let app_name = ReleaseChannel::global(cx).display_name();
+                show_app_notification(
                     NotificationId::unique::<UpdateNotification>(),
                     cx,
-                    |cx| cx.new(|_| UpdateNotification::new(version, workspace_handle)),
+                    move |cx| {
+                        let workspace_handle = cx.entity().downgrade();
+                        cx.new(|_cx| {
+                            MessageNotification::new(format!("Updated to {app_name} {}", version))
+                                .primary_message("View Release Notes")
+                                .primary_on_click(move |window, cx| {
+                                    if let Some(workspace) = workspace_handle.upgrade() {
+                                        workspace.update(cx, |workspace, cx| {
+                                            crate::view_release_notes_locally(
+                                                workspace, window, cx,
+                                            );
+                                        })
+                                    }
+                                    cx.emit(DismissEvent);
+                                })
+                        })
+                    },
                 );
                 updater.update(cx, |updater, cx| {
                     updater
                         .set_should_show_update_notification(false, cx)
                         .detach_and_log_err(cx);
-                });
+                })
             })?;
         }
         anyhow::Ok(())
     })
     .detach();
-
-    None
 }

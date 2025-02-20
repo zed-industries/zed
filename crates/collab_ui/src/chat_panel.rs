@@ -97,14 +97,14 @@ impl ChatPanel {
         });
 
         cx.new(|cx| {
-            let model = cx.entity().downgrade();
+            let entity = cx.entity().downgrade();
             let message_list = ListState::new(
                 0,
                 gpui::ListAlignment::Bottom,
                 px(1000.),
                 move |ix, window, cx| {
-                    if let Some(model) = model.upgrade() {
-                        model.update(cx, |this: &mut Self, cx| {
+                    if let Some(entity) = entity.upgrade() {
+                        entity.update(cx, |this: &mut Self, cx| {
                             this.render_message(ix, window, cx).into_any_element()
                         })
                     } else {
@@ -201,8 +201,7 @@ impl ChatPanel {
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(|mut cx| async move {
             let serialized_panel = if let Some(panel) = cx
-                .background_executor()
-                .spawn(async move { KEY_VALUE_STORE.read_kvp(CHAT_PANEL_KEY) })
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(CHAT_PANEL_KEY) })
                 .await
                 .log_err()
                 .flatten()
@@ -227,7 +226,7 @@ impl ChatPanel {
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
-        self.pending_serialization = cx.background_executor().spawn(
+        self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
@@ -992,6 +991,7 @@ impl Render for ChatPanel {
                                         .key_binding(KeyBinding::for_action(
                                             &collab_panel::ToggleFocus,
                                             window,
+                                            cx,
                                         ))
                                         .on_click(|_, window, cx| {
                                             window.dispatch_action(

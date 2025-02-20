@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-CARGO_ABOUT_VERSION="0.6.1"
+CARGO_ABOUT_VERSION="0.6.6"
 OUTPUT_FILE="${1:-$(pwd)/assets/licenses.md}"
 TEMPLATE_FILE="script/licenses/template.md.hbs"
 
@@ -11,10 +11,10 @@ TEMPLATE_FILE="script/licenses/template.md.hbs"
 echo -e "# ###### THEME LICENSES ######\n" >> $OUTPUT_FILE
 cat assets/themes/LICENSES >> $OUTPUT_FILE
 
-echo -e "# ###### ICON LICENSES ######\n" >> $OUTPUT_FILE
+echo -e "\n# ###### ICON LICENSES ######\n" >> $OUTPUT_FILE
 cat assets/icons/LICENSES >> $OUTPUT_FILE
 
-echo -e "# ###### CODE LICENSES ######\n" >> $OUTPUT_FILE
+echo -e "\n# ###### CODE LICENSES ######\n" >> $OUTPUT_FILE
 
 if ! cargo install --list | grep "cargo-about v$CARGO_ABOUT_VERSION" > /dev/null; then
   echo "Installing cargo-about@$CARGO_ABOUT_VERSION..."
@@ -24,11 +24,11 @@ else
 fi
 
 echo "Generating cargo licenses"
+
 cargo about generate \
     --fail \
     -c script/licenses/zed-licenses.toml \
     "${TEMPLATE_FILE}" >> $OUTPUT_FILE
-
 
 sed -i.bak 's/&quot;/"/g' $OUTPUT_FILE
 sed -i.bak 's/&#x27;/'\''/g' $OUTPUT_FILE # The ` '\'' ` thing ends the string, appends a single quote, and re-opens the string
@@ -38,3 +38,5 @@ sed -i.bak 's/&lt;/</g' $OUTPUT_FILE
 sed -i.bak 's/&gt;/>/g' $OUTPUT_FILE
 
 rm -rf "${OUTPUT_FILE}.bak"
+
+echo "generate-licenses completed. See $OUTPUT_FILE"

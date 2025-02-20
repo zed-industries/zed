@@ -16,7 +16,7 @@ use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
 
-use release_channel::AppVersion;
+use release_channel::{AppVersion, ReleaseChannel, RELEASE_CHANNEL};
 use remote::proxy::ProxyLaunchError;
 use remote::ssh_session::ChannelClient;
 use remote::{
@@ -59,7 +59,7 @@ fn init_logging_proxy() {
 
 fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
     struct MultiWrite {
-        file: Box<dyn std::io::Write + Send + 'static>,
+        file: std::fs::File,
         channel: Sender<Vec<u8>>,
         buffer: Vec<u8>,
     }
@@ -80,14 +80,11 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
         }
     }
 
-    let log_file = Box::new(if log_file_path.exists() {
-        std::fs::OpenOptions::new()
-            .append(true)
-            .open(&log_file_path)
-            .context("Failed to open log file in append mode")?
-    } else {
-        std::fs::File::create(&log_file_path).context("Failed to create log file")?
-    });
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file_path)
+        .context("Failed to open log file in append mode")?;
 
     let (tx, rx) = smol::channel::unbounded();
 
@@ -149,6 +146,14 @@ fn init_panic_hook() {
             (&backtrace).join("\n")
         );
 
+        let release_channel = *RELEASE_CHANNEL;
+        let version = match release_channel {
+            ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION"),
+            ReleaseChannel::Nightly | ReleaseChannel::Dev => {
+                option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha")
+            }
+        };
+
         let panic_data = telemetry_events::Panic {
             thread: thread_name.into(),
             payload: payload.clone(),
@@ -156,11 +161,9 @@ fn init_panic_hook() {
                 file: location.file().into(),
                 line: location.line(),
             }),
-            app_version: format!(
-                "remote-server-{}",
-                option_env!("ZED_COMMIT_SHA").unwrap_or(&env!("ZED_PKG_VERSION"))
-            ),
-            release_channel: release_channel::RELEASE_CHANNEL.display_name().into(),
+            app_version: format!("remote-server-{version}"),
+            app_commit_sha: option_env!("ZED_COMMIT_SHA").map(|sha| sha.into()),
+            release_channel: release_channel.display_name().into(),
             target: env!("TARGET").to_owned().into(),
             os_name: telemetry::os_name(),
             os_version: Some(telemetry::os_version()),
@@ -308,7 +311,7 @@ fn start_server(
             let mut output_buffer = Vec::new();
 
             let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 while let Ok(msg) = read_message(&mut stdin_stream, &mut input_buffer).await {
                     if let Err(_) = stdin_msg_tx.send(msg).await {
                         break;
@@ -484,8 +487,7 @@ pub fn execute_run(
 
         handle_panic_requests(&project, &session);
 
-        cx.background_executor()
-            .spawn(async move { cleanup_old_binaries() })
+        cx.background_spawn(async move { cleanup_old_binaries() })
             .detach();
 
         mem::forget(project);

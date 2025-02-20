@@ -6,7 +6,7 @@ use ui::{
     element_cell, prelude::*, string_cell, utils::calculate_contrast_ratio, AudioStatus,
     Availability, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
     Checkbox, CheckboxWithLabel, ContentGroup, DecoratedIcon, ElevationIndex, Facepile,
-    IconDecoration, Indicator, Switch, Table, TintColor, Tooltip,
+    IconDecoration, Indicator, KeybindingHint, Switch, Table, TintColor, Tooltip,
 };
 
 use crate::{Item, Workspace};
@@ -27,7 +27,6 @@ pub fn init(cx: &mut App) {
 enum ThemePreviewPage {
     Overview,
     Typography,
-    Components,
 }
 
 impl ThemePreviewPage {
@@ -35,7 +34,6 @@ impl ThemePreviewPage {
         match self {
             Self::Overview => "Overview",
             Self::Typography => "Typography",
-            Self::Components => "Components",
         }
     }
 }
@@ -63,9 +61,6 @@ impl ThemePreview {
             ThemePreviewPage::Overview => self.render_overview_page(window, cx).into_any_element(),
             ThemePreviewPage::Typography => {
                 self.render_typography_page(window, cx).into_any_element()
-            }
-            ThemePreviewPage::Components => {
-                self.render_components_page(window, cx).into_any_element()
             }
         }
     }
@@ -390,27 +385,6 @@ impl ThemePreview {
                 .child(Headline::new("Body Text").size(HeadlineSize::Small))
                 .child(Label::new("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."))
             )
-    }
-
-    fn render_components_page(&self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let layer = ElevationIndex::Surface;
-
-        v_flex()
-            .id("theme-preview-components")
-            .overflow_scroll()
-            .size_full()
-            .gap_2()
-            .child(Button::render_component_previews(window, cx))
-            .child(Checkbox::render_component_previews(window, cx))
-            .child(CheckboxWithLabel::render_component_previews(window, cx))
-            .child(ContentGroup::render_component_previews(window, cx))
-            .child(DecoratedIcon::render_component_previews(window, cx))
-            .child(Facepile::render_component_previews(window, cx))
-            .child(Icon::render_component_previews(window, cx))
-            .child(IconDecoration::render_component_previews(window, cx))
-            .child(Indicator::render_component_previews(window, cx))
-            .child(Switch::render_component_previews(window, cx))
-            .child(Table::render_component_previews(window, cx))
     }
 
     fn render_page_nav(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

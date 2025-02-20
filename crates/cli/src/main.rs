@@ -33,7 +33,19 @@ trait InstalledApp {
 #[command(
     name = "zed",
     disable_version_flag = true,
-    after_help = "To read from stdin, append '-' (e.g. 'ps axf | zed -')"
+    before_help = "The Zed CLI binary.
+This CLI is a separate binary that invokes Zed.
+
+Examples:
+    `zed`
+          Simply opens Zed
+    `zed --foreground`
+          Runs in foreground (shows all logs)
+    `zed path-to-your-project`
+          Open your project in Zed
+    `zed -n path-to-file `
+          Open file/folder in a new window",
+    after_help = "To read from stdin, append '-', e.g. 'ps axf | zed -'"
 )]
 struct Args {
     /// Wait for all of the given paths to be opened/closed before exiting.
@@ -45,10 +57,9 @@ struct Args {
     /// Create a new workspace
     #[arg(short, long, overrides_with = "add")]
     new: bool,
-    /// A sequence of space-separated paths that you want to open.
+    /// The paths to open in Zed (space-separated).
     ///
-    /// Use `path:line:row` syntax to open a file at a specific location.
-    /// Non-existing paths and directories will ignore `:line:row` suffix.
+    /// Use `path:line:column` syntax to open a file at the given line and column.
     paths_with_position: Vec<String>,
     /// Print Zed's version and the app path.
     #[arg(short, long)]
@@ -110,7 +121,7 @@ fn main() -> Result<()> {
     // Intercept version designators
     #[cfg(target_os = "macos")]
     if let Some(channel) = std::env::args().nth(1).filter(|arg| arg.starts_with("--")) {
-        // When the first argument is a name of a release channel, we're gonna spawn off a cli of that version, with trailing args passed along.
+        // When the first argument is a name of a release channel, we're going to spawn off the CLI of that version, with trailing args passed along.
         use std::str::FromStr as _;
 
         if let Ok(channel) = release_channel::ReleaseChannel::from_str(&channel[2..]) {
@@ -328,13 +339,17 @@ mod linux {
     impl InstalledApp for App {
         fn zed_version_string(&self) -> String {
             format!(
-                "Zed {}{} – {}",
+                "Zed {}{}{} – {}",
                 if *RELEASE_CHANNEL == "stable" {
                     "".to_string()
                 } else {
-                    format!(" {} ", *RELEASE_CHANNEL)
+                    format!("{} ", *RELEASE_CHANNEL)
                 },
                 option_env!("RELEASE_VERSION").unwrap_or_default(),
+                match option_env!("ZED_COMMIT_SHA") {
+                    Some(commit_sha) => format!(" {commit_sha} "),
+                    None => "".to_string(),
+                },
                 self.0.display(),
             )
         }

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{AnyWindowHandle, Context, Subscription, Task, WindowId};
+use gpui::{AnyWindowHandle, AppContext as _, Context, Subscription, Task, WindowId};
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -88,7 +88,7 @@ impl AppSession {
 
     fn app_will_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
         if let Some(windows) = cx.window_stack() {
-            cx.background_executor().spawn(store_window_stack(windows))
+            cx.background_spawn(store_window_stack(windows))
         } else {
             Task::ready(())
         }

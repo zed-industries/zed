@@ -1,3 +1,4 @@
+use ::proto::{FromProto, ToProto};
 use anyhow::{anyhow, Result};
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
@@ -8,6 +9,7 @@ use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
+    git::GitStore,
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
@@ -40,6 +42,7 @@ pub struct HeadlessProject {
     pub next_entry_id: Arc<AtomicUsize>,
     pub languages: Arc<LanguageRegistry>,
     pub extensions: Entity<HeadlessExtensionStore>,
+    pub git_store: Entity<GitStore>,
 }
 
 pub struct HeadlessAppState {
@@ -77,11 +80,15 @@ impl HeadlessProject {
             store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             store
         });
+
         let buffer_store = cx.new(|cx| {
             let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
+
+        let git_store =
+            cx.new(|cx| GitStore::new(&worktree_store, buffer_store.clone(), None, None, cx));
         let prettier_store = cx.new(|cx| {
             PrettierStore::new(
                 node_runtime.clone(),
@@ -164,6 +171,7 @@ impl HeadlessProject {
 
         let client: AnyProtoClient = session.clone().into();
 
+        // local_machine -> ssh handlers
         session.subscribe_to_entity(SSH_PROJECT_ID, &worktree_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &buffer_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &cx.entity());
@@ -171,22 +179,23 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &task_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &toolchain_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &git_store);
 
         client.add_request_handler(cx.weak_entity(), Self::handle_list_remote_directory);
         client.add_request_handler(cx.weak_entity(), Self::handle_get_path_metadata);
         client.add_request_handler(cx.weak_entity(), Self::handle_shutdown_remote_server);
         client.add_request_handler(cx.weak_entity(), Self::handle_ping);
 
-        client.add_model_request_handler(Self::handle_add_worktree);
+        client.add_entity_request_handler(Self::handle_add_worktree);
         client.add_request_handler(cx.weak_entity(), Self::handle_remove_worktree);
 
-        client.add_model_request_handler(Self::handle_open_buffer_by_path);
-        client.add_model_request_handler(Self::handle_open_new_buffer);
-        client.add_model_request_handler(Self::handle_find_search_candidates);
-        client.add_model_request_handler(Self::handle_open_server_settings);
+        client.add_entity_request_handler(Self::handle_open_buffer_by_path);
+        client.add_entity_request_handler(Self::handle_open_new_buffer);
+        client.add_entity_request_handler(Self::handle_find_search_candidates);
+        client.add_entity_request_handler(Self::handle_open_server_settings);
 
-        client.add_model_request_handler(BufferStore::handle_update_buffer);
-        client.add_model_message_handler(BufferStore::handle_close_buffer);
+        client.add_entity_request_handler(BufferStore::handle_update_buffer);
+        client.add_entity_message_handler(BufferStore::handle_close_buffer);
 
         client.add_request_handler(
             extensions.clone().downgrade(),
@@ -203,6 +212,7 @@ impl HeadlessProject {
         LspStore::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
+        GitStore::init(&client);
 
         HeadlessProject {
             session: client,
@@ -215,6 +225,7 @@ impl HeadlessProject {
             next_entry_id: Default::default(),
             languages,
             extensions,
+            git_store,
         }
     }
 
@@ -229,8 +240,7 @@ impl HeadlessProject {
                 operation,
                 is_local: true,
             } => cx
-                .background_executor()
-                .spawn(self.session.request(proto::UpdateBuffer {
+                .background_spawn(self.session.request(proto::UpdateBuffer {
                     project_id: SSH_PROJECT_ID,
                     buffer_id: buffer.read(cx).remote_id().to_proto(),
                     operations: vec![serialize_operation(operation)],
@@ -291,15 +301,14 @@ impl HeadlessProject {
                     message: prompt.message.clone(),
                 });
                 let prompt = prompt.clone();
-                cx.background_executor()
-                    .spawn(async move {
-                        let response = request.await?;
-                        if let Some(action_response) = response.action_response {
-                            prompt.respond(action_response as usize).await;
-                        }
-                        anyhow::Ok(())
-                    })
-                    .detach();
+                cx.background_spawn(async move {
+                    let response = request.await?;
+                    if let Some(action_response) = response.action_response {
+                        prompt.respond(action_response as usize).await;
+                    }
+                    anyhow::Ok(())
+                })
+                .detach();
             }
             _ => {}
         }
@@ -311,10 +320,8 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::AddWorktreeResponse> {
         use client::ErrorCodeExt;
-        let path = shellexpand::tilde(&message.payload.path).to_string();
-
         let fs = this.read_with(&mut cx, |this, _| this.fs.clone())?;
-        let path = PathBuf::from(path);
+        let path = PathBuf::from_proto(shellexpand::tilde(&message.payload.path).to_string());
 
         let canonicalized = match fs.canonicalize(&path).await {
             Ok(path) => path,
@@ -349,7 +356,7 @@ impl HeadlessProject {
         let response = this.update(&mut cx, |_, cx| {
             worktree.update(cx, |worktree, _| proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
-                canonicalized_path: canonicalized.to_string_lossy().to_string(),
+                canonicalized_path: canonicalized.to_proto(),
             })
         })?;
 
@@ -404,7 +411,7 @@ impl HeadlessProject {
                 buffer_store.open_buffer(
                     ProjectPath {
                         worktree_id,
-                        path: PathBuf::from(message.payload.path).into(),
+                        path: Arc::<Path>::from_proto(message.payload.path),
                     },
                     cx,
                 )
@@ -545,11 +552,11 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::ListRemoteDirectory>,
         cx: AsyncApp,
     ) -> Result<proto::ListRemoteDirectoryResponse> {
-        let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
         let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
+        let expanded = PathBuf::from_proto(shellexpand::tilde(&envelope.payload.path).to_string());
 
         let mut entries = Vec::new();
-        let mut response = fs.read_dir(Path::new(&expanded)).await?;
+        let mut response = fs.read_dir(&expanded).await?;
         while let Some(path) = response.next().await {
             if let Some(file_name) = path?.file_name() {
                 entries.push(file_name.to_string_lossy().to_string());
@@ -564,15 +571,15 @@ impl HeadlessProject {
         cx: AsyncApp,
     ) -> Result<proto::GetPathMetadataResponse> {
         let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
-        let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
+        let expanded = PathBuf::from_proto(shellexpand::tilde(&envelope.payload.path).to_string());
 
-        let metadata = fs.metadata(&PathBuf::from(expanded.clone())).await?;
+        let metadata = fs.metadata(&expanded).await?;
         let is_dir = metadata.map(|metadata| metadata.is_dir).unwrap_or(false);
 
         Ok(proto::GetPathMetadataResponse {
             exists: metadata.is_some(),
             is_dir,
-            path: expanded,
+            path: expanded.to_proto(),
         })
     }
 

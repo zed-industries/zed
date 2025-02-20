@@ -239,14 +239,14 @@ impl CollabPanel {
             )
             .detach();
 
-            let model = cx.entity().downgrade();
+            let entity = cx.entity().downgrade();
             let list_state = ListState::new(
                 0,
                 gpui::ListAlignment::Top,
                 px(1000.),
                 move |ix, window, cx| {
-                    if let Some(model) = model.upgrade() {
-                        model.update(cx, |this, cx| this.render_list_entry(ix, window, cx))
+                    if let Some(entity) = entity.upgrade() {
+                        entity.update(cx, |this, cx| this.render_list_entry(ix, window, cx))
                     } else {
                         div().into_any()
                     }
@@ -319,8 +319,7 @@ impl CollabPanel {
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
         let serialized_panel = cx
-            .background_executor()
-            .spawn(async move { KEY_VALUE_STORE.read_kvp(COLLABORATION_PANEL_KEY) })
+            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(COLLABORATION_PANEL_KEY) })
             .await
             .map_err(|_| anyhow::anyhow!("Failed to read collaboration panel from key value store"))
             .log_err()
@@ -351,7 +350,7 @@ impl CollabPanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
         let collapsed_channels = self.collapsed_channels.clone();
-        self.pending_serialization = cx.background_executor().spawn(
+        self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(

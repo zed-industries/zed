@@ -3,7 +3,9 @@ use std::io::{Cursor, Write};
 use crate::role::Role;
 use crate::LanguageModelToolUse;
 use base64::write::EncoderWriter;
-use gpui::{point, size, App, DevicePixels, Image, ObjectFit, RenderImage, Size, Task};
+use gpui::{
+    point, size, App, AppContext as _, DevicePixels, Image, ObjectFit, RenderImage, Size, Task,
+};
 use image::{codecs::png::PngEncoder, imageops::resize, DynamicImage, ImageDecoder};
 use serde::{Deserialize, Serialize};
 use ui::{px, SharedString};
@@ -30,7 +32,7 @@ const ANTHROPIC_SIZE_LIMT: f32 = 1568.;
 
 impl LanguageModelImage {
     pub fn from_image(data: Image, cx: &mut App) -> Task<Option<Self>> {
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             match data.format() {
                 gpui::ImageFormat::Png
                 | gpui::ImageFormat::Jpeg
@@ -266,6 +268,47 @@ impl LanguageModelRequest {
             max_tokens: max_output_tokens,
             tools: Vec::new(),
             tool_choice: None,
+        }
+    }
+
+    pub fn into_mistral(self, model: String, max_output_tokens: Option<u32>) -> mistral::Request {
+        let len = self.messages.len();
+        let merged_messages =
+            self.messages
+                .into_iter()
+                .fold(Vec::with_capacity(len), |mut acc, msg| {
+                    let role = msg.role;
+                    let content = msg.string_contents();
+
+                    acc.push(match role {
+                        Role::User => mistral::RequestMessage::User { content },
+                        Role::Assistant => mistral::RequestMessage::Assistant {
+                            content: Some(content),
+                            tool_calls: Vec::new(),
+                        },
+                        Role::System => mistral::RequestMessage::System { content },
+                    });
+                    acc
+                });
+
+        mistral::Request {
+            model,
+            messages: merged_messages,
+            stream: true,
+            max_tokens: max_output_tokens,
+            temperature: self.temperature,
+            response_format: None,
+            tools: self
+                .tools
+                .into_iter()
+                .map(|tool| mistral::ToolDefinition::Function {
+                    function: mistral::FunctionDefinition {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: Some(tool.input_schema),
+                    },
+                })
+                .collect(),
         }
     }
 

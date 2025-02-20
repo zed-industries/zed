@@ -25,7 +25,7 @@ use collections::HashMap;
 use super::Context;
 
 slotmap::new_key_type! {
-    /// A unique identifier for a model or view across the application.
+    /// A unique identifier for a entity across the application.
     pub struct EntityId;
 }
 
@@ -97,9 +97,9 @@ impl EntityMap {
         let mut accessed_entities = self.accessed_entities.borrow_mut();
         accessed_entities.insert(slot.entity_id);
 
-        let model = slot.0;
-        self.entities.insert(model.entity_id, Box::new(entity));
-        model
+        let handle = slot.0;
+        self.entities.insert(handle.entity_id, Box::new(entity));
+        handle
     }
 
     /// Move an entity to the stack.
@@ -127,21 +127,21 @@ impl EntityMap {
             .insert(lease.pointer.entity_id, lease.entity.take().unwrap());
     }
 
-    pub fn read<T: 'static>(&self, model: &Entity<T>) -> &T {
-        self.assert_valid_context(model);
+    pub fn read<T: 'static>(&self, entity: &Entity<T>) -> &T {
+        self.assert_valid_context(entity);
         let mut accessed_entities = self.accessed_entities.borrow_mut();
-        accessed_entities.insert(model.entity_id);
+        accessed_entities.insert(entity.entity_id);
 
         self.entities
-            .get(model.entity_id)
+            .get(entity.entity_id)
             .and_then(|entity| entity.downcast_ref())
             .unwrap_or_else(|| double_lease_panic::<T>("read"))
     }
 
-    fn assert_valid_context(&self, model: &AnyEntity) {
+    fn assert_valid_context(&self, entity: &AnyEntity) {
         debug_assert!(
-            Weak::ptr_eq(&model.entity_map, &Arc::downgrade(&self.ref_counts)),
-            "used a model with the wrong context"
+            Weak::ptr_eq(&entity.entity_map, &Arc::downgrade(&self.ref_counts)),
+            "used a entity with the wrong context"
         );
     }
 
@@ -216,7 +216,7 @@ impl<'a, T> Drop for Lease<'a, T> {
 #[derive(Deref, DerefMut)]
 pub(crate) struct Slot<T>(Entity<T>);
 
-/// A dynamically typed reference to a model, which can be downcast into a `Model<T>`.
+/// A dynamically typed reference to a entity, which can be downcast into a `Entity<T>`.
 pub struct AnyEntity {
     pub(crate) entity_id: EntityId,
     pub(crate) entity_type: TypeId,
@@ -241,17 +241,17 @@ impl AnyEntity {
         }
     }
 
-    /// Returns the id associated with this model.
+    /// Returns the id associated with this entity.
     pub fn entity_id(&self) -> EntityId {
         self.entity_id
     }
 
-    /// Returns the [TypeId] associated with this model.
+    /// Returns the [TypeId] associated with this entity.
     pub fn entity_type(&self) -> TypeId {
         self.entity_type
     }
 
-    /// Converts this model handle into a weak variant, which does not prevent it from being released.
+    /// Converts this entity handle into a weak variant, which does not prevent it from being released.
     pub fn downgrade(&self) -> AnyWeakEntity {
         AnyWeakEntity {
             entity_id: self.entity_id,
@@ -260,8 +260,8 @@ impl AnyEntity {
         }
     }
 
-    /// Converts this model handle into a strongly-typed model handle of the given type.
-    /// If this model handle is not of the specified type, returns itself as an error variant.
+    /// Converts this entity handle into a strongly-typed entity handle of the given type.
+    /// If this entity handle is not of the specified type, returns itself as an error variant.
     pub fn downcast<T: 'static>(self) -> Result<Entity<T>, AnyEntity> {
         if TypeId::of::<T>() == self.entity_type {
             Ok(Entity {
@@ -281,9 +281,9 @@ impl Clone for AnyEntity {
             let count = entity_map
                 .counts
                 .get(self.entity_id)
-                .expect("detected over-release of a model");
+                .expect("detected over-release of a entity");
             let prev_count = count.fetch_add(1, SeqCst);
-            assert_ne!(prev_count, 0, "Detected over-release of a model.");
+            assert_ne!(prev_count, 0, "Detected over-release of a entity.");
         }
 
         Self {
@@ -311,7 +311,7 @@ impl Drop for AnyEntity {
                 .get(self.entity_id)
                 .expect("detected over-release of a handle.");
             let prev_count = count.fetch_sub(1, SeqCst);
-            assert_ne!(prev_count, 0, "Detected over-release of a model.");
+            assert_ne!(prev_count, 0, "Detected over-release of a entity.");
             if prev_count == 1 {
                 // We were the last reference to this entity, so we can remove it.
                 let mut entity_map = RwLockUpgradableReadGuard::upgrade(entity_map);
@@ -330,8 +330,8 @@ impl Drop for AnyEntity {
 }
 
 impl<T> From<Entity<T>> for AnyEntity {
-    fn from(model: Entity<T>) -> Self {
-        model.any_entity
+    fn from(entity: Entity<T>) -> Self {
+        entity.any_entity
     }
 }
 
@@ -351,7 +351,7 @@ impl Eq for AnyEntity {}
 
 impl std::fmt::Debug for AnyEntity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AnyModel")
+        f.debug_struct("AnyEntity")
             .field("entity_id", &self.entity_id.as_u64())
             .finish()
     }
@@ -406,7 +406,7 @@ impl<T: 'static> Entity<T> {
         })
     }
 
-    /// Convert this into a dynamically typed model.
+    /// Convert this into a dynamically typed entity.
     pub fn into_any(self) -> AnyEntity {
         self.any_entity
     }
@@ -416,7 +416,7 @@ impl<T: 'static> Entity<T> {
         cx.entities.read(self)
     }
 
-    /// Read the entity referenced by this model with the given function.
+    /// Read the entity referenced by this handle with the given function.
     pub fn read_with<R, C: AppContext>(
         &self,
         cx: &C,
@@ -425,11 +425,11 @@ impl<T: 'static> Entity<T> {
         cx.read_entity(self, f)
     }
 
-    /// Updates the entity referenced by this model with the given function.
+    /// Updates the entity referenced by this handle with the given function.
     ///
     /// The update function receives a context appropriate for its environment.
-    /// When updating in an `AppContext`, it receives a `ModelContext`.
-    /// When updating in a `WindowContext`, it receives a `ViewContext`.
+    /// When updating in an `App`, it receives a `Context`.
+    /// When updating in a `Window`, it receives a `Window` and a `Context`.
     pub fn update<C, R>(
         &self,
         cx: &mut C,
@@ -441,7 +441,7 @@ impl<T: 'static> Entity<T> {
         cx.update_entity(self, update)
     }
 
-    /// Updates the entity referenced by this model with the given function if
+    /// Updates the entity referenced by this handle with the given function if
     /// the referenced entity still exists, within a visual context that has a window.
     /// Returns an error if the entity has been released.
     pub fn update_in<C, R>(
@@ -467,7 +467,7 @@ impl<T> Clone for Entity<T> {
 
 impl<T> std::fmt::Debug for Entity<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Model")
+        f.debug_struct("Entity")
             .field("entity_id", &self.any_entity.entity_id)
             .field("entity_type", &type_name::<T>())
             .finish()
@@ -494,7 +494,7 @@ impl<T> PartialEq<WeakEntity<T>> for Entity<T> {
     }
 }
 
-/// A type erased, weak reference to a model.
+/// A type erased, weak reference to a entity.
 #[derive(Clone)]
 pub struct AnyWeakEntity {
     pub(crate) entity_id: EntityId,
@@ -508,7 +508,7 @@ impl AnyWeakEntity {
         self.entity_id
     }
 
-    /// Check if this weak handle can be upgraded, or if the model has already been dropped
+    /// Check if this weak handle can be upgraded, or if the entity has already been dropped
     pub fn is_upgradable(&self) -> bool {
         let ref_count = self
             .entity_ref_counts
@@ -518,7 +518,7 @@ impl AnyWeakEntity {
         ref_count > 0
     }
 
-    /// Upgrade this weak model reference to a strong reference.
+    /// Upgrade this weak entity reference to a strong reference.
     pub fn upgrade(&self) -> Option<AnyEntity> {
         let ref_counts = &self.entity_ref_counts.upgrade()?;
         let ref_counts = ref_counts.read();
@@ -546,7 +546,7 @@ impl AnyWeakEntity {
         })
     }
 
-    /// Assert that model referenced by this weak handle has been released.
+    /// Assert that entity referenced by this weak handle has been released.
     #[cfg(any(test, feature = "test-support"))]
     pub fn assert_released(&self) {
         self.entity_ref_counts
@@ -579,8 +579,8 @@ impl std::fmt::Debug for AnyWeakEntity {
 }
 
 impl<T> From<WeakEntity<T>> for AnyWeakEntity {
-    fn from(model: WeakEntity<T>) -> Self {
-        model.any_entity
+    fn from(entity: WeakEntity<T>) -> Self {
+        entity.any_entity
     }
 }
 
@@ -598,7 +598,7 @@ impl PartialEq for AnyWeakEntity {
 
 impl Eq for AnyWeakEntity {}
 
-/// A weak reference to a model of the given type.
+/// A weak reference to a entity of the given type.
 #[derive(Deref, DerefMut)]
 pub struct WeakEntity<T> {
     #[deref]
@@ -629,13 +629,13 @@ impl<T> Clone for WeakEntity<T> {
 }
 
 impl<T: 'static> WeakEntity<T> {
-    /// Upgrade this weak model reference into a strong model reference
+    /// Upgrade this weak entity reference into a strong entity reference
     pub fn upgrade(&self) -> Option<Entity<T>> {
         // Delegate to the trait implementation to keep behavior in one place.
         Entity::upgrade_from(self)
     }
 
-    /// Updates the entity referenced by this model with the given function if
+    /// Updates the entity referenced by this handle with the given function if
     /// the referenced entity still exists. Returns an error if the entity has
     /// been released.
     pub fn update<C, R>(
@@ -654,7 +654,7 @@ impl<T: 'static> WeakEntity<T> {
         )
     }
 
-    /// Updates the entity referenced by this model with the given function if
+    /// Updates the entity referenced by this handle with the given function if
     /// the referenced entity still exists, within a visual context that has a window.
     /// Returns an error if the entity has been released.
     pub fn update_in<C, R>(
@@ -670,11 +670,11 @@ impl<T: 'static> WeakEntity<T> {
         let this = self.upgrade().ok_or_else(|| anyhow!("entity released"))?;
 
         crate::Flatten::flatten(window.update(cx, |_, window, cx| {
-            this.update(cx, |model, cx| update(model, window, cx))
+            this.update(cx, |entity, cx| update(entity, window, cx))
         }))
     }
 
-    /// Reads the entity referenced by this model with the given function if
+    /// Reads the entity referenced by this handle with the given function if
     /// the referenced entity still exists. Returns an error if the entity has
     /// been released.
     pub fn read_with<C, R>(&self, cx: &C, read: impl FnOnce(&T, &App) -> R) -> Result<R>

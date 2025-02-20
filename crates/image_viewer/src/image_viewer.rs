@@ -1,3 +1,6 @@
+mod image_info;
+mod image_viewer_settings;
+
 use std::path::PathBuf;
 
 use anyhow::Context as _;
@@ -19,7 +22,8 @@ use workspace::{
     ItemId, ItemSettings, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
-const IMAGE_VIEWER_KIND: &str = "ImageView";
+pub use crate::image_info::*;
+pub use crate::image_viewer_settings::*;
 
 pub struct ImageView {
     image_item: Entity<ImageItem>,
@@ -31,7 +35,6 @@ impl ImageView {
     pub fn new(
         image_item: Entity<ImageItem>,
         project: Entity<Project>,
-
         cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&image_item, Self::on_image_event).detach();
@@ -49,7 +52,9 @@ impl ImageView {
         cx: &mut Context<Self>,
     ) {
         match event {
-            ImageItemEvent::FileHandleChanged | ImageItemEvent::Reloaded => {
+            ImageItemEvent::MetadataUpdated
+            | ImageItemEvent::FileHandleChanged
+            | ImageItemEvent::Reloaded => {
                 cx.emit(ImageViewEvent::TitleChanged);
                 cx.notify();
             }
@@ -126,7 +131,7 @@ impl Item for ImageView {
         Label::new(title)
             .single_line()
             .color(label_color)
-            .italic(params.preview)
+            .when(params.preview, |this| this.italic())
             .into_any_element()
     }
 
@@ -188,7 +193,7 @@ fn breadcrumbs_text_for_image(project: &Project, image: &ImageItem, cx: &App) ->
 
 impl SerializableItem for ImageView {
     fn serialized_item_kind() -> &'static str {
-        IMAGE_VIEWER_KIND
+        "ImageView"
     }
 
     fn deserialize(
@@ -247,7 +252,7 @@ impl SerializableItem for ImageView {
         let workspace_id = workspace.database_id()?;
         let image_path = self.image_item.read(cx).file.as_local()?.abs_path(cx);
 
-        Some(cx.background_executor().spawn({
+        Some(cx.background_spawn({
             async move {
                 IMAGE_VIEWER
                     .save_image_path(item_id, workspace_id, image_path)
@@ -357,8 +362,9 @@ impl ProjectItem for ImageView {
 }
 
 pub fn init(cx: &mut App) {
+    ImageViewerSettings::register(cx);
     workspace::register_project_item::<ImageView>(cx);
-    workspace::register_serializable_item::<ImageView>(cx)
+    workspace::register_serializable_item::<ImageView>(cx);
 }
 
 mod persistence {

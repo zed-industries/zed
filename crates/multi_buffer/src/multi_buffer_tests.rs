@@ -1,5 +1,5 @@
 use super::*;
-use git::diff::DiffHunkStatus;
+use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use gpui::{App, TestAppContext};
 use indoc::indoc;
 use language::{Buffer, Rope};
@@ -19,12 +19,14 @@ fn init_logger() {
 #[gpui::test]
 fn test_empty_singleton(cx: &mut App) {
     let buffer = cx.new(|cx| Buffer::local("", cx));
+    let buffer_id = buffer.read(cx).remote_id();
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
     let snapshot = multibuffer.read(cx).snapshot(cx);
     assert_eq!(snapshot.text(), "");
     assert_eq!(
         snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>(),
         [RowInfo {
+            buffer_id: Some(buffer_id),
             buffer_row: Some(0),
             multibuffer_row: Some(MultiBufferRow(0)),
             diff_status: None
@@ -315,7 +317,8 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
     );
 
     let snapshot = multibuffer.update(cx, |multibuffer, cx| {
-        let (buffer_2_excerpt_id, _) = multibuffer.excerpts_for_buffer(&buffer_2, cx)[0].clone();
+        let (buffer_2_excerpt_id, _) =
+            multibuffer.excerpts_for_buffer(buffer_2.read(cx).remote_id(), cx)[0].clone();
         multibuffer.remove_excerpts([buffer_2_excerpt_id], cx);
         multibuffer.snapshot(cx)
     });
@@ -358,17 +361,9 @@ fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\n";
     let text = "one\nthree\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let change_set = cx.new(|cx| {
-        let mut change_set = BufferChangeSet::new(&buffer, cx);
-        let _ = change_set.set_base_text(base_text.into(), snapshot.text, cx);
-        change_set
-    });
-    cx.run_until_parked();
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.add_change_set(change_set, cx)
-    });
+    multibuffer.update(cx, |multibuffer, cx| multibuffer.add_diff(diff, cx));
 
     let (before, after) = multibuffer.update(cx, |multibuffer, cx| {
         let before = multibuffer.snapshot(cx).anchor_before(Point::new(1, 0));
@@ -381,7 +376,7 @@ fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
     let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
     let actual_text = snapshot.text();
     let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
-    let actual_diff = format_diff(&actual_text, &actual_row_infos, &Default::default());
+    let actual_diff = format_diff(&actual_text, &actual_row_infos, &Default::default(), None);
     pretty_assertions::assert_eq!(
         actual_diff,
         indoc! {
@@ -408,20 +403,14 @@ fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
     let text = "one\nfour\nseven\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let change_set = cx.new(|cx| {
-        let mut change_set = BufferChangeSet::new(&buffer, cx);
-        let snapshot = buffer.read(cx).snapshot();
-        let _ = change_set.set_base_text(base_text.into(), snapshot.text, cx);
-        change_set
-    });
-    cx.run_until_parked();
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
         (multibuffer.snapshot(cx), multibuffer.subscribe())
     });
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.add_change_set(change_set, cx);
+        multibuffer.add_diff(diff, cx);
         multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
     });
 
@@ -507,17 +496,11 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nfour\nfive\nsix\nseven\n";
     let text = "one\ntwo\nTHREE\nfour\nfive\nseven\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let change_set = cx.new(|cx| {
-        let mut change_set = BufferChangeSet::new(&buffer, cx);
-        let snapshot = buffer.read(cx).text_snapshot();
-        let _ = change_set.set_base_text(base_text.into(), snapshot, cx);
-        change_set
-    });
-    cx.run_until_parked();
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer, cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.add_change_set(change_set.clone(), cx);
+        multibuffer.add_diff(diff.clone(), cx);
         (multibuffer.snapshot(cx), multibuffer.subscribe())
     });
 
@@ -989,6 +972,74 @@ fn test_empty_multibuffer(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    let buffer = cx.new(|cx| Buffer::local("", cx));
+    let base_text = "a\nb\nc";
+
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.push_excerpts(
+            buffer.clone(),
+            [ExcerptRange {
+                context: 0..0,
+                primary: None,
+            }],
+            cx,
+        );
+        multibuffer.set_all_diff_hunks_expanded(cx);
+        multibuffer.add_diff(diff.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(snapshot.text(), "a\nb\nc\n");
+
+    let hunk = snapshot
+        .diff_hunks_in_range(Point::new(1, 1)..Point::new(1, 1))
+        .next()
+        .unwrap();
+
+    assert_eq!(hunk.diff_base_byte_range.start, 0);
+
+    let buf2 = cx.new(|cx| Buffer::local("X", cx));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.push_excerpts(
+            buf2,
+            [ExcerptRange {
+                context: 0..1,
+                primary: None,
+            }],
+            cx,
+        );
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "a\nb\nc")], None, cx);
+        diff.update(cx, |diff, cx| {
+            diff.recalculate_diff_sync(buffer.snapshot().text, cx);
+        });
+        assert_eq!(buffer.text(), "a\nb\nc")
+    });
+    cx.run_until_parked();
+
+    let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(snapshot.text(), "a\nb\nc\nX");
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.undo(cx);
+        diff.update(cx, |diff, cx| {
+            diff.recalculate_diff_sync(buffer.snapshot().text, cx);
+        });
+        assert_eq!(buffer.text(), "")
+    });
+    cx.run_until_parked();
+
+    let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(snapshot.text(), "a\nb\nc\n\nX");
+}
+
+#[gpui::test]
 fn test_singleton_multibuffer_anchors(cx: &mut App) {
     let buffer = cx.new(|cx| Buffer::local("abcd", cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
@@ -1220,13 +1271,12 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     );
 
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let change_set =
-        cx.new(|cx| BufferChangeSet::new_with_base_text(base_text.to_string(), &buffer, cx));
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
     cx.run_until_parked();
 
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
-        multibuffer.add_change_set(change_set.clone(), cx);
+        multibuffer.add_diff(diff.clone(), cx);
         multibuffer
     });
 
@@ -1275,13 +1325,13 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
             .map(|info| (info.buffer_row, info.diff_status))
             .collect::<Vec<_>>(),
         vec![
-            (Some(0), Some(DiffHunkStatus::Added)),
+            (Some(0), Some(DiffHunkStatus::added_none())),
             (Some(1), None),
-            (Some(1), Some(DiffHunkStatus::Removed)),
-            (Some(2), Some(DiffHunkStatus::Added)),
+            (Some(1), Some(DiffHunkStatus::deleted_none())),
+            (Some(2), Some(DiffHunkStatus::added_none())),
             (Some(3), None),
-            (Some(3), Some(DiffHunkStatus::Removed)),
-            (Some(4), Some(DiffHunkStatus::Removed)),
+            (Some(3), Some(DiffHunkStatus::deleted_none())),
+            (Some(4), Some(DiffHunkStatus::deleted_none())),
             (Some(4), None),
             (Some(5), None)
         ]
@@ -1411,8 +1461,8 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     assert_line_indents(&snapshot);
 
     // Recalculate the diff, changing the first diff hunk.
-    let _ = change_set.update(cx, |change_set, cx| {
-        change_set.recalculate_diff(buffer.read(cx).text_snapshot(), cx)
+    diff.update(cx, |diff, cx| {
+        diff.recalculate_diff_sync(buffer.read(cx).text_snapshot(), cx);
     });
     cx.run_until_parked();
     assert_new_snapshot(
@@ -1464,13 +1514,12 @@ fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
     );
 
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let change_set =
-        cx.new(|cx| BufferChangeSet::new_with_base_text(base_text.to_string(), &buffer, cx));
+    let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
     cx.run_until_parked();
 
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
-        multibuffer.add_change_set(change_set.clone(), cx);
+        multibuffer.add_diff(diff.clone(), cx);
         multibuffer
     });
 
@@ -1528,6 +1577,303 @@ fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
+    let buf1 = cx.new(|cx| {
+        Buffer::local(
+            indoc! {
+            "zero
+            one
+            two
+            two.five
+            three
+            four
+            five
+            six
+            seven
+            eight
+            nine
+            ten
+            eleven
+            ",
+            },
+            cx,
+        )
+    });
+    let path1: PathKey = PathKey::namespaced("0", Path::new("/").into());
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![
+                Point::row_range(1..2),
+                Point::row_range(6..7),
+                Point::row_range(11..12),
+            ],
+            1,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {
+            "-----
+            zero
+            one
+            two
+            two.five
+            -----
+            four
+            five
+            six
+            seven
+            -----
+            nine
+            ten
+            eleven
+            "
+        },
+    );
+
+    buf1.update(cx, |buffer, cx| buffer.edit([(0..5, "")], None, cx));
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![
+                Point::row_range(0..2),
+                Point::row_range(5..6),
+                Point::row_range(10..11),
+            ],
+            1,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {
+            "-----
+             one
+             two
+             two.five
+             three
+             -----
+             four
+             five
+             six
+             seven
+             -----
+             nine
+             ten
+             eleven
+            "
+        },
+    );
+}
+
+#[gpui::test]
+fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
+    let buf1 = cx.new(|cx| {
+        Buffer::local(
+            indoc! {
+            "zero
+            one
+            two
+            three
+            four
+            five
+            six
+            seven
+            ",
+            },
+            cx,
+        )
+    });
+    let path1: PathKey = PathKey::namespaced("0", Path::new("/").into());
+    let buf2 = cx.new(|cx| {
+        Buffer::local(
+            indoc! {
+            "000
+            111
+            222
+            333
+            444
+            555
+            666
+            777
+            888
+            999
+            "
+            },
+            cx,
+        )
+    });
+    let path2 = PathKey::namespaced("x", Path::new("/").into());
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![Point::row_range(0..1)],
+            2,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {
+        "-----
+        zero
+        one
+        two
+        three
+        "
+        },
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(path1.clone(), buf1.clone(), vec![], 2, cx);
+    });
+
+    assert_excerpts_match(&multibuffer, cx, "");
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![Point::row_range(0..1), Point::row_range(7..8)],
+            2,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {"-----
+                zero
+                one
+                two
+                three
+                -----
+                five
+                six
+                seven
+                "},
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![Point::row_range(0..1), Point::row_range(5..6)],
+            2,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {"-----
+                    zero
+                    one
+                    two
+                    three
+                    four
+                    five
+                    six
+                    seven
+                    "},
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path2.clone(),
+            buf2.clone(),
+            vec![Point::row_range(2..3)],
+            2,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {"-----
+                zero
+                one
+                two
+                three
+                four
+                five
+                six
+                seven
+                -----
+                000
+                111
+                222
+                333
+                444
+                555
+                "},
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(path1.clone(), buf1.clone(), vec![], 2, cx);
+    });
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![Point::row_range(3..4)],
+            2,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {"-----
+                one
+                two
+                three
+                four
+                five
+                six
+                -----
+                000
+                111
+                222
+                333
+                444
+                555
+                "},
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![Point::row_range(3..4)],
+            2,
+            cx,
+        );
+    });
+}
+
+#[gpui::test]
 fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
     let base_text_1 = indoc!(
         "
@@ -1570,10 +1916,8 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     let buffer_1 = cx.new(|cx| Buffer::local(text_1, cx));
     let buffer_2 = cx.new(|cx| Buffer::local(text_2, cx));
-    let change_set_1 =
-        cx.new(|cx| BufferChangeSet::new_with_base_text(base_text_1.to_string(), &buffer_1, cx));
-    let change_set_2 =
-        cx.new(|cx| BufferChangeSet::new_with_base_text(base_text_2.to_string(), &buffer_2, cx));
+    let diff_1 = cx.new(|cx| BufferDiff::new_with_base_text(base_text_1, &buffer_1, cx));
+    let diff_2 = cx.new(|cx| BufferDiff::new_with_base_text(base_text_2, &buffer_2, cx));
     cx.run_until_parked();
 
     let multibuffer = cx.new(|cx| {
@@ -1594,8 +1938,8 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
             }],
             cx,
         );
-        multibuffer.add_change_set(change_set_1.clone(), cx);
-        multibuffer.add_change_set(change_set_2.clone(), cx);
+        multibuffer.add_diff(diff_1.clone(), cx);
+        multibuffer.add_diff(diff_2.clone(), cx);
         multibuffer
     });
 
@@ -1655,12 +1999,8 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     let id_1 = buffer_1.read_with(cx, |buffer, _| buffer.remote_id());
     let id_2 = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
-    let base_id_1 = change_set_1.read_with(cx, |change_set, _| {
-        change_set.base_text.as_ref().unwrap().remote_id()
-    });
-    let base_id_2 = change_set_2.read_with(cx, |change_set, _| {
-        change_set.base_text.as_ref().unwrap().remote_id()
-    });
+    let base_id_1 = diff_1.read_with(cx, |diff, _| diff.base_text().as_ref().unwrap().remote_id());
+    let base_id_2 = diff_2.read_with(cx, |diff, _| diff.base_text().as_ref().unwrap().remote_id());
 
     let buffer_lines = (0..=snapshot.max_row().0)
         .map(|row| {
@@ -1755,9 +2095,10 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 #[derive(Default)]
 struct ReferenceMultibuffer {
     excerpts: Vec<ReferenceExcerpt>,
-    change_sets: HashMap<BufferId, Entity<BufferChangeSet>>,
+    diffs: HashMap<BufferId, Entity<BufferDiff>>,
 }
 
+#[derive(Debug)]
 struct ReferenceExcerpt {
     id: ExcerptId,
     buffer: Entity<Buffer>,
@@ -1767,6 +2108,7 @@ struct ReferenceExcerpt {
 
 #[derive(Debug)]
 struct ReferenceRegion {
+    buffer_id: Option<BufferId>,
     range: Range<usize>,
     buffer_start: Option<Point>,
     status: Option<DiffHunkStatus>,
@@ -1842,42 +2184,30 @@ impl ReferenceMultibuffer {
             .unwrap();
         let buffer = excerpt.buffer.read(cx).snapshot();
         let buffer_id = buffer.remote_id();
-        let Some(change_set) = self.change_sets.get(&buffer_id) else {
+        let Some(diff) = self.diffs.get(&buffer_id) else {
             return;
         };
-        let diff = change_set.read(cx).diff_to_buffer.clone();
         let excerpt_range = excerpt.range.to_offset(&buffer);
-        if excerpt_range.is_empty() {
-            return;
-        }
-        for hunk in diff.hunks_intersecting_range(range, &buffer) {
+        for hunk in diff.read(cx).hunks_intersecting_range(range, &buffer, cx) {
             let hunk_range = hunk.buffer_range.to_offset(&buffer);
-            let hunk_precedes_excerpt = hunk
-                .buffer_range
-                .end
-                .cmp(&excerpt.range.start, &buffer)
-                .is_lt();
-            let hunk_follows_excerpt = hunk
-                .buffer_range
-                .start
-                .cmp(&excerpt.range.end, &buffer)
-                .is_ge();
-            if hunk_precedes_excerpt || hunk_follows_excerpt {
+            if hunk_range.start < excerpt_range.start || hunk_range.start > excerpt_range.end {
                 continue;
             }
-
             if let Err(ix) = excerpt
                 .expanded_diff_hunks
                 .binary_search_by(|anchor| anchor.cmp(&hunk.buffer_range.start, &buffer))
             {
                 log::info!(
-                    "expanding diff hunk {:?}. excerpt: {:?}",
+                    "expanding diff hunk {:?}. excerpt:{:?}, excerpt range:{:?}",
                     hunk_range,
+                    excerpt_id,
                     excerpt_range
                 );
                 excerpt
                     .expanded_diff_hunks
                     .insert(ix, hunk.buffer_range.start);
+            } else {
+                log::trace!("hunk {hunk_range:?} already expanded in excerpt {excerpt_id:?}");
             }
         }
     }
@@ -1890,27 +2220,22 @@ impl ReferenceMultibuffer {
             excerpt_boundary_rows.insert(MultiBufferRow(text.matches('\n').count() as u32));
             let buffer = excerpt.buffer.read(cx);
             let buffer_range = excerpt.range.to_offset(buffer);
-            let change_set = self.change_sets.get(&buffer.remote_id()).unwrap().read(cx);
-            let diff = change_set.diff_to_buffer.clone();
-            let base_buffer = change_set.base_text.as_ref().unwrap();
+            let diff = self.diffs.get(&buffer.remote_id()).unwrap().read(cx);
+            // let diff = diff.snapshot.clone();
+            let base_buffer = diff.base_text().unwrap();
 
             let mut offset = buffer_range.start;
             let mut hunks = diff
-                .hunks_intersecting_range(excerpt.range.clone(), buffer)
+                .hunks_intersecting_range(excerpt.range.clone(), buffer, cx)
                 .peekable();
 
             while let Some(hunk) = hunks.next() {
-                if !hunk.buffer_range.start.is_valid(&buffer) {
-                    continue;
-                }
-
                 // Ignore hunks that are outside the excerpt range.
                 let mut hunk_range = hunk.buffer_range.to_offset(buffer);
+
                 hunk_range.end = hunk_range.end.min(buffer_range.end);
-                if hunk_range.start > buffer_range.end
-                    || hunk_range.end < buffer_range.start
-                    || buffer_range.is_empty()
-                {
+                if hunk_range.start > buffer_range.end || hunk_range.start < buffer_range.start {
+                    log::trace!("skipping hunk outside excerpt range");
                     continue;
                 }
 
@@ -1918,6 +2243,12 @@ impl ReferenceMultibuffer {
                     expanded_anchor.to_offset(&buffer).max(buffer_range.start)
                         == hunk_range.start.max(buffer_range.start)
                 }) {
+                    log::trace!("skipping a hunk that's not marked as expanded");
+                    continue;
+                }
+
+                if !hunk.buffer_range.start.is_valid(&buffer) {
+                    log::trace!("skipping hunk with deleted start: {:?}", hunk.row_range);
                     continue;
                 }
 
@@ -1926,6 +2257,7 @@ impl ReferenceMultibuffer {
                     let len = text.len();
                     text.extend(buffer.text_for_range(offset..hunk_range.start));
                     regions.push(ReferenceRegion {
+                        buffer_id: Some(buffer.remote_id()),
                         range: len..text.len(),
                         buffer_start: Some(buffer.offset_to_point(offset)),
                         status: None,
@@ -1942,11 +2274,12 @@ impl ReferenceMultibuffer {
                         let len = text.len();
                         text.push_str(&base_text);
                         regions.push(ReferenceRegion {
+                            buffer_id: Some(base_buffer.remote_id()),
                             range: len..text.len(),
                             buffer_start: Some(
                                 base_buffer.offset_to_point(hunk.diff_base_byte_range.start),
                             ),
-                            status: Some(DiffHunkStatus::Removed),
+                            status: Some(DiffHunkStatus::deleted(hunk.secondary_status)),
                         });
                     }
 
@@ -1958,9 +2291,10 @@ impl ReferenceMultibuffer {
                     let len = text.len();
                     text.extend(buffer.text_for_range(offset..hunk_range.end));
                     regions.push(ReferenceRegion {
+                        buffer_id: Some(buffer.remote_id()),
                         range: len..text.len(),
                         buffer_start: Some(buffer.offset_to_point(offset)),
-                        status: Some(DiffHunkStatus::Added),
+                        status: Some(DiffHunkStatus::added(hunk.secondary_status)),
                     });
                     offset = hunk_range.end;
                 }
@@ -1971,6 +2305,7 @@ impl ReferenceMultibuffer {
             text.extend(buffer.text_for_range(offset..buffer_range.end));
             text.push('\n');
             regions.push(ReferenceRegion {
+                buffer_id: Some(buffer.remote_id()),
                 range: len..text.len(),
                 buffer_start: Some(buffer.offset_to_point(offset)),
                 status: None,
@@ -1980,6 +2315,7 @@ impl ReferenceMultibuffer {
         // Remove final trailing newline.
         if self.excerpts.is_empty() {
             regions.push(ReferenceRegion {
+                buffer_id: None,
                 range: 0..1,
                 buffer_start: Some(Point::new(0, 0)),
                 status: None,
@@ -2003,6 +2339,7 @@ impl ReferenceMultibuffer {
                                 + text[region.range.start..ix].matches('\n').count() as u32
                         });
                         RowInfo {
+                            buffer_id: region.buffer_id,
                             diff_status: region.status,
                             buffer_row,
                             multibuffer_row: Some(MultiBufferRow(
@@ -2023,13 +2360,8 @@ impl ReferenceMultibuffer {
             let buffer = excerpt.buffer.read(cx).snapshot();
             let excerpt_range = excerpt.range.to_offset(&buffer);
             let buffer_id = buffer.remote_id();
-            let diff = &self
-                .change_sets
-                .get(&buffer_id)
-                .unwrap()
-                .read(cx)
-                .diff_to_buffer;
-            let mut hunks = diff.hunks_in_row_range(0..u32::MAX, &buffer).peekable();
+            let diff = self.diffs.get(&buffer_id).unwrap().read(cx);
+            let mut hunks = diff.hunks_in_row_range(0..u32::MAX, &buffer, cx).peekable();
             excerpt.expanded_diff_hunks.retain(|hunk_anchor| {
                 if !hunk_anchor.is_valid(&buffer) {
                     return false;
@@ -2052,9 +2384,9 @@ impl ReferenceMultibuffer {
         }
     }
 
-    fn add_change_set(&mut self, change_set: Entity<BufferChangeSet>, cx: &mut App) {
-        let buffer_id = change_set.read(cx).buffer_id;
-        self.change_sets.insert(buffer_id, change_set);
+    fn add_diff(&mut self, diff: Entity<BufferDiff>, cx: &mut App) {
+        let buffer_id = diff.read(cx).buffer_id;
+        self.diffs.insert(buffer_id, diff);
     }
 }
 
@@ -2078,6 +2410,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                 buffer.update(cx, |buf, cx| {
                     let edit_count = rng.gen_range(1..5);
                     buf.randomly_edit(&mut rng, edit_count, cx);
+                    log::info!("buffer text:\n{}", buf.text());
                     needs_diff_calculation = true;
                 });
                 cx.update(|cx| reference.diffs_updated(cx));
@@ -2170,7 +2503,11 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                     let range = snapshot.anchor_in_excerpt(excerpt.id, start).unwrap()
                         ..snapshot.anchor_in_excerpt(excerpt.id, end).unwrap();
 
-                    log::info!("expanding diff hunks for excerpt {:?}", excerpt_ix);
+                    log::info!(
+                        "expanding diff hunks in range {:?} (excerpt id {:?}) index {excerpt_ix:?})",
+                        range.to_offset(&snapshot),
+                        excerpt.id
+                    );
                     reference.expand_diff_hunks(excerpt.id, start..end, cx);
                     multibuffer.expand_diff_hunks(vec![range], cx);
                 });
@@ -2179,16 +2516,16 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                 multibuffer.update(cx, |multibuffer, cx| {
                     for buffer in multibuffer.all_buffers() {
                         let snapshot = buffer.read(cx).snapshot();
-                        let _ = multibuffer
-                            .change_set_for(snapshot.remote_id())
-                            .unwrap()
-                            .update(cx, |change_set, cx| {
+                        let _ = multibuffer.diff_for(snapshot.remote_id()).unwrap().update(
+                            cx,
+                            |diff, cx| {
                                 log::info!(
                                     "recalculating diff for buffer {:?}",
                                     snapshot.remote_id(),
                                 );
-                                change_set.recalculate_diff(snapshot.text, cx)
-                            });
+                                diff.recalculate_diff_sync(snapshot.text, cx);
+                            },
+                        );
                     }
                     reference.diffs_updated(cx);
                     needs_diff_calculation = false;
@@ -2201,18 +2538,11 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                         .collect::<String>();
 
                     let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
-                    let change_set = cx.new(|cx| BufferChangeSet::new(&buffer, cx));
-                    change_set
-                        .update(cx, |change_set, cx| {
-                            let snapshot = buffer.read(cx).snapshot();
-                            change_set.set_base_text(base_text, snapshot.text, cx)
-                        })
-                        .await
-                        .unwrap();
+                    let diff = cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer, cx));
 
                     multibuffer.update(cx, |multibuffer, cx| {
-                        reference.add_change_set(change_set.clone(), cx);
-                        multibuffer.add_change_set(change_set, cx)
+                        reference.add_diff(diff.clone(), cx);
+                        multibuffer.add_diff(diff, cx)
                     });
                     buffers.push(buffer);
                     buffers.last().unwrap()
@@ -2283,12 +2613,28 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             .filter_map(|b| if b.next.is_some() { Some(b.row) } else { None })
             .collect::<HashSet<_>>();
         let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
-        let actual_diff = format_diff(&actual_text, &actual_row_infos, &actual_boundary_rows);
 
         let (expected_text, expected_row_infos, expected_boundary_rows) =
             cx.update(|cx| reference.expected_content(cx));
-        let expected_diff =
-            format_diff(&expected_text, &expected_row_infos, &expected_boundary_rows);
+
+        let has_diff = actual_row_infos
+            .iter()
+            .any(|info| info.diff_status.is_some())
+            || expected_row_infos
+                .iter()
+                .any(|info| info.diff_status.is_some());
+        let actual_diff = format_diff(
+            &actual_text,
+            &actual_row_infos,
+            &actual_boundary_rows,
+            Some(has_diff),
+        );
+        let expected_diff = format_diff(
+            &expected_text,
+            &expected_row_infos,
+            &expected_boundary_rows,
+            Some(has_diff),
+        );
 
         log::info!("Multibuffer content:\n{}", actual_diff);
 
@@ -2299,8 +2645,8 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             actual_text.split('\n').count()
         );
         pretty_assertions::assert_eq!(actual_diff, expected_diff);
-        pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos);
         pretty_assertions::assert_eq!(actual_text, expected_text);
+        pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos);
 
         for _ in 0..5 {
             let start_row = rng.gen_range(0..=expected_row_infos.len());
@@ -2318,13 +2664,13 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             snapshot.widest_line_number(),
             expected_row_infos
                 .into_iter()
-                .filter_map(
-                    |info| if info.diff_status == Some(DiffHunkStatus::Removed) {
+                .filter_map(|info| {
+                    if info.diff_status.is_some_and(|status| status.is_deleted()) {
                         None
                     } else {
                         info.buffer_row
                     }
-                )
+                })
                 .max()
                 .unwrap()
                 + 1
@@ -2667,16 +3013,18 @@ fn format_diff(
     text: &str,
     row_infos: &Vec<RowInfo>,
     boundary_rows: &HashSet<MultiBufferRow>,
+    has_diff: Option<bool>,
 ) -> String {
-    let has_diff = row_infos.iter().any(|info| info.diff_status.is_some());
+    let has_diff =
+        has_diff.unwrap_or_else(|| row_infos.iter().any(|info| info.diff_status.is_some()));
     text.split('\n')
         .enumerate()
         .zip(row_infos)
         .map(|((ix, line), info)| {
-            let marker = match info.diff_status {
-                Some(DiffHunkStatus::Added) => "+ ",
-                Some(DiffHunkStatus::Removed) => "- ",
-                Some(DiffHunkStatus::Modified) => unreachable!(),
+            let marker = match info.diff_status.map(|status| status.kind) {
+                Some(DiffHunkStatusKind::Added) => "+ ",
+                Some(DiffHunkStatusKind::Deleted) => "- ",
+                Some(DiffHunkStatusKind::Modified) => unreachable!(),
                 None => {
                     if has_diff && !line.is_empty() {
                         "  "
@@ -2701,6 +3049,25 @@ fn format_diff(
 }
 
 #[track_caller]
+fn assert_excerpts_match(
+    multibuffer: &Entity<MultiBuffer>,
+    cx: &mut TestAppContext,
+    expected: &str,
+) {
+    let mut output = String::new();
+    multibuffer.read_with(cx, |multibuffer, cx| {
+        for (_, buffer, range) in multibuffer.snapshot(cx).excerpts() {
+            output.push_str("-----\n");
+            output.extend(buffer.text_for_range(range.context));
+            if !output.ends_with('\n') {
+                output.push('\n');
+            }
+        }
+    });
+    assert_eq!(output, expected);
+}
+
+#[track_caller]
 fn assert_new_snapshot(
     multibuffer: &Entity<MultiBuffer>,
     snapshot: &mut MultiBufferSnapshot,
@@ -2713,7 +3080,7 @@ fn assert_new_snapshot(
     let line_infos = new_snapshot
         .row_infos(MultiBufferRow(0))
         .collect::<Vec<_>>();
-    let actual_diff = format_diff(&actual_text, &line_infos, &Default::default());
+    let actual_diff = format_diff(&actual_text, &line_infos, &Default::default(), None);
     pretty_assertions::assert_eq!(actual_diff, expected_diff);
     check_edits(
         snapshot,

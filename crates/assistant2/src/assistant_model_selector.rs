@@ -61,29 +61,26 @@ impl Render for AssistantModelSelector {
                     h_flex()
                         .gap_0p5()
                         .child(
-                            div().max_w_32().child(
-                                Label::new(model_name)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                                    .text_ellipsis()
-                                    .into_any_element(),
-                            ),
+                            Label::new(model_name)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
                         )
                         .child(
                             Icon::new(IconName::ChevronDown)
                                 .color(Color::Muted)
                                 .size(IconSize::XSmall),
                         ),
+                ),
+            move |window, cx| {
+                Tooltip::for_action_in(
+                    "Change Model",
+                    &ToggleModelSelector,
+                    &focus_handle,
+                    window,
+                    cx,
                 )
-                .tooltip(move |window, cx| {
-                    Tooltip::for_action_in(
-                        "Change Model",
-                        &ToggleModelSelector,
-                        &focus_handle,
-                        window,
-                        cx,
-                    )
-                }),
+            },
+            gpui::Corner::BottomRight,
         )
         .with_handle(self.menu_handle.clone())
     }

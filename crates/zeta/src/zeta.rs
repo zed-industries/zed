@@ -1,25 +1,42 @@
 mod completion_diff_element;
+mod init;
+mod input_excerpt;
+mod license_detection;
+mod onboarding_banner;
+mod onboarding_modal;
+mod onboarding_telemetry;
 mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
+use db::kvp::KEY_VALUE_STORE;
+use editor::Editor;
+pub use init::*;
+use inline_completion::DataCollectionState;
+pub use license_detection::is_license_eligible_for_data_collection;
+use license_detection::LICENSE_FILES_TO_CHECK;
+pub use onboarding_banner::*;
 pub use rate_completion_modal::*;
 
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayVec;
 use client::{Client, UserStore};
 use collections::{HashMap, HashSet, VecDeque};
-use feature_flags::FeatureFlagAppExt as _;
 use futures::AsyncReadExt;
 use gpui::{
-    actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, Subscription, Task,
+    actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, SemanticVersion,
+    Subscription, Task,
 };
 use http_client::{HttpClient, Method};
+use input_excerpt::excerpt_for_cursor_position;
 use language::{
-    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, OffsetRangeExt,
-    Point, ToOffset, ToPoint,
+    text_diff, Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToOffset, ToPoint,
 };
 use language_models::LlmApiToken;
-use rpc::{PredictEditsParams, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME};
+use postage::watch;
+use project::Project;
+use release_channel::AppVersion;
+use settings::WorktreeId;
+use std::str::FromStr;
 use std::{
     borrow::Cow,
     cmp,
@@ -28,42 +45,35 @@ use std::{
     mem,
     ops::Range,
     path::Path,
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
 use telemetry_events::InlineCompletionRating;
+use thiserror::Error;
 use util::ResultExt;
 use uuid::Uuid;
+use workspace::notifications::{ErrorMessagePrompt, NotificationId};
+use workspace::Workspace;
+use worktree::Worktree;
+use zed_llm_client::{
+    PredictEditsBody, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME,
+    MINIMUM_REQUIRED_VERSION_HEADER_NAME,
+};
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
 const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
 const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
 const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
+const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 
-// TODO(mgsloan): more systematic way to choose or tune these fairly arbitrary constants?
+const MAX_CONTEXT_TOKENS: usize = 150;
+const MAX_REWRITE_TOKENS: usize = 350;
+const MAX_EVENT_TOKENS: usize = 500;
 
-/// Typical number of string bytes per token for the purposes of limiting model input. This is
-/// intentionally low to err on the side of underestimating limits.
-const BYTES_PER_TOKEN_GUESS: usize = 3;
-
-/// This is based on the output token limit `max_tokens: 2048` in `crates/collab/src/llm.rs`. Number
-/// of output tokens is relevant to the size of the input excerpt because the model is tasked with
-/// outputting a modified excerpt. `2/3` is chosen so that there are some output tokens remaining
-/// for the model to specify insertions.
-const BUFFER_EXCERPT_BYTE_LIMIT: usize = (2048 * 2 / 3) * BYTES_PER_TOKEN_GUESS;
-
-/// Note that this is not the limit for the overall prompt, just for the inputs to the template
-/// instantiated in `crates/collab/src/llm.rs`.
-const TOTAL_BYTE_LIMIT: usize = BUFFER_EXCERPT_BYTE_LIMIT * 2;
-
-/// Maximum number of events to include in the prompt.
+/// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
-
-/// Maximum number of string bytes in a single event. Arbitrarily choosing this to be 4x the size of
-/// equally splitting up the the remaining bytes after the largest possible buffer excerpt.
-const PER_EVENT_BYTE_LIMIT: usize =
-    (TOTAL_BYTE_LIMIT - BUFFER_EXCERPT_BYTE_LIMIT) / MAX_EVENT_COUNT * 4;
 
 actions!(edit_prediction, [ClearHistory]);
 
@@ -82,12 +92,6 @@ impl std::fmt::Display for InlineCompletionId {
     }
 }
 
-impl InlineCompletionId {
-    fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
 #[derive(Clone)]
 struct ZetaGlobal(Entity<Zeta>);
 
@@ -101,6 +105,7 @@ pub struct InlineCompletion {
     cursor_offset: usize,
     edits: Arc<[(Range<Anchor>, String)]>,
     snapshot: BufferSnapshot,
+    edit_preview: EditPreview,
     input_outline: Arc<str>,
     input_events: Arc<str>,
     input_excerpt: Arc<str>,
@@ -116,55 +121,57 @@ impl InlineCompletion {
     }
 
     fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, String)>> {
-        let mut edits = Vec::new();
+        interpolate(&self.snapshot, new_snapshot, self.edits.clone())
+    }
+}
 
-        let mut user_edits = new_snapshot
-            .edits_since::<usize>(&self.snapshot.version)
-            .peekable();
-        for (model_old_range, model_new_text) in self.edits.iter() {
-            let model_offset_range = model_old_range.to_offset(&self.snapshot);
-            while let Some(next_user_edit) = user_edits.peek() {
-                if next_user_edit.old.end < model_offset_range.start {
-                    user_edits.next();
-                } else {
-                    break;
-                }
-            }
+fn interpolate(
+    old_snapshot: &BufferSnapshot,
+    new_snapshot: &BufferSnapshot,
+    current_edits: Arc<[(Range<Anchor>, String)]>,
+) -> Option<Vec<(Range<Anchor>, String)>> {
+    let mut edits = Vec::new();
 
-            if let Some(user_edit) = user_edits.peek() {
-                if user_edit.old.start > model_offset_range.end {
-                    edits.push((model_old_range.clone(), model_new_text.clone()));
-                } else if user_edit.old == model_offset_range {
-                    let user_new_text = new_snapshot
-                        .text_for_range(user_edit.new.clone())
-                        .collect::<String>();
-
-                    if let Some(model_suffix) = model_new_text.strip_prefix(&user_new_text) {
-                        if !model_suffix.is_empty() {
-                            edits.push((
-                                new_snapshot.anchor_after(user_edit.new.end)
-                                    ..new_snapshot.anchor_before(user_edit.new.end),
-                                model_suffix.into(),
-                            ));
-                        }
-
-                        user_edits.next();
-                    } else {
-                        return None;
-                    }
-                } else {
-                    return None;
-                }
-            } else {
+    let mut model_edits = current_edits.into_iter().peekable();
+    for user_edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
+        while let Some((model_old_range, _)) = model_edits.peek() {
+            let model_old_range = model_old_range.to_offset(old_snapshot);
+            if model_old_range.end < user_edit.old.start {
+                let (model_old_range, model_new_text) = model_edits.next().unwrap();
                 edits.push((model_old_range.clone(), model_new_text.clone()));
+            } else {
+                break;
             }
         }
 
-        if edits.is_empty() {
-            None
-        } else {
-            Some(edits)
+        if let Some((model_old_range, model_new_text)) = model_edits.peek() {
+            let model_old_offset_range = model_old_range.to_offset(old_snapshot);
+            if user_edit.old == model_old_offset_range {
+                let user_new_text = new_snapshot
+                    .text_for_range(user_edit.new.clone())
+                    .collect::<String>();
+
+                if let Some(model_suffix) = model_new_text.strip_prefix(&user_new_text) {
+                    if !model_suffix.is_empty() {
+                        let anchor = old_snapshot.anchor_after(user_edit.old.end);
+                        edits.push((anchor..anchor, model_suffix.to_string()));
+                    }
+
+                    model_edits.next();
+                    continue;
+                }
+            }
         }
+
+        return None;
+    }
+
+    edits.extend(model_edits.cloned());
+
+    if edits.is_empty() {
+        None
+    } else {
+        Some(edits)
     }
 }
 
@@ -179,15 +186,21 @@ impl std::fmt::Debug for InlineCompletion {
 }
 
 pub struct Zeta {
+    editor: Option<Entity<Editor>>,
     client: Arc<Client>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     shown_completions: VecDeque<InlineCompletion>,
     rated_completions: HashSet<InlineCompletionId>,
+    data_collection_choice: Entity<DataCollectionChoice>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
-    tos_accepted: bool, // Terms of service accepted
+    /// Whether the terms of service have been accepted.
+    tos_accepted: bool,
+    /// Whether an update to a newer version of Zed is required to continue using Zeta.
+    update_required: bool,
     _user_store_subscription: Subscription,
+    license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
 }
 
 impl Zeta {
@@ -196,30 +209,54 @@ impl Zeta {
     }
 
     pub fn register(
+        editor: Option<Entity<Editor>>,
+        worktree: Option<Entity<Worktree>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
         cx: &mut App,
     ) -> Entity<Self> {
-        Self::global(cx).unwrap_or_else(|| {
-            let model = cx.new(|cx| Self::new(client, user_store, cx));
-            cx.set_global(ZetaGlobal(model.clone()));
-            model
-        })
+        let this = Self::global(cx).unwrap_or_else(|| {
+            let entity = cx.new(|cx| Self::new(editor, client, user_store, cx));
+            cx.set_global(ZetaGlobal(entity.clone()));
+            entity
+        });
+
+        this.update(cx, move |this, cx| {
+            if let Some(worktree) = worktree {
+                worktree.update(cx, |worktree, cx| {
+                    this.license_detection_watchers
+                        .entry(worktree.id())
+                        .or_insert_with(|| Rc::new(LicenseDetectionWatcher::new(worktree, cx)));
+                });
+            }
+        });
+
+        this
     }
 
     pub fn clear_history(&mut self) {
         self.events.clear();
     }
 
-    fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
+    fn new(
+        editor: Option<Entity<Editor>>,
+        client: Arc<Client>,
+        user_store: Entity<UserStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let refresh_llm_token_listener = language_models::RefreshLlmTokenListener::global(cx);
 
+        let data_collection_choice = Self::load_data_collection_choices();
+        let data_collection_choice = cx.new(|_| data_collection_choice);
+
         Self {
+            editor,
             client,
             events: VecDeque::new(),
             shown_completions: VecDeque::new(),
             rated_completions: HashSet::default(),
             registered_buffers: HashMap::default(),
+            data_collection_choice,
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
@@ -237,12 +274,19 @@ impl Zeta {
                 .read(cx)
                 .current_user_has_accepted_terms()
                 .unwrap_or(false),
-            _user_store_subscription: cx.subscribe(&user_store, |this, _, event, _| match event {
-                client::user::Event::TermsStatusUpdated { accepted } => {
-                    this.tos_accepted = *accepted;
+            update_required: false,
+            _user_store_subscription: cx.subscribe(&user_store, |this, user_store, event, cx| {
+                match event {
+                    client::user::Event::PrivateUserInfoUpdated => {
+                        this.tos_accepted = user_store
+                            .read(cx)
+                            .current_user_has_accepted_terms()
+                            .unwrap_or(false);
+                    }
+                    _ => {}
                 }
-                _ => {}
             }),
+            license_detection_watchers: HashMap::default(),
         }
     }
 
@@ -305,83 +349,178 @@ impl Zeta {
         event: &language::BufferEvent,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            language::BufferEvent::Edited => {
-                self.report_changes_for_buffer(&buffer, cx);
-            }
-            _ => {}
+        if let language::BufferEvent::Edited = event {
+            self.report_changes_for_buffer(&buffer, cx);
         }
     }
 
-    pub fn request_completion_impl<F, R>(
+    #[allow(clippy::too_many_arguments)]
+    fn request_completion_impl<F, R>(
         &mut self,
+        workspace: Option<Entity<Workspace>>,
+        project: Option<&Entity<Project>>,
         buffer: &Entity<Buffer>,
         cursor: language::Anchor,
+        can_collect_data: bool,
         cx: &mut Context<Self>,
         perform_predict_edits: F,
     ) -> Task<Result<Option<InlineCompletion>>>
     where
-        F: FnOnce(Arc<Client>, LlmApiToken, bool, PredictEditsParams) -> R + 'static,
+        F: FnOnce(PerformPredictEditsParams) -> R + 'static,
         R: Future<Output = Result<PredictEditsResponse>> + Send + 'static,
     {
-        let snapshot = self.report_changes_for_buffer(buffer, cx);
+        let snapshot = self.report_changes_for_buffer(&buffer, cx);
+        let diagnostic_groups = snapshot.diagnostic_groups(None);
         let cursor_point = cursor.to_point(&snapshot);
         let cursor_offset = cursor_point.to_offset(&snapshot);
         let events = self.events.clone();
-        let path = snapshot
+        let path: Arc<Path> = snapshot
             .file()
             .map(|f| Arc::from(f.full_path(cx).as_path()))
             .unwrap_or_else(|| Arc::from(Path::new("untitled")));
 
+        let zeta = cx.entity();
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
-        let is_staff = cx.is_staff();
+        let app_version = AppVersion::global(cx);
+
+        let buffer = buffer.clone();
+
+        let local_lsp_store =
+            project.and_then(|project| project.read(cx).lsp_store().read(cx).as_local());
+        let diagnostic_groups = if let Some(local_lsp_store) = local_lsp_store {
+            Some(
+                diagnostic_groups
+                    .into_iter()
+                    .filter_map(|(language_server_id, diagnostic_group)| {
+                        let language_server =
+                            local_lsp_store.running_language_server_for_id(language_server_id)?;
+
+                        Some((
+                            language_server.name(),
+                            diagnostic_group.resolve::<usize>(&snapshot),
+                        ))
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
 
         cx.spawn(|_, cx| async move {
             let request_sent_at = Instant::now();
 
-            let (input_events, input_excerpt, input_outline, excerpt_range) = cx
-                .background_executor()
-                .spawn({
+            struct BackgroundValues {
+                input_events: String,
+                input_excerpt: String,
+                speculated_output: String,
+                editable_range: Range<usize>,
+                input_outline: String,
+            }
+
+            let values = cx
+                .background_spawn({
                     let snapshot = snapshot.clone();
+                    let path = path.clone();
                     async move {
-                        let (input_excerpt, excerpt_range) =
-                            prompt_for_excerpt(&snapshot, cursor_point, cursor_offset)?;
-
-                        let chars_remaining = TOTAL_BYTE_LIMIT.saturating_sub(input_excerpt.len());
-                        let input_events = prompt_for_events(events.iter(), chars_remaining);
-
-                        // Note that input_outline is not currently used in prompt generation and so
-                        // is not counted towards TOTAL_BYTE_LIMIT.
+                        let path = path.to_string_lossy();
+                        let input_excerpt = excerpt_for_cursor_position(
+                            cursor_point,
+                            &path,
+                            &snapshot,
+                            MAX_REWRITE_TOKENS,
+                            MAX_CONTEXT_TOKENS,
+                        );
+                        let input_events = prompt_for_events(&events, MAX_EVENT_TOKENS);
                         let input_outline = prompt_for_outline(&snapshot);
 
-                        anyhow::Ok((input_events, input_excerpt, input_outline, excerpt_range))
+                        anyhow::Ok(BackgroundValues {
+                            input_events,
+                            input_excerpt: input_excerpt.prompt,
+                            speculated_output: input_excerpt.speculated_output,
+                            editable_range: input_excerpt.editable_range.to_offset(&snapshot),
+                            input_outline,
+                        })
                     }
                 })
                 .await?;
 
-            log::debug!("Events:\n{}\nExcerpt:\n{}", input_events, input_excerpt);
+            log::debug!(
+                "Events:\n{}\nExcerpt:\n{:?}",
+                values.input_events,
+                values.input_excerpt
+            );
 
-            let body = PredictEditsParams {
-                input_events: input_events.clone(),
-                input_excerpt: input_excerpt.clone(),
-                outline: Some(input_outline.clone()),
+            let body = PredictEditsBody {
+                input_events: values.input_events.clone(),
+                input_excerpt: values.input_excerpt.clone(),
+                speculated_output: Some(values.speculated_output),
+                outline: Some(values.input_outline.clone()),
+                can_collect_data,
+                diagnostic_groups: diagnostic_groups.and_then(|diagnostic_groups| {
+                    diagnostic_groups
+                        .into_iter()
+                        .map(|(name, diagnostic_group)| {
+                            Ok((name.to_string(), serde_json::to_value(diagnostic_group)?))
+                        })
+                        .collect::<Result<Vec<_>>>()
+                        .log_err()
+                }),
             };
 
-            let response = perform_predict_edits(client, llm_token, is_staff, body).await?;
+            let response = perform_predict_edits(PerformPredictEditsParams {
+                client,
+                llm_token,
+                app_version,
+                body,
+            })
+            .await;
+            let response = match response {
+                Ok(response) => response,
+                Err(err) => {
+                    if err.is::<ZedUpdateRequiredError>() {
+                        cx.update(|cx| {
+                            zeta.update(cx, |zeta, _cx| {
+                                zeta.update_required = true;
+                            });
 
-            let output_excerpt = response.output_excerpt;
-            log::debug!("completion response: {}", output_excerpt);
+                            if let Some(workspace) = workspace {
+                                workspace.update(cx, |workspace, cx| {
+                                    workspace.show_notification(
+                                        NotificationId::unique::<ZedUpdateRequiredError>(),
+                                        cx,
+                                        |cx| {
+                                            cx.new(|_| {
+                                                ErrorMessagePrompt::new(err.to_string())
+                                                    .with_link_button(
+                                                        "Update Zed",
+                                                        "https://zed.dev/releases",
+                                                    )
+                                            })
+                                        },
+                                    );
+                                });
+                            }
+                        })
+                        .ok();
+                    }
+
+                    return Err(err);
+                }
+            };
+
+            log::debug!("completion response: {}", &response.output_excerpt);
 
             Self::process_completion_response(
-                output_excerpt,
+                response,
+                buffer,
                 &snapshot,
-                excerpt_range,
+                values.editable_range,
                 cursor_offset,
                 path,
-                input_outline,
-                input_events,
-                input_excerpt,
+                values.input_outline,
+                values.input_events,
+                values.input_excerpt,
                 request_sent_at,
                 &cx,
             )
@@ -392,6 +531,8 @@ impl Zeta {
     // Generates several example completions of various states to fill the Zeta completion modal
     #[cfg(any(test, feature = "test-support"))]
     pub fn fill_with_fake_completions(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        use language::Point;
+
         let test_buffer_text = indoc::indoc! {r#"a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
             And maybe a short line
 
@@ -400,14 +541,17 @@ impl Zeta {
             and then another
             "#};
 
+        let project = None;
         let buffer = cx.new(|cx| Buffer::local(test_buffer_text, cx));
         let position = buffer.read(cx).anchor_before(Point::new(1, 0));
 
         let completion_tasks = vec![
             self.fake_completion(
+                project,
                 &buffer,
                 position,
                 PredictEditsResponse {
+                    request_id: Uuid::parse_str("e7861db5-0cea-4761-b1c5-ad083ac53a80").unwrap(),
                     output_excerpt: format!("{EDITABLE_REGION_START_MARKER}
 a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 [here's an edit]
@@ -420,9 +564,11 @@ and then another
                 cx,
             ),
             self.fake_completion(
+                project,
                 &buffer,
                 position,
                 PredictEditsResponse {
+                    request_id: Uuid::parse_str("077c556a-2c49-44e2-bbc6-dafc09032a5e").unwrap(),
                     output_excerpt: format!(r#"{EDITABLE_REGION_START_MARKER}
 a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 And maybe a short line
@@ -435,9 +581,11 @@ and then another
                 cx,
             ),
             self.fake_completion(
+                project,
                 &buffer,
                 position,
                 PredictEditsResponse {
+                    request_id: Uuid::parse_str("df8c7b23-3d1d-4f99-a306-1f6264a41277").unwrap(),
                     output_excerpt: format!(r#"{EDITABLE_REGION_START_MARKER}
 a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 And maybe a short line
@@ -451,9 +599,11 @@ and then another
                 cx,
             ),
             self.fake_completion(
+                project,
                 &buffer,
                 position,
                 PredictEditsResponse {
+                    request_id: Uuid::parse_str("c743958d-e4d8-44a8-aa5b-eb1e305c5f5c").unwrap(),
                     output_excerpt: format!(r#"{EDITABLE_REGION_START_MARKER}
 a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 And maybe a short line
@@ -467,9 +617,11 @@ and then another
                 cx,
             ),
             self.fake_completion(
+                project,
                 &buffer,
                 position,
                 PredictEditsResponse {
+                    request_id: Uuid::parse_str("ff5cd7ab-ad06-4808-986e-d3391e7b8355").unwrap(),
                     output_excerpt: format!(r#"{EDITABLE_REGION_START_MARKER}
 a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 And maybe a short line
@@ -482,9 +634,11 @@ and then another
                 cx,
             ),
             self.fake_completion(
+                project,
                 &buffer,
                 position,
                 PredictEditsResponse {
+                    request_id: Uuid::parse_str("83cafa55-cdba-4b27-8474-1865ea06be94").unwrap(),
                     output_excerpt: format!(r#"{EDITABLE_REGION_START_MARKER}
 a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 And maybe a short line
@@ -496,9 +650,11 @@ and then another
                 cx,
             ),
             self.fake_completion(
+                project,
                 &buffer,
                 position,
                 PredictEditsResponse {
+                    request_id: Uuid::parse_str("d5bd3afd-8723-47c7-bd77-15a3a926867b").unwrap(),
                     output_excerpt: format!(r#"{EDITABLE_REGION_START_MARKER}
 a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 And maybe a short line
@@ -528,6 +684,7 @@ and then another
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake_completion(
         &mut self,
+        project: Option<&Entity<Project>>,
         buffer: &Entity<Buffer>,
         position: language::Anchor,
         response: PredictEditsResponse,
@@ -535,48 +692,80 @@ and then another
     ) -> Task<Result<Option<InlineCompletion>>> {
         use std::future::ready;
 
-        self.request_completion_impl(buffer, position, cx, |_, _, _, _| ready(Ok(response)))
+        self.request_completion_impl(None, project, buffer, position, false, cx, |_params| {
+            ready(Ok(response))
+        })
     }
 
     pub fn request_completion(
         &mut self,
+        project: Option<&Entity<Project>>,
         buffer: &Entity<Buffer>,
         position: language::Anchor,
+        can_collect_data: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<InlineCompletion>>> {
-        self.request_completion_impl(buffer, position, cx, Self::perform_predict_edits)
+        let workspace = self
+            .editor
+            .as_ref()
+            .and_then(|editor| editor.read(cx).workspace());
+        self.request_completion_impl(
+            workspace,
+            project,
+            buffer,
+            position,
+            can_collect_data,
+            cx,
+            Self::perform_predict_edits,
+        )
     }
 
     fn perform_predict_edits(
-        client: Arc<Client>,
-        llm_token: LlmApiToken,
-        is_staff: bool,
-        body: PredictEditsParams,
+        params: PerformPredictEditsParams,
     ) -> impl Future<Output = Result<PredictEditsResponse>> {
         async move {
+            let PerformPredictEditsParams {
+                client,
+                llm_token,
+                app_version,
+                body,
+                ..
+            } = params;
+
             let http_client = client.http_client();
             let mut token = llm_token.acquire(&client).await?;
             let mut did_retry = false;
 
             loop {
                 let request_builder = http_client::Request::builder().method(Method::POST);
-                let request_builder = if is_staff {
-                    request_builder.uri(
-                        "https://llm-worker-production.zed-industries.workers.dev/predict_edits",
-                    )
-                } else {
-                    request_builder.uri(
-                        http_client
-                            .build_zed_llm_url("/predict_edits", &[])?
-                            .as_ref(),
-                    )
-                };
+                let request_builder =
+                    if let Ok(predict_edits_url) = std::env::var("ZED_PREDICT_EDITS_URL") {
+                        request_builder.uri(predict_edits_url)
+                    } else {
+                        request_builder.uri(
+                            http_client
+                                .build_zed_llm_url("/predict_edits/v2", &[])?
+                                .as_ref(),
+                        )
+                    };
                 let request = request_builder
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", token))
                     .body(serde_json::to_string(&body)?.into())?;
 
                 let mut response = http_client.send(request).await?;
+
+                if let Some(minimum_required_version) = response
+                    .headers()
+                    .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
+                    .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
+                {
+                    if app_version < minimum_required_version {
+                        return Err(anyhow!(ZedUpdateRequiredError {
+                            minimum_version: minimum_required_version
+                        }));
+                    }
+                }
 
                 if response.status().is_success() {
                     let mut body = String::new();
@@ -605,9 +794,10 @@ and then another
 
     #[allow(clippy::too_many_arguments)]
     fn process_completion_response(
-        output_excerpt: String,
+        prediction_response: PredictEditsResponse,
+        buffer: Entity<Buffer>,
         snapshot: &BufferSnapshot,
-        excerpt_range: Range<usize>,
+        editable_range: Range<usize>,
         cursor_offset: usize,
         path: Arc<Path>,
         input_outline: String,
@@ -617,50 +807,109 @@ and then another
         cx: &AsyncApp,
     ) -> Task<Result<Option<InlineCompletion>>> {
         let snapshot = snapshot.clone();
-        cx.background_executor().spawn(async move {
-            let content = output_excerpt.replace(CURSOR_MARKER, "");
+        let request_id = prediction_response.request_id;
+        let output_excerpt = prediction_response.output_excerpt;
+        cx.spawn(|cx| async move {
+            let output_excerpt: Arc<str> = output_excerpt.into();
 
-            let start_markers = content
-                .match_indices(EDITABLE_REGION_START_MARKER)
-                .collect::<Vec<_>>();
-            anyhow::ensure!(
-                start_markers.len() == 1,
-                "expected exactly one start marker, found {}",
-                start_markers.len()
-            );
+            let edits: Arc<[(Range<Anchor>, String)]> = cx
+                .background_spawn({
+                    let output_excerpt = output_excerpt.clone();
+                    let editable_range = editable_range.clone();
+                    let snapshot = snapshot.clone();
+                    async move { Self::parse_edits(output_excerpt, editable_range, &snapshot) }
+                })
+                .await?
+                .into();
 
-            let codefence_start = start_markers[0].0;
-            let content = &content[codefence_start..];
+            let Some((edits, snapshot, edit_preview)) = buffer.read_with(&cx, {
+                let edits = edits.clone();
+                |buffer, cx| {
+                    let new_snapshot = buffer.snapshot();
+                    let edits: Arc<[(Range<Anchor>, String)]> =
+                        interpolate(&snapshot, &new_snapshot, edits)?.into();
+                    Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
+                }
+            })?
+            else {
+                return anyhow::Ok(None);
+            };
 
-            let newline_ix = content.find('\n').context("could not find newline")?;
-            let content = &content[newline_ix + 1..];
-
-            let codefence_end = content
-                .rfind(&format!("\n{EDITABLE_REGION_END_MARKER}"))
-                .context("could not find end marker")?;
-            let new_text = &content[..codefence_end];
-
-            let old_text = snapshot
-                .text_for_range(excerpt_range.clone())
-                .collect::<String>();
-
-            let edits = Self::compute_edits(old_text, new_text, excerpt_range.start, &snapshot);
+            let edit_preview = edit_preview.await;
 
             Ok(Some(InlineCompletion {
-                id: InlineCompletionId::new(),
+                id: InlineCompletionId(request_id),
                 path,
-                excerpt_range,
+                excerpt_range: editable_range,
                 cursor_offset,
-                edits: edits.into(),
-                snapshot: snapshot.clone(),
+                edits,
+                edit_preview,
+                snapshot,
                 input_outline: input_outline.into(),
                 input_events: input_events.into(),
                 input_excerpt: input_excerpt.into(),
-                output_excerpt: output_excerpt.into(),
+                output_excerpt,
                 request_sent_at,
                 response_received_at: Instant::now(),
             }))
         })
+    }
+
+    fn parse_edits(
+        output_excerpt: Arc<str>,
+        editable_range: Range<usize>,
+        snapshot: &BufferSnapshot,
+    ) -> Result<Vec<(Range<Anchor>, String)>> {
+        let content = output_excerpt.replace(CURSOR_MARKER, "");
+
+        let start_markers = content
+            .match_indices(EDITABLE_REGION_START_MARKER)
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            start_markers.len() == 1,
+            "expected exactly one start marker, found {}",
+            start_markers.len()
+        );
+
+        let end_markers = content
+            .match_indices(EDITABLE_REGION_END_MARKER)
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            end_markers.len() == 1,
+            "expected exactly one end marker, found {}",
+            end_markers.len()
+        );
+
+        let sof_markers = content
+            .match_indices(START_OF_FILE_MARKER)
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            sof_markers.len() <= 1,
+            "expected at most one start-of-file marker, found {}",
+            sof_markers.len()
+        );
+
+        let codefence_start = start_markers[0].0;
+        let content = &content[codefence_start..];
+
+        let newline_ix = content.find('\n').context("could not find newline")?;
+        let content = &content[newline_ix + 1..];
+
+        let codefence_end = content
+            .rfind(&format!("\n{EDITABLE_REGION_END_MARKER}"))
+            .context("could not find end marker")?;
+        let new_text = &content[..codefence_end];
+
+        let old_text = snapshot
+            .text_for_range(editable_range.clone())
+            .collect::<String>();
+
+        Ok(Self::compute_edits(
+            old_text,
+            new_text,
+            editable_range.start,
+            &snapshot,
+        ))
     }
 
     pub fn compute_edits(
@@ -669,51 +918,18 @@ and then another
         offset: usize,
         snapshot: &BufferSnapshot,
     ) -> Vec<(Range<Anchor>, String)> {
-        let diff = similar::TextDiff::from_words(old_text.as_str(), new_text);
-
-        let mut edits: Vec<(Range<usize>, String)> = Vec::new();
-        let mut old_start = offset;
-        for change in diff.iter_all_changes() {
-            let value = change.value();
-            match change.tag() {
-                similar::ChangeTag::Equal => {
-                    old_start += value.len();
-                }
-                similar::ChangeTag::Delete => {
-                    let old_end = old_start + value.len();
-                    if let Some((last_old_range, _)) = edits.last_mut() {
-                        if last_old_range.end == old_start {
-                            last_old_range.end = old_end;
-                        } else {
-                            edits.push((old_start..old_end, String::new()));
-                        }
-                    } else {
-                        edits.push((old_start..old_end, String::new()));
-                    }
-                    old_start = old_end;
-                }
-                similar::ChangeTag::Insert => {
-                    if let Some((last_old_range, last_new_text)) = edits.last_mut() {
-                        if last_old_range.end == old_start {
-                            last_new_text.push_str(value);
-                        } else {
-                            edits.push((old_start..old_start, value.into()));
-                        }
-                    } else {
-                        edits.push((old_start..old_start, value.into()));
-                    }
-                }
-            }
-        }
-
-        edits
+        text_diff(&old_text, &new_text)
             .into_iter()
             .map(|(mut old_range, new_text)| {
+                old_range.start += offset;
+                old_range.end += offset;
+
                 let prefix_len = common_prefix(
                     snapshot.chars_for_range(old_range.clone()),
                     new_text.chars(),
                 );
                 old_range.start += prefix_len;
+
                 let suffix_len = common_prefix(
                     snapshot.reversed_chars_for_range(old_range.clone()),
                     new_text[prefix_len..].chars().rev(),
@@ -721,10 +937,13 @@ and then another
                 old_range.end = old_range.end.saturating_sub(suffix_len);
 
                 let new_text = new_text[prefix_len..new_text.len() - suffix_len].to_string();
-                (
-                    snapshot.anchor_after(old_range.start)..snapshot.anchor_before(old_range.end),
-                    new_text,
-                )
+                let range = if old_range.is_empty() {
+                    let anchor = snapshot.anchor_after(old_range.start);
+                    anchor..anchor
+                } else {
+                    snapshot.anchor_after(old_range.start)..snapshot.anchor_before(old_range.end)
+                };
+                (range, new_text)
             })
             .collect()
     }
@@ -751,7 +970,7 @@ and then another
     ) {
         self.rated_completions.insert(completion.id);
         telemetry::event!(
-            "Inline Completion Rated",
+            "Edit Prediction Rated",
             rating,
             input_events = completion.input_events,
             input_excerpt = completion.input_excerpt,
@@ -795,6 +1014,91 @@ and then another
 
         new_snapshot
     }
+
+    fn load_data_collection_choices() -> DataCollectionChoice {
+        let choice = KEY_VALUE_STORE
+            .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
+            .log_err()
+            .flatten();
+
+        match choice.as_deref() {
+            Some("true") => DataCollectionChoice::Enabled,
+            Some("false") => DataCollectionChoice::Disabled,
+            Some(_) => {
+                log::error!("unknown value in '{ZED_PREDICT_DATA_COLLECTION_CHOICE}'");
+                DataCollectionChoice::NotAnswered
+            }
+            None => DataCollectionChoice::NotAnswered,
+        }
+    }
+}
+
+struct PerformPredictEditsParams {
+    pub client: Arc<Client>,
+    pub llm_token: LlmApiToken,
+    pub app_version: SemanticVersion,
+    pub body: PredictEditsBody,
+}
+
+#[derive(Error, Debug)]
+#[error(
+    "You must update to Zed version {minimum_version} or higher to continue using edit predictions."
+)]
+pub struct ZedUpdateRequiredError {
+    minimum_version: SemanticVersion,
+}
+
+struct LicenseDetectionWatcher {
+    is_open_source_rx: watch::Receiver<bool>,
+    _is_open_source_task: Task<()>,
+}
+
+impl LicenseDetectionWatcher {
+    pub fn new(worktree: &Worktree, cx: &mut Context<Worktree>) -> Self {
+        let (mut is_open_source_tx, is_open_source_rx) = watch::channel_with::<bool>(false);
+
+        // Check if worktree is a single file, if so we do not need to check for a LICENSE file
+        let task = if worktree.abs_path().is_file() {
+            Task::ready(())
+        } else {
+            let loaded_files = LICENSE_FILES_TO_CHECK
+                .iter()
+                .map(Path::new)
+                .map(|file| worktree.load_file(file, cx))
+                .collect::<ArrayVec<_, { LICENSE_FILES_TO_CHECK.len() }>>();
+
+            cx.background_spawn(async move {
+                for loaded_file in loaded_files.into_iter() {
+                    let Ok(loaded_file) = loaded_file.await else {
+                        continue;
+                    };
+
+                    let path = &loaded_file.file.path;
+                    if is_license_eligible_for_data_collection(&loaded_file.text) {
+                        log::info!("detected '{path:?}' as open source license");
+                        *is_open_source_tx.borrow_mut() = true;
+                    } else {
+                        log::info!("didn't detect '{path:?}' as open source license");
+                    }
+
+                    // stop on the first license that successfully read
+                    return;
+                }
+
+                log::debug!("didn't find a license file to check, assuming closed source");
+            })
+        };
+
+        Self {
+            is_open_source_rx,
+            _is_open_source_task: task,
+        }
+    }
+
+    /// Answers false until we find out it's open source
+    pub fn is_project_open_source(&self) -> bool {
+        *self.is_open_source_rx.borrow()
+    }
 }
 
 fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
@@ -819,9 +1123,7 @@ fn prompt_for_outline(snapshot: &BufferSnapshot) -> String {
     .unwrap();
 
     if let Some(outline) = snapshot.outline(None) {
-        let guess_size = outline.items.len() * 15;
-        input_outline.reserve(guess_size);
-        for item in outline.items.iter() {
+        for item in &outline.items {
             let spacing = " ".repeat(item.depth);
             writeln!(input_outline, "{}{}", spacing, item.text).unwrap();
         }
@@ -832,290 +1134,20 @@ fn prompt_for_outline(snapshot: &BufferSnapshot) -> String {
     input_outline
 }
 
-#[derive(Debug, Default)]
-struct ExcerptPromptBuilder<'a> {
-    file_path: Cow<'a, str>,
-    include_start_of_file_marker: bool,
-    before_editable_region: Option<ReversedStringChunks<'a>>,
-    before_cursor: ReversedStringChunks<'a>,
-    after_cursor: StringChunks<'a>,
-    after_editable_region: Option<StringChunks<'a>>,
-}
-
-impl<'a> ExcerptPromptBuilder<'a> {
-    pub fn len(&self) -> usize {
-        let mut length = 0;
-        length += "```".len();
-        length += self.file_path.len();
-        length += 1;
-        if self.include_start_of_file_marker {
-            length += START_OF_FILE_MARKER.len();
-            length += 1;
-        }
-        if let Some(before_editable_region) = &self.before_editable_region {
-            length += before_editable_region.len();
-            length += 1;
-        }
-        length += EDITABLE_REGION_START_MARKER.len();
-        length += 1;
-        length += self.before_cursor.len();
-        length += CURSOR_MARKER.len();
-        length += self.after_cursor.len();
-        length += 1;
-        length += EDITABLE_REGION_END_MARKER.len();
-        length += 1;
-        if let Some(after_editable_region) = &self.after_editable_region {
-            length += after_editable_region.len();
-            length += 1;
-        }
-        length += "```".len();
-        length
-    }
-
-    pub fn to_string(&self) -> String {
-        let length = self.len();
-        let mut result = String::with_capacity(length);
-        result.push_str("```");
-        result.push_str(&self.file_path);
-        result.push('\n');
-        if self.include_start_of_file_marker {
-            result.push_str(START_OF_FILE_MARKER);
-            result.push('\n');
-        }
-        if let Some(before_editable_region) = &self.before_editable_region {
-            before_editable_region.add_to_string(&mut result);
-            result.push('\n');
-        }
-        result.push_str(EDITABLE_REGION_START_MARKER);
-        result.push('\n');
-        self.before_cursor.add_to_string(&mut result);
-        result.push_str(CURSOR_MARKER);
-        self.after_cursor.add_to_string(&mut result);
-        result.push('\n');
-        result.push_str(EDITABLE_REGION_END_MARKER);
-        result.push('\n');
-        if let Some(after_editable_region) = &self.after_editable_region {
-            after_editable_region.add_to_string(&mut result);
-            result.push('\n');
-        }
-        result.push_str("```");
-        debug_assert!(
-            result.len() == length,
-            "Expected length: {}, Actual length: {}",
-            length,
-            result.len()
-        );
-        result
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct StringChunks<'a> {
-    chunks: Vec<&'a str>,
-    length: usize,
-}
-
-#[derive(Debug, Default)]
-pub struct ReversedStringChunks<'a>(StringChunks<'a>);
-
-impl<'a> StringChunks<'a> {
-    pub fn len(&self) -> usize {
-        self.length
-    }
-
-    pub fn extend(&mut self, new_chunks: impl Iterator<Item = &'a str>) {
-        self.chunks
-            .extend(new_chunks.inspect(|chunk| self.length += chunk.len()));
-    }
-
-    pub fn append_from_buffer<T: ToOffset>(
-        &mut self,
-        snapshot: &'a BufferSnapshot,
-        range: Range<T>,
-    ) {
-        self.extend(snapshot.text_for_range(range));
-    }
-
-    pub fn add_to_string(&self, string: &mut String) {
-        for chunk in self.chunks.iter() {
-            string.push_str(chunk);
-        }
-    }
-}
-
-impl<'a> ReversedStringChunks<'a> {
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn prepend_from_buffer<T: ToOffset>(
-        &mut self,
-        snapshot: &'a BufferSnapshot,
-        range: Range<T>,
-    ) {
-        self.0.extend(snapshot.reversed_chunks_in_range(range));
-    }
-
-    pub fn add_to_string(&self, string: &mut String) {
-        for chunk in self.0.chunks.iter().rev() {
-            string.push_str(chunk);
-        }
-    }
-}
-
-/// Computes a prompt for the excerpt of the buffer around the cursor. This always includes complete
-/// lines and the result length will be `<= MAX_INPUT_EXCERPT_BYTES`.
-fn prompt_for_excerpt(
-    snapshot: &BufferSnapshot,
-    cursor_point: Point,
-    cursor_offset: usize,
-) -> Result<(String, Range<usize>)> {
-    let mut builder = ExcerptPromptBuilder::default();
-    builder.file_path = snapshot.file().map_or(Cow::Borrowed("untitled"), |file| {
-        file.path().to_string_lossy()
-    });
-
-    let cursor_row = cursor_point.row;
-    let cursor_line_start_offset = Point::new(cursor_row, 0).to_offset(snapshot);
-    let cursor_line_end_offset =
-        Point::new(cursor_row, snapshot.line_len(cursor_row)).to_offset(snapshot);
-    builder
-        .before_cursor
-        .prepend_from_buffer(snapshot, cursor_line_start_offset..cursor_offset);
-    builder
-        .after_cursor
-        .append_from_buffer(snapshot, cursor_offset..cursor_line_end_offset);
-
-    if builder.len() > BUFFER_EXCERPT_BYTE_LIMIT {
-        return Err(anyhow!("Current line too long to send to model."));
-    }
-
-    let last_buffer_row = snapshot.max_point().row;
-
-    // Figure out how many lines of the buffer to include in the prompt, walking outwards from the
-    // cursor. Even if a line before or after the cursor causes the byte limit to be exceeded,
-    // continues walking in the other direction.
-    let mut first_included_row = cursor_row;
-    let mut last_included_row = cursor_row;
-    let mut no_more_before = cursor_row == 0;
-    let mut no_more_after = cursor_row >= last_buffer_row;
-    let mut output_len = builder.len();
-    let mut row_delta = 1;
-    loop {
-        if !no_more_before {
-            let row = cursor_point.row - row_delta;
-            let line_len: usize = (snapshot.line_len(row) + 1).try_into().unwrap();
-            let mut new_output_len = output_len + line_len;
-            if row == 0 {
-                new_output_len += START_OF_FILE_MARKER.len() + 1;
-            }
-            if new_output_len <= BUFFER_EXCERPT_BYTE_LIMIT {
-                output_len = new_output_len;
-                first_included_row = row;
-                if row == 0 {
-                    builder.include_start_of_file_marker = true;
-                    no_more_before = true;
-                }
-            } else {
-                no_more_before = true;
-            }
-        }
-        if !no_more_after {
-            let row = cursor_point.row + row_delta;
-            let line_len: usize = (snapshot.line_len(row) + 1).try_into().unwrap();
-            let new_output_len = output_len + line_len;
-            if new_output_len <= BUFFER_EXCERPT_BYTE_LIMIT {
-                output_len = new_output_len;
-                last_included_row = row;
-                if row >= last_buffer_row {
-                    no_more_after = true;
-                }
-            } else {
-                no_more_after = true;
-            }
-        }
-        if no_more_before && no_more_after {
-            break;
-        }
-        row_delta += 1;
-    }
-
-    // Include a line of context outside the editable region, but only if it is not the first line
-    // (otherwise the first line of the file would never be uneditable).
-    let first_editable_row = if first_included_row != 0
-        && first_included_row < cursor_row
-        && !snapshot.is_line_blank(first_included_row)
-    {
-        let mut before_editable_region = ReversedStringChunks::default();
-        before_editable_region.prepend_from_buffer(
-            snapshot,
-            Point::new(first_included_row, 0)
-                ..Point::new(first_included_row, snapshot.line_len(first_included_row)),
-        );
-        builder.before_editable_region = Some(before_editable_region);
-        first_included_row + 1
-    } else {
-        first_included_row
-    };
-
-    // Include a line of context outside the editable region, but only if it is not the last line
-    // (otherwise the first line of the file would never be uneditable).
-    let last_editable_row = if last_included_row < last_buffer_row
-        && last_included_row > cursor_row
-        && !snapshot.is_line_blank(last_included_row)
-    {
-        let mut after_editable_region = StringChunks::default();
-        after_editable_region.append_from_buffer(
-            snapshot,
-            Point::new(last_included_row, 0)
-                ..Point::new(last_included_row, snapshot.line_len(last_included_row)),
-        );
-        builder.after_editable_region = Some(after_editable_region);
-        last_included_row + 1
-    } else {
-        last_included_row
-    };
-
-    let editable_range = (Point::new(first_editable_row, 0)
-        ..Point::new(last_editable_row, snapshot.line_len(last_editable_row)))
-        .to_offset(snapshot);
-
-    let before_cursor_row = editable_range.start..cursor_line_start_offset;
-    let after_cursor_row = cursor_line_end_offset..editable_range.end;
-    if !before_cursor_row.is_empty() {
-        builder
-            .before_cursor
-            .prepend_from_buffer(snapshot, before_cursor_row);
-    }
-    if !after_cursor_row.is_empty() {
-        builder
-            .after_cursor
-            .append_from_buffer(snapshot, after_cursor_row);
-    }
-
-    anyhow::Ok((builder.to_string(), editable_range))
-}
-
-fn prompt_for_events<'a>(
-    events: impl Iterator<Item = &'a Event>,
-    mut bytes_remaining: usize,
-) -> String {
+fn prompt_for_events(events: &VecDeque<Event>, mut remaining_tokens: usize) -> String {
     let mut result = String::new();
-    for event in events {
-        if !result.is_empty() {
-            result.push('\n');
-            result.push('\n');
-        }
+    for event in events.iter().rev() {
         let event_string = event.to_prompt();
-        let len = event_string.len();
-        if len > PER_EVENT_BYTE_LIMIT {
-            continue;
-        }
-        if len > bytes_remaining {
+        let event_tokens = tokens_for_bytes(event_string.len());
+        if event_tokens > remaining_tokens {
             break;
         }
-        bytes_remaining -= len;
-        result.push_str(&event_string);
+
+        if !result.is_empty() {
+            result.insert_str(0, "\n\n");
+        }
+        result.insert_str(0, &event_string);
+        remaining_tokens -= event_tokens;
     }
     result
 }
@@ -1156,10 +1188,7 @@ impl Event {
                     writeln!(prompt, "User renamed {:?} to {:?}\n", old_path, new_path).unwrap();
                 }
 
-                let diff =
-                    similar::TextDiff::from_lines(&old_snapshot.text(), &new_snapshot.text())
-                        .unified_diff()
-                        .to_string();
+                let diff = language::unified_diff(&old_snapshot.text(), &new_snapshot.text());
                 if !diff.is_empty() {
                     write!(
                         prompt,
@@ -1209,40 +1238,154 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum DataCollectionChoice {
+    NotAnswered,
+    Enabled,
+    Disabled,
+}
+
+impl DataCollectionChoice {
+    pub fn is_enabled(self) -> bool {
+        match self {
+            Self::Enabled => true,
+            Self::NotAnswered | Self::Disabled => false,
+        }
+    }
+
+    pub fn is_answered(self) -> bool {
+        match self {
+            Self::Enabled | Self::Disabled => true,
+            Self::NotAnswered => false,
+        }
+    }
+
+    pub fn toggle(&self) -> DataCollectionChoice {
+        match self {
+            Self::Enabled => Self::Disabled,
+            Self::Disabled => Self::Enabled,
+            Self::NotAnswered => Self::Enabled,
+        }
+    }
+}
+
+impl From<bool> for DataCollectionChoice {
+    fn from(value: bool) -> Self {
+        match value {
+            true => DataCollectionChoice::Enabled,
+            false => DataCollectionChoice::Disabled,
+        }
+    }
+}
+
+pub struct ProviderDataCollection {
+    /// When set to None, data collection is not possible in the provider buffer
+    choice: Option<Entity<DataCollectionChoice>>,
+    license_detection_watcher: Option<Rc<LicenseDetectionWatcher>>,
+}
+
+impl ProviderDataCollection {
+    pub fn new(zeta: Entity<Zeta>, buffer: Option<Entity<Buffer>>, cx: &mut App) -> Self {
+        let choice_and_watcher = buffer.and_then(|buffer| {
+            let file = buffer.read(cx).file()?;
+
+            if !file.is_local() || file.is_private() {
+                return None;
+            }
+
+            let zeta = zeta.read(cx);
+            let choice = zeta.data_collection_choice.clone();
+
+            let license_detection_watcher = zeta
+                .license_detection_watchers
+                .get(&file.worktree_id(cx))
+                .cloned()?;
+
+            Some((choice, license_detection_watcher))
+        });
+
+        if let Some((choice, watcher)) = choice_and_watcher {
+            ProviderDataCollection {
+                choice: Some(choice),
+                license_detection_watcher: Some(watcher),
+            }
+        } else {
+            ProviderDataCollection {
+                choice: None,
+                license_detection_watcher: None,
+            }
+        }
+    }
+
+    pub fn can_collect_data(&self, cx: &App) -> bool {
+        self.is_data_collection_enabled(cx) && self.is_project_open_source()
+    }
+
+    pub fn is_data_collection_enabled(&self, cx: &App) -> bool {
+        self.choice
+            .as_ref()
+            .is_some_and(|choice| choice.read(cx).is_enabled())
+    }
+
+    fn is_project_open_source(&self) -> bool {
+        self.license_detection_watcher
+            .as_ref()
+            .is_some_and(|watcher| watcher.is_project_open_source())
+    }
+
+    pub fn toggle(&mut self, cx: &mut App) {
+        if let Some(choice) = self.choice.as_mut() {
+            let new_choice = choice.update(cx, |choice, _cx| {
+                let new_choice = choice.toggle();
+                *choice = new_choice;
+                new_choice
+            });
+
+            db::write_and_log(cx, move || {
+                KEY_VALUE_STORE.write_kvp(
+                    ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
+                    new_choice.is_enabled().to_string(),
+                )
+            });
+        }
+    }
+}
+
 pub struct ZetaInlineCompletionProvider {
     zeta: Entity<Zeta>,
     pending_completions: ArrayVec<PendingCompletion, 2>,
     next_pending_completion_id: usize,
     current_completion: Option<CurrentInlineCompletion>,
+    /// None if this is entirely disabled for this provider
+    provider_data_collection: ProviderDataCollection,
+    last_request_timestamp: Instant,
 }
 
 impl ZetaInlineCompletionProvider {
-    pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(8);
+    pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
 
-    pub fn new(zeta: Entity<Zeta>) -> Self {
+    pub fn new(zeta: Entity<Zeta>, provider_data_collection: ProviderDataCollection) -> Self {
         Self {
             zeta,
             pending_completions: ArrayVec::new(),
             next_pending_completion_id: 0,
             current_completion: None,
+            provider_data_collection,
+            last_request_timestamp: Instant::now(),
         }
     }
 }
 
-impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvider {
+impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider {
     fn name() -> &'static str {
         "zed-predict"
     }
 
     fn display_name() -> &'static str {
-        "Zed Predict"
+        "Zed's Edit Predictions"
     }
 
     fn show_completions_in_menu() -> bool {
-        true
-    }
-
-    fn show_completions_in_normal_mode() -> bool {
         true
     }
 
@@ -1250,17 +1393,31 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         true
     }
 
+    fn data_collection_state(&self, cx: &App) -> DataCollectionState {
+        let is_project_open_source = self.provider_data_collection.is_project_open_source();
+
+        if self.provider_data_collection.is_data_collection_enabled(cx) {
+            DataCollectionState::Enabled {
+                is_project_open_source,
+            }
+        } else {
+            DataCollectionState::Disabled {
+                is_project_open_source,
+            }
+        }
+    }
+
+    fn toggle_data_collection(&mut self, cx: &mut App) {
+        self.provider_data_collection.toggle(cx);
+    }
+
     fn is_enabled(
         &self,
-        buffer: &Entity<Buffer>,
-        cursor_position: language::Anchor,
-        cx: &App,
+        _buffer: &Entity<Buffer>,
+        _cursor_position: language::Anchor,
+        _cx: &App,
     ) -> bool {
-        let buffer = buffer.read(cx);
-        let file = buffer.file();
-        let language = buffer.language_at(cursor_position);
-        let settings = all_language_settings(file, cx);
-        settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
+        true
     }
 
     fn needs_terms_acceptance(&self, cx: &App) -> bool {
@@ -1273,26 +1430,53 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
     fn refresh(
         &mut self,
+        project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         position: language::Anchor,
-        debounce: bool,
+        _debounce: bool,
         cx: &mut Context<Self>,
     ) {
         if !self.zeta.read(cx).tos_accepted {
             return;
         }
 
+        if self.zeta.read(cx).update_required {
+            return;
+        }
+
+        if let Some(current_completion) = self.current_completion.as_ref() {
+            let snapshot = buffer.read(cx).snapshot();
+            if current_completion
+                .completion
+                .interpolate(&snapshot)
+                .is_some()
+            {
+                return;
+            }
+        }
+
         let pending_completion_id = self.next_pending_completion_id;
         self.next_pending_completion_id += 1;
+        let can_collect_data = self.provider_data_collection.can_collect_data(cx);
+        let last_request_timestamp = self.last_request_timestamp;
 
         let task = cx.spawn(|this, mut cx| async move {
-            if debounce {
-                cx.background_executor().timer(Self::DEBOUNCE_TIMEOUT).await;
+            if let Some(timeout) = (last_request_timestamp + Self::THROTTLE_TIMEOUT)
+                .checked_duration_since(Instant::now())
+            {
+                cx.background_executor().timer(timeout).await;
             }
 
             let completion_request = this.update(&mut cx, |this, cx| {
+                this.last_request_timestamp = Instant::now();
                 this.zeta.update(cx, |zeta, cx| {
-                    zeta.request_completion(&buffer, position, cx)
+                    zeta.request_completion(
+                        project.as_ref(),
+                        &buffer,
+                        position,
+                        can_collect_data,
+                        cx,
+                    )
                 })
             });
 
@@ -1313,6 +1497,16 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                 .log_err()
                 .flatten()
             else {
+                this.update(&mut cx, |this, cx| {
+                    if this.pending_completions[0].id == pending_completion_id {
+                        this.pending_completions.remove(0);
+                    } else {
+                        this.pending_completions.clear();
+                    }
+
+                    cx.notify();
+                })
+                .ok();
                 return;
             };
 
@@ -1433,9 +1627,18 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         }
 
         Some(inline_completion::InlineCompletion {
+            id: Some(completion.id.to_string().into()),
             edits: edits[edit_start_ix..edit_end_ix].to_vec(),
+            edit_preview: Some(completion.edit_preview.clone()),
         })
     }
+}
+
+fn tokens_for_bytes(bytes: usize) -> usize {
+    /// Typical number of string bytes per token for the purposes of limiting model input. This is
+    /// intentionally low to err on the side of underestimating limits.
+    const BYTES_PER_TOKEN_GUESS: usize = 3;
+    bytes / BYTES_PER_TOKEN_GUESS
 }
 
 #[cfg(test)]
@@ -1445,6 +1648,7 @@ mod tests {
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
     use indoc::indoc;
+    use language::Point;
     use language_models::RefreshLlmTokenListener;
     use rpc::proto;
     use settings::SettingsStore;
@@ -1452,21 +1656,27 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    fn test_inline_completion_basic_interpolation(cx: &mut TestAppContext) {
+    async fn test_inline_completion_basic_interpolation(cx: &mut TestAppContext) {
         let buffer = cx.new(|cx| Buffer::local("Lorem ipsum dolor", cx));
+        let edits: Arc<[(Range<Anchor>, String)]> = cx.update(|cx| {
+            to_completion_edits(
+                [(2..5, "REM".to_string()), (9..11, "".to_string())],
+                &buffer,
+                cx,
+            )
+            .into()
+        });
+
+        let edit_preview = cx
+            .read(|cx| buffer.read(cx).preview_edits(edits.clone(), cx))
+            .await;
+
         let completion = InlineCompletion {
-            edits: cx
-                .read(|cx| {
-                    to_completion_edits(
-                        [(2..5, "REM".to_string()), (9..11, "".to_string())],
-                        &buffer,
-                        cx,
-                    )
-                })
-                .into(),
+            edits,
+            edit_preview,
             path: Path::new("").into(),
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
-            id: InlineCompletionId::new(),
+            id: InlineCompletionId(Uuid::new_v4()),
             excerpt_range: 0..0,
             cursor_offset: 0,
             input_outline: "".into(),
@@ -1477,105 +1687,152 @@ mod tests {
             response_received_at: Instant::now(),
         };
 
-        assert_eq!(
-            cx.read(|cx| {
+        cx.update(|cx| {
+            assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
-                    cx,
-                )
-            }),
-            vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
-        );
+                    cx
+                ),
+                vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
+            );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "")], None, cx));
-        assert_eq!(
-            cx.read(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "")], None, cx));
+            assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
-                    cx,
-                )
-            }),
-            vec![(2..2, "REM".to_string()), (6..8, "".to_string())]
-        );
+                    cx
+                ),
+                vec![(2..2, "REM".to_string()), (6..8, "".to_string())]
+            );
 
-        buffer.update(cx, |buffer, cx| buffer.undo(cx));
-        assert_eq!(
-            cx.read(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.undo(cx));
+            assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
-                    cx,
-                )
-            }),
-            vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
-        );
+                    cx
+                ),
+                vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
+            );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "R")], None, cx));
-        assert_eq!(
-            cx.read(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "R")], None, cx));
+            assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
-                    cx,
-                )
-            }),
-            vec![(3..3, "EM".to_string()), (7..9, "".to_string())]
-        );
+                    cx
+                ),
+                vec![(3..3, "EM".to_string()), (7..9, "".to_string())]
+            );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "E")], None, cx));
-        assert_eq!(
-            cx.read(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "E")], None, cx));
+            assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
-                    cx,
-                )
-            }),
-            vec![(4..4, "M".to_string()), (8..10, "".to_string())]
-        );
+                    cx
+                ),
+                vec![(4..4, "M".to_string()), (8..10, "".to_string())]
+            );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "M")], None, cx));
-        assert_eq!(
-            cx.read(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "M")], None, cx));
+            assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
-                    cx,
-                )
-            }),
-            vec![(9..11, "".to_string())]
-        );
+                    cx
+                ),
+                vec![(9..11, "".to_string())]
+            );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "")], None, cx));
-        assert_eq!(
-            cx.read(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "")], None, cx));
+            assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
-                    cx,
-                )
-            }),
-            vec![(4..4, "M".to_string()), (8..10, "".to_string())]
-        );
+                    cx
+                ),
+                vec![(4..4, "M".to_string()), (8..10, "".to_string())]
+            );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([(8..10, "")], None, cx));
-        assert_eq!(
-            cx.read(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.edit([(8..10, "")], None, cx));
+            assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
-                    cx,
-                )
-            }),
-            vec![(4..4, "M".to_string())]
+                    cx
+                ),
+                vec![(4..4, "M".to_string())]
+            );
+
+            buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, cx));
+            assert_eq!(completion.interpolate(&buffer.read(cx).snapshot()), None);
+        })
+    }
+
+    #[gpui::test]
+    async fn test_clean_up_diff(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            client::init_settings(cx);
+        });
+
+        let edits = edits_for_prediction(
+            indoc! {"
+                fn main() {
+                    let word_1 = \"lorem\";
+                    let range = word.len()..word.len();
+                }
+            "},
+            indoc! {"
+                <|editable_region_start|>
+                fn main() {
+                    let word_1 = \"lorem\";
+                    let range = word_1.len()..word_1.len();
+                }
+
+                <|editable_region_end|>
+            "},
+            cx,
+        )
+        .await;
+        assert_eq!(
+            edits,
+            [
+                (Point::new(2, 20)..Point::new(2, 20), "_1".to_string()),
+                (Point::new(2, 32)..Point::new(2, 32), "_1".to_string()),
+            ]
         );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, cx));
+        let edits = edits_for_prediction(
+            indoc! {"
+                fn main() {
+                    let story = \"the quick\"
+                }
+            "},
+            indoc! {"
+                <|editable_region_start|>
+                fn main() {
+                    let story = \"the quick brown fox jumps over the lazy dog\";
+                }
+
+                <|editable_region_end|>
+            "},
+            cx,
+        )
+        .await;
         assert_eq!(
-            cx.read(|cx| completion.interpolate(&buffer.read(cx).snapshot())),
-            None
+            edits,
+            [
+                (
+                    Point::new(1, 26)..Point::new(1, 26),
+                    " brown fox jumps over the lazy dog".to_string()
+                ),
+                (Point::new(1, 27)..Point::new(1, 27), ";".to_string()),
+            ]
         );
     }
 
@@ -1602,6 +1859,8 @@ mod tests {
                 .status(200)
                 .body(
                     serde_json::to_string(&PredictEditsResponse {
+                        request_id: Uuid::parse_str("7e86480f-3536-4d2c-9334-8213e3445d45")
+                            .unwrap(),
                         output_excerpt: completion_response.to_string(),
                     })
                     .unwrap()
@@ -1616,12 +1875,13 @@ mod tests {
         });
         let server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(client, user_store, cx));
+        let zeta = cx.new(|cx| Zeta::new(None, client, user_store, cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
-        let completion_task =
-            zeta.update(cx, |zeta, cx| zeta.request_completion(&buffer, cursor, cx));
+        let completion_task = zeta.update(cx, |zeta, cx| {
+            zeta.request_completion(None, &buffer, cursor, false, cx)
+        });
 
         let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
         server.respond(
@@ -1637,6 +1897,58 @@ mod tests {
             buffer.read_with(cx, |buffer, _| buffer.text()),
             "lorem\nipsum"
         );
+    }
+
+    async fn edits_for_prediction(
+        buffer_content: &str,
+        completion_response: &str,
+        cx: &mut TestAppContext,
+    ) -> Vec<(Range<Point>, String)> {
+        let completion_response = completion_response.to_string();
+        let http_client = FakeHttpClient::create(move |_| {
+            let completion = completion_response.clone();
+            async move {
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(
+                        serde_json::to_string(&PredictEditsResponse {
+                            request_id: Uuid::new_v4(),
+                            output_excerpt: completion,
+                        })
+                        .unwrap()
+                        .into(),
+                    )
+                    .unwrap())
+            }
+        });
+
+        let client = cx.update(|cx| Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
+        cx.update(|cx| {
+            RefreshLlmTokenListener::register(client.clone(), cx);
+        });
+        let server = FakeServer::for_client(42, &client, cx).await;
+        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+        let zeta = cx.new(|cx| Zeta::new(None, client, user_store, cx));
+
+        let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
+        let completion_task = zeta.update(cx, |zeta, cx| {
+            zeta.request_completion(None, &buffer, cursor, false, cx)
+        });
+
+        let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
+        server.respond(
+            token_request.receipt(),
+            proto::GetLlmTokenResponse { token: "".into() },
+        );
+
+        let completion = completion_task.await.unwrap().unwrap();
+        completion
+            .edits
+            .into_iter()
+            .map(|(old_range, new_text)| (old_range.to_point(&snapshot), new_text.clone()))
+            .collect::<Vec<_>>()
     }
 
     fn to_completion_edits(

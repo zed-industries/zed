@@ -96,6 +96,8 @@ impl ExtensionHostProxy {
 }
 
 pub trait ExtensionThemeProxy: Send + Sync + 'static {
+    fn set_extensions_loaded(&self);
+
     fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>>;
 
     fn remove_user_themes(&self, themes: Vec<SharedString>);
@@ -118,9 +120,19 @@ pub trait ExtensionThemeProxy: Send + Sync + 'static {
         icons_root_dir: PathBuf,
         fs: Arc<dyn Fs>,
     ) -> Task<Result<()>>;
+
+    fn reload_current_icon_theme(&self, cx: &mut App);
 }
 
 impl ExtensionThemeProxy for ExtensionHostProxy {
+    fn set_extensions_loaded(&self) {
+        let Some(proxy) = self.theme_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.set_extensions_loaded()
+    }
+
     fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
         let Some(proxy) = self.theme_proxy.read().clone() else {
             return Task::ready(Ok(Vec::new()));
@@ -184,6 +196,14 @@ impl ExtensionThemeProxy for ExtensionHostProxy {
         };
 
         proxy.load_icon_theme(icon_theme_path, icons_root_dir, fs)
+    }
+
+    fn reload_current_icon_theme(&self, cx: &mut App) {
+        let Some(proxy) = self.theme_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.reload_current_icon_theme(cx)
     }
 }
 

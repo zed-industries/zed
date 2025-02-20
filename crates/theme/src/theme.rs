@@ -23,7 +23,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use ::settings::Settings;
+use ::settings::SettingsStore;
 use anyhow::Result;
+use fallback_themes::apply_status_color_defaults;
 use fs::Fs;
 use gpui::{
     px, App, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString, WindowAppearance,
@@ -100,6 +102,16 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
 
     ThemeSettings::register(cx);
     FontFamilyCache::init_global(cx);
+
+    let mut prev_buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
+        if buffer_font_size != prev_buffer_font_size {
+            prev_buffer_font_size = buffer_font_size;
+            reset_buffer_font_size(cx);
+        }
+    })
+    .detach();
 }
 
 /// Implementing this trait allows accessing the active theme.
@@ -155,7 +167,9 @@ impl ThemeFamily {
             AppearanceContent::Light => StatusColors::light(),
             AppearanceContent::Dark => StatusColors::dark(),
         };
-        refined_status_colors.refine(&theme.style.status_colors_refinement());
+        let mut status_colors_refinement = theme.style.status_colors_refinement();
+        apply_status_color_defaults(&mut status_colors_refinement);
+        refined_status_colors.refine(&status_colors_refinement);
 
         let mut refined_player_colors = match theme.appearance {
             AppearanceContent::Light => PlayerColors::light(),

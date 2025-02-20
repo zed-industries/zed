@@ -183,7 +183,7 @@ impl Item for ReplSessionsPage {
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("repl sessions")
+        Some("REPL Session Started")
     }
 
     fn show_toolbar(&self) -> bool {
@@ -249,7 +249,7 @@ impl Render for ReplSessionsPage {
             return ReplSessionsContainer::new("No Jupyter Kernel Sessions").child(
                 v_flex()
                     .child(Label::new(instructions))
-                    .children(KeyBinding::for_action(&Run, window)),
+                    .children(KeyBinding::for_action(&Run, window, cx)),
             );
         }
 

@@ -6,10 +6,11 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 
-use client::ExtensionMetadata;
+use client::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
+use feature_flags::FeatureFlagAppExt as _;
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, uniform_list, Action, App, ClipboardItem, Context, Entity, EventEmitter, Flatten,
@@ -210,6 +211,7 @@ pub struct ExtensionsPage {
     filtered_remote_extension_indices: Vec<usize>,
     query_editor: Entity<Editor>,
     query_contains_error: bool,
+    provides_filter: Option<ExtensionProvides>,
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
     upsells: BTreeSet<Feature>,
@@ -261,12 +263,13 @@ impl ExtensionsPage {
                 filtered_remote_extension_indices: Vec::new(),
                 remote_extension_entries: Vec::new(),
                 query_contains_error: false,
+                provides_filter: None,
                 extension_fetch_task: None,
                 _subscriptions: subscriptions,
                 query_editor,
                 upsells: BTreeSet::default(),
             };
-            this.fetch_extensions(None, cx);
+            this.fetch_extensions(None, None, cx);
             this
         })
     }
@@ -289,6 +292,25 @@ impl ExtensionsPage {
                     window.dispatch_action(
                         zed_actions::theme_selector::Toggle {
                             themes_filter: Some(themes),
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
+                })
+                .ok();
+            return;
+        }
+
+        let icon_themes = extension_store
+            .extension_icon_themes(extension_id)
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>();
+        if !icon_themes.is_empty() {
+            workspace
+                .update(cx, |_workspace, cx| {
+                    window.dispatch_action(
+                        zed_actions::icon_theme_selector::Toggle {
+                            themes_filter: Some(icon_themes),
                         }
                         .boxed_clone(),
                         cx,
@@ -344,7 +366,12 @@ impl ExtensionsPage {
         cx.notify();
     }
 
-    fn fetch_extensions(&mut self, search: Option<String>, cx: &mut Context<Self>) {
+    fn fetch_extensions(
+        &mut self,
+        search: Option<String>,
+        provides_filter: Option<BTreeSet<ExtensionProvides>>,
+        cx: &mut Context<Self>,
+    ) {
         self.is_fetching_extensions = true;
         cx.notify();
 
@@ -355,7 +382,7 @@ impl ExtensionsPage {
         });
 
         let remote_extensions = extension_store.update(cx, |store, cx| {
-            store.fetch_extensions(search.as_deref(), cx)
+            store.fetch_extensions(search.as_deref(), provides_filter.as_ref(), cx)
         });
 
         cx.spawn(move |this, mut cx| async move {
@@ -556,7 +583,6 @@ impl ExtensionsPage {
                     .child(
                         h_flex()
                             .gap_2()
-                            .items_end()
                             .child(
                                 Headline::new(extension.manifest.name.clone())
                                     .size(HeadlineSize::Medium),
@@ -569,7 +595,52 @@ impl ExtensionsPage {
                                         Headline::new(format!("(v{installed_version} installed)",))
                                             .size(HeadlineSize::XSmall)
                                     }),
-                            ),
+                            )
+                            .map(|parent| {
+                                if extension.manifest.provides.is_empty() {
+                                    return parent;
+                                }
+
+                                parent.child(
+                                    h_flex().gap_2().children(
+                                        extension
+                                            .manifest
+                                            .provides
+                                            .iter()
+                                            .map(|provides| {
+                                                let label = match provides {
+                                                    ExtensionProvides::Themes => "Themes",
+                                                    ExtensionProvides::IconThemes => "Icon Themes",
+                                                    ExtensionProvides::Languages => "Languages",
+                                                    ExtensionProvides::Grammars => "Grammars",
+                                                    ExtensionProvides::LanguageServers => {
+                                                        "Language Servers"
+                                                    }
+                                                    ExtensionProvides::ContextServers => {
+                                                        "Context Servers"
+                                                    }
+                                                    ExtensionProvides::SlashCommands => {
+                                                        "Slash Commands"
+                                                    }
+                                                    ExtensionProvides::IndexedDocsProviders => {
+                                                        "Indexed Docs Providers"
+                                                    }
+                                                    ExtensionProvides::Snippets => "Snippets",
+                                                };
+                                                div()
+                                                    .bg(cx.theme().colors().element_background)
+                                                    .px_0p5()
+                                                    .border_1()
+                                                    .border_color(cx.theme().colors().border)
+                                                    .rounded_md()
+                                                    .child(
+                                                        Label::new(label).size(LabelSize::XSmall),
+                                                    )
+                                            })
+                                            .collect::<Vec<_>>(),
+                                    ),
+                                )
+                            }),
                     )
                     .child(
                         h_flex()
@@ -890,9 +961,13 @@ impl ExtensionsPage {
     ) {
         if let editor::EditorEvent::Edited { .. } = event {
             self.query_contains_error = false;
-            self.fetch_extensions_debounced(cx);
-            self.refresh_feature_upsells(cx);
+            self.refresh_search(cx);
         }
+    }
+
+    fn refresh_search(&mut self, cx: &mut Context<Self>) {
+        self.fetch_extensions_debounced(cx);
+        self.refresh_feature_upsells(cx);
     }
 
     fn fetch_extensions_debounced(&mut self, cx: &mut Context<ExtensionsPage>) {
@@ -915,7 +990,7 @@ impl ExtensionsPage {
             };
 
             this.update(&mut cx, |this, cx| {
-                this.fetch_extensions(search, cx);
+                this.fetch_extensions(search, Some(BTreeSet::from_iter(this.provides_filter)), cx);
             })
             .ok();
         }));
@@ -1099,7 +1174,41 @@ impl Render for ExtensionsPage {
                             .w_full()
                             .gap_2()
                             .justify_between()
-                            .child(h_flex().child(self.render_search(cx)))
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(self.render_search(cx))
+                                    .map(|parent| {
+                                        // Note: Staff-only until this gets design input.
+                                        if !cx.is_staff() {
+                                            return parent;
+                                        }
+
+                                        parent.child(CheckboxWithLabel::new(
+                                            "icon-themes-filter",
+                                            Label::new("Icon themes"),
+                                            match self.provides_filter {
+                                                Some(ExtensionProvides::IconThemes) => {
+                                                    ToggleState::Selected
+                                                }
+                                                _ => ToggleState::Unselected,
+                                            },
+                                            cx.listener(|this, checked, _window, cx| {
+                                                match checked {
+                                                    ToggleState::Unselected
+                                                    | ToggleState::Indeterminate => {
+                                                        this.provides_filter = None
+                                                    }
+                                                    ToggleState::Selected => {
+                                                        this.provides_filter =
+                                                            Some(ExtensionProvides::IconThemes)
+                                                    }
+                                                };
+                                                this.refresh_search(cx);
+                                            }),
+                                        ))
+                                    }),
+                            )
                             .child(
                                 h_flex()
                                     .child(
@@ -1188,7 +1297,7 @@ impl Item for ExtensionsPage {
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("extensions page")
+        Some("Extensions Page Opened")
     }
 
     fn show_toolbar(&self) -> bool {
