@@ -15078,7 +15078,7 @@ fn insert_extra_newline_tree_sitter(buffer: &MultiBufferSnapshot, range: Range<u
     let Some(pair) = pair else {
         return false;
     };
-    pair.newline
+    pair.newline_only
         && buffer
             .chars_for_range(pair.open_range.end..range.start)
             .chain(buffer.chars_for_range(range.end..pair.close_range.start))

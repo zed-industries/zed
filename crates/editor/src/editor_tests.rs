@@ -15947,7 +15947,7 @@ async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
             ("</" @open ">" @close)
             ("<" @open ">" @close)
             ("\"" @open "\"" @close)
-            ((element (start_tag) @open (end_tag) @close) (#set! newline) (#set! nomatch))
+            ((element (start_tag) @open (end_tag) @close) (#set! newline.only))
         "#,
         )
         .unwrap(),

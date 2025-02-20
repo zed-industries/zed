@@ -1046,8 +1046,7 @@ struct BracketsConfig {
 
 #[derive(Clone, Debug, Default)]
 struct BracketsPatternConfig {
-    newline: bool,
-    no_match: bool,
+    newline_only: bool,
 }
 
 impl Language {
@@ -1294,8 +1293,7 @@ impl Language {
                 let mut config = BracketsPatternConfig::default();
                 for setting in query.property_settings(ix) {
                     match setting.key.as_ref() {
-                        "newline" => config.newline = true,
-                        "nomatch" => config.no_match = true,
+                        "newline.only" => config.newline_only = true,
                         _ => {}
                     }
                 }

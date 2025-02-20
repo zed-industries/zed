@@ -786,8 +786,7 @@ impl EditPreview {
 pub struct BracketMatch {
     pub open_range: Range<usize>,
     pub close_range: Range<usize>,
-    pub newline: bool,
-    pub no_match: bool,
+    pub newline_only: bool,
 }
 
 impl Buffer {
@@ -3659,8 +3658,7 @@ impl BufferSnapshot {
                 return Some(BracketMatch {
                     open_range,
                     close_range,
-                    newline: pattern.newline,
-                    no_match: pattern.no_match,
+                    newline_only: pattern.newline_only,
                 });
             }
             None
@@ -3675,7 +3673,8 @@ impl BufferSnapshot {
         // Find bracket pairs that *inclusively* contain the given range.
         let range = range.start.to_offset(self).saturating_sub(1)
             ..self.len().min(range.end.to_offset(self) + 1);
-        self.all_bracket_ranges(range).filter(|pair| !pair.no_match)
+        self.all_bracket_ranges(range)
+            .filter(|pair| !pair.newline_only)
     }
 
     pub fn text_object_ranges<T: ToOffset>(
