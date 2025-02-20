@@ -17,8 +17,8 @@ use git::{
 
 static CHROMIUM_REVIEW_URL: &str = "https://chromium-review.googlesource.com";
 
-// Parse Gerrit URLs like
-// https://chromium-review.googlesource.com/c/chromium/src/+/3310961.
+/// Parses Gerrit URLs like
+/// https://chromium-review.googlesource.com/c/chromium/src/+/3310961.
 fn pull_request_regex() -> &'static Regex {
     static PULL_REQUEST_NUMBER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(&format!(
@@ -29,7 +29,7 @@ fn pull_request_regex() -> &'static Regex {
     &PULL_REQUEST_NUMBER_REGEX
 }
 
-// https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html
+/// https://gerrit-review.googlesource.com/Documentation/rest-api-changes.html
 #[derive(Debug, Deserialize)]
 struct ChangeInfo {
     owner: AccountInfo,
@@ -72,7 +72,7 @@ impl Chromium {
             );
         }
 
-        // Remove XSSI protection prefix
+        // Remove XSSI protection prefix.
         let body_str = std::str::from_utf8(&body)?.trim_start_matches(")]}'");
 
         serde_json::from_str::<ChangeInfo>(body_str)
@@ -173,19 +173,20 @@ impl GitHostingProvider for Chromium {
         http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
         let commit = commit.to_string();
-        let avatar_url = self
+        let Some(author) = self
             .fetch_chromium_commit_author(repo, &commit, &http_client)
             .await?
-            .map(|author| -> Result<Url, url::ParseError> {
-                let mut url = Url::parse(&format!(
-                    "{CHROMIUM_REVIEW_URL}/accounts/{}/avatar",
-                    &author.id
-                ))?;
-                url.set_query(Some("size=128"));
-                Ok(url)
-            })
-            .transpose()?;
-        Ok(avatar_url)
+        else {
+            return Ok(None);
+        };
+
+        let mut avatar_url = Url::parse(&format!(
+            "{CHROMIUM_REVIEW_URL}/accounts/{}/avatar",
+            &author.id
+        ))?;
+        avatar_url.set_query(Some("size=128"));
+
+        Ok(Some(avatar_url))
     }
 }
 
