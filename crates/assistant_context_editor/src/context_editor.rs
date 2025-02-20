@@ -1774,63 +1774,64 @@ impl ContextEditor {
         &mut self,
         cx: &mut Context<Self>,
     ) -> (String, CopyMetadata, Vec<text::Selection<usize>>) {
-        let (snapshot, selection, base_selection, creases) = self.editor.update(cx, |editor, cx| {
-            let mut selection = editor.selections.newest::<Point>(cx);
-            let base_selection = editor.selections.newest_adjusted(cx);
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let (snapshot, selection, base_selection, creases) =
+            self.editor.update(cx, |editor, cx| {
+                let mut selection = editor.selections.newest::<Point>(cx);
+                let base_selection = editor.selections.newest_adjusted(cx);
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
 
-            let is_entire_line = selection.is_empty() || editor.selections.line_mode;
-            if is_entire_line {
-                selection.start = Point::new(selection.start.row, 0);
-                selection.end =
-                    cmp::min(snapshot.max_point(), Point::new(selection.start.row + 1, 0));
-                selection.goal = SelectionGoal::None;
-            }
+                let is_entire_line = selection.is_empty() || editor.selections.line_mode;
+                if is_entire_line {
+                    selection.start = Point::new(selection.start.row, 0);
+                    selection.end =
+                        cmp::min(snapshot.max_point(), Point::new(selection.start.row + 1, 0));
+                    selection.goal = SelectionGoal::None;
+                }
 
-            let selection_start = snapshot.point_to_offset(selection.start);
+                let selection_start = snapshot.point_to_offset(selection.start);
 
-            (
-                snapshot.clone(),
-                selection.clone(),
-                base_selection.clone(),
-                editor.display_map.update(cx, |display_map, cx| {
-                    display_map
-                        .snapshot(cx)
-                        .crease_snapshot
-                        .creases_in_range(
-                            MultiBufferRow(selection.start.row)
-                                ..MultiBufferRow(selection.end.row + 1),
-                            &snapshot,
-                        )
-                        .filter_map(|crease| {
-                            if let Crease::Inline {
-                                range, metadata, ..
-                            } = &crease
-                            {
-                                let metadata = metadata.as_ref()?;
-                                let start = range
-                                    .start
-                                    .to_offset(&snapshot)
-                                    .saturating_sub(selection_start);
-                                let end = range
-                                    .end
-                                    .to_offset(&snapshot)
-                                    .saturating_sub(selection_start);
+                (
+                    snapshot.clone(),
+                    selection.clone(),
+                    base_selection.clone(),
+                    editor.display_map.update(cx, |display_map, cx| {
+                        display_map
+                            .snapshot(cx)
+                            .crease_snapshot
+                            .creases_in_range(
+                                MultiBufferRow(selection.start.row)
+                                    ..MultiBufferRow(selection.end.row + 1),
+                                &snapshot,
+                            )
+                            .filter_map(|crease| {
+                                if let Crease::Inline {
+                                    range, metadata, ..
+                                } = &crease
+                                {
+                                    let metadata = metadata.as_ref()?;
+                                    let start = range
+                                        .start
+                                        .to_offset(&snapshot)
+                                        .saturating_sub(selection_start);
+                                    let end = range
+                                        .end
+                                        .to_offset(&snapshot)
+                                        .saturating_sub(selection_start);
 
-                                let range_relative_to_selection = start..end;
-                                if !range_relative_to_selection.is_empty() {
-                                    return Some(SelectedCreaseMetadata {
-                                        range_relative_to_selection,
-                                        crease: metadata.clone(),
-                                    });
+                                    let range_relative_to_selection = start..end;
+                                    if !range_relative_to_selection.is_empty() {
+                                        return Some(SelectedCreaseMetadata {
+                                            range_relative_to_selection,
+                                            crease: metadata.clone(),
+                                        });
+                                    }
                                 }
-                            }
-                            None
-                        })
-                        .collect::<Vec<_>>()
-                }),
-            )
-        });
+                                None
+                            })
+                            .collect::<Vec<_>>()
+                    }),
+                )
+            });
 
         let selection = selection.map(|point| snapshot.point_to_offset(point));
         let context = self.context.read(cx);
