@@ -556,7 +556,7 @@ unicode-script = "0.5.7"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 wasmparser = "0.221"
-wasm-encoder = "0.221"
+wasm-encoder = "0.226"
 wasmtime = { version = "29", default-features = false, features = [
     "async",
     "demangle",
