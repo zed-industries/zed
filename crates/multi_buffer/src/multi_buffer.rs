@@ -6941,8 +6941,8 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for ExcerptPoint {
     }
 }
 
-impl<D: TextDimension + Ord>
-    sum_tree::SeekTarget<'_, DiffTransformSummary, DiffTransformSummary> for ExcerptDimension<D>
+impl<D: TextDimension + Ord> sum_tree::SeekTarget<'_, DiffTransformSummary, DiffTransformSummary>
+    for ExcerptDimension<D>
 {
     fn cmp(&self, cursor_location: &DiffTransformSummary, _: &()) -> cmp::Ordering {
         Ord::cmp(&self.0, &D::from_text_summary(&cursor_location.input))

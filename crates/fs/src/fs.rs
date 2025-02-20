@@ -1253,7 +1253,8 @@ impl FakeFs {
         self.with_git_state(dot_git, true, |state| {
             let branch = branch.map(Into::into);
             state.branches.extend(branch.clone());
-            state.current_branch_name = branch})
+            state.current_branch_name = branch
+        })
     }
 
     pub fn insert_branches(&self, dot_git: &Path, branches: &[&str]) {

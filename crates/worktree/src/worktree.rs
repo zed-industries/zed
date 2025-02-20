@@ -1466,9 +1466,7 @@ impl LocalWorktree {
                 };
 
                 scanner
-                    .run(Box::pin(
-                        events.map(|events| events.into_iter().collect()),
-                    ))
+                    .run(Box::pin(events.map(|events| events.into_iter().collect())))
                     .await;
             }
         });
