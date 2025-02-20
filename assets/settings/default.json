@@ -1084,6 +1084,9 @@
     "Erlang": {
       "language_servers": ["erlang-ls", "!elp", "..."]
     },
+    "Git Commit": {
+      "allow_rewrap": "anywhere"
+    },
     "Go": {
       "code_actions_on_format": {
         "source.organizeImports": true
