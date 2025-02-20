@@ -7057,7 +7057,12 @@ impl Editor {
     }
 
     pub fn git_restore(&mut self, _: &Restore, window: &mut Window, cx: &mut Context<Self>) {
-        let selections = self.selections.ranges(cx);
+        let selections = self
+            .selections
+            .all(cx)
+            .into_iter()
+            .map(|s| s.range())
+            .collect();
         self.restore_hunks_in_ranges(selections, window, cx);
     }
 
