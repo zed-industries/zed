@@ -23,6 +23,8 @@ use windows::{
     },
 };
 
+use crate::OpenListener;
+
 use crate::{Args, OpenListener};
 
 pub fn check_single_instance(opener: OpenListener, args: &Args) -> bool {
