@@ -946,13 +946,13 @@ impl<'a> sum_tree::Dimension<'a, ListItemSummary> for Height {
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, ListItemSummary, ListItemSummary> for Count {
+impl sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for Count {
     fn cmp(&self, other: &ListItemSummary, _: &()) -> std::cmp::Ordering {
         self.0.partial_cmp(&other.count).unwrap()
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, ListItemSummary, ListItemSummary> for Height {
+impl sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for Height {
     fn cmp(&self, other: &ListItemSummary, _: &()) -> std::cmp::Ordering {
         self.0.partial_cmp(&other.height).unwrap()
     }

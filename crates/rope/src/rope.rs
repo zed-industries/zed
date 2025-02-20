@@ -145,7 +145,7 @@ impl Rope {
 
         // We also round up the capacity up by one, for a good measure; we *really* don't want to realloc here, as we assume that the # of characters
         // we're working with there is large.
-        let capacity = (text.len() + MIN_CHUNK_SIZE - 1) / MIN_CHUNK_SIZE;
+        let capacity = text.len().div_ceil(MIN_CHUNK_SIZE);
         let mut new_chunks = Vec::with_capacity(capacity);
 
         while !text.is_empty() {
@@ -855,7 +855,7 @@ impl<'a> Iterator for Bytes<'a> {
     }
 }
 
-impl<'a> io::Read for Bytes<'a> {
+impl io::Read for Bytes<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if let Some(chunk) = self.peek() {
             let len = cmp::min(buf.len(), chunk.len());
@@ -889,7 +889,7 @@ pub struct Lines<'a> {
     reversed: bool,
 }
 
-impl<'a> Lines<'a> {
+impl Lines<'_> {
     pub fn next(&mut self) -> Option<&str> {
         if self.done {
             return None;
