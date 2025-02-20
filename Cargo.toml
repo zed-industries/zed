@@ -15,6 +15,7 @@ members = [
     "crates/audio",
     "crates/auto_update",
     "crates/auto_update_ui",
+    "crates/autoclose_tags",
     "crates/breadcrumbs",
     "crates/buffer_diff",
     "crates/call",
@@ -218,6 +219,7 @@ assistant_tools = { path = "crates/assistant_tools" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 auto_update_ui = { path = "crates/auto_update_ui" }
+autoclose_tags = { path = "crates/autoclose_tags" }
 breadcrumbs = { path = "crates/breadcrumbs" }
 call = { path = "crates/call" }
 channel = { path = "crates/channel" }
