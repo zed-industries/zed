@@ -8,6 +8,7 @@
 //! Notably we do *not* assign a single language to a single file; in real world a single file can consist of multiple programming languages - HTML is a good example of that - and `language` crate tends to reflect that status quo in its API.
 mod buffer;
 mod diagnostic_set;
+mod edit_behavior;
 mod highlight_map;
 mod language_registry;
 pub mod language_settings;
@@ -26,6 +27,7 @@ use crate::language_settings::SoftWrap;
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
+pub use edit_behavior::EditBehaviorProvider;
 use fs::Fs;
 use futures::Future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};

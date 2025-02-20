@@ -21,6 +21,7 @@ mod json;
 mod python;
 mod rust;
 mod tailwind;
+mod tsx;
 mod typescript;
 mod vtsls;
 mod yaml;
@@ -74,6 +75,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         ("gitcommit", tree_sitter_gitcommit::LANGUAGE),
     ]);
 
+    // TODO! rework this whole thing
     macro_rules! language {
         ($name:literal) => {
             let config = load_config($name);
@@ -159,6 +161,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
             );
         };
     }
+
     language!("bash", Vec::new(), bash_task_context());
     language!("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
     language!("cpp", vec![Arc::new(c::CLspAdapter)]);

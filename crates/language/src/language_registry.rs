@@ -1,4 +1,5 @@
 use crate::{
+    edit_behavior::EditBehaviorProvider,
     language_settings::{
         all_language_settings, AllLanguageSettingsContent, LanguageSettingsContent,
     },
@@ -222,6 +223,8 @@ pub struct LoadedLanguage {
     pub queries: LanguageQueries,
     pub context_provider: Option<Arc<dyn ContextProvider>>,
     pub toolchain_provider: Option<Arc<dyn ToolchainLister>>,
+    pub edit_behavior_provider:
+        Option<Arc<dyn EditBehaviorProvider<AutoEditState = dyn std::any::Any>>>,
 }
 
 impl LanguageRegistry {
@@ -315,6 +318,7 @@ impl LanguageRegistry {
                     queries: Default::default(),
                     toolchain_provider: None,
                     context_provider: None,
+                    edit_behavior_provider: None,
                 })
             }),
         )

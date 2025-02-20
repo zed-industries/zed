@@ -163,6 +163,7 @@ impl HeadlessExtensionStore {
                             queries: LanguageQueries::default(),
                             context_provider: None,
                             toolchain_provider: None,
+                            edit_behavior_provider: None,
                         })
                     }),
                 );

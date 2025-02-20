@@ -1199,6 +1199,7 @@ impl ExtensionStore {
                         queries,
                         context_provider,
                         toolchain_provider: None,
+                        edit_behavior_provider: None,
                     })
                 }),
             );
