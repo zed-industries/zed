@@ -1456,7 +1456,7 @@ impl FakeLanguageServer {
         (server, fake)
     }
     #[cfg(target_os = "windows")]
-    fn root_path() -> &'static Path {
+    fn root_path() -> Url {
         Url::from_file_path("C:/").unwrap()
     }
 
