@@ -1,5 +1,4 @@
 use assistant_context_editor::SavedContextMetadata;
-use chrono::{DateTime, Utc};
 use gpui::{
     uniform_list, App, Entity, FocusHandle, Focusable, ScrollStrategy, UniformListScrollHandle,
     WeakEntity,
@@ -7,28 +6,14 @@ use gpui::{
 use time::{OffsetDateTime, UtcOffset};
 use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing, Tooltip};
 
-use crate::thread_store::{SavedThreadMetadata, ThreadStore};
+use crate::history_store::{HistoryEntry, HistoryStore};
+use crate::thread_store::SavedThreadMetadata;
 use crate::{AssistantPanel, RemoveSelectedThread};
-
-enum ThreadOrContext {
-    Thread(SavedThreadMetadata),
-    Context(SavedContextMetadata),
-}
-
-impl ThreadOrContext {
-    pub fn updated_at(&self) -> DateTime<Utc> {
-        match self {
-            ThreadOrContext::Thread(thread) => thread.updated_at,
-            ThreadOrContext::Context(context) => context.mtime.to_utc(),
-        }
-    }
-}
 
 pub struct ThreadHistory {
     focus_handle: FocusHandle,
     assistant_panel: WeakEntity<AssistantPanel>,
-    thread_store: Entity<ThreadStore>,
-    context_store: Entity<assistant_context_editor::ContextStore>,
+    history_store: Entity<HistoryStore>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
 }
@@ -36,15 +21,13 @@ pub struct ThreadHistory {
 impl ThreadHistory {
     pub(crate) fn new(
         assistant_panel: WeakEntity<AssistantPanel>,
-        thread_store: Entity<ThreadStore>,
-        context_store: Entity<assistant_context_editor::ContextStore>,
+        history_store: Entity<HistoryStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             assistant_panel,
-            thread_store,
-            context_store,
+            history_store,
             scroll_handle: UniformListScrollHandle::default(),
             selected_index: 0,
         }
@@ -56,7 +39,9 @@ impl ThreadHistory {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.thread_store.read(cx).thread_count();
+        let count = self
+            .history_store
+            .update(cx, |this, cx| this.entry_count(cx));
         if count > 0 {
             if self.selected_index == 0 {
                 self.set_selected_index(count - 1, window, cx);
@@ -72,7 +57,9 @@ impl ThreadHistory {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let count = self.thread_store.read(cx).thread_count();
+        let count = self
+            .history_store
+            .update(cx, |this, cx| this.entry_count(cx));
         if count > 0 {
             if self.selected_index == count - 1 {
                 self.set_selected_index(0, window, cx);
@@ -83,14 +70,18 @@ impl ThreadHistory {
     }
 
     fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.thread_store.read(cx).thread_count();
+        let count = self
+            .history_store
+            .update(cx, |this, cx| this.entry_count(cx));
         if count > 0 {
             self.set_selected_index(0, window, cx);
         }
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
-        let count = self.thread_store.read(cx).thread_count();
+        let count = self
+            .history_store
+            .update(cx, |this, cx| this.entry_count(cx));
         if count > 0 {
             self.set_selected_index(count - 1, window, cx);
         }
@@ -104,12 +95,23 @@ impl ThreadHistory {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        let threads = self.thread_store.update(cx, |this, _cx| this.threads());
+        let entries = self.history_store.update(cx, |this, cx| this.entries(cx));
 
-        if let Some(thread) = threads.get(self.selected_index) {
-            self.assistant_panel
-                .update(cx, move |this, cx| this.open_thread(&thread.id, window, cx))
-                .ok();
+        if let Some(entry) = entries.get(self.selected_index) {
+            match entry {
+                HistoryEntry::Thread(thread) => {
+                    self.assistant_panel
+                        .update(cx, move |this, cx| this.open_thread(&thread.id, window, cx))
+                        .ok();
+                }
+                HistoryEntry::Context(context) => {
+                    self.assistant_panel
+                        .update(cx, move |this, cx| {
+                            this.open_saved_prompt_editor(context.path.clone(), window, cx)
+                        })
+                        .ok();
+                }
+            }
 
             cx.notify();
         }
@@ -121,14 +123,19 @@ impl ThreadHistory {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let threads = self.thread_store.update(cx, |this, _cx| this.threads());
+        let entries = self.history_store.update(cx, |this, cx| this.entries(cx));
 
-        if let Some(thread) = threads.get(self.selected_index) {
-            self.assistant_panel
-                .update(cx, |this, cx| {
-                    this.delete_thread(&thread.id, cx);
-                })
-                .ok();
+        if let Some(entry) = entries.get(self.selected_index) {
+            match entry {
+                HistoryEntry::Thread(thread) => {
+                    self.assistant_panel
+                        .update(cx, |this, cx| {
+                            this.delete_thread(&thread.id, cx);
+                        })
+                        .ok();
+                }
+                HistoryEntry::Context(_context) => {}
+            }
 
             cx.notify();
         }
@@ -143,21 +150,7 @@ impl Focusable for ThreadHistory {
 
 impl Render for ThreadHistory {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let threads = self.thread_store.update(cx, |this, _cx| this.threads());
-        let contexts = self.context_store.update(cx, |this, _cx| this.contexts());
-
-        let mut history_entries = Vec::new();
-
-        for thread in threads {
-            history_entries.push(ThreadOrContext::Thread(thread));
-        }
-
-        for context in contexts {
-            history_entries.push(ThreadOrContext::Context(context));
-        }
-
-        history_entries.sort_unstable_by_key(|entry| std::cmp::Reverse(entry.updated_at()));
-
+        let history_entries = self.history_store.update(cx, |this, cx| this.entries(cx));
         let selected_index = self.selected_index;
 
         v_flex()
@@ -195,13 +188,13 @@ impl Render for ThreadHistory {
                                     .enumerate()
                                     .map(|(index, entry)| {
                                         h_flex().w_full().pb_1().child(match entry {
-                                            ThreadOrContext::Thread(thread) => PastThread::new(
+                                            HistoryEntry::Thread(thread) => PastThread::new(
                                                 thread.clone(),
                                                 history.assistant_panel.clone(),
                                                 selected_index == index,
                                             )
                                             .into_any_element(),
-                                            ThreadOrContext::Context(context) => PastContext::new(
+                                            HistoryEntry::Context(context) => PastContext::new(
                                                 context.clone(),
                                                 history.assistant_panel.clone(),
                                                 selected_index == index,

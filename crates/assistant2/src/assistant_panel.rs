@@ -31,9 +31,10 @@ use zed_actions::assistant::{DeployPromptLibrary, ToggleFocus};
 
 use crate::active_thread::ActiveThread;
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
+use crate::history_store::{HistoryEntry, HistoryStore};
 use crate::message_editor::MessageEditor;
 use crate::thread::{Thread, ThreadError, ThreadId};
-use crate::thread_history::{PastThread, ThreadHistory};
+use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{
     InlineAssistant, NewPromptEditor, NewThread, OpenConfiguration, OpenHistory,
@@ -103,6 +104,7 @@ pub struct AssistantPanel {
     tools: Arc<ToolWorkingSet>,
     local_timezone: UtcOffset,
     active_view: ActiveView,
+    history_store: Entity<HistoryStore>,
     history: Entity<ThreadHistory>,
     new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     open_history_context_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -173,6 +175,9 @@ impl AssistantPanel {
             )
         });
 
+        let history_store =
+            cx.new(|cx| HistoryStore::new(thread_store.clone(), context_store.clone(), cx));
+
         Self {
             active_view: ActiveView::Thread,
             workspace: workspace.clone(),
@@ -192,7 +197,7 @@ impl AssistantPanel {
                 )
             }),
             message_editor,
-            context_store: context_store.clone(),
+            context_store,
             context_editor: None,
             context_history: None,
             configuration: None,
@@ -202,7 +207,8 @@ impl AssistantPanel {
                 chrono::Local::now().offset().local_minus_utc(),
             )
             .unwrap(),
-            history: cx.new(|cx| ThreadHistory::new(weak_self, thread_store, context_store, cx)),
+            history_store: history_store.clone(),
+            history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, cx)),
             new_item_context_menu_handle: PopoverMenuHandle::default(),
             open_history_context_menu_handle: PopoverMenuHandle::default(),
             width: None,
@@ -762,9 +768,9 @@ impl AssistantPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let recent_threads = self
-            .thread_store
-            .update(cx, |this, _cx| this.recent_threads(3));
+        let recent_history = self
+            .history_store
+            .update(cx, |this, cx| this.recent_entries(3, cx));
 
         let create_welcome_heading = || {
             h_flex()
@@ -791,7 +797,8 @@ impl AssistantPanel {
             )
             .map(|parent| {
                 match configuration_error {
-                    Some(ConfigurationError::ProviderNotAuthenticated) | Some(ConfigurationError::NoProvider)  => {
+                    Some(ConfigurationError::ProviderNotAuthenticated)
+                    | Some(ConfigurationError::NoProvider) => {
                         parent.child(
                             v_flex()
                                 .gap_0p5()
@@ -818,34 +825,24 @@ impl AssistantPanel {
                                 ),
                         )
                     }
-                    Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
-                        parent.child(
-                            v_flex()
-                                .gap_0p5()
-                                .child(create_welcome_heading())
-                                .children(provider.render_accept_terms(
-                                    LanguageModelProviderTosView::ThreadEmptyState,
-                                    cx,
-                                )),
-                        )
-                    }
+                    Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => parent
+                        .child(v_flex().gap_0p5().child(create_welcome_heading()).children(
+                            provider.render_accept_terms(
+                                LanguageModelProviderTosView::ThreadEmptyState,
+                                cx,
+                            ),
+                        )),
                     None => parent,
                 }
             })
-            .when(
-                recent_threads.is_empty() && no_error,
-                |parent| {
-                    parent.child(
-                        v_flex().gap_0p5().child(create_welcome_heading()).child(
-                            h_flex().w_full().justify_center().child(
-                                Label::new("Start typing to chat with your codebase")
-                                    .color(Color::Muted),
-                            ),
-                        ),
-                    )
-                },
-            )
-            .when(!recent_threads.is_empty(), |parent| {
+            .when(recent_history.is_empty() && no_error, |parent| {
+                parent.child(v_flex().gap_0p5().child(create_welcome_heading()).child(
+                    h_flex().w_full().justify_center().child(
+                        Label::new("Start typing to chat with your codebase").color(Color::Muted),
+                    ),
+                ))
+            })
+            .when(!recent_history.is_empty(), |parent| {
                 parent
                     .child(
                         h_flex().w_full().justify_center().child(
@@ -855,9 +852,18 @@ impl AssistantPanel {
                         ),
                     )
                     .child(v_flex().mx_auto().w_4_5().gap_2().children(
-                        recent_threads.into_iter().map(|thread| {
-                            // TODO: keyboard navigation
-                            PastThread::new(thread, cx.entity().downgrade(), false)
+                        recent_history.into_iter().map(|entry| {
+                            // TODO: Add keyboard navigation.
+                            match entry {
+                                HistoryEntry::Thread(thread) => {
+                                    PastThread::new(thread, cx.entity().downgrade(), false)
+                                        .into_any_element()
+                                }
+                                HistoryEntry::Context(context) => {
+                                    PastContext::new(context, cx.entity().downgrade(), false)
+                                        .into_any_element()
+                                }
+                            }
                         }),
                     ))
                     .child(
@@ -869,7 +875,7 @@ impl AssistantPanel {
                                     &OpenHistory,
                                     &self.focus_handle(cx),
                                     window,
-                                    cx
+                                    cx,
                                 ))
                                 .on_click(move |_event, window, cx| {
                                     window.dispatch_action(OpenHistory.boxed_clone(), cx);
