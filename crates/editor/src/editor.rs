@@ -11895,15 +11895,21 @@ impl Editor {
 
     fn refresh_inline_diagnostics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.inline_diagnostics_disabled {
+            self.inline_diagnostics_update = Task::ready(());
+            self.inline_diagnostics.clear();
             return;
         }
 
-        let settings = ProjectSettings::get_global(cx);
-        if !settings.diagnostics.inline.enabled {
+        if !self.show_inline_diagnostics {
+            self.inline_diagnostics_update = Task::ready(());
+            self.inline_diagnostics.clear();
             return;
         }
 
-        let debounce = settings.diagnostics.inline.update_debounce_ms;
+        let debounce = ProjectSettings::get_global(cx)
+            .diagnostics
+            .inline
+            .update_debounce_ms;
         let debounce = if debounce > 0 {
             Some(Duration::from_millis(debounce))
         } else {
@@ -14502,12 +14508,7 @@ impl Editor {
             let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;
             let inline_blame_enabled = project_settings.git.inline_blame_enabled();
             if self.show_inline_diagnostics != show_inline_diagnostics {
-                if show_inline_diagnostics {
-                    self.refresh_inline_diagnostics(window, cx);
-                } else {
-                    self.inline_diagnostics_update = Task::ready(());
-                    self.inline_diagnostics.clear();
-                }
+                self.refresh_inline_diagnostics(window, cx);
             }
 
             if self.git_blame_inline_enabled != inline_blame_enabled {
@@ -14987,6 +14988,14 @@ impl Editor {
         supports
     }
 
+    pub fn inline_diagnostics_enabled(&self) -> bool {
+        self.show_inline_diagnostics
+    }
+
+    pub fn supports_inline_diagnostics(&self) -> bool {
+        !self.inline_diagnostics_disabled
+    }
+
     pub fn is_focused(&self, window: &Window) -> bool {
         self.focus_handle.is_focused(window)
     }
@@ -15207,6 +15216,19 @@ impl Editor {
                 snapshot.clip_offset(start, Bias::Left)..snapshot.clip_offset(end, Bias::Right)
             }));
         });
+    }
+
+    pub fn toggle_inline_diagnostics(
+        &mut self,
+        _: &ToggleInlineDiagnostics,
+        window: &mut Window,
+        cx: &mut Context<'_, Editor>,
+    ) {
+        if self.inline_diagnostics_disabled {
+            return;
+        }
+        self.show_inline_diagnostics = !self.show_inline_diagnostics;
+        self.refresh_inline_diagnostics(window, cx);
     }
 }
 

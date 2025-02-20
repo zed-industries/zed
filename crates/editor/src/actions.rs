@@ -397,6 +397,7 @@ gpui::actions!(
         ToggleGitBlameInline,
         ToggleIndentGuides,
         ToggleInlayHints,
+        ToggleInlineDiagnostics,
         ToggleEditPrediction,
         ToggleLineNumbers,
         SwapSelectionEnds,
