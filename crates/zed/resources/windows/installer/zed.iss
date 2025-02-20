@@ -2,7 +2,7 @@
 AppId={#AppId}
 AppName={#AppName}
 AppVerName={#AppDisplayName}
-AppPublisher=Zed Industry
+AppPublisher=Zed Industries
 AppPublisherURL=https://www.zed.dev/
 AppSupportURL=https://www.zed.dev/
 AppUpdatesURL=https://www.zed.dev/

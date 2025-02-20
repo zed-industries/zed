@@ -19,7 +19,7 @@
     Version="1.0.0.0" />
   <Properties>
     <DisplayName>Zed Editor Preview</DisplayName>
-    <PublisherDisplayName>Zed ZedIndustries</PublisherDisplayName>
+    <PublisherDisplayName>Zed Industries</PublisherDisplayName>
     <!-- TODO: Use actual icon here. -->
     <Logo>resources\logo_150x150.png</Logo>
     <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
