@@ -11896,10 +11896,13 @@ impl Editor {
         self.inline_diagnostics.clear();
     }
 
-    fn refresh_inline_diagnostics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn refresh_inline_diagnostics(
+        &mut self,
+        debounce: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.inline_diagnostics_disabled {
-            self.inline_diagnostics_update = Task::ready(());
-            self.inline_diagnostics.clear();
             return;
         }
 
@@ -11913,7 +11916,7 @@ impl Editor {
             .diagnostics
             .inline
             .update_debounce_ms;
-        let debounce = if debounce_ms > 0 {
+        let debounce = if debounce && debounce_ms > 0 {
             Some(Duration::from_millis(debounce_ms))
         } else {
             None
@@ -14437,7 +14440,7 @@ impl Editor {
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
-                self.refresh_inline_diagnostics(window, cx);
+                self.refresh_inline_diagnostics(true, window, cx);
                 self.scrollbar_marker_state.dirty = true;
                 cx.notify();
             }
@@ -14491,7 +14494,7 @@ impl Editor {
             let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;
             let inline_blame_enabled = project_settings.git.inline_blame_enabled();
             if self.show_inline_diagnostics != show_inline_diagnostics {
-                self.refresh_inline_diagnostics(window, cx);
+                self.refresh_inline_diagnostics(false, window, cx);
             }
 
             if self.git_blame_inline_enabled != inline_blame_enabled {
@@ -15211,7 +15214,7 @@ impl Editor {
             return;
         }
         self.show_inline_diagnostics = !self.show_inline_diagnostics;
-        self.refresh_inline_diagnostics(window, cx);
+        self.refresh_inline_diagnostics(false, window, cx);
     }
 }
 

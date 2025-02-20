@@ -1246,7 +1246,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 **Options**
 
-1. Enable inline diagnostics:
+1. Enable inline diagnostics.
 
 ```json
 {
@@ -1271,9 +1271,9 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 }
 ```
 
-3. Set padding between the end of the source line and the start of the diagnostic
+3. Set padding between the end of the source line and the start of the diagnostic.
 
-````json
+```json
 {
   "diagnostics": {
     "inline": {
@@ -1282,6 +1282,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     }
   }
 }
+```
 
 4. Horizontally align inline diagnostics at the given column.
 
@@ -1294,7 +1295,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     }
   }
 }
-````
+```
 
 5. Show only warning and error diagnostics.
 
