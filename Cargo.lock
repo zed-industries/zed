@@ -3483,15 +3483,12 @@ name = "credentials_provider"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
- "fs",
  "futures 0.3.31",
  "gpui",
  "paths",
  "release_channel",
  "serde",
  "serde_json",
- "util",
 ]
 
 [[package]]
@@ -6955,7 +6952,6 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "collections",
- "credentials_provider",
  "deepseek",
  "futures 0.3.31",
  "google_ai",
@@ -6983,7 +6979,6 @@ dependencies = [
 name = "language_model_selector"
 version = "0.1.0"
 dependencies = [
- "credentials_provider",
  "feature_flags",
  "gpui",
  "language_model",
