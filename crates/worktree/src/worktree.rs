@@ -2034,10 +2034,20 @@ impl LocalWorktree {
         let abs_new_path = self.absolutize(&new_path);
         let fs = self.fs.clone();
         let copy = cx.background_executor().spawn(async move {
+            let abs_old_path = abs_old_path?;
+            let abs_new_path = abs_new_path?;
+
+            if cfg!(target_os = "windows") && abs_new_path.starts_with(&abs_old_path) {
+                return Err(anyhow::anyhow!(
+                    "{:?} cannot be pasted within its own subfolder",
+                    abs_new_path
+                ));
+            }
+
             copy_recursive(
                 fs.as_ref(),
-                &abs_old_path?,
-                &abs_new_path?,
+                &abs_old_path,
+                &abs_new_path,
                 Default::default(),
             )
             .await
