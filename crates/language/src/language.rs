@@ -15,6 +15,7 @@ mod outline;
 pub mod proto;
 mod syntax_map;
 mod task_context;
+mod text_diff;
 mod toolchain;
 
 #[cfg(test)]
@@ -62,6 +63,7 @@ use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextProvider, RunnableRange};
+pub use text_diff::{line_diff, text_diff, text_diff_with_options, unified_diff, DiffOptions};
 use theme::SyntaxTheme;
 pub use toolchain::{LanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister};
 use tree_sitter::{self, wasmtime, Query, QueryCursor, WasmStore};

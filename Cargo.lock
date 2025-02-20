@@ -416,7 +416,6 @@ dependencies = [
  "serde",
  "serde_json_lenient",
  "settings",
- "similar",
  "smol",
  "streaming_diff",
  "telemetry",
@@ -482,7 +481,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "similar",
  "smol",
  "streaming_diff",
  "telemetry_events",
@@ -4064,7 +4062,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "similar",
  "smallvec",
  "smol",
  "snippet",
@@ -6377,6 +6374,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edcd27d72f2f071c64249075f42e205ff93c9a4c5f6c6da53e79ed9f9832c285"
 
 [[package]]
+name = "imara-diff"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17d34b7d42178945f775e84bc4c36dde7c1c6cdfea656d3354d009056f2bb3d2"
+dependencies = [
+ "hashbrown 0.15.2",
+]
+
+[[package]]
 name = "imgref"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6868,6 +6874,7 @@ dependencies = [
  "globset",
  "gpui",
  "http_client",
+ "imara-diff",
  "indoc",
  "itertools 0.14.0",
  "log",
@@ -6882,7 +6889,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "similar",
  "smallvec",
  "smol",
  "streaming-iterator",
@@ -10129,7 +10135,6 @@ dependencies = [
  "sha2",
  "shellexpand 2.1.2",
  "shlex",
- "similar",
  "smol",
  "snippet",
  "snippet_provider",
@@ -12269,12 +12274,6 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
-
-[[package]]
-name = "similar"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ad1d488a557b235fc46dae55512ffbfc429d2482b08b4d9435ab07384ca8aec"
 
 [[package]]
 name = "simple_asn1"
@@ -17140,7 +17139,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "similar",
  "telemetry",
  "telemetry_events",
  "theme",
