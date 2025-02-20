@@ -9,13 +9,17 @@ use futures::FutureExt as _;
 use gpui::{App, AsyncApp};
 use release_channel::ReleaseChannel;
 
-/// An environment variable whose presence indicates that the development auth
-/// provider should be used.
+/// An environment variable whose presence indicates that the system keychain
+/// should be used in development.
 ///
-/// Only works in development. Setting this environment variable in other release
-/// channels is a no-op.
-pub static ZED_DEVELOPMENT_AUTH: LazyLock<bool> = LazyLock::new(|| {
-    std::env::var("ZED_DEVELOPMENT_AUTH").map_or(false, |value| !value.is_empty())
+/// By default, running Zed in development uses the development credentials
+/// provider. Setting this environment variable allows you to interact with the
+/// system keychain (for instance, if you need to test something).
+///
+/// Only works in development. Setting this environment variable in other
+/// release channels is a no-op.
+static ZED_DEVELOPMENT_USE_KEYCHAIN: LazyLock<bool> = LazyLock::new(|| {
+    std::env::var("ZED_DEVELOPMENT_USE_KEYCHAIN").map_or(false, |value| !value.is_empty())
 });
 
 /// A provider for credentials.
@@ -57,13 +61,21 @@ impl dyn CredentialsProvider {
     }
 
     fn new(cx: &App) -> Arc<Self> {
-        let use_development_backend = match ReleaseChannel::try_global(cx) {
-            Some(ReleaseChannel::Dev) => *ZED_DEVELOPMENT_AUTH,
+        let use_development_provider = match ReleaseChannel::try_global(cx) {
+            Some(ReleaseChannel::Dev) => {
+                // In development we default to using the development
+                // credentials provider to avoid getting spammed by relentless
+                // keychain access prompts.
+                //
+                // However, if the `ZED_DEVELOPMENT_USE_KEYCHAIN` environment
+                // variable is set, we will use the actual keychain.
+                !*ZED_DEVELOPMENT_USE_KEYCHAIN
+            }
             Some(ReleaseChannel::Nightly | ReleaseChannel::Preview | ReleaseChannel::Stable)
             | None => false,
         };
 
-        if use_development_backend {
+        if use_development_provider {
             Arc::new(DevelopmentCredentialsProvider::new())
         } else {
             Arc::new(KeychainCredentialsProvider)
