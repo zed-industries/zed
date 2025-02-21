@@ -188,7 +188,7 @@ impl Vim {
                 clipboard_selections.push(ClipboardSelection {
                     len: text.len() - initial_len,
                     is_entire_line: linewise,
-                    first_line_indent: buffer.indent_size_for_line(MultiBufferRow(start.row)).len,
+                    start_column: start.column,
                 });
             }
         }

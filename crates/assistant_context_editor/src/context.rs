@@ -3366,7 +3366,7 @@ impl SavedContextV0_1_0 {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SavedContextMetadata {
     pub title: String,
     pub path: PathBuf,
