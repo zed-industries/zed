@@ -153,9 +153,12 @@ type :(primitive_type) @type.primitive
 [
   (true)
   (false)
+] @boolean
+
+[
   (null)
   ("nullptr")
-] @constant
+] @constant.builtin
 
 (number_literal) @number
 
