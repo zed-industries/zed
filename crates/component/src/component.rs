@@ -173,9 +173,9 @@ pub enum ExampleLabelSide {
     Left,
     /// Right side
     Right,
-    #[default]
     /// Top side
     Top,
+    #[default]
     /// Bottom side
     Bottom,
 }
@@ -202,8 +202,8 @@ impl RenderOnce for ComponentExample {
 
         base.gap_1()
             .p_2()
-            .text_sm()
-            .text_color(cx.theme().colors().text)
+            .text_size(px(10.))
+            .text_color(cx.theme().colors().text_muted)
             .when(self.grow, |this| this.flex_1())
             .child(self.element)
             .child(self.variant_name)
@@ -250,7 +250,7 @@ impl RenderOnce for ComponentExampleGroup {
                         .flex()
                         .items_center()
                         .gap_3()
-                        .child(div().h_px().w_4().bg(cx.theme().colors().border_variant))
+                        .child(div().h_px().w_4().bg(cx.theme().colors().border))
                         .child(
                             div()
                                 .flex_none()
