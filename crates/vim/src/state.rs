@@ -274,7 +274,7 @@ impl MarksCollection {
             MarksCollection::Loaded {
                 marks: _,
                 buffer: _,
-            } => todo!(),
+            } => {}
             MarksCollection::Unloaded(marks) => {
                 marks.insert(name, points);
             }
@@ -286,7 +286,7 @@ impl MarksCollection {
             MarksCollection::Loaded { marks, buffer: _ } => {
                 marks.insert(name, anchors);
             }
-            MarksCollection::Unloaded(_) => todo!(),
+            MarksCollection::Unloaded(_) => {}
         }
     }
 
@@ -347,7 +347,7 @@ impl MarksCollection {
                     };
                     cx.background_executor()
                         .spawn(DB.set_mark(
-                            workspace_id.clone(),
+                            workspace_id,
                             name.clone(),
                             path.to_path_buf().into_os_string().into_vec(),
                             value,
@@ -411,7 +411,7 @@ impl MarksState {
     }
 
     pub fn on_buffer_loaded(&mut self, buffer_handle: &Entity<Buffer>, cx: &mut Context<Self>) {
-        let workspace_id = self.workspace_id.clone();
+        let workspace_id = self.workspace_id;
         cx.subscribe(buffer_handle, move |this, buffer, event, cx| {
             match event {
                 BufferEvent::Edited => {
@@ -464,15 +464,11 @@ impl MarksState {
             return;
         }
 
-        if !self.marks.contains_key(&path.clone()) {
-            self.marks.insert(
-                path.clone(),
-                MarksCollection::Unloaded(HashMap::<String, Vec<Point>>::default()),
-            );
-        }
-        let Some(marks_collection) = self.marks.get_mut(&path.clone()) else {
-            return;
-        };
+        let marks_collection = self
+            .marks
+            .entry(path.clone())
+            .or_insert_with(|| MarksCollection::Unloaded(HashMap::<String, Vec<Point>>::default()));
+
         marks_collection.load(buffer_handle, multi_buffer_handle, cx);
 
         if name.starts_with(|c: char| c.is_uppercase()) {
@@ -576,7 +572,7 @@ impl VimGlobals {
                     .await?;
                 cx.update_global(|g: &mut VimGlobals, cx: &mut App| {
                     g.marks
-                        .insert(workspace_id, MarksState::new(workspace_id.clone(), cx));
+                        .insert(workspace_id, MarksState::new(workspace_id, cx));
                     if let Some(marks_state) = g.marks.get(&workspace_id) {
                         marks_state.update(cx, |ms, cx| {
                             ms.load(workspace_id, marks, global_marks_paths, cx);
