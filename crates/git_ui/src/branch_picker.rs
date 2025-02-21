@@ -1,15 +1,18 @@
 use anyhow::{anyhow, Context as _, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 
-use git::repository::Branch;
+use editor::commit_tooltip::CommitTooltip;
+use git::repository::{Branch, GitRepository};
 use gpui::{
-    rems, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    rems, AnyView, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
     Task, WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::ProjectPath;
+use project::git::GitRepo;
 use std::sync::Arc;
+use time::OffsetDateTime;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
@@ -148,6 +151,24 @@ impl BranchListDelegate {
             .iter()
             .filter(|item| matches!(item, BranchEntry::Branch(_)))
             .count()
+    }
+
+    pub fn get_last_commit_info(
+        repo: &dyn GitRepository,
+        branch_name: &str,
+    ) -> anyhow::Result<editor::commit_tooltip::CommitDetails> {
+        let last_commit = repo.show(branch_name)?;
+        Ok(editor::commit_tooltip::CommitDetails {
+            sha: last_commit.sha.clone(),
+            committer_name: last_commit.committer_name.clone(),
+            committer_email: last_commit.committer_email.clone(),
+            commit_time: OffsetDateTime::from_unix_timestamp(last_commit.commit_timestamp)
+                .map_err(|_| anyhow::anyhow!("Invalid commit timestamp"))?,
+            message: Some(editor::commit_tooltip::ParsedCommitMessage {
+                message: last_commit.message.clone(),
+                ..Default::default()
+            }),
+        })
     }
 }
 
@@ -318,11 +339,32 @@ impl PickerDelegate for BranchListDelegate {
         ix: usize,
         selected: bool,
         _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let hit = &self.matches[ix];
         let shortened_branch_name =
             util::truncate_and_trailoff(&hit.name(), self.branch_name_trailoff_after);
+
+        let repo = self.workspace.upgrade().and_then(|workspace| {
+            let project_entity = workspace.read(cx).project();
+            project_entity.read(cx).active_repository(cx)
+        });
+
+        let branch_name = match hit {
+            BranchEntry::Branch(branch) => Some(branch.string.as_str()),
+            BranchEntry::History(branch) => Some(branch.as_str()),
+            BranchEntry::NewBranch { name } => Some(name.as_str()),
+        };
+    
+        let commit_details = repo.as_ref().and_then(|repo_entity| {
+            let repo = repo_entity.read(cx);
+            let git_repo = match &repo.git_repo {
+                GitRepo::Local(git_repo) => git_repo.as_ref(),
+                _ => return None,
+            };
+            let branch_name = branch_name?;
+            Self::get_last_commit_info(git_repo, branch_name).ok()
+        });        
 
         Some(
             ListItem::new(SharedString::from(format!("vcs-menu-{ix}")))
@@ -331,9 +373,29 @@ impl PickerDelegate for BranchListDelegate {
                 .toggle_state(selected)
                 .when(matches!(hit, BranchEntry::History(_)), |el| {
                     el.end_slot(
-                        Icon::new(IconName::HistoryRerun)
-                            .color(Color::Muted)
-                            .size(IconSize::Small),
+                        div()
+                            .child(
+                                Icon::new(IconName::HistoryRerun)
+                                    .color(Color::Muted)
+                                    .size(IconSize::Small),
+                            )
+                            .id("commit-msg-hover")
+                            .hoverable_tooltip(move |window, cx| {
+                                let commit_details = commit_details.clone().unwrap_or(editor::commit_tooltip::CommitDetails {
+                                    sha: "N/A".into(),
+                                    committer_name: "Unknown".into(),
+                                    committer_email: "unknown@example.com".into(),
+                                    commit_time: OffsetDateTime::from_unix_timestamp(0).unwrap(),
+                                    message: Some(editor::commit_tooltip::ParsedCommitMessage {
+                                        message: "No commit details available".into(),
+                                        ..Default::default()
+                                    }),
+                                });
+                                let tooltip = cx.new(|cx| {
+                                    CommitTooltip::new(commit_details, window, cx)
+                                });
+                                AnyView::from(tooltip)
+                            }),
                     )
                 })
                 .map(|el| match hit {
