@@ -5472,6 +5472,9 @@ impl BackgroundScanner {
                         },
                         &(),
                     );
+                    if status.is_conflicted() {
+                        repository.current_merge_conflicts.insert(repo_path.clone());
+                    }
 
                     if let Some(path) = project_path {
                         changed_paths.push(path);
