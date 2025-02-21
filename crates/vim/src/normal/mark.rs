@@ -121,7 +121,7 @@ impl Vim {
             }
         } else {
             // Save the last anchor so as to jump to it later.
-            let anchor: Option<Anchor> = anchors.last_mut().map(|last| last.clone());
+            let anchor: Option<Anchor> = anchors.last_mut().map(|anchor| *anchor);
             let should_jump = self.mode == Mode::Visual
                 || self.mode == Mode::VisualLine
                 || self.mode == Mode::VisualBlock;
@@ -151,15 +151,10 @@ impl Vim {
                 }
             });
 
-            if should_jump && anchor.is_some() {
-                self.motion(
-                    Motion::Jump {
-                        anchor: anchor.unwrap(),
-                        line,
-                    },
-                    window,
-                    cx,
-                )
+            if should_jump {
+                if let Some(anchor) = anchor {
+                    self.motion(Motion::Jump { anchor, line }, window, cx)
+                }
             }
         }
     }
