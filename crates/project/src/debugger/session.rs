@@ -759,8 +759,12 @@ impl Session {
             }
             Events::Output(_event) => {}
             Events::Breakpoint(_) => {}
-            Events::Module(_event) => {}
-            Events::LoadedSource(_event) => {}
+            Events::Module(_) => {
+                self.invalidate_state(&ModulesCommand.into());
+            }
+            Events::LoadedSource(_) => {
+                self.invalidate_state(&ModulesCommand.into());
+            }
             Events::Capabilities(_event) => {}
             Events::Memory(_) => {}
             Events::Process(_) => {}
@@ -983,7 +987,7 @@ impl Session {
             self.fetch(
                 dap_command::LoadedSourcesCommand,
                 |this, result, cx| {
-                    this.loaded_sources = result.clone();
+                    this.loaded_sources = result.iter().cloned().collect();
                     cx.notify();
                 },
                 cx,
