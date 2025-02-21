@@ -42,7 +42,7 @@ You can customize the formatting behavior of Prettier. For example to use single
 {
   "overrides": [
     {
-      "files": ["*.yaml", "*.yml"]
+      "files": ["*.yaml", "*.yml"],
       "options": {
         "singleQuote": false
       }
