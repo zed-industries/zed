@@ -2,6 +2,7 @@
 
 (type_identifier) @type
 (field_identifier) @variable.member
+(package_identifier) @namespace
 
 (keyed_element
   .
@@ -20,6 +21,15 @@
 
 (method_declaration
   name: (field_identifier) @function.method)
+(method_elem
+  name: (field_identifier) @function.method)
+
+[
+  ";"
+  "."
+  ","
+  ":"
+] @punctuation.delimiter
 
 [
   "("
