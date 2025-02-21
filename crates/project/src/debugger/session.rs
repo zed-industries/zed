@@ -367,14 +367,17 @@ impl ThreadStates {
         self.global_state = Some(ThreadStatus::Stopped);
         self.known_thread_states.clear();
     }
+
     fn all_threads_continued(&mut self) {
         self.global_state = Some(ThreadStatus::Running);
         self.known_thread_states.clear();
     }
+
     fn thread_stopped(&mut self, thread_id: ThreadId) {
         self.known_thread_states
             .insert(thread_id, ThreadStatus::Stopped);
     }
+
     fn thread_continued(&mut self, thread_id: ThreadId) {
         self.known_thread_states
             .insert(thread_id, ThreadStatus::Running);
@@ -908,11 +911,11 @@ impl Session {
     }
 
     pub fn modules(&mut self, cx: &mut Context<Self>) -> &[Module] {
-        if !self.thread_states.any_thread_running() {
+        if self.thread_states.any_thread_running() {
             self.fetch(
                 dap_command::ModulesCommand,
                 |this, result, cx| {
-                    this.modules = result.clone();
+                    this.modules = result.iter().cloned().collect();
                     cx.notify();
                 },
                 cx,
@@ -977,14 +980,17 @@ impl Session {
     }
 
     pub fn loaded_sources(&mut self, cx: &mut Context<Self>) -> &[Source] {
-        self.fetch(
-            dap_command::LoadedSourcesCommand,
-            |this, result, cx| {
-                this.loaded_sources = result.clone();
-                cx.notify();
-            },
-            cx,
-        );
+        if self.thread_states.any_thread_running() {
+            self.fetch(
+                dap_command::LoadedSourcesCommand,
+                |this, result, cx| {
+                    this.loaded_sources = result.clone();
+                    cx.notify();
+                },
+                cx,
+            );
+        }
+
         &self.loaded_sources
     }
 
