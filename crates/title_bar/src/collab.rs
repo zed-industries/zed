@@ -428,25 +428,25 @@ impl TitleBar {
                 .on_click(move |_, _, cx| toggle_deafen(&Default::default(), cx))
                 .into_any_element(),
             );
-        }
 
-        if screen_sharing_supported {
-            children.push(
-                IconButton::new("screen-share", ui::IconName::Screen)
-                    .style(ButtonStyle::Subtle)
-                    .icon_size(IconSize::Small)
-                    .toggle_state(is_screen_sharing)
-                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                    .tooltip(Tooltip::text(if is_screen_sharing {
-                        "Stop Sharing Screen"
-                    } else {
-                        "Share Screen"
-                    }))
-                    .on_click(move |_, window, cx| {
-                        toggle_screen_sharing(&Default::default(), window, cx)
-                    })
-                    .into_any_element(),
-            );
+            if screen_sharing_supported {
+                children.push(
+                    IconButton::new("screen-share", ui::IconName::Screen)
+                        .style(ButtonStyle::Subtle)
+                        .icon_size(IconSize::Small)
+                        .toggle_state(is_screen_sharing)
+                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                        .tooltip(Tooltip::text(if is_screen_sharing {
+                            "Stop Sharing Screen"
+                        } else {
+                            "Share Screen"
+                        }))
+                        .on_click(move |_, window, cx| {
+                            toggle_screen_sharing(&Default::default(), window, cx)
+                        })
+                        .into_any_element(),
+                );
+            }
         }
 
         children.push(div().pr_2().into_any_element());

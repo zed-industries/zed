@@ -102,8 +102,9 @@
 [
   (true)
   (false)
-  (null)
-] @constant
+] @boolean
+
+(null) @constant.builtin
 
 (identifier) @variable
 
