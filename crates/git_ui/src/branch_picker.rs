@@ -355,7 +355,7 @@ impl PickerDelegate for BranchListDelegate {
             BranchEntry::History(branch) => Some(branch.as_str()),
             BranchEntry::NewBranch { name } => Some(name.as_str()),
         };
-    
+
         let commit_details = repo.as_ref().and_then(|repo_entity| {
             let repo = repo_entity.read(cx);
             let git_repo = match &repo.git_repo {
@@ -364,7 +364,7 @@ impl PickerDelegate for BranchListDelegate {
             };
             let branch_name = branch_name?;
             Self::get_last_commit_info(git_repo, branch_name).ok()
-        });        
+        });
 
         Some(
             ListItem::new(SharedString::from(format!("vcs-menu-{ix}")))
