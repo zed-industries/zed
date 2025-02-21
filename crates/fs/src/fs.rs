@@ -2192,7 +2192,15 @@ mod tests {
         )
         .await;
 
-        println!("{:#?}", fs.files());
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/inner3/d")),
+            ]
+        );
 
         let source = Path::new(path!("/outer"));
         let target = Path::new(path!("/outer/inner1/outer"));
@@ -2200,6 +2208,18 @@ mod tests {
             .await
             .unwrap();
 
-        println!("{:#?}", fs.files());
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/inner3/d")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner1/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/inner3/d")),
+            ]
+        );
     }
 }
