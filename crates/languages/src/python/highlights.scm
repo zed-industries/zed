@@ -8,6 +8,7 @@
 ((identifier) @constant
   (#match? @constant "^_*[A-Z][A-Z0-9_]*$"))
 
+(identifier) @variable
 (attribute attribute: (identifier) @property)
 (type (identifier) @type)
 (generic_type (identifier) @type)
@@ -118,6 +119,12 @@
 ]
 
 [
+  "."
+  ","
+  ":"
+] @punctuation.delimiter
+
+[
   "("
   ")"
   "["
@@ -190,6 +197,7 @@
   "&"
   "%"
   "%="
+  "@"
   "^"
   "+"
   "->"
