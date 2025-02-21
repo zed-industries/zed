@@ -13,7 +13,7 @@ use rope::Point;
 use settings::Settings;
 use std::time::Duration;
 use text::Bias;
-use theme::ThemeSettings;
+use theme::{get_ui_font_size, ThemeSettings};
 use ui::{
     prelude::*, ButtonLike, KeyBinding, PopoverMenu, PopoverMenuHandle, Switch, TintColor, Tooltip,
 };
@@ -369,11 +369,7 @@ impl Render for MessageEditor {
                             .anchor(gpui::Corner::BottomLeft)
                             .offset(gpui::Point {
                                 x: px(0.0),
-                                y: px(-ThemeSettings::clamp_font_size(
-                                    ThemeSettings::get_global(cx).ui_font_size,
-                                )
-                                .0 * 2.0)
-                                    - px(4.0),
+                                y: (-get_ui_font_size(cx) * 2) - px(4.0),
                             })
                             .with_handle(self.inline_context_picker_menu_handle.clone()),
                     )
@@ -394,6 +390,7 @@ impl Render for MessageEditor {
                                         &ChatMode,
                                         &focus_handle,
                                         window,
+                                        cx,
                                     )),
                             )
                             .child(h_flex().gap_1().child(self.model_selector.clone()).child(
@@ -423,6 +420,7 @@ impl Render for MessageEditor {
                                                         &editor::actions::Cancel,
                                                         &focus_handle,
                                                         window,
+                                                        cx,
                                                     )
                                                     .map(|binding| binding.into_any_element()),
                                                 ),
@@ -453,6 +451,7 @@ impl Render for MessageEditor {
                                                         &Chat,
                                                         &focus_handle,
                                                         window,
+                                                        cx,
                                                     )
                                                     .map(|binding| binding.into_any_element()),
                                                 ),

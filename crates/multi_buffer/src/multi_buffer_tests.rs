@@ -1,5 +1,5 @@
 use super::*;
-use buffer_diff::DiffHunkStatus;
+use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use gpui::{App, TestAppContext};
 use indoc::indoc;
 use language::{Buffer, Rope};
@@ -1325,13 +1325,13 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
             .map(|info| (info.buffer_row, info.diff_status))
             .collect::<Vec<_>>(),
         vec![
-            (Some(0), Some(DiffHunkStatus::added())),
+            (Some(0), Some(DiffHunkStatus::added_none())),
             (Some(1), None),
-            (Some(1), Some(DiffHunkStatus::removed())),
-            (Some(2), Some(DiffHunkStatus::added())),
+            (Some(1), Some(DiffHunkStatus::deleted_none())),
+            (Some(2), Some(DiffHunkStatus::added_none())),
             (Some(3), None),
-            (Some(3), Some(DiffHunkStatus::removed())),
-            (Some(4), Some(DiffHunkStatus::removed())),
+            (Some(3), Some(DiffHunkStatus::deleted_none())),
+            (Some(4), Some(DiffHunkStatus::deleted_none())),
             (Some(4), None),
             (Some(5), None)
         ]
@@ -1599,7 +1599,7 @@ fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path1: PathKey = PathKey::namespaced("0", Path::new("/"));
+    let path1: PathKey = PathKey::namespaced("0", Path::new("/").into());
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {
@@ -1695,7 +1695,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path1: PathKey = PathKey::namespaced("0", Path::new("/"));
+    let path1: PathKey = PathKey::namespaced("0", Path::new("/").into());
     let buf2 = cx.new(|cx| {
         Buffer::local(
             indoc! {
@@ -1714,7 +1714,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path2 = PathKey::namespaced("x", Path::new("/"));
+    let path2 = PathKey::namespaced("x", Path::new("/").into());
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {
@@ -2279,7 +2279,7 @@ impl ReferenceMultibuffer {
                             buffer_start: Some(
                                 base_buffer.offset_to_point(hunk.diff_base_byte_range.start),
                             ),
-                            status: Some(DiffHunkStatus::Removed(hunk.secondary_status)),
+                            status: Some(DiffHunkStatus::deleted(hunk.secondary_status)),
                         });
                     }
 
@@ -2294,7 +2294,7 @@ impl ReferenceMultibuffer {
                         buffer_id: Some(buffer.remote_id()),
                         range: len..text.len(),
                         buffer_start: Some(buffer.offset_to_point(offset)),
-                        status: Some(DiffHunkStatus::Added(hunk.secondary_status)),
+                        status: Some(DiffHunkStatus::added(hunk.secondary_status)),
                     });
                     offset = hunk_range.end;
                 }
@@ -2664,13 +2664,13 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             snapshot.widest_line_number(),
             expected_row_infos
                 .into_iter()
-                .filter_map(
-                    |info| if matches!(info.diff_status, Some(DiffHunkStatus::Removed(_))) {
+                .filter_map(|info| {
+                    if info.diff_status.is_some_and(|status| status.is_deleted()) {
                         None
                     } else {
                         info.buffer_row
                     }
-                )
+                })
                 .max()
                 .unwrap()
                 + 1
@@ -3021,10 +3021,10 @@ fn format_diff(
         .enumerate()
         .zip(row_infos)
         .map(|((ix, line), info)| {
-            let marker = match info.diff_status {
-                Some(DiffHunkStatus::Added(_)) => "+ ",
-                Some(DiffHunkStatus::Removed(_)) => "- ",
-                Some(DiffHunkStatus::Modified(_)) => unreachable!(),
+            let marker = match info.diff_status.map(|status| status.kind) {
+                Some(DiffHunkStatusKind::Added) => "+ ",
+                Some(DiffHunkStatusKind::Deleted) => "- ",
+                Some(DiffHunkStatusKind::Modified) => unreachable!(),
                 None => {
                     if has_diff && !line.is_empty() {
                         "  "

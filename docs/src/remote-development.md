@@ -89,6 +89,61 @@ If you use the command line to open a connection to a host by doing `zed ssh://1
 
 Additionally it's worth noting that while you can pass a password on the command line `zed ssh://user:password@host/~`, we do not support writing a password to your settings file. If you're connecting repeatedly to the same host, you should configure key-based authentication.
 
+## Port forwarding
+
+If you'd like to be able to connect to ports on your remote server from your local machine, you can configure port forwarding in your settings file. This is particularly useful for developing websites so you can load the site in your browser while working.
+
+```json
+{
+  "ssh_connections": [
+    {
+      "host": "192.168.1.10",
+      "port_forwards": [{ "local_port": 8080, "remote_port": 80 }]
+    }
+  ]
+}
+```
+
+This will cause requests from your local machine to `localhost:8080` to be forwarded to the remote machine's port 80. Under the hood this uses the `-L` argument to ssh.
+
+By default these ports are bound to localhost, so other computers in the same network as your development machine cannot access them. You can set the local_host to bind to a different interface, for example, 0.0.0.0 will bind to all local interfaces.
+
+```json
+{
+  "ssh_connections": [
+    {
+      "host": "192.168.1.10",
+      "port_forwards": [
+        {
+          "local_port": 8080,
+          "remote_port": 80,
+          "local_host": "0.0.0.0"
+        }
+      ]
+    }
+  ]
+}
+```
+
+These ports also default to the `localhost` interface on the remote host. If you need to change this, you can also set the remote host:
+
+```json
+{
+  "ssh_connections": [
+    {
+      "host": "192.168.1.10",
+      "port_forwards": [
+        {
+          "local_port": 8080,
+          "remote_port": 80,
+          "remote_host": "docker-host"
+        }
+      ]
+    }
+  ]
+}
+```
+
 ## Zed settings
 
 When opening a remote project there are three relevant settings locations:

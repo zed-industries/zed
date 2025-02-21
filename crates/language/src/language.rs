@@ -15,11 +15,11 @@ mod outline;
 pub mod proto;
 mod syntax_map;
 mod task_context;
+mod text_diff;
 mod toolchain;
 
 #[cfg(test)]
 pub mod buffer_tests;
-pub mod markdown;
 
 pub use crate::language_settings::EditPredictionsMode;
 use crate::language_settings::SoftWrap;
@@ -44,7 +44,6 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use settings::WorktreeId;
 use smol::future::FutureExt as _;
-use std::num::NonZeroU32;
 use std::{
     any::Any,
     ffi::OsStr,
@@ -60,9 +59,11 @@ use std::{
         Arc, LazyLock,
     },
 };
+use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextProvider, RunnableRange};
+pub use text_diff::{line_diff, text_diff, text_diff_with_options, unified_diff, DiffOptions};
 use theme::SyntaxTheme;
 pub use toolchain::{LanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister};
 use tree_sitter::{self, wasmtime, Query, QueryCursor, WasmStore};
@@ -162,6 +163,7 @@ pub struct CachedLspAdapter {
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
+    attach_kind: OnceLock<Attach>,
 }
 
 impl Debug for CachedLspAdapter {
@@ -197,6 +199,7 @@ impl CachedLspAdapter {
             adapter,
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
+            attach_kind: Default::default(),
         })
     }
 
@@ -258,6 +261,38 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
+    pub fn find_project_root(
+        &self,
+        path: &Path,
+        ancestor_depth: usize,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> Option<Arc<Path>> {
+        self.adapter
+            .find_project_root(path, ancestor_depth, delegate)
+    }
+    pub fn attach_kind(&self) -> Attach {
+        *self.attach_kind.get_or_init(|| self.adapter.attach_kind())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Attach {
+    /// Create a single language server instance per subproject root.
+    InstancePerRoot,
+    /// Use one shared language server instance for all subprojects within a project.
+    Shared,
+}
+
+impl Attach {
+    pub fn root_path(
+        &self,
+        root_subproject_path: (WorktreeId, Arc<Path>),
+    ) -> (WorktreeId, Arc<Path>) {
+        match self {
+            Attach::InstancePerRoot => root_subproject_path,
+            Attach::Shared => (root_subproject_path.0, Arc::from(Path::new(""))),
+        }
+    }
 }
 
 /// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
@@ -268,6 +303,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
+    fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool;
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
 
@@ -505,6 +541,19 @@ pub trait LspAdapter: 'static + Send + Sync {
     /// Support custom initialize params.
     fn prepare_initialize_params(&self, original: InitializeParams) -> Result<InitializeParams> {
         Ok(original)
+    }
+    fn attach_kind(&self) -> Attach {
+        Attach::Shared
+    }
+    fn find_project_root(
+        &self,
+
+        _path: &Path,
+        _ancestor_depth: usize,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Option<Arc<Path>> {
+        // By default all language servers are rooted at the root of the worktree.
+        Some(Arc::from("".as_ref()))
     }
 }
 
@@ -867,9 +916,9 @@ impl GrammarId {
 pub struct Grammar {
     id: GrammarId,
     pub ts_language: tree_sitter::Language,
-    pub(crate) error_query: Query,
+    pub(crate) error_query: Option<Query>,
     pub(crate) highlights_query: Option<Query>,
-    pub(crate) brackets_config: Option<BracketConfig>,
+    pub(crate) brackets_config: Option<BracketsConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
     pub(crate) runnable_config: Option<RunnableConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
@@ -990,10 +1039,16 @@ struct InjectionPatternConfig {
     combined: bool,
 }
 
-struct BracketConfig {
+struct BracketsConfig {
     query: Query,
     open_capture_ix: u32,
     close_capture_ix: u32,
+    patterns: Vec<BracketsPatternConfig>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct BracketsPatternConfig {
+    newline_only: bool,
 }
 
 impl Language {
@@ -1022,7 +1077,7 @@ impl Language {
                     override_config: None,
                     redactions_config: None,
                     runnable_config: None,
-                    error_query: Query::new(&ts_language, "(ERROR) @error").unwrap(),
+                    error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
                     ts_language,
                     highlight_map: Default::default(),
                 })
@@ -1235,11 +1290,24 @@ impl Language {
                 ("close", &mut close_capture_ix),
             ],
         );
+        let patterns = (0..query.pattern_count())
+            .map(|ix| {
+                let mut config = BracketsPatternConfig::default();
+                for setting in query.property_settings(ix) {
+                    match setting.key.as_ref() {
+                        "newline.only" => config.newline_only = true,
+                        _ => {}
+                    }
+                }
+                config
+            })
+            .collect();
         if let Some((open_capture_ix, close_capture_ix)) = open_capture_ix.zip(close_capture_ix) {
-            grammar.brackets_config = Some(BracketConfig {
+            grammar.brackets_config = Some(BracketsConfig {
                 query,
                 open_capture_ix,
                 close_capture_ix,
+                patterns,
             });
         }
         Ok(self)
@@ -1675,12 +1743,13 @@ impl Grammar {
                 .expect("incompatible grammar");
             let mut chunks = text.chunks_in_range(0..text.len());
             parser
-                .parse_with(
+                .parse_with_options(
                     &mut move |offset, _| {
                         chunks.seek(offset);
                         chunks.next().unwrap_or("").as_bytes()
                     },
                     old_tree.as_ref(),
+                    None,
                 )
                 .unwrap()
         })

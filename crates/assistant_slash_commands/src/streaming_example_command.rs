@@ -63,56 +63,55 @@ impl SlashCommand for StreamingExampleSlashCommand {
         cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let (events_tx, events_rx) = mpsc::unbounded();
-        cx.background_executor()
-            .spawn(async move {
-                events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
-                    icon: IconName::FileRust,
-                    label: "Section 1".into(),
-                    metadata: None,
-                }))?;
-                events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
-                    SlashCommandContent::Text {
-                        text: "Hello".into(),
-                        run_commands_in_text: false,
-                    },
-                )))?;
-                events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
+        cx.background_spawn(async move {
+            events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
+                icon: IconName::FileRust,
+                label: "Section 1".into(),
+                metadata: None,
+            }))?;
+            events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
+                SlashCommandContent::Text {
+                    text: "Hello".into(),
+                    run_commands_in_text: false,
+                },
+            )))?;
+            events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
 
+            Timer::after(Duration::from_secs(1)).await;
+
+            events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
+                icon: IconName::FileRust,
+                label: "Section 2".into(),
+                metadata: None,
+            }))?;
+            events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
+                SlashCommandContent::Text {
+                    text: "World".into(),
+                    run_commands_in_text: false,
+                },
+            )))?;
+            events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
+
+            for n in 1..=10 {
                 Timer::after(Duration::from_secs(1)).await;
 
                 events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
-                    icon: IconName::FileRust,
-                    label: "Section 2".into(),
+                    icon: IconName::StarFilled,
+                    label: format!("Section {n}").into(),
                     metadata: None,
                 }))?;
                 events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
                     SlashCommandContent::Text {
-                        text: "World".into(),
+                        text: "lorem ipsum ".repeat(n).trim().into(),
                         run_commands_in_text: false,
                     },
                 )))?;
                 events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
+            }
 
-                for n in 1..=10 {
-                    Timer::after(Duration::from_secs(1)).await;
-
-                    events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
-                        icon: IconName::StarFilled,
-                        label: format!("Section {n}").into(),
-                        metadata: None,
-                    }))?;
-                    events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
-                        SlashCommandContent::Text {
-                            text: "lorem ipsum ".repeat(n).trim().into(),
-                            run_commands_in_text: false,
-                        },
-                    )))?;
-                    events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
-                }
-
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
 
         Task::ready(Ok(events_rx.boxed()))
     }

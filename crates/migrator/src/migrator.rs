@@ -68,6 +68,17 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
     )
 }
 
+pub fn migrate_edit_prediction_provider_settings(text: &str) -> Result<Option<String>> {
+    migrate(
+        &text,
+        &[(
+            SETTINGS_REPLACE_NESTED_KEY,
+            replace_edit_prediction_provider_setting,
+        )],
+        &EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY,
+    )
+}
+
 type MigrationPatterns = &'static [(
     &'static str,
     fn(&str, &QueryMatch, &Query) -> Option<(Range<usize>, String)>,
@@ -450,6 +461,17 @@ fn rename_context_key(
     }
 }
 
+/// "context": "Editor && inline_completion && !showing_completions" -> "Editor && edit_prediction && !showing_completions"
+pub static CONTEXT_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
+    HashMap::from_iter([
+        ("inline_completion", "edit_prediction"),
+        (
+            "inline_completion_requires_modifier",
+            "edit_prediction_requires_modifier",
+        ),
+    ])
+});
+
 const ACTION_ARGUMENT_SNAKE_CASE_PATTERN: &str = r#"(document
     (array
         (object
@@ -475,15 +497,10 @@ const ACTION_ARGUMENT_SNAKE_CASE_PATTERN: &str = r#"(document
     (#eq? @name "bindings")
 )"#;
 
-fn is_snake_case(text: &str) -> bool {
-    text == text.to_case(Case::Snake)
-}
-
 fn to_snake_case(text: &str) -> String {
     text.to_case(Case::Snake)
 }
 
-/// [ "editor::FoldAtLevel", { "SomeKey": "Value" } ] -> [ "editor::FoldAtLevel", { "some_key" : "value" } ]
 fn action_argument_snake_case(
     contents: &str,
     mat: &QueryMatch,
@@ -499,34 +516,26 @@ fn action_argument_snake_case(
             .byte_range(),
     )?;
 
+    let replacement_key = ACTION_ARGUMENT_SNAKE_CASE_REPLACE.get(action_name)?;
     let argument_key = contents.get(
         mat.nodes_for_capture_index(argument_key_ix)
             .next()?
             .byte_range(),
     )?;
 
+    if argument_key != *replacement_key {
+        return None;
+    }
+
     let argument_value_node = mat.nodes_for_capture_index(argument_value_ix).next()?;
     let argument_value = contents.get(argument_value_node.byte_range())?;
 
-    let mut needs_replacement = false;
-    let mut new_key = argument_key.to_string();
-    if !is_snake_case(argument_key) {
-        new_key = to_snake_case(argument_key);
-        needs_replacement = true;
-    }
-
-    let mut new_value = argument_value.to_string();
-    if argument_value_node.kind() == "string" {
-        let inner_value = argument_value.trim_matches('"');
-        if !is_snake_case(inner_value) {
-            new_value = format!("\"{}\"", to_snake_case(inner_value));
-            needs_replacement = true;
-        }
-    }
-
-    if !needs_replacement {
-        return None;
-    }
+    let new_key = to_snake_case(argument_key);
+    let new_value = if argument_value_node.kind() == "string" {
+        format!("\"{}\"", to_snake_case(argument_value.trim_matches('"')))
+    } else {
+        argument_value.to_string()
+    };
 
     let range_to_replace = mat.nodes_for_capture_index(array_ix).next()?.byte_range();
     let replacement = format!(
@@ -537,20 +546,34 @@ fn action_argument_snake_case(
     Some((range_to_replace, replacement))
 }
 
-/// "context": "Editor && inline_completion && !showing_completions" -> "Editor && edit_prediction && !showing_completions"
-pub static CONTEXT_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
-    HashMap::from_iter([
-        ("inline_completion", "edit_prediction"),
-        (
-            "inline_completion_requires_modifier",
-            "edit_prediction_requires_modifier",
-        ),
-    ])
-});
+pub static ACTION_ARGUMENT_SNAKE_CASE_REPLACE: LazyLock<HashMap<&str, &str>> =
+    LazyLock::new(|| {
+        HashMap::from_iter([
+            ("vim::NextWordStart", "ignorePunctuation"),
+            ("vim::NextWordEnd", "ignorePunctuation"),
+            ("vim::PreviousWordStart", "ignorePunctuation"),
+            ("vim::PreviousWordEnd", "ignorePunctuation"),
+            ("vim::MoveToNext", "partialWord"),
+            ("vim::MoveToPrev", "partialWord"),
+            ("vim::Down", "displayLines"),
+            ("vim::Up", "displayLines"),
+            ("vim::EndOfLine", "displayLines"),
+            ("vim::StartOfLine", "displayLines"),
+            ("vim::FirstNonWhitespace", "displayLines"),
+            ("pane::CloseActiveItem", "saveIntent"),
+            ("vim::Paste", "preserveClipboard"),
+            ("vim::Word", "ignorePunctuation"),
+            ("vim::Subword", "ignorePunctuation"),
+            ("vim::IndentObj", "includeBelow"),
+        ])
+    });
 
 const SETTINGS_MIGRATION_PATTERNS: MigrationPatterns = &[
     (SETTINGS_STRING_REPLACE_QUERY, replace_setting_name),
-    (SETTINGS_REPLACE_NESTED_KEY, replace_setting_nested_key),
+    (
+        SETTINGS_REPLACE_NESTED_KEY,
+        replace_edit_prediction_provider_setting,
+    ),
     (
         SETTINGS_REPLACE_IN_LANGUAGES_QUERY,
         replace_setting_in_languages,
@@ -564,6 +587,14 @@ static SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
             .iter()
             .map(|pattern| pattern.0)
             .collect::<String>(),
+    )
+    .unwrap()
+});
+
+static EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
+    Query::new(
+        &tree_sitter_json::LANGUAGE.into(),
+        SETTINGS_REPLACE_NESTED_KEY,
     )
     .unwrap()
 });
@@ -622,7 +653,7 @@ const SETTINGS_REPLACE_NESTED_KEY: &str = r#"
 )
 "#;
 
-fn replace_setting_nested_key(
+fn replace_edit_prediction_provider_setting(
     contents: &str,
     mat: &QueryMatch,
     query: &Query,
@@ -641,26 +672,12 @@ fn replace_setting_nested_key(
         .byte_range();
     let setting_name = contents.get(setting_range.clone())?;
 
-    let new_setting_name = SETTINGS_NESTED_STRING_REPLACE
-        .get(&parent_object_name)?
-        .get(setting_name)?;
+    if parent_object_name == "features" && setting_name == "inline_completion_provider" {
+        return Some((setting_range, "edit_prediction_provider".into()));
+    }
 
-    Some((setting_range, new_setting_name.to_string()))
+    None
 }
-
-/// ```json
-/// "features": {
-///   "inline_completion_provider": "copilot"
-/// },
-/// ```
-pub static SETTINGS_NESTED_STRING_REPLACE: LazyLock<
-    HashMap<&'static str, HashMap<&'static str, &'static str>>,
-> = LazyLock::new(|| {
-    HashMap::from_iter([(
-        "features",
-        HashMap::from_iter([("inline_completion_provider", "edit_prediction_provider")]),
-    )])
-});
 
 const SETTINGS_REPLACE_IN_LANGUAGES_QUERY: &str = r#"
 (object
@@ -856,10 +873,10 @@ mod tests {
             [
                 {
                     "bindings": {
-                        "cmd-1": ["vim::PushOperator", { "Object": { "SomeKey": "Value" } }],
-                        "cmd-2": ["vim::SomeOtherAction", { "OtherKey": "Value" }],
-                        "cmd-3": ["vim::SomeDifferentAction", { "OtherKey": true }],
-                        "cmd-4": ["vim::OneMore", { "OtherKey": 4 }]
+                        "cmd-1": ["vim::PushOperator", { "Object": { "around": false } }],
+                        "cmd-3": ["pane::CloseActiveItem", { "saveIntent": "saveAll" }],
+                        "cmd-2": ["vim::NextWordStart", { "ignorePunctuation": true }],
+                        "cmd-4": ["task::Spawn", { "task_name": "a b" }] // should remain as it is
                     }
                 }
             ]
@@ -869,10 +886,10 @@ mod tests {
             [
                 {
                     "bindings": {
-                        "cmd-1": ["vim::PushObject", { "some_key": "value" }],
-                        "cmd-2": ["vim::SomeOtherAction", { "other_key": "value" }],
-                        "cmd-3": ["vim::SomeDifferentAction", { "other_key": true }],
-                        "cmd-4": ["vim::OneMore", { "other_key": 4 }]
+                        "cmd-1": ["vim::PushObject", { "around": false }],
+                        "cmd-3": ["pane::CloseActiveItem", { "save_intent": "save_all" }],
+                        "cmd-2": ["vim::NextWordStart", { "ignore_punctuation": true }],
+                        "cmd-4": ["task::Spawn", { "task_name": "a b" }] // should remain as it is
                     }
                 }
             ]

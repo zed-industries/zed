@@ -482,6 +482,6 @@ jobs:
       - bundle
     steps:
       - name: gh release
-        run: gh release edit $GITHUB_REF_NAME --draft=false
+        run: gh release edit $GITHUB_REF_NAME --draft=true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
