@@ -1,7 +1,7 @@
 use gpui::Render;
 use story::{Story, StoryItem, StorySection};
 
-use crate::{prelude::*, AudioStatus, Availability, AvatarAvailabilityIndicator};
+use crate::{prelude::*, AudioStatus, CollaboratorAvailability, AvatarAvailabilityIndicator};
 use crate::{Avatar, AvatarAudioStatusIndicator};
 
 pub struct AvatarStory;
@@ -26,12 +26,12 @@ impl Render for AvatarStory {
                     .child(StoryItem::new(
                         "With free availability indicator",
                         Avatar::new("https://avatars.githubusercontent.com/u/326587?v=4")
-                            .indicator(AvatarAvailabilityIndicator::new(Availability::Free)),
+                            .indicator(AvatarAvailabilityIndicator::new(CollaboratorAvailability::Free)),
                     ))
                     .child(StoryItem::new(
                         "With busy availability indicator",
                         Avatar::new("https://avatars.githubusercontent.com/u/326587?v=4")
-                            .indicator(AvatarAvailabilityIndicator::new(Availability::Busy)),
+                            .indicator(AvatarAvailabilityIndicator::new(CollaboratorAvailability::Busy)),
                     )),
             )
             .child(
