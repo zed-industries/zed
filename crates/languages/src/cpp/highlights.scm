@@ -69,6 +69,7 @@
 (auto) @type
 (type_identifier) @type
 type :(primitive_type) @type.primitive
+(sized_type_specifier) @type.primitive
 
 (requires_clause
     constraint: (template_type
@@ -131,7 +132,6 @@ type :(primitive_type) @type.primitive
   "using"
   "virtual"
   "while"
-  (sized_type_specifier)
   (storage_class_specifier)
   (type_qualifier)
 ] @keyword
