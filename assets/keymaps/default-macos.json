@@ -97,8 +97,10 @@
       "cmd-right": "editor::MoveToEndOfLine",
       "ctrl-e": "editor::MoveToEndOfLine",
       "end": "editor::MoveToEndOfLine",
-      "cmd-up": "editor::MoveToBeginning",
-      "cmd-down": "editor::MoveToEnd",
+      "cmd-up": "editor::MoveToStartOfExcerpt",
+      "cmd-down": "editor::MoveToEndOfExcerpt",
+      "cmd-home": "editor::MoveToBeginning", // Typed via `cmd-fn-left`
+      "cmd-end": "editor::MoveToEnd", // Typed via `cmd-fn-right`
       "shift-up": "editor::SelectUp",
       "ctrl-shift-p": "editor::SelectUp",
       "shift-down": "editor::SelectDown",
@@ -111,8 +113,8 @@
       "alt-shift-right": "editor::SelectToNextWordEnd", // cursorWordRightSelect
       "ctrl-shift-up": "editor::SelectToStartOfParagraph",
       "ctrl-shift-down": "editor::SelectToEndOfParagraph",
-      "cmd-shift-up": "editor::SelectToBeginning",
-      "cmd-shift-down": "editor::SelectToEnd",
+      "cmd-shift-up": "editor::SelectToStartOfExcerpt",
+      "cmd-shift-down": "editor::SelectToEndOfExcerpt",
       "cmd-a": "editor::SelectAll",
       "cmd-l": "editor::SelectLine",
       "cmd-shift-i": "editor::Format",
