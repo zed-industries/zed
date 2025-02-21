@@ -434,6 +434,8 @@ pub struct Session {
     ignore_breakpoints: bool,
     modules: Vec<dap::Module>,
     loaded_sources: Vec<dap::Source>,
+    last_processed_output: usize,
+    output: Vec<dap::OutputEvent>,
     threads: IndexMap<ThreadId, Thread>,
     requests: HashMap<RequestSlot, Shared<Task<Option<()>>>>,
     thread_states: ThreadStates,
@@ -570,6 +572,8 @@ impl Session {
                     capabilities,
                     thread_states: ThreadStates::default(),
                     ignore_breakpoints: false,
+                    last_processed_output: 0,
+                    output: Vec::default(),
                     requests: HashMap::default(),
                     modules: Vec::default(),
                     loaded_sources: Vec::default(),
@@ -598,6 +602,8 @@ impl Session {
             breakpoint_store,
             ignore_breakpoints,
             thread_states: ThreadStates::default(),
+            last_processed_output: 0,
+            output: Vec::default(),
             requests: HashMap::default(),
             modules: Vec::default(),
             loaded_sources: Vec::default(),
@@ -729,6 +735,18 @@ impl Session {
         })
     }
 
+    pub fn output(&self) -> Vec<dap::OutputEvent> {
+        self.output.iter().cloned().collect()
+    }
+
+    pub fn last_processed_output(&self) -> usize {
+        self.last_processed_output
+    }
+
+    pub fn set_last_processed_output(&mut self, last_processed_output: usize) {
+        self.last_processed_output = last_processed_output;
+    }
+
     fn handle_stopped_event(&mut self, event: StoppedEvent, cx: &mut Context<Self>) {
         // todo(debugger): We should query for all threads here if we don't get a thread id
         // maybe in both cases too?
@@ -777,7 +795,9 @@ impl Session {
                 }
                 self.invalidate_state(&ThreadsCommand.into());
             }
-            Events::Output(_event) => {}
+            Events::Output(event) => {
+                self.output.push(event);
+            }
             Events::Breakpoint(_) => {}
             Events::Module(_) => {
                 self.invalidate_state(&ModulesCommand.into());
