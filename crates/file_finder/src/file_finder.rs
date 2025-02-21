@@ -908,29 +908,24 @@ impl FileFinderDelegate {
                     .unwrap_or(px(10.));
                 (normal, small)
             };
-            let estimated_width = px(0.8)
-                * (px(file_name.len() as f32) * normal_em + px(full_path.len() as f32) * small_em);
-
-            if estimated_width > max_width && full_path.chars().all(|c| c.is_ascii()) {
+            let budget = full_path_budget(&file_name, normal_em, small_em, max_width);
+            if full_path.len() > budget {
                 let components = PathComponentSlice::new(&full_path);
-                if let Some(elided_range) = components.elision_range(&full_path_positions) {
+                if let Some(elided_range) =
+                    components.elision_range(budget - 1, &full_path_positions)
+                {
                     let elided_len = elided_range.end - elided_range.start;
-                    let estimated_width = px(0.8)
-                        * (px(file_name.len() as f32) * normal_em
-                            + px((full_path.len() - elided_len) as f32) * small_em);
-                    if estimated_width <= max_width {
-                        let placeholder = "…";
-                        full_path_positions.retain_mut(|mat| {
-                            if *mat >= elided_range.end {
-                                *mat -= elided_len;
-                                *mat += placeholder.len();
-                            } else if *mat >= elided_range.start {
-                                return false;
-                            }
-                            true
-                        });
-                        full_path.replace_range(elided_range, placeholder);
-                    }
+                    let placeholder = "…";
+                    full_path_positions.retain_mut(|mat| {
+                        if *mat >= elided_range.end {
+                            *mat -= elided_len;
+                            *mat += placeholder.len();
+                        } else if *mat >= elided_range.start {
+                            return false;
+                        }
+                        true
+                    });
+                    full_path.replace_range(elided_range, placeholder);
                 }
             }
         }
@@ -1056,6 +1051,15 @@ impl FileFinderDelegate {
         }
         key_context
     }
+}
+
+fn full_path_budget(
+    file_name: &str,
+    normal_em: Pixels,
+    small_em: Pixels,
+    max_width: Pixels,
+) -> usize {
+    ((px(max_width / px(0.8)) - px(file_name.len() as f32) * normal_em) / small_em) as usize
 }
 
 impl PickerDelegate for FileFinderDelegate {
@@ -1427,7 +1431,7 @@ impl<'a> PathComponentSlice<'a> {
         }
     }
 
-    fn elision_range(&self, matches: &[usize]) -> Option<Range<usize>> {
+    fn elision_range(&self, budget: usize, matches: &[usize]) -> Option<Range<usize>> {
         let eligible_range = {
             assert!(matches.windows(2).all(|w| w[0] <= w[1]));
             let mut matches = matches.iter().copied().peekable();
@@ -1469,11 +1473,42 @@ impl<'a> PathComponentSlice<'a> {
         if eligible_range.is_empty() {
             return None;
         }
-        let elided_component_range = eligible_range.start..=eligible_range.end - 1;
-        let elided_range = self.component_ranges[*elided_component_range.start()]
-            .1
-            .start
-            ..self.component_ranges[*elided_component_range.end()].1.end;
-        Some(elided_range)
+
+        let elided_range: Range<usize> = {
+            let byte_range = self.component_ranges[eligible_range.start].1.start
+                ..self.component_ranges[eligible_range.end - 1].1.end;
+            let midpoint = self.path_str.len() / 2;
+            let distance_from_start = byte_range.start.abs_diff(midpoint);
+            let distance_from_end = byte_range.end.abs_diff(midpoint);
+            let pick_from_end = distance_from_start > distance_from_end;
+            let mut len_with_elision = self.path_str.len();
+            let mut i = eligible_range.start;
+            while i < eligible_range.end {
+                if pick_from_end {
+                    i = eligible_range.end - i + eligible_range.start - 1;
+                }
+                len_with_elision -= self.component_ranges[i]
+                    .0
+                    .as_os_str()
+                    .as_encoded_bytes()
+                    .len()
+                    + 1;
+                if len_with_elision <= budget {
+                    break;
+                }
+                i += 1;
+            }
+            if len_with_elision > budget {
+                return None;
+            } else if pick_from_end {
+                i..eligible_range.end
+            } else {
+                eligible_range.start..i + 1
+            }
+        };
+
+        let byte_range = self.component_ranges[elided_range.start].1.start
+            ..self.component_ranges[elided_range.end - 1].1.end;
+        Some(byte_range)
     }
 }

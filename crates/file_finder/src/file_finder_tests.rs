@@ -22,8 +22,9 @@ fn test_path_component_slice() {
     fn check(path: &str, matches: impl IntoIterator<Item = usize>, expected: &str) {
         let mut path = path.to_owned();
         let slice = PathComponentSlice::new(&path);
-        let mut matches = Vec::from_iter(matches);
-        if let Some(range) = slice.elision_range(&mut matches) {
+        let matches = Vec::from_iter(matches);
+        // FIXME make it work again
+        if let Some(range) = slice.elision_range(0, &matches) {
             path.replace_range(range, "…");
         }
         assert_eq!(path, expected);
