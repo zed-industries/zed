@@ -214,12 +214,128 @@ pub struct VimGlobals {
 }
 
 #[derive(Clone)]
+enum MarksCollection {
+    Loaded {
+        marks: HashMap<String, Vec<Anchor>>,
+        buffer: WeakEntity<Buffer>,
+    },
+    Unloaded(HashMap<String, Vec<Point>>),
+}
+
+impl MarksCollection {
+    pub fn load(&mut self, entity: &Entity<Buffer>, cx: &App) {
+        let buffer = entity.read(cx);
+        let snapshot = buffer.snapshot();
+        let id = buffer.remote_id();
+
+        match self {
+            MarksCollection::Unloaded(marks) => {
+                let mut new_marks = HashMap::<String, Vec<Anchor>>::default();
+                for (name, points) in marks.iter() {
+                    let anchors = points
+                        .iter()
+                        .map(|&p| {
+                            Anchor::in_buffer(ExcerptId::min(), id, snapshot.anchor_before(p))
+                        })
+                        .collect();
+                    new_marks.insert(name.clone(), anchors);
+                }
+                *self = MarksCollection::Loaded {
+                    marks: new_marks,
+                    buffer: entity.downgrade(),
+                };
+            }
+            _ => {}
+        };
+    }
+    pub fn unload(&mut self, cx: &App) {
+        match self {
+            MarksCollection::Loaded { marks, buffer } => {
+                let mut new_marks = HashMap::<String, Vec<Point>>::default();
+                let Some(buffer) = buffer.upgrade() else {
+                    return;
+                };
+                let snapshot = buffer.read(cx).snapshot();
+
+                for (name, anchors) in marks.iter() {
+                    let points: Vec<Point> = anchors
+                        .iter()
+                        .map(|anchor| anchor.text_anchor.to_point(&snapshot))
+                        .collect();
+                    new_marks.insert(name.clone(), points);
+                }
+
+                *self = MarksCollection::Unloaded(new_marks)
+            }
+            _ => {}
+        };
+    }
+
+    pub fn add_mark_by_points(&mut self, name: String, points: Vec<Point>) {
+        match self {
+            MarksCollection::Loaded { marks, buffer } => todo!(),
+            MarksCollection::Unloaded(marks) => {
+                marks.insert(name, points);
+            }
+        }
+    }
+
+    pub fn add_mark_by_anchors(&mut self, name: String, anchors: Vec<Anchor>) {
+        match self {
+            MarksCollection::Loaded { marks, buffer } => {
+                marks.insert(name, anchors);
+            }
+            MarksCollection::Unloaded(marks) => todo!(),
+        }
+    }
+
+    pub fn get_anchors(
+        &mut self,
+        name: String,
+        buffer: &Entity<Buffer>,
+        cx: &App,
+    ) -> Option<Vec<Anchor>> {
+        self.load(buffer, cx);
+        match self {
+            MarksCollection::Loaded { marks, buffer } => marks.get(&name).cloned(),
+            _ => None,
+        }
+    }
+
+    pub fn get_json(&self, name: String, cx: &App) -> Option<String> {
+        match self {
+            MarksCollection::Loaded { marks, buffer } => {
+                let snapshot = buffer.upgrade()?.read(cx).snapshot();
+                let anchors = marks.get(&name)?;
+                let points: Vec<Point> = anchors
+                    .iter()
+                    .map(|anchor| anchor.text_anchor.to_point(&snapshot))
+                    .collect();
+                let locations: Vec<(u32, u32)> = points
+                    .iter()
+                    .map(|point| (point.row, point.column))
+                    .collect();
+                serde_json::to_string(&locations).ok()
+            }
+            MarksCollection::Unloaded(marks) => marks.get(&name).and_then(|points| {
+                let locations: Vec<(u32, u32)> = points
+                    .iter()
+                    .map(|point| (point.row, point.column))
+                    .collect();
+                serde_json::to_string(&locations).ok()
+            }),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct MarksState {
     pub workspace_id: WorkspaceId,
     // this allows for buffers that are not files to have global marks and for storing anchors in general
-    pub loaded_marks: HashMap<BufferId, HashMap<String, Vec<Anchor>>>,
-    pub path_buf_id: HashMap<Arc<Path>, BufferId>,
-    pub marks: HashMap<Arc<Path>, HashMap<String, Vec<Point>>>,
+    // pub loaded_marks: HashMap<BufferId, HashMap<String, Vec<Anchor>>>,
+    // pub path_buf_id: HashMap<Arc<Path>, BufferId>,
+    // pub marks: HashMap<Arc<Path>, HashMap<String, Vec<Point>>>,
+    pub marks: HashMap<Arc<Path>, MarksCollection>,
     pub global_marks: HashMap<String, Arc<Path>>,
 }
 
@@ -227,8 +343,8 @@ impl MarksState {
     pub fn new(workspace_id: WorkspaceId, cx: &mut App) -> Entity<MarksState> {
         cx.new(|_| Self {
             workspace_id,
-            loaded_marks: HashMap::default(),
-            path_buf_id: HashMap::default(),
+            // loaded_marks: HashMap::default(),
+            // path_buf_id: HashMap::default(),
             marks: HashMap::default(),
             global_marks: HashMap::default(),
         })
@@ -239,20 +355,30 @@ impl MarksState {
         workspace_id: WorkspaceId,
         marks: Vec<(Vec<u8>, String, String)>,
         global_mark_paths: Vec<(Vec<u8>, String)>,
+        cx: &App,
     ) {
         self.workspace_id = workspace_id;
         for (path, name, values) in marks {
             let Some(value) = serde_json::from_str::<Vec<(u32, u32)>>(&values).log_err() else {
                 continue;
             };
-            let path = PathBuf::from(OsString::from_vec(path));
-            let mut marks = self.marks.entry(Arc::from(path)).or_default();
+            let path = Arc::from(PathBuf::from(OsString::from_vec(path)));
+
             let points: Vec<Point> = value
                 .into_iter()
                 .map(|(row, col)| Point::new(row, col))
                 .collect();
-            marks.insert(name, points);
+            if let Some(marks_collection) = self.marks.get_mut(&path) {
+                marks_collection.unload(cx);
+                marks_collection.add_mark_by_points(name, points);
+            } else {
+                let mut marks = HashMap::<String, Vec<Point>>::default();
+                marks.insert(name, points);
+                let marks_collection = MarksCollection::Unloaded(marks);
+                self.marks.insert(path, marks_collection);
+            }
         }
+
         for (path, name) in global_mark_paths {
             let path: Arc<Path> = Arc::from(PathBuf::from(OsString::from_vec(path)));
             self.global_marks.insert(name, path);
@@ -266,65 +392,42 @@ impl MarksState {
             return;
         };
 
-        self.path_buf_id.insert(path.clone(), id.clone());
-
-        if !self.marks.contains_key(&path) {
+        let Some(marks_collection) = self.marks.get_mut(&path) else {
             return;
-        }
-
-        let snapshot = buffer.snapshot();
-        if let Some(map) = self.marks.get(&path) {
-            self.loaded_marks.insert(
-                id,
-                map.iter()
-                    .map(|(name, points)| {
-                        (
-                            name.clone(),
-                            points
-                                .iter()
-                                .map(|&p| {
-                                    Anchor::in_buffer(
-                                        ExcerptId::min(),
-                                        id,
-                                        snapshot.anchor_before(p),
-                                    )
-                                })
-                                .collect(),
-                        )
-                    })
-                    .collect(),
-            );
         };
+
+        marks_collection.load(buffer_handle, cx);
 
         cx.subscribe(buffer_handle, move |this, buffer, event, cx| {
             match event {
                 BufferEvent::Edited => {
-                    if let Some(m) = this.loaded_marks.get(&id) {
-                        let mut updates = Vec::new();
+                    // if let Some(m) = this.loaded_marks.get(&id) {
+                    //     let mut updates = Vec::new();
 
-                        for (name, anchors) in m.iter() {
-                            let points_from_anchors: Vec<Point> = anchors
-                                .iter()
-                                .map(|anchor| anchor.text_anchor.to_point(&snapshot))
-                                .collect();
+                    //     for (name, anchors) in m.iter() {
+                    //         let points_from_anchors: Vec<Point> = anchors
+                    //             .iter()
+                    //             .map(|anchor| anchor.text_anchor.to_point(&snapshot))
+                    //             .collect();
 
-                            if let Some(map) = this.marks.get(&path) {
-                                if let Some(old_points) = map.get(name) {
-                                    if points_from_anchors
-                                        .iter()
-                                        .zip(old_points.iter())
-                                        .any(|(&p1, &p2)| p1 != p2)
-                                    {
-                                        updates.push((name.clone(), anchors.clone()));
-                                    }
-                                }
-                            }
-                        }
-
-                        for (name, anchors) in updates {
-                            this.set_mark(name, &buffer, anchors, cx);
-                        }
-                    }
+                    //         if let Some(map) = this.marks.get(&path) {
+                    //             if let Some(old_points) = map.get(name) {
+                    //                 if points_from_anchors
+                    //                     .iter()
+                    //                     .zip(old_points.iter())
+                    //                     .any(|(&p1, &p2)| p1 != p2)
+                    //                 {
+                    //                     updates.push((name.clone(), anchors.clone()));
+                    //                 }
+                    //             }
+                    //         }
+                    //     }
+                    //     println!("here");
+                    //     for (name, anchors) in updates {
+                    //         println!("updating: {}", name.clone());
+                    //         this.set_mark(name, &buffer, anchors, cx);
+                    //     }
+                    // }
                     // recalculate marks for this buffer, and if they've changed update SQLite
                 }
                 // BufferEvent::Operation { operation, is_local } => todo!(),
@@ -339,10 +442,7 @@ impl MarksState {
                 // BufferEvent::Reparsed => todo!(),
                 // BufferEvent::DiagnosticsUpdated => todo!(),
                 // BufferEvent::CapabilityChanged => todo!(),
-                BufferEvent::Closed => {
-                    this.loaded_marks.remove(&id);
-                    this.path_buf_id.remove(&path.clone());
-                }
+                BufferEvent::Closed => {}
                 // BufferEvent::Discarded => todo!(),
                 _ => {}
             }
@@ -360,15 +460,19 @@ impl MarksState {
     ) {
         // the catch here is we may need to subscribe to the buffer.
 
-        let buffer = buffer_handle.read(cx);
-        let id = buffer.remote_id();
-
-        // This needs to happen before reading file so buffers without files can be jumped to
-        let mut map = self.loaded_marks.entry(id).or_default();
-        map.insert(name.clone(), anchors.clone());
-        let Some(path) = buffer.file().map(|file| file.path().clone()) else {
+        let Some(path) = buffer_handle
+            .read(cx)
+            .file()
+            .map(|file| file.path().clone())
+        else {
             return;
         };
+
+        let Some(marks_collection) = self.marks.get_mut(&path) else {
+            return;
+        };
+
+        marks_collection.load(buffer_handle, cx);
 
         if name.starts_with(|c: char| c.is_uppercase())
             || name.starts_with(|c: char| c.is_digit(10))
@@ -383,18 +487,9 @@ impl MarksState {
                 .detach_and_log_err(cx);
         }
 
-        let snapshot = buffer.snapshot();
-        let mut map = self.marks.entry(path.clone()).or_default();
-        let points: Vec<Point> = anchors
-            .iter()
-            .map(|anchor| anchor.text_anchor.to_point(&snapshot))
-            .collect();
-        map.insert(name.clone(), points.clone());
-        let locations: Vec<(u32, u32)> = points
-            .iter()
-            .map(|point| (point.row, point.column))
-            .collect();
-        let Ok(value) = serde_json::to_string(&locations) else {
+        marks_collection.add_mark_by_anchors(name.clone(), anchors);
+
+        let Some(value) = marks_collection.get_json(name.clone(), cx) else {
             return;
         };
 
@@ -412,18 +507,23 @@ impl MarksState {
         self.global_marks.get(&name).cloned()
     }
 
-    pub fn get_mark(&self, name: String, entity: Entity<Buffer>, cx: &App) -> Option<Vec<Anchor>> {
-        if name.starts_with(|c: char| c.is_uppercase())
+    pub fn get_mark(
+        &mut self,
+        name: String,
+        entity: &Entity<Buffer>,
+        cx: &App,
+    ) -> Option<Vec<Anchor>> {
+        let path: Arc<Path> = if name.starts_with(|c: char| c.is_uppercase())
             || name.starts_with(|c: char| c.is_digit(10))
         {
-            let path = self.get_path_for_mark(name.clone())?;
-            let buffer_id = self.path_buf_id.get(&path)?;
-            self.loaded_marks.get(&buffer_id)?.get(&name).cloned()
+            self.get_path_for_mark(name.clone())?
         } else {
             let buffer = entity.read(cx);
-            let id = buffer.remote_id();
-            self.loaded_marks.get(&id)?.get(&name).cloned()
-        }
+            entity.read(cx).file().map(|file| file.path().clone())?
+        };
+        self.marks
+            .get_mut(&path)?
+            .get_anchors(name.clone(), entity, cx)
     }
 }
 
@@ -490,7 +590,7 @@ impl VimGlobals {
                         .insert(workspace_id, MarksState::new(workspace_id.clone(), cx));
                     if let Some(marks_state) = g.marks.get(&workspace_id) {
                         marks_state.update(cx, |ms, cx| {
-                            ms.load(workspace_id, marks, global_marks_paths);
+                            ms.load(workspace_id, marks, global_marks_paths, cx);
                         });
                     }
                     // g.load_local_marks(workspace_id, local_marks);
