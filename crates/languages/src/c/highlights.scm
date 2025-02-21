@@ -104,9 +104,7 @@
   (false)
 ] @boolean
 
-[
-  (null)
-] @constant.builtin
+(null) @constant.builtin
 
 (identifier) @variable
 
