@@ -5996,7 +5996,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.accept_partial_inline_completion(window, cx, ' ');
+        self.accept_partial_inline_completion(window, cx, |c| c.is_alphabetic());
     }
 
     pub fn accept_next_line_inline_completion(
@@ -6005,14 +6005,14 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.accept_partial_inline_completion(window, cx, '\n');
+        self.accept_partial_inline_completion(window, cx, |c| *c != '\n');
     }
 
     fn accept_partial_inline_completion(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-        separator: char,
+        take_condition: impl Fn(&char) -> bool,
     ) {
         let Some(active_inline_completion) = self.active_inline_completion.as_ref() else {
             return;
@@ -6051,7 +6051,7 @@ impl Editor {
                     let mut partial_completion = text
                         .chars()
                         .by_ref()
-                        .take_while(|c| *c != separator)
+                        .take_while(take_condition)
                         .collect::<String>();
                     if partial_completion.is_empty() {
                         partial_completion = text
