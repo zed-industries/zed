@@ -82,6 +82,7 @@
 (escape_sequence) @string.escape
 
 (regex) @string.regex
+(regex_flags) @keyword.regex
 (number) @number
 
 ; Tokens
@@ -210,6 +211,8 @@
   "<" @punctuation.bracket
   ">" @punctuation.bracket)
 
+(decorator "@" @punctuation.special)
+
 ; Keywords
 
 [ "abstract"
@@ -229,11 +232,13 @@
 ] @keyword
 
 ; JSX elements
-(jsx_opening_element (identifier) @tag (#match? @tag "^[a-z][^.]*$"))
-(jsx_closing_element (identifier) @tag (#match? @tag "^[a-z][^.]*$"))
-(jsx_self_closing_element (identifier) @tag (#match? @tag "^[a-z][^.]*$"))
+(jsx_opening_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
+(jsx_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
+(jsx_self_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
 
-(jsx_attribute (property_identifier) @attribute)
-(jsx_opening_element (["<" ">"]) @punctuation.bracket)
-(jsx_closing_element (["</" ">"]) @punctuation.bracket)
-(jsx_self_closing_element (["<" "/>"]) @punctuation.bracket)
+(jsx_attribute (property_identifier) @attribute.jsx)
+(jsx_opening_element (["<" ">"]) @punctuation.bracket.jsx)
+(jsx_closing_element (["</" ">"]) @punctuation.bracket.jsx)
+(jsx_self_closing_element (["<" "/>"]) @punctuation.bracket.jsx)
+(jsx_attribute "=" @punctuation.delimiter.jsx)
+(jsx_text) @text.jsx
