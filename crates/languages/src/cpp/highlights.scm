@@ -153,6 +153,9 @@ type :(primitive_type) @type.primitive
 [
   (true)
   (false)
+] @boolean
+
+[
   (null)
   ("nullptr")
 ] @constant
