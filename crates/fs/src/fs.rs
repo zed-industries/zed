@@ -2028,6 +2028,18 @@ pub fn copy_recursive<'a>(
                     return Err(anyhow!("{target:?} already exists"));
                 }
             }
+            let mut items_to_paste = Vec::new();
+            let mut items_to_copy = fs.read_dir(source).await?;
+            while let Some(item) = items_to_copy.next().await {
+                let Ok(item) = item else {
+                    continue;
+                };
+                let Ok(relative_path) = item.strip_prefix(source) else {
+                    continue;
+                };
+                let target_path = target.join(relative_path);
+                items_to_paste.push(target_path);
+            }
 
             let _ = fs
                 .remove_dir(
@@ -2053,6 +2065,41 @@ pub fn copy_recursive<'a>(
         } else {
             fs.copy_file(source, target, options).await
         }
+    }
+    .boxed()
+}
+
+// async fn read_dir_items<'a>(fs: &'a dyn Fs, source: &'a Path) -> Result<Vec<PathBuf>> {
+//     let mut items = Vec::new();
+//     let mut children = fs.r
+
+async fn read_recursive<'a>(
+    fs: &'a dyn Fs,
+    source: &'a Path,
+    output: &'a mut Vec<(bool, PathBuf)>,
+) -> BoxFuture<'a, Result<()>> {
+    use futures::future::FutureExt;
+
+    async move {
+        let metadata = fs
+            .metadata(source)
+            .await?
+            .ok_or_else(|| anyhow!("path does not exist: {}", source.display()))?;
+
+        if metadata.is_dir {
+            let mut children = fs.read_dir(source).await?;
+            while let Some(child_path) = children.next().await {
+                if let Ok(child_path) = child_path {
+                    if let Some(file_name) = child_path.file_name() {
+                        let child_target_path = target.join(file_name);
+                        copy_recursive(fs, &child_path, &child_target_path, options).await?;
+                    }
+                }
+            }
+        } else {
+            output.push((false, source.to_path_buf()));
+        }
+        Ok(())
     }
     .boxed()
 }
