@@ -15,7 +15,7 @@ pub fn ensure_only_instance() -> Result<UnixDatagram> {
     UnixDatagram::bind(&sock_path)
 }
 
-pub fn ensure_only_instance_cli() -> Result<UnixDatagram> {
+pub fn other_instance_running() -> Result<UnixDatagram> {
     let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
     let sock = UnixDatagram::unbound()?;
     sock.connect(&sock_path).and(Ok(sock))

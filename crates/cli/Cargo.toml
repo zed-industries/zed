@@ -25,6 +25,7 @@ anyhow.workspace = true
 clap.workspace = true
 collections.workspace = true
 ipc-channel = "0.19"
+only_instance.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 release_channel.workspace = true
@@ -33,7 +34,7 @@ util.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-exec.workspace =  true
+exec.workspace = true
 fork.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

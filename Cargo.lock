@@ -2598,6 +2598,7 @@ dependencies = [
  "exec",
  "fork",
  "ipc-channel",
+ "only_instance",
  "parking_lot",
  "paths",
  "plist",

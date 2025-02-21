@@ -355,12 +355,11 @@ mod linux {
         }
 
         fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
-            let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL));
-            let sock = UnixDatagram::unbound()?;
-            if sock.connect(&sock_path).is_err() {
-                self.boot_background(ipc_url)?;
-            } else {
+            if let Ok(sock) = only_instance::other_instance_running() {
+                // There is already an instance running
                 sock.send(ipc_url.as_bytes())?;
+            } else {
+                self.boot_background(ipc_url)?;
             }
             Ok(())
         }
@@ -535,7 +534,14 @@ mod windows {
             unimplemented!()
         }
         fn launch(&self, _ipc_url: String) -> anyhow::Result<()> {
-            unimplemented!()
+            if only_instance::ensure_only_instance() {
+                // start a new instance
+                // send ipc_url to the new instance
+            } else {
+                // There is already an instance running
+                // send ipc_url to the existing instance
+            }
+            Ok(())
         }
         fn run_foreground(&self, _ipc_url: String) -> io::Result<ExitStatus> {
             unimplemented!()
