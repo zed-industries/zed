@@ -123,7 +123,11 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
             .into_iter()
             .find(|display| display.uuid().ok() == Some(uuid))
     });
-    let app_id = ReleaseChannel::global(cx).app_id();
+    if cx.app_id.is_none() {
+        let default_app_id = ReleaseChannel::global(cx).app_id().to_string();
+        cx.app_id = Some(default_app_id);
+    }
+
     let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
         Ok(val) if val == "server" => gpui::WindowDecorations::Server,
         Ok(val) if val == "client" => gpui::WindowDecorations::Client,
@@ -143,7 +147,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         is_movable: true,
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
-        app_id: Some(app_id.to_owned()),
+        app_id: cx.app_id.to_owned(),
         window_decorations: Some(window_decorations),
         window_min_size: Some(gpui::Size {
             width: px(360.0),

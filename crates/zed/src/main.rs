@@ -578,6 +578,8 @@ fn main() {
             open_listener.open_urls(urls)
         }
 
+        cx.app_id = args.app_id; // None, by default
+
         match open_rx
             .try_next()
             .ok()
@@ -1005,6 +1007,10 @@ struct Args {
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
+
+    /// Instructs zed to use custom app_id for window managers.
+    #[arg(long)]
+    app_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]
