@@ -1,3 +1,5 @@
+use crate::wasm_host::wit::since_v0_3_0::slash_command::SlashCommandOutputSection;
+use crate::wasm_host::wit::{CompletionKind, CompletionLabelDetails, InsertTextFormat, SymbolKind};
 use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
@@ -15,36 +17,32 @@ use language::{language_settings::AllLanguageSettings, LanguageName, LanguageSer
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{
+    env,
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
 use util::maybe;
 use wasmtime::component::{Linker, Resource};
 
-use super::latest;
-
-pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 2, 0);
+pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 3, 0);
+pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 3, 0);
 
 wasmtime::component::bindgen!({
     async: true,
     trappable_imports: true,
-    path: "../extension_api/wit/since_v0.2.0",
+    path: "../extension_api/wit/since_v0.3.0",
     with: {
          "worktree": ExtensionWorktree,
          "project": ExtensionProject,
          "key-value-store": ExtensionKeyValueStore,
-         "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream,
-         "zed:extension/github": latest::zed::extension::github,
-         "zed:extension/nodejs": latest::zed::extension::nodejs,
-         "zed:extension/platform": latest::zed::extension::platform,
-         "zed:extension/slash-command": latest::zed::extension::slash_command,
+         "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream
     },
 });
 
 pub use self::zed::extension::*;
 
 mod settings {
-    include!(concat!(env!("OUT_DIR"), "/since_v0.2.0/settings.rs"));
+    include!(concat!(env!("OUT_DIR"), "/since_v0.3.0/settings.rs"));
 }
 
 pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
@@ -54,19 +52,18 @@ pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBo
 
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
-    LINKER.get_or_init(|| {
-        super::new_linker(|linker, f| {
-            Extension::add_to_linker(linker, f)?;
-            latest::zed::extension::github::add_to_linker(linker, f)?;
-            latest::zed::extension::nodejs::add_to_linker(linker, f)?;
-            latest::zed::extension::platform::add_to_linker(linker, f)?;
-            latest::zed::extension::slash_command::add_to_linker(linker, f)?;
-            Ok(())
-        })
-    })
+    LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
 }
 
-impl From<Command> for latest::Command {
+impl From<Range> for std::ops::Range<usize> {
+    fn from(range: Range) -> Self {
+        let start = range.start as usize;
+        let end = range.end as usize;
+        start..end
+    }
+}
+
+impl From<Command> for extension::Command {
     fn from(value: Command) -> Self {
         Self {
             command: value.command,
@@ -76,65 +73,7 @@ impl From<Command> for latest::Command {
     }
 }
 
-impl From<SettingsLocation> for latest::SettingsLocation {
-    fn from(value: SettingsLocation) -> Self {
-        Self {
-            worktree_id: value.worktree_id,
-            path: value.path,
-        }
-    }
-}
-
-impl From<LanguageServerInstallationStatus> for latest::LanguageServerInstallationStatus {
-    fn from(value: LanguageServerInstallationStatus) -> Self {
-        match value {
-            LanguageServerInstallationStatus::None => Self::None,
-            LanguageServerInstallationStatus::Downloading => Self::Downloading,
-            LanguageServerInstallationStatus::CheckingForUpdate => Self::CheckingForUpdate,
-            LanguageServerInstallationStatus::Failed(message) => Self::Failed(message),
-        }
-    }
-}
-
-impl From<DownloadedFileType> for latest::DownloadedFileType {
-    fn from(value: DownloadedFileType) -> Self {
-        match value {
-            DownloadedFileType::Gzip => Self::Gzip,
-            DownloadedFileType::GzipTar => Self::GzipTar,
-            DownloadedFileType::Zip => Self::Zip,
-            DownloadedFileType::Uncompressed => Self::Uncompressed,
-        }
-    }
-}
-
-impl From<Range> for latest::Range {
-    fn from(value: Range) -> Self {
-        Self {
-            start: value.start,
-            end: value.end,
-        }
-    }
-}
-
-impl From<CodeLabelSpan> for latest::CodeLabelSpan {
-    fn from(value: CodeLabelSpan) -> Self {
-        match value {
-            CodeLabelSpan::CodeRange(range) => Self::CodeRange(range.into()),
-            CodeLabelSpan::Literal(literal) => Self::Literal(literal.into()),
-        }
-    }
-}
-
-impl From<CodeLabelSpanLiteral> for latest::CodeLabelSpanLiteral {
-    fn from(value: CodeLabelSpanLiteral) -> Self {
-        Self {
-            text: value.text,
-            highlight_name: value.highlight_name,
-        }
-    }
-}
-
-impl From<CodeLabel> for latest::CodeLabel {
+impl From<CodeLabel> for extension::CodeLabel {
     fn from(value: CodeLabel) -> Self {
         Self {
             code: value.code,
@@ -144,8 +83,26 @@ impl From<CodeLabel> for latest::CodeLabel {
     }
 }
 
-impl From<latest::Completion> for Completion {
-    fn from(value: latest::Completion) -> Self {
+impl From<CodeLabelSpan> for extension::CodeLabelSpan {
+    fn from(value: CodeLabelSpan) -> Self {
+        match value {
+            CodeLabelSpan::CodeRange(range) => Self::CodeRange(range.into()),
+            CodeLabelSpan::Literal(literal) => Self::Literal(literal.into()),
+        }
+    }
+}
+
+impl From<CodeLabelSpanLiteral> for extension::CodeLabelSpanLiteral {
+    fn from(value: CodeLabelSpanLiteral) -> Self {
+        Self {
+            text: value.text,
+            highlight_name: value.highlight_name,
+        }
+    }
+}
+
+impl From<extension::Completion> for Completion {
+    fn from(value: extension::Completion) -> Self {
         Self {
             label: value.label,
             label_details: value.label_details.map(Into::into),
@@ -156,8 +113,8 @@ impl From<latest::Completion> for Completion {
     }
 }
 
-impl From<latest::lsp::CompletionLabelDetails> for lsp::CompletionLabelDetails {
-    fn from(value: latest::lsp::CompletionLabelDetails) -> Self {
+impl From<extension::CompletionLabelDetails> for CompletionLabelDetails {
+    fn from(value: extension::CompletionLabelDetails) -> Self {
         Self {
             detail: value.detail,
             description: value.description,
@@ -165,88 +122,127 @@ impl From<latest::lsp::CompletionLabelDetails> for lsp::CompletionLabelDetails {
     }
 }
 
-impl From<latest::lsp::CompletionKind> for lsp::CompletionKind {
-    fn from(value: latest::lsp::CompletionKind) -> Self {
+impl From<extension::CompletionKind> for CompletionKind {
+    fn from(value: extension::CompletionKind) -> Self {
         match value {
-            latest::lsp::CompletionKind::Text => Self::Text,
-            latest::lsp::CompletionKind::Method => Self::Method,
-            latest::lsp::CompletionKind::Function => Self::Function,
-            latest::lsp::CompletionKind::Constructor => Self::Constructor,
-            latest::lsp::CompletionKind::Field => Self::Field,
-            latest::lsp::CompletionKind::Variable => Self::Variable,
-            latest::lsp::CompletionKind::Class => Self::Class,
-            latest::lsp::CompletionKind::Interface => Self::Interface,
-            latest::lsp::CompletionKind::Module => Self::Module,
-            latest::lsp::CompletionKind::Property => Self::Property,
-            latest::lsp::CompletionKind::Unit => Self::Unit,
-            latest::lsp::CompletionKind::Value => Self::Value,
-            latest::lsp::CompletionKind::Enum => Self::Enum,
-            latest::lsp::CompletionKind::Keyword => Self::Keyword,
-            latest::lsp::CompletionKind::Snippet => Self::Snippet,
-            latest::lsp::CompletionKind::Color => Self::Color,
-            latest::lsp::CompletionKind::File => Self::File,
-            latest::lsp::CompletionKind::Reference => Self::Reference,
-            latest::lsp::CompletionKind::Folder => Self::Folder,
-            latest::lsp::CompletionKind::EnumMember => Self::EnumMember,
-            latest::lsp::CompletionKind::Constant => Self::Constant,
-            latest::lsp::CompletionKind::Struct => Self::Struct,
-            latest::lsp::CompletionKind::Event => Self::Event,
-            latest::lsp::CompletionKind::Operator => Self::Operator,
-            latest::lsp::CompletionKind::TypeParameter => Self::TypeParameter,
-            latest::lsp::CompletionKind::Other(kind) => Self::Other(kind),
+            extension::CompletionKind::Text => Self::Text,
+            extension::CompletionKind::Method => Self::Method,
+            extension::CompletionKind::Function => Self::Function,
+            extension::CompletionKind::Constructor => Self::Constructor,
+            extension::CompletionKind::Field => Self::Field,
+            extension::CompletionKind::Variable => Self::Variable,
+            extension::CompletionKind::Class => Self::Class,
+            extension::CompletionKind::Interface => Self::Interface,
+            extension::CompletionKind::Module => Self::Module,
+            extension::CompletionKind::Property => Self::Property,
+            extension::CompletionKind::Unit => Self::Unit,
+            extension::CompletionKind::Value => Self::Value,
+            extension::CompletionKind::Enum => Self::Enum,
+            extension::CompletionKind::Keyword => Self::Keyword,
+            extension::CompletionKind::Snippet => Self::Snippet,
+            extension::CompletionKind::Color => Self::Color,
+            extension::CompletionKind::File => Self::File,
+            extension::CompletionKind::Reference => Self::Reference,
+            extension::CompletionKind::Folder => Self::Folder,
+            extension::CompletionKind::EnumMember => Self::EnumMember,
+            extension::CompletionKind::Constant => Self::Constant,
+            extension::CompletionKind::Struct => Self::Struct,
+            extension::CompletionKind::Event => Self::Event,
+            extension::CompletionKind::Operator => Self::Operator,
+            extension::CompletionKind::TypeParameter => Self::TypeParameter,
+            extension::CompletionKind::Other(value) => Self::Other(value),
         }
     }
 }
 
-impl From<latest::lsp::InsertTextFormat> for lsp::InsertTextFormat {
-    fn from(value: latest::lsp::InsertTextFormat) -> Self {
+impl From<extension::InsertTextFormat> for InsertTextFormat {
+    fn from(value: extension::InsertTextFormat) -> Self {
         match value {
-            latest::lsp::InsertTextFormat::PlainText => Self::PlainText,
-            latest::lsp::InsertTextFormat::Snippet => Self::Snippet,
-            latest::lsp::InsertTextFormat::Other(value) => Self::Other(value),
+            extension::InsertTextFormat::PlainText => Self::PlainText,
+            extension::InsertTextFormat::Snippet => Self::Snippet,
+            extension::InsertTextFormat::Other(value) => Self::Other(value),
         }
     }
 }
 
-impl From<latest::lsp::Symbol> for lsp::Symbol {
-    fn from(value: latest::lsp::Symbol) -> Self {
+impl From<extension::Symbol> for Symbol {
+    fn from(value: extension::Symbol) -> Self {
+        Self {
+            kind: value.kind.into(),
+            name: value.name,
+        }
+    }
+}
+
+impl From<extension::SymbolKind> for SymbolKind {
+    fn from(value: extension::SymbolKind) -> Self {
+        match value {
+            extension::SymbolKind::File => Self::File,
+            extension::SymbolKind::Module => Self::Module,
+            extension::SymbolKind::Namespace => Self::Namespace,
+            extension::SymbolKind::Package => Self::Package,
+            extension::SymbolKind::Class => Self::Class,
+            extension::SymbolKind::Method => Self::Method,
+            extension::SymbolKind::Property => Self::Property,
+            extension::SymbolKind::Field => Self::Field,
+            extension::SymbolKind::Constructor => Self::Constructor,
+            extension::SymbolKind::Enum => Self::Enum,
+            extension::SymbolKind::Interface => Self::Interface,
+            extension::SymbolKind::Function => Self::Function,
+            extension::SymbolKind::Variable => Self::Variable,
+            extension::SymbolKind::Constant => Self::Constant,
+            extension::SymbolKind::String => Self::String,
+            extension::SymbolKind::Number => Self::Number,
+            extension::SymbolKind::Boolean => Self::Boolean,
+            extension::SymbolKind::Array => Self::Array,
+            extension::SymbolKind::Object => Self::Object,
+            extension::SymbolKind::Key => Self::Key,
+            extension::SymbolKind::Null => Self::Null,
+            extension::SymbolKind::EnumMember => Self::EnumMember,
+            extension::SymbolKind::Struct => Self::Struct,
+            extension::SymbolKind::Event => Self::Event,
+            extension::SymbolKind::Operator => Self::Operator,
+            extension::SymbolKind::TypeParameter => Self::TypeParameter,
+            extension::SymbolKind::Other(value) => Self::Other(value),
+        }
+    }
+}
+
+impl From<extension::SlashCommand> for SlashCommand {
+    fn from(value: extension::SlashCommand) -> Self {
         Self {
             name: value.name,
-            kind: value.kind.into(),
+            description: value.description,
+            tooltip_text: value.tooltip_text,
+            requires_argument: value.requires_argument,
         }
     }
 }
 
-impl From<latest::lsp::SymbolKind> for lsp::SymbolKind {
-    fn from(value: latest::lsp::SymbolKind) -> Self {
-        match value {
-            latest::lsp::SymbolKind::File => Self::File,
-            latest::lsp::SymbolKind::Module => Self::Module,
-            latest::lsp::SymbolKind::Namespace => Self::Namespace,
-            latest::lsp::SymbolKind::Package => Self::Package,
-            latest::lsp::SymbolKind::Class => Self::Class,
-            latest::lsp::SymbolKind::Method => Self::Method,
-            latest::lsp::SymbolKind::Property => Self::Property,
-            latest::lsp::SymbolKind::Field => Self::Field,
-            latest::lsp::SymbolKind::Constructor => Self::Constructor,
-            latest::lsp::SymbolKind::Enum => Self::Enum,
-            latest::lsp::SymbolKind::Interface => Self::Interface,
-            latest::lsp::SymbolKind::Function => Self::Function,
-            latest::lsp::SymbolKind::Variable => Self::Variable,
-            latest::lsp::SymbolKind::Constant => Self::Constant,
-            latest::lsp::SymbolKind::String => Self::String,
-            latest::lsp::SymbolKind::Number => Self::Number,
-            latest::lsp::SymbolKind::Boolean => Self::Boolean,
-            latest::lsp::SymbolKind::Array => Self::Array,
-            latest::lsp::SymbolKind::Object => Self::Object,
-            latest::lsp::SymbolKind::Key => Self::Key,
-            latest::lsp::SymbolKind::Null => Self::Null,
-            latest::lsp::SymbolKind::EnumMember => Self::EnumMember,
-            latest::lsp::SymbolKind::Struct => Self::Struct,
-            latest::lsp::SymbolKind::Event => Self::Event,
-            latest::lsp::SymbolKind::Operator => Self::Operator,
-            latest::lsp::SymbolKind::TypeParameter => Self::TypeParameter,
-            latest::lsp::SymbolKind::Other(kind) => Self::Other(kind),
+impl From<SlashCommandOutput> for extension::SlashCommandOutput {
+    fn from(value: SlashCommandOutput) -> Self {
+        Self {
+            text: value.text,
+            sections: value.sections.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<SlashCommandOutputSection> for extension::SlashCommandOutputSection {
+    fn from(value: SlashCommandOutputSection) -> Self {
+        Self {
+            range: value.range.start as usize..value.range.end as usize,
+            label: value.label,
+        }
+    }
+}
+
+impl From<SlashCommandArgumentCompletion> for extension::SlashCommandArgumentCompletion {
+    fn from(value: SlashCommandArgumentCompletion) -> Self {
+        Self {
+            label: value.label,
+            new_text: value.new_text,
+            run_command: value.run_command,
         }
     }
 }
@@ -456,8 +452,132 @@ async fn convert_response(
     Ok(extension_response)
 }
 
+impl nodejs::Host for WasmState {
+    async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
+        self.host
+            .node_runtime
+            .binary_path()
+            .await
+            .map(|path| path.to_string_lossy().to_string())
+            .to_wasmtime_result()
+    }
+
+    async fn npm_package_latest_version(
+        &mut self,
+        package_name: String,
+    ) -> wasmtime::Result<Result<String, String>> {
+        self.host
+            .node_runtime
+            .npm_package_latest_version(&package_name)
+            .await
+            .to_wasmtime_result()
+    }
+
+    async fn npm_package_installed_version(
+        &mut self,
+        package_name: String,
+    ) -> wasmtime::Result<Result<Option<String>, String>> {
+        self.host
+            .node_runtime
+            .npm_package_installed_version(&self.work_dir(), &package_name)
+            .await
+            .to_wasmtime_result()
+    }
+
+    async fn npm_install_package(
+        &mut self,
+        package_name: String,
+        version: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        self.host
+            .node_runtime
+            .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
+            .await
+            .to_wasmtime_result()
+    }
+}
+
 #[async_trait]
 impl lsp::Host for WasmState {}
+
+impl From<::http_client::github::GithubRelease> for github::GithubRelease {
+    fn from(value: ::http_client::github::GithubRelease) -> Self {
+        Self {
+            version: value.tag_name,
+            assets: value.assets.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<::http_client::github::GithubReleaseAsset> for github::GithubReleaseAsset {
+    fn from(value: ::http_client::github::GithubReleaseAsset) -> Self {
+        Self {
+            name: value.name,
+            download_url: value.browser_download_url,
+        }
+    }
+}
+
+impl github::Host for WasmState {
+    async fn latest_github_release(
+        &mut self,
+        repo: String,
+        options: github::GithubReleaseOptions,
+    ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
+        maybe!(async {
+            let release = ::http_client::github::latest_github_release(
+                &repo,
+                options.require_assets,
+                options.pre_release,
+                self.host.http_client.clone(),
+            )
+            .await?;
+            Ok(release.into())
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    async fn github_release_by_tag_name(
+        &mut self,
+        repo: String,
+        tag: String,
+    ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
+        maybe!(async {
+            let release = ::http_client::github::get_release_by_tag_name(
+                &repo,
+                &tag,
+                self.host.http_client.clone(),
+            )
+            .await?;
+            Ok(release.into())
+        })
+        .await
+        .to_wasmtime_result()
+    }
+}
+
+impl platform::Host for WasmState {
+    async fn current_platform(&mut self) -> Result<(platform::Os, platform::Architecture)> {
+        Ok((
+            match env::consts::OS {
+                "macos" => platform::Os::Mac,
+                "linux" => platform::Os::Linux,
+                "windows" => platform::Os::Windows,
+                _ => panic!("unsupported os"),
+            },
+            match env::consts::ARCH {
+                "aarch64" => platform::Architecture::Aarch64,
+                "x86" => platform::Architecture::X86,
+                "x86_64" => platform::Architecture::X8664,
+                _ => panic!("unsupported architecture"),
+            },
+        ))
+    }
+}
+
+#[async_trait]
+impl slash_command::Host for WasmState {}
 
 impl ExtensionImports for WasmState {
     async fn get_settings(
