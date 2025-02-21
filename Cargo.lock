@@ -8757,6 +8757,7 @@ checksum = "945462a4b81e43c4e3ba96bd7b49d834c6f61198356aa858733bc4acf3cbe62e"
 name = "only_instance"
 version = "0.1.0"
 dependencies = [
+ "log",
  "paths",
  "release_channel",
  "sysinfo",

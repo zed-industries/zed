@@ -16,6 +16,7 @@ release_channel.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 sysinfo.workspace = true
+log.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 paths.workspace = true

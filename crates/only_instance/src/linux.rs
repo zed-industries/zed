@@ -2,7 +2,6 @@ use release_channel::RELEASE_CHANNEL_NAME;
 
 use std::io::Result;
 use std::os::unix::net::UnixDatagram;
-use std::path::Path;
 
 pub fn ensure_only_instance() -> Result<UnixDatagram> {
     let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
