@@ -17,6 +17,38 @@ fn init_logger() {
 }
 
 #[test]
+fn test_path_component_slice() {
+    #[track_caller]
+    fn check(
+        path: &str,
+        matches: impl IntoIterator<Item = usize>,
+        expected: &str,
+        expected_matches: impl IntoIterator<Item = usize>,
+    ) {
+        let mut slice = PathComponentSlice::new(path);
+        let mut matches = Vec::from_iter(matches);
+        slice.elide(&mut matches);
+        assert_eq!(slice.path_str, expected);
+        assert_eq!(matches, Vec::from_iter(expected_matches));
+    }
+
+    check("p/a/b/c/d/", [], "p/…/d/", []);
+    check("p/a/b/c/d/", [2, 4, 6], "p/a/b/c/d/", [2, 4, 6]);
+    check("p/a/b/c/d/", [2, 6], "p/a/…/c/d/", [2, 8]);
+    check("p/a/b/c/d/", [6], "p/…/c/d/", [6]);
+
+    check("p/a/b/c/d", [], "p/…/d", []);
+    check("p/a/b/c/d", [2, 4, 6], "p/a/b/c/d", [2, 4, 6]);
+    check("p/a/b/c/d", [2, 6], "p/a/…/c/d", [2, 8]);
+    check("p/a/b/c/d", [6], "p/…/c/d", [6]);
+
+    check("/p/a/b/c/d/", [], "/p/…/d/", []);
+    check("/p/a/b/c/d/", [3, 5, 7], "/p/a/b/c/d/", [3, 5, 7]);
+    check("/p/a/b/c/d/", [3, 7], "/p/a/…/c/d/", [3, 9]);
+    check("/p/a/b/c/d/", [7], "/p/…/c/d/", [7]);
+}
+
+#[test]
 fn test_custom_project_search_ordering_in_file_finder() {
     let mut file_finder_sorted_output = vec![
         ProjectPanelOrdMatch(PathMatch {

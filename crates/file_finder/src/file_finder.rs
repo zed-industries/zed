@@ -24,8 +24,10 @@ use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use settings::Settings;
 use std::{
+    borrow::Cow,
     cmp,
-    path::{Path, PathBuf},
+    ops::Range,
+    path::{Component, Path, PathBuf},
     sync::{
         atomic::{self, AtomicBool},
         Arc,
@@ -36,7 +38,7 @@ use ui::{
     prelude::*, ContextMenu, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenu,
     PopoverMenuHandle,
 };
-use util::{paths::PathWithPosition, post_inc, ResultExt};
+use util::{maybe, paths::PathWithPosition, post_inc, ResultExt};
 use workspace::{
     item::PreviewTabsSettings, notifications::NotifyResultExt, pane, ModalView, SplitDirection,
     Workspace,
@@ -805,25 +807,28 @@ impl FileFinderDelegate {
     fn labels_for_match(
         &self,
         path_match: &Match,
+        window: &mut Window,
         cx: &App,
         ix: usize,
-    ) -> (String, Vec<usize>, String, Vec<usize>) {
-        let (file_name, file_name_positions, full_path, full_path_positions) = match &path_match {
-            Match::History {
-                path: entry_path,
-                panel_match,
-            } => {
-                let worktree_id = entry_path.project.worktree_id;
-                let project_relative_path = &entry_path.project.path;
-                let has_worktree = self
-                    .project
-                    .read(cx)
-                    .worktree_for_id(worktree_id, cx)
-                    .is_some();
+    ) -> (HighlightedLabel, HighlightedLabel) {
+        let (file_name, file_name_positions, mut full_path, mut full_path_positions) =
+            match &path_match {
+                Match::History {
+                    path: entry_path,
+                    panel_match,
+                } => {
+                    let worktree_id = entry_path.project.worktree_id;
+                    let project_relative_path = &entry_path.project.path;
+                    let has_worktree = self
+                        .project
+                        .read(cx)
+                        .worktree_for_id(worktree_id, cx)
+                        .is_some();
 
-                if !has_worktree {
-                    if let Some(absolute_path) = &entry_path.absolute {
-                        return (
+                    if let Some(absolute_path) =
+                        entry_path.absolute.as_ref().filter(|_| !has_worktree)
+                    {
+                        (
                             absolute_path
                                 .file_name()
                                 .map_or_else(
@@ -834,58 +839,90 @@ impl FileFinderDelegate {
                             Vec::new(),
                             absolute_path.to_string_lossy().to_string(),
                             Vec::new(),
-                        );
+                        )
+                    } else {
+                        let mut path = Arc::clone(project_relative_path);
+                        if project_relative_path.as_ref() == Path::new("") {
+                            if let Some(absolute_path) = &entry_path.absolute {
+                                path = Arc::from(absolute_path.as_path());
+                            }
+                        }
+
+                        let mut path_match = PathMatch {
+                            score: ix as f64,
+                            positions: Vec::new(),
+                            worktree_id: worktree_id.to_usize(),
+                            path,
+                            is_dir: false, // File finder doesn't support directories
+                            path_prefix: "".into(),
+                            distance_to_relative_ancestor: usize::MAX,
+                        };
+                        if let Some(found_path_match) = &panel_match {
+                            path_match
+                                .positions
+                                .extend(found_path_match.0.positions.iter())
+                        }
+
+                        self.labels_for_path_match(&path_match)
                     }
                 }
-
-                let mut path = Arc::clone(project_relative_path);
-                if project_relative_path.as_ref() == Path::new("") {
-                    if let Some(absolute_path) = &entry_path.absolute {
-                        path = Arc::from(absolute_path.as_path());
-                    }
-                }
-
-                let mut path_match = PathMatch {
-                    score: ix as f64,
-                    positions: Vec::new(),
-                    worktree_id: worktree_id.to_usize(),
-                    path,
-                    is_dir: false, // File finder doesn't support directories
-                    path_prefix: "".into(),
-                    distance_to_relative_ancestor: usize::MAX,
-                };
-                if let Some(found_path_match) = &panel_match {
-                    path_match
-                        .positions
-                        .extend(found_path_match.0.positions.iter())
-                }
-
-                self.labels_for_path_match(&path_match)
-            }
-            Match::Search(path_match) => self.labels_for_path_match(&path_match.0),
-        };
+                Match::Search(path_match) => self.labels_for_path_match(&path_match.0),
+            };
 
         if file_name_positions.is_empty() {
             if let Some(user_home_path) = std::env::var("HOME").ok() {
                 let user_home_path = user_home_path.trim();
                 if !user_home_path.is_empty() {
                     if (&full_path).starts_with(user_home_path) {
-                        return (
-                            file_name,
-                            file_name_positions,
-                            full_path.replace(user_home_path, "~"),
-                            full_path_positions,
-                        );
+                        full_path.replace_range(0..user_home_path.len(), "~");
+                        full_path_positions.retain_mut(|pos| {
+                            if *pos >= user_home_path.len() {
+                                *pos -= user_home_path.len();
+                                *pos += 1;
+                                true
+                            } else {
+                                false
+                            }
+                        })
                     }
                 }
             }
         }
 
+        if full_path.is_ascii() {
+            let file_finder_settings = FileFinderSettings::get_global(cx);
+            let max_width =
+                FileFinder::modal_max_width(file_finder_settings.modal_max_width, window);
+            let (normal_em, small_em) = {
+                let style = window.text_style();
+                let font_id = window.text_system().resolve_font(&style.font());
+                let font_size = TextSize::Default.rems(cx).to_pixels(window.rem_size());
+                let normal = cx
+                    .text_system()
+                    .em_width(font_id, font_size)
+                    .unwrap_or(px(16.));
+                let font_size = TextSize::Small.rems(cx).to_pixels(window.rem_size());
+                let small = cx
+                    .text_system()
+                    .em_width(font_id, font_size)
+                    .unwrap_or(px(10.));
+                (normal, small)
+            };
+            let estimated_width =
+                px(file_name.len() as f32) * normal_em + px(full_path.len() as f32) * small_em;
+
+            if estimated_width > max_width && full_path.chars().all(|c| c.is_ascii()) {
+                let mut components = PathComponentSlice::new(&full_path);
+                components.elide(&mut full_path_positions);
+                full_path = std::mem::take(components.path_str.to_mut());
+            }
+        }
+
         (
-            file_name,
-            file_name_positions,
-            full_path,
-            full_path_positions,
+            HighlightedLabel::new(file_name, file_name_positions),
+            HighlightedLabel::new(full_path, full_path_positions)
+                .size(LabelSize::Small)
+                .color(Color::Muted),
         )
     }
 
@@ -1249,7 +1286,7 @@ impl PickerDelegate for FileFinderDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
@@ -1269,16 +1306,16 @@ impl PickerDelegate for FileFinderDelegate {
                 .size(IconSize::Small.rems())
                 .into_any_element(),
         };
-        let (file_name, file_name_positions, full_path, full_path_positions) =
-            self.labels_for_match(path_match, cx, ix);
+        let (file_name_label, full_path_label) = self.labels_for_match(path_match, window, cx, ix);
 
-        let file_icon = if settings.file_icons {
-            FileIcons::get_icon(Path::new(&file_name), cx)
-                .map(Icon::from_path)
-                .map(|icon| icon.color(Color::Muted))
-        } else {
-            None
-        };
+        let file_icon = maybe!({
+            if !settings.file_icons {
+                return None;
+            }
+            let file_name = path_match.path().file_name()?;
+            let icon = FileIcons::get_icon(file_name.as_ref(), cx)?;
+            Some(Icon::from_path(icon).color(Color::Muted))
+        });
 
         Some(
             ListItem::new(ix)
@@ -1291,12 +1328,8 @@ impl PickerDelegate for FileFinderDelegate {
                     h_flex()
                         .gap_2()
                         .py_px()
-                        .child(HighlightedLabel::new(file_name, file_name_positions))
-                        .child(
-                            HighlightedLabel::new(full_path, full_path_positions)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
+                        .child(file_name_label)
+                        .child(full_path_label),
                 ),
         )
     }
@@ -1342,5 +1375,116 @@ impl PickerDelegate for FileFinderDelegate {
                 )
                 .into_any(),
         )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PathComponentSlice<'a> {
+    path: Cow<'a, Path>,
+    path_str: Cow<'a, str>,
+    component_ranges: Vec<(Component<'a>, Range<usize>)>,
+}
+
+impl<'a> PathComponentSlice<'a> {
+    fn new(path: &'a str) -> Self {
+        let trimmed_path = Path::new(path).components().as_path().as_os_str();
+        let mut component_ranges = Vec::new();
+        let mut components = Path::new(trimmed_path).components();
+        let len = trimmed_path.as_encoded_bytes().len();
+        let mut pos = 0;
+        while let Some(component) = components.next() {
+            component_ranges.push((component, pos..0));
+            pos = len - components.as_path().as_os_str().as_encoded_bytes().len();
+        }
+        for ((_, range), ancestor) in component_ranges
+            .iter_mut()
+            .rev()
+            .zip(Path::new(trimmed_path).ancestors())
+        {
+            range.end = ancestor.as_os_str().as_encoded_bytes().len();
+        }
+        Self {
+            path: Cow::Borrowed(Path::new(path)),
+            path_str: Cow::Borrowed(path),
+            component_ranges,
+        }
+    }
+
+    fn elide(&mut self, matches: &mut Vec<usize>) {
+        let eligible_range = {
+            assert!(matches.windows(2).all(|w| w[0] <= w[1]));
+            let mut matches = matches.iter().copied().peekable();
+            let mut longest: Option<Range<usize>> = None;
+            let mut cur = 0..0;
+            let mut seen_normal = false;
+            for (i, (component, range)) in self.component_ranges.iter().enumerate() {
+                let is_normal = matches!(component, Component::Normal(_));
+                let is_first_normal = is_normal && !seen_normal;
+                seen_normal |= is_normal;
+                let is_last = i == self.component_ranges.len() - 1;
+                let contains_match = matches.peek().is_some_and(|mat| range.contains(mat));
+                if contains_match {
+                    matches.next();
+                }
+                if is_first_normal || is_last || !is_normal || contains_match {
+                    if !longest
+                        .as_ref()
+                        .is_some_and(|old| old.end - old.start > cur.end - cur.start)
+                    {
+                        longest = Some(cur);
+                    }
+                    cur = i + 1..i + 1;
+                } else {
+                    cur.end = i + 1;
+                }
+            }
+            if !longest
+                .as_ref()
+                .is_some_and(|old| old.end - old.start > cur.end - cur.start)
+            {
+                longest = Some(cur);
+            }
+            longest
+        };
+
+        let Some(eligible_range) = eligible_range else {
+            return;
+        };
+        assert!(eligible_range.start <= eligible_range.end);
+        if eligible_range.is_empty() {
+            return;
+        }
+        let elided_component_range = eligible_range.start..=eligible_range.end - 1;
+        let eligible_path_range = self.component_ranges[*elided_component_range.start()]
+            .1
+            .start
+            ..self.component_ranges[*elided_component_range.end()].1.end;
+
+        let elided_len = eligible_path_range.end - eligible_path_range.start;
+        let placeholder = "…";
+        self.component_ranges.retain_mut(|(_, range)| {
+            if range.start >= eligible_path_range.end {
+                range.start -= elided_len;
+                range.start += placeholder.len();
+                range.end -= elided_len;
+                range.end += placeholder.len();
+            } else if range.end >= eligible_path_range.start {
+                return false;
+            }
+            true
+        });
+        matches.retain_mut(|mat| {
+            if *mat >= eligible_path_range.end {
+                *mat -= elided_len;
+                *mat += placeholder.len();
+            } else if *mat >= eligible_path_range.start {
+                return false;
+            }
+            true
+        });
+        self.path_str
+            .to_mut()
+            .replace_range(eligible_path_range, placeholder);
+        self.path = Path::new(self.path_str.as_ref()).to_owned().into();
     }
 }
