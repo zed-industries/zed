@@ -39,7 +39,7 @@ use workspace::{
     ActivatePaneUp, ActivatePreviousPane, DraggedSelection, DraggedTab, ItemId, MoveItemToPane,
     MoveItemToPaneInDirection, NewTerminal, Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft,
     SplitRight, SplitUp, SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom,
-    Workspace, WorkspaceId,
+    Workspace,
 };
 
 use anyhow::{anyhow, Context as _, Result};
@@ -217,8 +217,12 @@ impl TerminalPanel {
         });
     }
 
-    fn serialization_key(database_id: WorkspaceId) -> String {
-        format!("{:?}-{:?}", TERMINAL_PANEL_KEY, database_id)
+    fn serialization_key(workspace: &Workspace) -> Option<String> {
+        workspace
+            .database_id()
+            .map(|id| i64::from(id).to_string())
+            .or(workspace.session_id())
+            .map(|id| format!("{:?}-{:?}", TERMINAL_PANEL_KEY, id))
     }
 
     pub async fn load(
@@ -227,39 +231,44 @@ impl TerminalPanel {
     ) -> Result<Entity<Self>> {
         let mut terminal_panel = None;
 
-        if let Some(database_id) = workspace
-            .read_with(&mut cx, |workspace, _| workspace.database_id())
-            .log_err()
+        match workspace
+            .read_with(&mut cx, |workspace, _| {
+                workspace
+                    .database_id()
+                    .zip(TerminalPanel::serialization_key(workspace))
+            })
+            .ok()
             .flatten()
         {
-            if let Some(serialized_panel) = cx
-                .background_spawn(async move {
-                    KEY_VALUE_STORE.read_kvp(&TerminalPanel::serialization_key(database_id))
-                })
-                .await
-                .log_err()
-                .flatten()
-                .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
-                .transpose()
-                .log_err()
-                .flatten()
-            {
-                if let Ok(serialized) = workspace
-                    .update_in(&mut cx, |workspace, window, cx| {
-                        deserialize_terminal_panel(
-                            workspace.weak_handle(),
-                            workspace.project().clone(),
-                            database_id,
-                            serialized_panel,
-                            window,
-                            cx,
-                        )
-                    })?
+            Some((database_id, serialization_key)) => {
+                if let Some(serialized_panel) = cx
+                    .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
                     .await
+                    .log_err()
+                    .flatten()
+                    .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
+                    .transpose()
+                    .log_err()
+                    .flatten()
                 {
-                    terminal_panel = Some(serialized);
+                    if let Ok(serialized) = workspace
+                        .update_in(&mut cx, |workspace, window, cx| {
+                            deserialize_terminal_panel(
+                                workspace.weak_handle(),
+                                workspace.project().clone(),
+                                database_id,
+                                serialized_panel,
+                                window,
+                                cx,
+                            )
+                        })?
+                        .await
+                    {
+                        terminal_panel = Some(serialized);
+                    }
                 }
             }
+            _ => {}
         }
 
         let terminal_panel = if let Some(panel) = terminal_panel {
@@ -750,10 +759,12 @@ impl TerminalPanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let height = self.height;
         let width = self.width;
-        let Some(database_id) = self
+        let Some(serialization_key) = self
             .workspace
-            .update(cx, |workspace, _| workspace.database_id())
-            .log_err()
+            .update(cx, |workspace, _| {
+                TerminalPanel::serialization_key(workspace)
+            })
+            .ok()
             .flatten()
         else {
             return;
@@ -776,7 +787,7 @@ impl TerminalPanel {
                 async move {
                     KEY_VALUE_STORE
                         .write_kvp(
-                            TerminalPanel::serialization_key(database_id),
+                            serialization_key,
                             serde_json::to_string(&SerializedTerminalPanel {
                                 items,
                                 active_item_id: None,
