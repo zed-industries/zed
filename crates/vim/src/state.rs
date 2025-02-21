@@ -8,7 +8,7 @@ use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use db::sqlez_macros::sql;
 use db::{define_connection, query};
-use editor::{Anchor, ClipboardSelection, Editor, ExcerptId, MultiBuffer};
+use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer};
 use gpui::{
     Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, Global,
     WeakEntity,
@@ -214,7 +214,7 @@ pub struct VimGlobals {
 }
 
 #[derive(Clone)]
-enum MarksCollection {
+pub enum MarksCollection {
     Loaded {
         marks: HashMap<String, Vec<Anchor>>,
         buffer: WeakEntity<Buffer>,
@@ -234,11 +234,7 @@ impl MarksCollection {
                 for (name, points) in marks.iter() {
                     let anchors = points
                         .iter()
-                        .map(|&p| {
-                            multi_buffer_snapshot.anchor_after(p.to_offset(&buffer_snapshot))
-
-                            // Anchor::in_buffer(ExcerptId::min(), id, snapshot.anchor_before(p))
-                        })
+                        .map(|&p| multi_buffer_snapshot.anchor_after(p.to_offset(&buffer_snapshot)))
                         .collect();
                     new_marks.insert(name.clone(), anchors);
                 }
@@ -275,7 +271,10 @@ impl MarksCollection {
 
     pub fn add_mark_by_points(&mut self, name: String, points: Vec<Point>) {
         match self {
-            MarksCollection::Loaded { marks, buffer } => todo!(),
+            MarksCollection::Loaded {
+                marks: _,
+                buffer: _,
+            } => todo!(),
             MarksCollection::Unloaded(marks) => {
                 marks.insert(name, points);
             }
@@ -284,10 +283,10 @@ impl MarksCollection {
 
     pub fn add_mark_by_anchors(&mut self, name: String, anchors: Vec<Anchor>) {
         match self {
-            MarksCollection::Loaded { marks, buffer } => {
+            MarksCollection::Loaded { marks, buffer: _ } => {
                 marks.insert(name, anchors);
             }
-            MarksCollection::Unloaded(marks) => todo!(),
+            MarksCollection::Unloaded(_) => todo!(),
         }
     }
 
@@ -300,7 +299,7 @@ impl MarksCollection {
     ) -> Option<Vec<Anchor>> {
         self.load(buffer, multi_buffer, cx);
         match self {
-            MarksCollection::Loaded { marks, buffer } => marks.get(&name).cloned(),
+            MarksCollection::Loaded { marks, buffer: _ } => marks.get(&name).cloned(),
             _ => None,
         }
     }
@@ -333,16 +332,17 @@ impl MarksCollection {
     pub fn write_all_to_db(&mut self, workspace_id: WorkspaceId, path: Arc<Path>, cx: &App) {
         self.unload(cx);
         match self {
-            MarksCollection::Loaded { marks, buffer } => {}
+            MarksCollection::Loaded {
+                marks: _,
+                buffer: _,
+            } => {}
             MarksCollection::Unloaded(marks) => {
                 for (name, points) in marks.iter() {
-                    let Some(value) = marks.get(&name.clone()).and_then(|points| {
-                        let locations: Vec<(u32, u32)> = points
-                            .iter()
-                            .map(|point| (point.row, point.column))
-                            .collect();
-                        serde_json::to_string(&locations).ok()
-                    }) else {
+                    let locations: Vec<(u32, u32)> = points
+                        .iter()
+                        .map(|point| (point.row, point.column))
+                        .collect();
+                    let Some(value) = serde_json::to_string(&locations).ok() else {
                         return;
                     };
                     cx.background_executor()
@@ -536,7 +536,6 @@ impl MarksState {
         {
             self.get_path_for_mark(name.clone())?
         } else {
-            let buffer = entity.read(cx);
             entity.read(cx).file().map(|file| file.path().clone())?
         };
         self.marks
@@ -618,7 +617,7 @@ impl VimGlobals {
             .detach_and_log_err(cx);
 
             let buffer_store = workspace.project().read(cx).buffer_store().clone();
-            cx.subscribe(&buffer_store, move |this, _, event, cx| {
+            cx.subscribe(&buffer_store, move |_, _, event, cx| {
                 match event {
                     project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
                         // if we have marks for this buffer, upgrade to anchors,
@@ -630,15 +629,6 @@ impl VimGlobals {
                                 });
                             }
                         })
-                    }
-                    project::buffer_store::BufferStoreEvent::BufferDropped(buffer_id) => {
-                        // Vim::update_globals(cx, |globals, cx| {
-                        //     if let Some(marks_state) = globals.marks.get(&workspace_id) {
-                        //         marks_state.update(cx, |ms, cx| {
-                        //             ms.marks.
-                        //         });
-                        //     }
-                        // })
                     }
                     _ => {}
                 }

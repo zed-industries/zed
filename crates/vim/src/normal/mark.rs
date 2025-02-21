@@ -5,7 +5,7 @@ use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
-    Anchor, Bias, DisplayPoint, Editor, ToOffset,
+    Anchor, Bias, DisplayPoint, Editor,
 };
 use gpui::{Context, Window};
 use language::SelectionGoal;

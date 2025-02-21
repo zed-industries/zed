@@ -23,7 +23,7 @@ use anyhow::Result;
 use collections::HashMap;
 use editor::{
     movement::{self, FindRange},
-    Anchor, Bias, Editor, EditorEvent, EditorMode, MultiBuffer, ToOffset, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorMode, MultiBuffer, ToPoint,
 };
 use gpui::{
     actions, impl_actions, Action, App, AppContext, Axis, Context, Entity, EventEmitter,
@@ -865,7 +865,7 @@ impl Vim {
             vim_globals
                 .marks
                 .get(&workspace_id)?
-                .update(cx, |ms, cx| ms.global_marks.get(&name.clone()).cloned())
+                .update(cx, |ms, _| ms.global_marks.get(&name.clone()).cloned())
         })
     }
 
