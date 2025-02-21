@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use editor::ProposedChangesEditor;
 use futures::{future, TryFutureExt as _};
-use gpui::{App, AsyncApp, Entity, SharedString};
+use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString};
 use language::{AutoindentMode, Buffer, BufferSnapshot};
 use project::{Project, ProjectPath};
 use std::{cmp, ops::Range, path::Path, sync::Arc};
@@ -140,7 +140,7 @@ impl ResolvedPatch {
             buffer.edit(
                 edits,
                 Some(AutoindentMode::Block {
-                    original_indent_columns: Vec::new(),
+                    original_start_columns: Vec::new(),
                 }),
                 cx,
             );
@@ -258,8 +258,7 @@ impl AssistantEdit {
 
         let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
         let suggestion = cx
-            .background_executor()
-            .spawn(async move { kind.resolve(&snapshot) })
+            .background_spawn(async move { kind.resolve(&snapshot) })
             .await;
 
         Ok((buffer, suggestion))
@@ -547,7 +546,7 @@ impl Eq for AssistantPatch {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{App, AppContext as _};
+    use gpui::App;
     use language::{
         language_settings::AllLanguageSettings, Language, LanguageConfig, LanguageMatcher,
     };

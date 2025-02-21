@@ -91,16 +91,21 @@ impl Render for QuickActionBar {
             selection_menu_enabled,
             inlay_hints_enabled,
             supports_inlay_hints,
+            inline_diagnostics_enabled,
+            supports_inline_diagnostics,
             git_blame_inline_enabled,
             show_git_blame_gutter,
             auto_signature_help_enabled,
             show_inline_completions,
             inline_completion_enabled,
         ) = {
+            let supports_inlay_hints =
+                editor.update(cx, |editor, cx| editor.supports_inlay_hints(cx));
             let editor = editor.read(cx);
             let selection_menu_enabled = editor.selection_menu_enabled(cx);
             let inlay_hints_enabled = editor.inlay_hints_enabled();
-            let supports_inlay_hints = editor.supports_inlay_hints(cx);
+            let show_inline_diagnostics = editor.show_inline_diagnostics();
+            let supports_inline_diagnostics = editor.inline_diagnostics_enabled();
             let git_blame_inline_enabled = editor.git_blame_inline_enabled();
             let show_git_blame_gutter = editor.show_git_blame_gutter();
             let auto_signature_help_enabled = editor.auto_signature_help_enabled(cx);
@@ -111,6 +116,8 @@ impl Render for QuickActionBar {
                 selection_menu_enabled,
                 inlay_hints_enabled,
                 supports_inlay_hints,
+                show_inline_diagnostics,
+                supports_inline_diagnostics,
                 git_blame_inline_enabled,
                 show_git_blame_gutter,
                 auto_signature_help_enabled,
@@ -246,6 +253,29 @@ impl Render for QuickActionBar {
                                                 .update(cx, |editor, cx| {
                                                     editor.toggle_inlay_hints(
                                                         &editor::actions::ToggleInlayHints,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    },
+                                );
+                            }
+
+                            if supports_inline_diagnostics {
+                                menu = menu.toggleable_entry(
+                                    "Inline Diagnostics",
+                                    inline_diagnostics_enabled,
+                                    IconPosition::Start,
+                                    Some(editor::actions::ToggleInlineDiagnostics.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_inline_diagnostics(
+                                                        &editor::actions::ToggleInlineDiagnostics,
                                                         window,
                                                         cx,
                                                     );
@@ -472,13 +502,22 @@ impl ToolbarItemView for QuickActionBar {
             self._inlay_hints_enabled_subscription.take();
 
             if let Some(editor) = active_item.downcast::<Editor>() {
-                let mut inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
-                let mut supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
+                let (mut inlay_hints_enabled, mut supports_inlay_hints) =
+                    editor.update(cx, |editor, cx| {
+                        (
+                            editor.inlay_hints_enabled(),
+                            editor.supports_inlay_hints(cx),
+                        )
+                    });
                 self._inlay_hints_enabled_subscription =
                     Some(cx.observe(&editor, move |_, editor, cx| {
-                        let editor = editor.read(cx);
-                        let new_inlay_hints_enabled = editor.inlay_hints_enabled();
-                        let new_supports_inlay_hints = editor.supports_inlay_hints(cx);
+                        let (new_inlay_hints_enabled, new_supports_inlay_hints) =
+                            editor.update(cx, |editor, cx| {
+                                (
+                                    editor.inlay_hints_enabled(),
+                                    editor.supports_inlay_hints(cx),
+                                )
+                            });
                         let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
                             || supports_inlay_hints != new_supports_inlay_hints;
                         inlay_hints_enabled = new_inlay_hints_enabled;

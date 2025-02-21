@@ -3,18 +3,41 @@
 set -euo pipefail
 
 check_license () {
-    for license in "LICENSE-AGPL" "LICENSE-GPL" "LICENSE-APACHE"; do
-        if [[ -L "$1/$license" ]]; then
+    local dir="$1"
+    local allowed_licenses=()
+    local agpl_crates=("crates/collab")
+
+    local is_agpl=false
+    for agpl_crate in "${agpl_crates[@]}"; do
+        if [[ "$dir" == "$agpl_crate" ]]; then
+            is_agpl=true
+            break
+        fi
+    done
+
+    if [[ "$is_agpl" == true ]]; then
+        allowed_licenses=("LICENSE-AGPL")
+    else
+        allowed_licenses=("LICENSE-GPL" "LICENSE-APACHE")
+    fi
+
+    for license in "${allowed_licenses[@]}"; do
+        if [[ -L "$dir/$license" ]]; then
             return 0
-        elif [[ -e "$1/$license" ]]; then
-            echo "Error: $1/$license exists but is not a symlink."
+        elif [[ -e "$dir/$license" ]]; then
+            echo "Error: $dir/$license exists but is not a symlink."
             exit 1
         fi
     done
-    echo "Error: $1 does not contain a license symlink"
+
+    if [[ "$dir" == "crates/collab" ]]; then
+        echo "Error: $dir does not contain a LICENSE-AGPL symlink"
+    else
+        echo "Error: $dir does not contain a LICENSE-GPL or LICENSE-APACHE symlink"
+    fi
     exit 1
 }
 
-git ls-files **/*/Cargo.toml | while read cargo_toml; do
-   check_license $(dirname "$cargo_toml");
+git ls-files "**/*/Cargo.toml" | while read -r cargo_toml; do
+   check_license "$(dirname "$cargo_toml")"
 done

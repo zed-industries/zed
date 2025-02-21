@@ -40,13 +40,15 @@ pub enum Model {
     O3Mini,
     #[serde(alias = "claude-3-5-sonnet", rename = "claude-3.5-sonnet")]
     Claude3_5Sonnet,
+    #[serde(alias = "gemini-2.0-flash", rename = "gemini-2.0-flash-001")]
+    Gemini20Flash,
 }
 
 impl Model {
     pub fn uses_streaming(&self) -> bool {
         match self {
             Self::Gpt4o | Self::Gpt4 | Self::Gpt3_5Turbo | Self::Claude3_5Sonnet => true,
-            Self::O3Mini | Self::O1 => false,
+            Self::O3Mini | Self::O1 | Self::Gemini20Flash => false,
         }
     }
 
@@ -58,6 +60,7 @@ impl Model {
             "o1" => Ok(Self::O1),
             "o3-mini" => Ok(Self::O3Mini),
             "claude-3-5-sonnet" => Ok(Self::Claude3_5Sonnet),
+            "gemini-2.0-flash-001" => Ok(Self::Gemini20Flash),
             _ => Err(anyhow!("Invalid model id: {}", id)),
         }
     }
@@ -70,6 +73,7 @@ impl Model {
             Self::O3Mini => "o3-mini",
             Self::O1 => "o1",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet",
+            Self::Gemini20Flash => "gemini-2.0-flash-001",
         }
     }
 
@@ -81,17 +85,19 @@ impl Model {
             Self::O3Mini => "o3-mini",
             Self::O1 => "o1",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
+            Self::Gemini20Flash => "Gemini 2.0 Flash",
         }
     }
 
     pub fn max_token_count(&self) -> usize {
         match self {
-            Self::Gpt4o => 64000,
-            Self::Gpt4 => 32768,
-            Self::Gpt3_5Turbo => 12288,
-            Self::O3Mini => 20000,
-            Self::O1 => 20000,
-            Self::Claude3_5Sonnet => 200_000,
+            Self::Gpt4o => 64_000,
+            Self::Gpt4 => 32_768,
+            Self::Gpt3_5Turbo => 12_288,
+            Self::O3Mini => 64_000,
+            Self::O1 => 20_000,
+            Self::Claude3_5Sonnet => 128_000,
+            Model::Gemini20Flash => 128_000,
         }
     }
 }

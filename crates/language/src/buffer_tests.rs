@@ -25,6 +25,7 @@ use text::{BufferId, LineEnding};
 use text::{Point, ToPoint};
 use theme::ActiveTheme;
 use unindent::Unindent as _;
+use util::test::marked_text_offsets;
 use util::{assert_set_eq, post_inc, test::marked_text_ranges, RandomCharIter};
 
 pub static TRAILING_WHITESPACE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
@@ -354,24 +355,44 @@ fn test_edit_events(cx: &mut gpui::App) {
 
 #[gpui::test]
 async fn test_apply_diff(cx: &mut TestAppContext) {
-    let text = "a\nbb\nccc\ndddd\neeeee\nffffff\n";
+    let (text, offsets) = marked_text_offsets(
+        "one two three\nfour fiˇve six\nseven eightˇ nine\nten eleven twelve\n",
+    );
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let anchor = buffer.update(cx, |buffer, _| buffer.anchor_before(Point::new(3, 3)));
-
-    let text = "a\nccc\ndddd\nffffff\n";
-    let diff = buffer.update(cx, |b, cx| b.diff(text.into(), cx)).await;
-    buffer.update(cx, |buffer, cx| {
-        buffer.apply_diff(diff, cx).unwrap();
-        assert_eq!(buffer.text(), text);
-        assert_eq!(anchor.to_point(buffer), Point::new(2, 3));
+    let anchors = buffer.update(cx, |buffer, _| {
+        offsets
+            .iter()
+            .map(|offset| buffer.anchor_before(offset))
+            .collect::<Vec<_>>()
     });
 
-    let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
-    let diff = buffer.update(cx, |b, cx| b.diff(text.into(), cx)).await;
+    let (text, offsets) = marked_text_offsets(
+        "one two three\n{\nfour FIVEˇ six\n}\nseven AND EIGHTˇ nine\nten eleven twelve\n",
+    );
+
+    let diff = buffer.update(cx, |b, cx| b.diff(text.clone(), cx)).await;
     buffer.update(cx, |buffer, cx| {
         buffer.apply_diff(diff, cx).unwrap();
         assert_eq!(buffer.text(), text);
-        assert_eq!(anchor.to_point(buffer), Point::new(4, 4));
+        let actual_offsets = anchors
+            .iter()
+            .map(|anchor| anchor.to_offset(buffer))
+            .collect::<Vec<_>>();
+        assert_eq!(actual_offsets, offsets);
+    });
+
+    let (text, offsets) =
+        marked_text_offsets("one two three\n{\nˇ}\nseven AND EIGHTEENˇ nine\nten eleven twelve\n");
+
+    let diff = buffer.update(cx, |b, cx| b.diff(text.clone(), cx)).await;
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(diff, cx).unwrap();
+        assert_eq!(buffer.text(), text);
+        let actual_offsets = anchors
+            .iter()
+            .map(|anchor| anchor.to_offset(buffer))
+            .collect::<Vec<_>>();
+        assert_eq!(actual_offsets, offsets);
     });
 }
 
@@ -1636,7 +1657,7 @@ fn test_autoindent_block_mode(cx: &mut App) {
         buffer.edit(
             [(Point::new(2, 0)..Point::new(2, 0), inserted_text.clone())],
             Some(AutoindentMode::Block {
-                original_indent_columns: original_indent_columns.clone(),
+                original_start_columns: original_indent_columns.clone(),
             }),
             cx,
         );
@@ -1664,7 +1685,7 @@ fn test_autoindent_block_mode(cx: &mut App) {
         buffer.edit(
             [(Point::new(2, 8)..Point::new(2, 8), inserted_text)],
             Some(AutoindentMode::Block {
-                original_indent_columns: original_indent_columns.clone(),
+                original_start_columns: original_indent_columns.clone(),
             }),
             cx,
         );
@@ -1713,7 +1734,7 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
         buffer.edit(
             [(Point::new(2, 0)..Point::new(2, 0), inserted_text)],
             Some(AutoindentMode::Block {
-                original_indent_columns: original_indent_columns.clone(),
+                original_start_columns: original_indent_columns.clone(),
             }),
             cx,
         );
@@ -1744,7 +1765,7 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
         buffer.edit(
             [(Point::new(2, 12)..Point::new(2, 12), inserted_text)],
             Some(AutoindentMode::Block {
-                original_indent_columns: Vec::new(),
+                original_start_columns: Vec::new(),
             }),
             cx,
         );
@@ -1800,7 +1821,7 @@ fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut App) {
                 (ranges_to_replace[2].clone(), "fn three() {\n    103\n}\n"),
             ],
             Some(AutoindentMode::Block {
-                original_indent_columns: vec![0, 0, 0],
+                original_start_columns: vec![0, 0, 0],
             }),
             cx,
         );
@@ -3149,7 +3170,7 @@ fn html_lang() -> Language {
             block_comment: Some(("<!--".into(), "-->".into())),
             ..Default::default()
         },
-        Some(tree_sitter_html::language()),
+        Some(tree_sitter_html::LANGUAGE.into()),
     )
     .with_indents_query(
         "
@@ -3380,7 +3401,10 @@ fn assert_bracket_pairs(
         .collect::<Vec<_>>();
 
     assert_set_eq!(
-        buffer.bracket_ranges(selection_range).collect::<Vec<_>>(),
+        buffer
+            .bracket_ranges(selection_range)
+            .map(|pair| (pair.open_range, pair.close_range))
+            .collect::<Vec<_>>(),
         bracket_pairs
     );
 }

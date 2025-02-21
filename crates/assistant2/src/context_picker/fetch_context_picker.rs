@@ -208,8 +208,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
         let confirm_behavior = self.confirm_behavior;
         cx.spawn_in(window, |this, mut cx| async move {
             let text = cx
-                .background_executor()
-                .spawn(Self::build_message(http_client, url.clone()))
+                .background_spawn(Self::build_message(http_client, url.clone()))
                 .await?;
 
             this.update_in(&mut cx, |this, window, cx| {

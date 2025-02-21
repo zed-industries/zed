@@ -69,7 +69,7 @@ impl CompletionDiffElement {
         let settings = ThemeSettings::get_global(cx).clone();
         let text_style = TextStyle {
             color: cx.theme().colors().editor_foreground,
-            font_size: settings.buffer_font_size().into(),
+            font_size: settings.buffer_font_size(cx).into(),
             font_family: settings.buffer_font.family,
             font_features: settings.buffer_font.features,
             font_fallbacks: settings.buffer_font.fallbacks,

@@ -181,16 +181,9 @@ impl<P: LinuxClient + 'static> Platform for P {
         log::info!("Restarting process, using app path: {:?}", app_path);
 
         // Script to wait for the current process to exit and then restart the app.
-        // We also wait for possibly open TCP sockets by the process to be closed,
-        // since on Linux it's not guaranteed that a process' resources have been
-        // cleaned up when `kill -0` returns.
         let script = format!(
             r#"
             while kill -0 {pid} 2>/dev/null; do
-                sleep 0.1
-            done
-
-            while lsof -nP -iTCP -a -p {pid} 2>/dev/null; do
                 sleep 0.1
             done
 
@@ -673,6 +666,12 @@ impl CursorStyle {
             CursorStyle::DragLink => "alias",
             CursorStyle::DragCopy => "copy",
             CursorStyle::ContextualMenu => "context-menu",
+            CursorStyle::None => {
+                #[cfg(debug_assertions)]
+                panic!("CursorStyle::None should be handled separately in the client");
+                #[cfg(not(debug_assertions))]
+                "default"
+            }
         }
         .to_string()
     }
