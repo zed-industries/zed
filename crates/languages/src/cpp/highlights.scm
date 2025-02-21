@@ -158,7 +158,7 @@ type :(primitive_type) @type.primitive
 [
   (null)
   ("nullptr")
-] @constant
+] @constant.builtin
 
 (number_literal) @number
 
