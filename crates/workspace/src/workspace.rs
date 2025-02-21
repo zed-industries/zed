@@ -3515,7 +3515,16 @@ impl Workspace {
         {
             let target_pane = self.find_or_create_pane_in_direction(window, &pane, direction, cx);
             target_pane.update(cx, |pane, cx| {
-                pane.add_item(clone, true, true, None, window, cx)
+                let project_entry_id = clone
+                    .is_singleton(cx)
+                    .then_some(Some(()))
+                    .and_then(|_| clone.project_entry_ids(cx).first().cloned());
+                if let Some(project_entry_id) = project_entry_id {
+                    if let Some(existing) = pane.item_for_entry(project_entry_id, cx) {
+                        pane.remove_item(existing.item_id(), true, false, window, cx);
+                    }
+                }
+                pane.add_item(clone, true, true, None, window, cx);
             });
             Some(target_pane)
         } else {
