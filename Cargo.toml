@@ -16,6 +16,7 @@ members = [
     "crates/auto_update",
     "crates/auto_update_ui",
     "crates/breadcrumbs",
+    "crates/buffer_diff",
     "crates/call",
     "crates/channel",
     "crates/cli",
@@ -31,6 +32,7 @@ members = [
     "crates/context_server",
     "crates/context_server_settings",
     "crates/copilot",
+    "crates/credentials_provider",
     "crates/dap",
     "crates/dap_adapters",
     "crates/debugger_tools",
@@ -38,7 +40,6 @@ members = [
     "crates/db",
     "crates/deepseek",
     "crates/diagnostics",
-    "crates/buffer_diff",
     "crates/docs_preprocessor",
     "crates/editor",
     "crates/evals",
@@ -237,6 +238,7 @@ component_preview = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
 context_server_settings = { path = "crates/context_server_settings" }
 copilot = { path = "crates/copilot" }
+credentials_provider = { path = "crates/credentials_provider" }
 dap = { path = "crates/dap" }
 dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }

@@ -488,7 +488,7 @@ struct BufferEdit {
     range: Range<usize>,
     new_text: Arc<str>,
     is_insertion: bool,
-    original_indent_column: u32,
+    original_start_column: u32,
     excerpt_id: ExcerptId,
 }
 
@@ -747,15 +747,15 @@ impl MultiBuffer {
                 return;
             }
 
-            let original_indent_columns = match &mut autoindent_mode {
+            let original_start_columns = match &mut autoindent_mode {
                 Some(AutoindentMode::Block {
-                    original_indent_columns,
-                }) => mem::take(original_indent_columns),
+                    original_start_columns,
+                }) => mem::take(original_start_columns),
                 _ => Default::default(),
             };
 
             let (buffer_edits, edited_excerpt_ids) =
-                this.convert_edits_to_buffer_edits(edits, &snapshot, &original_indent_columns);
+                this.convert_edits_to_buffer_edits(edits, &snapshot, &original_start_columns);
             drop(snapshot);
 
             for (buffer_id, mut edits) in buffer_edits {
@@ -772,7 +772,7 @@ impl MultiBuffer {
                             mut range,
                             mut new_text,
                             mut is_insertion,
-                            original_indent_column,
+                            original_start_column: original_indent_column,
                             excerpt_id,
                         }) = edits.next()
                         {
@@ -815,7 +815,7 @@ impl MultiBuffer {
                         let deletion_autoindent_mode =
                             if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
                                 Some(AutoindentMode::Block {
-                                    original_indent_columns: Default::default(),
+                                    original_start_columns: Default::default(),
                                 })
                             } else {
                                 autoindent_mode.clone()
@@ -823,7 +823,7 @@ impl MultiBuffer {
                         let insertion_autoindent_mode =
                             if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
                                 Some(AutoindentMode::Block {
-                                    original_indent_columns,
+                                    original_start_columns: original_indent_columns,
                                 })
                             } else {
                                 autoindent_mode.clone()
@@ -844,13 +844,13 @@ impl MultiBuffer {
         &self,
         edits: Vec<(Range<usize>, Arc<str>)>,
         snapshot: &MultiBufferSnapshot,
-        original_indent_columns: &[u32],
+        original_start_columns: &[u32],
     ) -> (HashMap<BufferId, Vec<BufferEdit>>, Vec<ExcerptId>) {
         let mut buffer_edits: HashMap<BufferId, Vec<BufferEdit>> = Default::default();
         let mut edited_excerpt_ids = Vec::new();
         let mut cursor = snapshot.cursor::<usize>();
         for (ix, (range, new_text)) in edits.into_iter().enumerate() {
-            let original_indent_column = original_indent_columns.get(ix).copied().unwrap_or(0);
+            let original_start_column = original_start_columns.get(ix).copied().unwrap_or(0);
 
             cursor.seek(&range.start);
             let mut start_region = cursor.region().expect("start offset out of bounds");
@@ -901,7 +901,7 @@ impl MultiBuffer {
                             range: buffer_start..buffer_end,
                             new_text,
                             is_insertion: true,
-                            original_indent_column,
+                            original_start_column,
                             excerpt_id: start_region.excerpt.id,
                         });
                 }
@@ -917,7 +917,7 @@ impl MultiBuffer {
                             range: start_excerpt_range,
                             new_text: new_text.clone(),
                             is_insertion: true,
-                            original_indent_column,
+                            original_start_column,
                             excerpt_id: start_region.excerpt.id,
                         });
                 }
@@ -930,7 +930,7 @@ impl MultiBuffer {
                             range: end_excerpt_range,
                             new_text: new_text.clone(),
                             is_insertion: false,
-                            original_indent_column,
+                            original_start_column,
                             excerpt_id: end_region.excerpt.id,
                         });
                 }
@@ -950,7 +950,7 @@ impl MultiBuffer {
                                 range: region.buffer_range,
                                 new_text: new_text.clone(),
                                 is_insertion: false,
-                                original_indent_column,
+                                original_start_column,
                                 excerpt_id: region.excerpt.id,
                             });
                     }
