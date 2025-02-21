@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 description = "SDK for the LiveKit server API"
 publish.workspace = true
-license = "AGPL-3.0-or-later"
+license = "GPL-3.0-or-later"
 
 [lints]
 workspace = true

@@ -22,6 +22,7 @@ use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::{FeatureFlagAppExt, FeatureFlagViewExt, GitUiFeatureFlag};
 use futures::{channel::mpsc, select_biased, StreamExt};
+use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     actions, point, px, Action, App, AppContext as _, AsyncApp, Context, DismissEvent, Element,
     Entity, Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel,
@@ -104,6 +105,19 @@ pub fn init(cx: &mut App) {
     }
 }
 
+fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
+    WorkspaceSettings::get_global(cx)
+        .on_last_window_closed
+        .is_quit_app()
+        .then(|| {
+            cx.on_window_closed(|cx| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+        })
+}
+
 pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowOptions {
     let display = display_uuid.and_then(|uuid| {
         cx.displays()
@@ -144,6 +158,12 @@ pub fn initialize_workspace(
     prompt_builder: Arc<PromptBuilder>,
     cx: &mut App,
 ) {
+    let mut _on_close_subscription = bind_on_window_closed(cx);
+    cx.observe_global::<SettingsStore>(move |cx| {
+        _on_close_subscription = bind_on_window_closed(cx);
+    })
+    .detach();
+
     cx.observe_new(move |workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
@@ -908,6 +928,8 @@ fn initialize_pane(
             toolbar.add_item(syntax_tree_item, window, cx);
             let migration_banner = cx.new(|cx| MigrationBanner::new(workspace, cx));
             toolbar.add_item(migration_banner, window, cx);
+            let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
+            toolbar.add_item(project_diff_toolbar, window, cx);
         })
     });
 }
@@ -3945,7 +3967,7 @@ mod tests {
         assert_key_bindings_for(
             workspace.into(),
             cx,
-            vec![("backspace", &B), ("[", &ActivatePrevItem)],
+            vec![("backspace", &B), ("{", &ActivatePrevItem)],
             line!(),
         );
     }

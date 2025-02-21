@@ -25,7 +25,11 @@ use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
-    assert_set_eq, path, paths::PathMatcher, separator, test::TempTree, uri, TryFutureExt as _,
+    assert_set_eq, path,
+    paths::PathMatcher,
+    separator,
+    test::{marked_text_offsets, TempTree},
+    uri, TryFutureExt as _,
 };
 
 #[gpui::test]
@@ -3625,7 +3629,8 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
 async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let initial_contents = "aaa\nbbbbb\nc\n";
+    let (initial_contents, initial_offsets) =
+        marked_text_offsets("one twoˇ\nthree ˇfourˇ five\nsixˇ seven\n");
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/dir"),
@@ -3640,8 +3645,9 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let anchors = (0..3)
-        .map(|row| buffer.update(cx, |b, _| b.anchor_before(Point::new(row, 1))))
+    let anchors = initial_offsets
+        .iter()
+        .map(|offset| buffer.update(cx, |b, _| b.anchor_before(offset)))
         .collect::<Vec<_>>();
 
     // Change the file on disk, adding two new lines of text, and removing
@@ -3650,10 +3656,12 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
         assert!(!buffer.is_dirty());
         assert!(!buffer.has_conflict());
     });
-    let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
+
+    let (new_contents, new_offsets) =
+        marked_text_offsets("oneˇ\nthree ˇFOURˇ five\nsixtyˇ seven\n");
     fs.save(
         path!("/dir/the-file").as_ref(),
-        &new_contents.into(),
+        &new_contents.as_str().into(),
         LineEnding::Unix,
     )
     .await
@@ -3668,14 +3676,11 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
         assert!(!buffer.is_dirty());
         assert!(!buffer.has_conflict());
 
-        let anchor_positions = anchors
+        let anchor_offsets = anchors
             .iter()
-            .map(|anchor| anchor.to_point(&*buffer))
+            .map(|anchor| anchor.to_offset(&*buffer))
             .collect::<Vec<_>>();
-        assert_eq!(
-            anchor_positions,
-            [Point::new(1, 1), Point::new(3, 1), Point::new(3, 5)]
-        );
+        assert_eq!(anchor_offsets, new_offsets);
     });
 
     // Modify the buffer
@@ -3698,6 +3703,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     // marked as having a conflict.
     cx.executor().run_until_parked();
     buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), " ".to_string() + &new_contents);
         assert!(buffer.has_conflict());
     });
 }
