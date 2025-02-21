@@ -980,11 +980,6 @@ impl Session {
         self.ignore_breakpoints
     }
 
-    pub fn handle_module_event(&mut self, _event: &dap::ModuleEvent, cx: &mut Context<Self>) {
-        self.invalidate_state(&ModulesCommand.into());
-        cx.notify();
-    }
-
     pub fn loaded_sources(&mut self, cx: &mut Context<Self>) -> &[Source] {
         if self.thread_states.any_stopped_thread() {
             self.fetch(
