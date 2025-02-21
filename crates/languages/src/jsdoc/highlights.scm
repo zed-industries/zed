@@ -1,2 +1,2 @@
-(tag_name) @keyword
-(type) @type
+(tag_name) @comment.doc.keyword
+(type) @comment.doc.type
