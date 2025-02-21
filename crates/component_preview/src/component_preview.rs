@@ -105,11 +105,15 @@ impl ComponentPreview {
         v_flex()
             .py_2()
             .child(
-                v_group()
+                v_flex()
+                    .bg(cx.theme().colors().text.opacity(0.05))
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_md()
                     .w_full()
-                    .gap_3()
-                    .py_6()
-                    .px_8()
+                    .gap_4()
+                    .py_4()
+                    .px_6()
                     .flex_none()
                     .child(
                         v_flex()
@@ -117,7 +121,7 @@ impl ComponentPreview {
                             .child(
                                 h_flex()
                                     .gap_1()
-                                    .text_2xl()
+                                    .text_xl()
                                     .child(div().child(name))
                                     .when_some(scope, |this, scope| {
                                         this.child(div().opacity(0.5).child(format!("({})", scope)))
@@ -170,11 +174,16 @@ impl Render for ComponentPreview {
                 .flex_grow(),
             )
             .child(
-                v_flex().id("component-list").px_8().size_full().child(
-                    list(self.component_list.clone())
-                        .flex_grow()
-                        .with_sizing_behavior(gpui::ListSizingBehavior::Auto),
-                ),
+                v_flex()
+                    .id("component-list")
+                    .px_8()
+                    .pt_4()
+                    .size_full()
+                    .child(
+                        list(self.component_list.clone())
+                            .flex_grow()
+                            .with_sizing_behavior(gpui::ListSizingBehavior::Auto),
+                    ),
             )
     }
 }
