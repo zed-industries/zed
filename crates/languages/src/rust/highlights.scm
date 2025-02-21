@@ -48,8 +48,8 @@
  (#match? @type "^[A-Z]"))
 
 ; Assume all-caps names are constants
-((identifier) @constant.variable
- (#match? @constant.variable "^_*[A-Z][A-Z\\d_]*$"))
+((identifier) @constant
+ (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
 
 [
   "("
