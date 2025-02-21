@@ -399,8 +399,14 @@ impl InlineCompletionButton {
         })
     }
 
-    pub fn build_language_settings_menu(&self, mut menu: ContextMenu, cx: &mut App) -> ContextMenu {
+    pub fn build_language_settings_menu(
+        &self,
+        mut menu: ContextMenu,
+        window: &Window,
+        cx: &mut App,
+    ) -> ContextMenu {
         let fs = self.fs.clone();
+        let line_height = window.line_height();
 
         menu = menu.header("Show Edit Predictions For");
 
@@ -499,12 +505,14 @@ impl InlineCompletionButton {
                                 )
                                 .child(
                                     h_flex()
+                                        .items_start()
                                         .pt_2()
+                                        .flex_1()
                                         .gap_1p5()
                                         .border_t_1()
                                         .border_color(cx.theme().colors().border_variant)
-                                        .child(Icon::new(icon_name).size(IconSize::XSmall).color(icon_color))
-                                        .child(div().child(Label::new(msg).size(LabelSize::Small).color(label_color)))
+                                        .child(h_flex().flex_shrink_0().h(line_height).child(Icon::new(icon_name).size(IconSize::XSmall).color(icon_color)))
+                                        .child(div().child(msg).w_full().text_sm().text_color(label_color.color(cx)))
                                 )
                                 .into_any_element()
                         })
@@ -631,8 +639,8 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, _, cx| {
-            self.build_language_settings_menu(menu, cx)
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            self.build_language_settings_menu(menu, window, cx)
                 .separator()
                 .link(
                     "Go to Copilot Settings",
@@ -650,8 +658,8 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, _, cx| {
-            self.build_language_settings_menu(menu, cx)
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            self.build_language_settings_menu(menu, window, cx)
                 .separator()
                 .action("Sign Out", supermaven::SignOut.boxed_clone())
         })
@@ -662,8 +670,8 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, _window, cx| {
-            self.build_language_settings_menu(menu, cx).when(
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            self.build_language_settings_menu(menu, window, cx).when(
                 cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>(),
                 |this| this.action("Rate Completions", RateCompletions.boxed_clone()),
             )
