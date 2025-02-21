@@ -912,9 +912,21 @@ impl FileFinderDelegate {
                 * (px(file_name.len() as f32) * normal_em + px(full_path.len() as f32) * small_em);
 
             if estimated_width > max_width && full_path.chars().all(|c| c.is_ascii()) {
-                let mut components = PathComponentSlice::new(&full_path);
-                components.elide(&mut full_path_positions);
-                full_path = std::mem::take(components.path_str.to_mut());
+                let components = PathComponentSlice::new(&full_path);
+                if let Some(elided_range) = components.elision_range(&full_path_positions) {
+                    let elided_len = elided_range.end - elided_range.start;
+                    let placeholder = "…";
+                    full_path_positions.retain_mut(|mat| {
+                        if *mat >= elided_range.end {
+                            *mat -= elided_len;
+                            *mat += placeholder.len();
+                        } else if *mat >= elided_range.start {
+                            return false;
+                        }
+                        true
+                    });
+                    full_path.replace_range(elided_range, placeholder);
+                }
             }
         }
 
@@ -1410,7 +1422,7 @@ impl<'a> PathComponentSlice<'a> {
         }
     }
 
-    fn elide(&mut self, matches: &mut Vec<usize>) {
+    fn elision_range(&self, matches: &[usize]) -> Option<Range<usize>> {
         let eligible_range = {
             assert!(matches.windows(2).all(|w| w[0] <= w[1]));
             let mut matches = matches.iter().copied().peekable();
@@ -1447,44 +1459,16 @@ impl<'a> PathComponentSlice<'a> {
             longest
         };
 
-        let Some(eligible_range) = eligible_range else {
-            return;
-        };
+        let eligible_range = eligible_range?;
         assert!(eligible_range.start <= eligible_range.end);
         if eligible_range.is_empty() {
-            return;
+            return None;
         }
         let elided_component_range = eligible_range.start..=eligible_range.end - 1;
-        let eligible_path_range = self.component_ranges[*elided_component_range.start()]
+        let elided_range = self.component_ranges[*elided_component_range.start()]
             .1
             .start
             ..self.component_ranges[*elided_component_range.end()].1.end;
-
-        let elided_len = eligible_path_range.end - eligible_path_range.start;
-        let placeholder = "…";
-        self.component_ranges.retain_mut(|(_, range)| {
-            if range.start >= eligible_path_range.end {
-                range.start -= elided_len;
-                range.start += placeholder.len();
-                range.end -= elided_len;
-                range.end += placeholder.len();
-            } else if range.end >= eligible_path_range.start {
-                return false;
-            }
-            true
-        });
-        matches.retain_mut(|mat| {
-            if *mat >= eligible_path_range.end {
-                *mat -= elided_len;
-                *mat += placeholder.len();
-            } else if *mat >= eligible_path_range.start {
-                return false;
-            }
-            true
-        });
-        self.path_str
-            .to_mut()
-            .replace_range(eligible_path_range, placeholder);
-        self.path = Path::new(self.path_str.as_ref()).to_owned().into();
+        Some(elided_range)
     }
 }
