@@ -224,189 +224,181 @@ impl Element for Scrollbar {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        padded_bounds: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
-        window.with_content_mask(
-            Some(ContentMask {
-                bounds: padded_bounds,
-            }),
-            |window| {
-                let colors = cx.theme().colors();
-                let thumb_background = colors
-                    .surface_background
-                    .blend(colors.scrollbar_thumb_background);
-                let is_vertical = self.kind == ScrollbarAxis::Vertical;
-                let extra_padding = px(5.0);
-                let padded_bounds = if is_vertical {
-                    Bounds::from_corners(
-                        padded_bounds.origin + point(Pixels::ZERO, extra_padding),
-                        padded_bounds.bottom_right() - point(Pixels::ZERO, extra_padding * 3),
-                    )
-                } else {
-                    Bounds::from_corners(
-                        padded_bounds.origin + point(extra_padding, Pixels::ZERO),
-                        padded_bounds.bottom_right() - point(extra_padding * 3, Pixels::ZERO),
-                    )
-                };
+        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            let colors = cx.theme().colors();
+            let thumb_background = colors
+                .surface_background
+                .blend(colors.scrollbar_thumb_background);
+            let is_vertical = self.kind == ScrollbarAxis::Vertical;
+            let extra_padding = px(5.0);
+            let padded_bounds = if is_vertical {
+                Bounds::from_corners(
+                    bounds.origin + point(Pixels::ZERO, extra_padding),
+                    bounds.bottom_right() - point(Pixels::ZERO, extra_padding * 3),
+                )
+            } else {
+                Bounds::from_corners(
+                    bounds.origin + point(extra_padding, Pixels::ZERO),
+                    bounds.bottom_right() - point(extra_padding * 3, Pixels::ZERO),
+                )
+            };
 
-                let mut thumb_bounds = if is_vertical {
-                    let thumb_offset = self.thumb.start * padded_bounds.size.height;
-                    let thumb_end = self.thumb.end * padded_bounds.size.height;
-                    let thumb_upper_left = point(
-                        padded_bounds.origin.x,
-                        padded_bounds.origin.y + thumb_offset,
-                    );
-                    let thumb_lower_right = point(
-                        padded_bounds.origin.x + padded_bounds.size.width,
-                        padded_bounds.origin.y + thumb_end,
-                    );
-                    Bounds::from_corners(thumb_upper_left, thumb_lower_right)
-                } else {
-                    let thumb_offset = self.thumb.start * padded_bounds.size.width;
-                    let thumb_end = self.thumb.end * padded_bounds.size.width;
-                    let thumb_upper_left = point(
-                        padded_bounds.origin.x + thumb_offset,
-                        padded_bounds.origin.y,
-                    );
-                    let thumb_lower_right = point(
-                        padded_bounds.origin.x + thumb_end,
-                        padded_bounds.origin.y + padded_bounds.size.height,
-                    );
-                    Bounds::from_corners(thumb_upper_left, thumb_lower_right)
-                };
-                let corners = if is_vertical {
-                    thumb_bounds.size.width /= 1.5;
-                    Corners::all(thumb_bounds.size.width / 2.0)
-                } else {
-                    thumb_bounds.size.height /= 1.5;
-                    Corners::all(thumb_bounds.size.height / 2.0)
-                };
-                window.paint_quad(quad(
-                    thumb_bounds,
-                    corners,
-                    thumb_background,
-                    Edges::default(),
-                    Hsla::transparent_black(),
-                ));
+            let mut thumb_bounds = if is_vertical {
+                let thumb_offset = self.thumb.start * padded_bounds.size.height;
+                let thumb_end = self.thumb.end * padded_bounds.size.height;
+                let thumb_upper_left = point(
+                    padded_bounds.origin.x,
+                    padded_bounds.origin.y + thumb_offset,
+                );
+                let thumb_lower_right = point(
+                    padded_bounds.origin.x + padded_bounds.size.width,
+                    padded_bounds.origin.y + thumb_end,
+                );
+                Bounds::from_corners(thumb_upper_left, thumb_lower_right)
+            } else {
+                let thumb_offset = self.thumb.start * padded_bounds.size.width;
+                let thumb_end = self.thumb.end * padded_bounds.size.width;
+                let thumb_upper_left = point(
+                    padded_bounds.origin.x + thumb_offset,
+                    padded_bounds.origin.y,
+                );
+                let thumb_lower_right = point(
+                    padded_bounds.origin.x + thumb_end,
+                    padded_bounds.origin.y + padded_bounds.size.height,
+                );
+                Bounds::from_corners(thumb_upper_left, thumb_lower_right)
+            };
+            let corners = if is_vertical {
+                thumb_bounds.size.width /= 1.5;
+                Corners::all(thumb_bounds.size.width / 2.0)
+            } else {
+                thumb_bounds.size.height /= 1.5;
+                Corners::all(thumb_bounds.size.height / 2.0)
+            };
+            window.paint_quad(quad(
+                thumb_bounds,
+                corners,
+                thumb_background,
+                Edges::default(),
+                Hsla::transparent_black(),
+            ));
 
-                let scroll = self.state.scroll_handle.clone();
-                let axis = self.kind;
+            let scroll = self.state.scroll_handle.clone();
+            let axis = self.kind;
 
-                window.on_mouse_event({
-                    let scroll = scroll.clone();
-                    let state = self.state.clone();
-                    move |event: &MouseDownEvent, phase, _, _| {
-                        if !(phase.bubble() && padded_bounds.contains(&event.position)) {
-                            return;
-                        }
+            window.on_mouse_event({
+                let scroll = scroll.clone();
+                let state = self.state.clone();
+                move |event: &MouseDownEvent, phase, _, _| {
+                    if !(phase.bubble() && bounds.contains(&event.position)) {
+                        return;
+                    }
 
-                        if thumb_bounds.contains(&event.position) {
-                            let offset =
-                                event.position.along(axis) - thumb_bounds.origin.along(axis);
-                            state.drag.set(Some(offset));
-                        } else if let Some(ContentSize {
-                            size: item_size, ..
-                        }) = scroll.content_size()
-                        {
-                            let click_offset = {
-                                let viewport_size = padded_bounds.size.along(axis);
+                    if thumb_bounds.contains(&event.position) {
+                        let offset = event.position.along(axis) - thumb_bounds.origin.along(axis);
+                        state.drag.set(Some(offset));
+                    } else if let Some(ContentSize {
+                        size: item_size, ..
+                    }) = scroll.content_size()
+                    {
+                        let click_offset = {
+                            let viewport_size = padded_bounds.size.along(axis);
 
-                                let thumb_size = thumb_bounds.size.along(axis);
-                                let thumb_start = (event.position.along(axis)
-                                    - padded_bounds.origin.along(axis)
-                                    - (thumb_size / 2.))
-                                    .clamp(px(0.), viewport_size - thumb_size);
+                            let thumb_size = thumb_bounds.size.along(axis);
+                            let thumb_start = (event.position.along(axis)
+                                - padded_bounds.origin.along(axis)
+                                - (thumb_size / 2.))
+                                .clamp(px(0.), viewport_size - thumb_size);
 
-                                let max_offset =
-                                    (item_size.along(axis) - viewport_size).max(px(0.));
-                                let percentage = if viewport_size > thumb_size {
-                                    thumb_start / (viewport_size - thumb_size)
-                                } else {
-                                    0.
-                                };
-
-                                -max_offset * percentage
+                            let max_offset = (item_size.along(axis) - viewport_size).max(px(0.));
+                            let percentage = if viewport_size > thumb_size {
+                                thumb_start / (viewport_size - thumb_size)
+                            } else {
+                                0.
                             };
-                            match axis {
-                                ScrollbarAxis::Horizontal => {
-                                    scroll.set_offset(point(click_offset, scroll.offset().y));
-                                }
-                                ScrollbarAxis::Vertical => {
-                                    scroll.set_offset(point(scroll.offset().x, click_offset));
-                                }
+
+                            -max_offset * percentage
+                        };
+                        match axis {
+                            ScrollbarAxis::Horizontal => {
+                                scroll.set_offset(point(click_offset, scroll.offset().y));
+                            }
+                            ScrollbarAxis::Vertical => {
+                                scroll.set_offset(point(scroll.offset().x, click_offset));
                             }
                         }
                     }
-                });
-                window.on_mouse_event({
-                    let scroll = scroll.clone();
-                    move |event: &ScrollWheelEvent, phase, window, _| {
-                        if phase.bubble() && padded_bounds.contains(&event.position) {
-                            let current_offset = scroll.offset();
-                            scroll.set_offset(
-                                current_offset + event.delta.pixel_delta(window.line_height()),
-                            );
-                        }
+                }
+            });
+            window.on_mouse_event({
+                let scroll = scroll.clone();
+                move |event: &ScrollWheelEvent, phase, window, _| {
+                    if phase.bubble() && bounds.contains(&event.position) {
+                        let current_offset = scroll.offset();
+                        scroll.set_offset(
+                            current_offset + event.delta.pixel_delta(window.line_height()),
+                        );
                     }
-                });
-                let state = self.state.clone();
-                let axis = self.kind;
-                window.on_mouse_event(move |event: &MouseMoveEvent, _, _, cx| {
-                    if let Some(drag_state) = state.drag.get().filter(|_| event.dragging()) {
-                        if let Some(ContentSize {
-                            size: item_size, ..
-                        }) = scroll.content_size()
-                        {
-                            let drag_offset = {
-                                let viewport_size = padded_bounds.size.along(axis);
+                }
+            });
+            let state = self.state.clone();
+            let axis = self.kind;
+            window.on_mouse_event(move |event: &MouseMoveEvent, _, _, cx| {
+                if let Some(drag_state) = state.drag.get().filter(|_| event.dragging()) {
+                    if let Some(ContentSize {
+                        size: item_size, ..
+                    }) = scroll.content_size()
+                    {
+                        let drag_offset = {
+                            let viewport_size = padded_bounds.size.along(axis);
 
-                                let thumb_size = thumb_bounds.size.along(axis);
-                                let thumb_start = (event.position.along(axis)
-                                    - padded_bounds.origin.along(axis)
-                                    - drag_state)
-                                    .clamp(px(0.), viewport_size - thumb_size);
+                            let thumb_size = thumb_bounds.size.along(axis);
+                            let thumb_start = (event.position.along(axis)
+                                - padded_bounds.origin.along(axis)
+                                - drag_state)
+                                .clamp(px(0.), viewport_size - thumb_size);
 
-                                let max_offset =
-                                    (item_size.along(axis) - viewport_size).max(px(0.));
-                                let percentage = if viewport_size > thumb_size {
-                                    thumb_start / (viewport_size - thumb_size)
-                                } else {
-                                    0.
-                                };
-
-                                -max_offset * percentage
+                            let max_offset = (item_size.along(axis) - viewport_size).max(px(0.));
+                            let percentage = if viewport_size > thumb_size {
+                                thumb_start / (viewport_size - thumb_size)
+                            } else {
+                                0.
                             };
-                            match axis {
-                                ScrollbarAxis::Horizontal => {
-                                    scroll.set_offset(point(drag_offset, scroll.offset().y));
-                                }
-                                ScrollbarAxis::Vertical => {
-                                    scroll.set_offset(point(scroll.offset().x, drag_offset));
-                                }
-                            };
-                            if let Some(id) = state.parent_id {
-                                cx.notify(id);
+
+                            -max_offset * percentage
+                        };
+                        match axis {
+                            ScrollbarAxis::Horizontal => {
+                                scroll.set_offset(point(drag_offset, scroll.offset().y));
                             }
-                        }
-                    } else {
-                        state.drag.set(None);
-                    }
-                });
-                let state = self.state.clone();
-                window.on_mouse_event(move |_event: &MouseUpEvent, phase, _, cx| {
-                    if phase.bubble() {
-                        state.drag.take();
+                            ScrollbarAxis::Vertical => {
+                                scroll.set_offset(point(scroll.offset().x, drag_offset));
+                            }
+                        };
                         if let Some(id) = state.parent_id {
                             cx.notify(id);
                         }
                     }
-                });
-            },
-        )
+                } else {
+                    state.drag.set(None);
+                }
+            });
+            let state = self.state.clone();
+            window.on_mouse_event(move |_event: &MouseUpEvent, phase, _, cx| {
+                if phase.bubble() {
+                    state.drag.take();
+                    if let Some(id) = state.parent_id {
+                        cx.notify(id);
+                    }
+                }
+            });
+        })
     }
 }
 
