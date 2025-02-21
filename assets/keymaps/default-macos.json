@@ -743,6 +743,14 @@
     }
   },
   {
+    "context": "GitCommit > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "editor::Newline",
+      "cmd-enter": "git::Commit"
+    }
+  },
+  {
     "context": "GitPanel > Editor",
     "use_key_equivalents": true,
     "bindings": {

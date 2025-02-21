@@ -12769,7 +12769,7 @@ impl Editor {
         self.toggle_diff_hunks_in_ranges(ranges, cx);
     }
 
-    fn diff_hunks_in_ranges<'a>(
+    pub fn diff_hunks_in_ranges<'a>(
         &'a self,
         ranges: &'a [Range<Anchor>],
         buffer: &'a MultiBufferSnapshot,
@@ -12814,9 +12814,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let head = self.selections.newest_anchor().head();
-        self.stage_or_unstage_diff_hunks(true, &[head..head], cx);
-        self.go_to_next_hunk(&Default::default(), window, cx);
+        self.do_stage_or_unstage_and_next(true, window, cx);
     }
 
     pub fn unstage_and_next(
@@ -12825,9 +12823,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let head = self.selections.newest_anchor().head();
-        self.stage_or_unstage_diff_hunks(false, &[head..head], cx);
-        self.go_to_next_hunk(&Default::default(), window, cx);
+        self.do_stage_or_unstage_and_next(false, window, cx);
     }
 
     pub fn stage_or_unstage_diff_hunks(
@@ -12847,6 +12843,43 @@ impl Editor {
         for (buffer_id, hunks) in &chunk_by {
             Self::do_stage_or_unstage(project, stage, buffer_id, hunks, &snapshot, cx);
         }
+    }
+
+    fn do_stage_or_unstage_and_next(
+        &mut self,
+        stage: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
+        if ranges.iter().any(|range| range.start != range.end) {
+            self.stage_or_unstage_diff_hunks(stage, &ranges[..], cx);
+            return;
+        }
+
+        if !self.buffer().read(cx).is_singleton() {
+            if let Some((excerpt_id, buffer, range)) = self.active_excerpt(cx) {
+                ranges = vec![multi_buffer::Anchor::range_in_buffer(
+                    excerpt_id,
+                    buffer.read(cx).remote_id(),
+                    range,
+                )];
+                self.stage_or_unstage_diff_hunks(stage, &ranges[..], cx);
+                let snapshot = self.buffer().read(cx).snapshot(cx);
+                let mut point = ranges.last().unwrap().end.to_point(&snapshot);
+                if point.row < snapshot.max_row().0 {
+                    point.row += 1;
+                    point.column = 0;
+                    point = snapshot.clip_point(point, Bias::Right);
+                    self.change_selections(Some(Autoscroll::top_relative(6)), window, cx, |s| {
+                        s.select_ranges([point..point]);
+                    })
+                }
+                return;
+            }
+        }
+        self.stage_or_unstage_diff_hunks(stage, &ranges[..], cx);
+        self.go_to_next_hunk(&Default::default(), window, cx);
     }
 
     fn do_stage_or_unstage(
