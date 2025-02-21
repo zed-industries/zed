@@ -270,6 +270,22 @@ impl TerminalPanel {
             })?
         };
 
+        if let Some(workspace) = workspace.upgrade() {
+            terminal_panel
+                .update_in(&mut cx, |_, window, cx| {
+                    cx.subscribe_in(&workspace, window, |terminal_panel, _, e, window, cx| {
+                        if let workspace::Event::SpawnTask {
+                            action: spawn_in_terminal,
+                        } = e
+                        {
+                            terminal_panel.spawn_task(spawn_in_terminal, window, cx);
+                        };
+                    })
+                    .detach();
+                })
+                .ok();
+        }
+
         // Since panels/docks are loaded outside from the workspace, we cleanup here, instead of through the workspace.
         if let Some(workspace) = workspace.upgrade() {
             let cleanup_task = workspace.update_in(&mut cx, |workspace, window, cx| {
