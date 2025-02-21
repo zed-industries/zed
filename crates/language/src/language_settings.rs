@@ -144,6 +144,8 @@ pub struct LanguageSettings {
     /// Whether to display inline and alongside documentation for items in the
     /// completions menu.
     pub show_completion_documentation: bool,
+    /// Whether or not show whitespaces in git diff. This setting will override the global whitespace setting.
+    pub show_whitespaces_in_git_diff: bool,
 }
 
 impl LanguageSettings {
@@ -425,6 +427,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub show_completion_documentation: Option<bool>,
+    /// Whether or not show whitespaces in git diff. This setting will override the global whitespace setting.
+    ///
+    /// Default: false
+    pub show_whitespaces_in_git_diff: Option<bool>,
 }
 
 /// The contents of the edit prediction settings.
@@ -1245,6 +1251,10 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(
         &mut settings.show_completion_documentation,
         src.show_completion_documentation,
+    );
+    merge(
+        &mut settings.show_whitespaces_in_git_diff,
+        src.show_whitespaces_in_git_diff,
     );
 }
 

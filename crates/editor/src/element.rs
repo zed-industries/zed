@@ -4864,6 +4864,14 @@ impl EditorElement {
             .settings_at(0, cx)
             .show_whitespaces;
 
+        let show_whitespace_in_diff = self
+            .editor
+            .read(cx)
+            .buffer
+            .read(cx)
+            .settings_at(0, cx)
+            .show_whitespaces_in_git_diff;
+
         for (ix, line_with_invisibles) in layout.position_map.line_layouts.iter().enumerate() {
             let row = DisplayRow(layout.visible_display_row_range.start.0 + ix as u32);
             line_with_invisibles.draw(
@@ -4871,6 +4879,7 @@ impl EditorElement {
                 row,
                 layout.content_origin,
                 whitespace_setting,
+                show_whitespace_in_diff,
                 invisible_display_ranges,
                 window,
                 cx,
@@ -6311,6 +6320,7 @@ impl LineWithInvisibles {
         row: DisplayRow,
         content_origin: gpui::Point<Pixels>,
         whitespace_setting: ShowWhitespaceSetting,
+        show_whitespace_in_diff: bool,
         selection_ranges: &[Range<DisplayPoint>],
         window: &mut Window,
         cx: &mut App,
@@ -6343,6 +6353,7 @@ impl LineWithInvisibles {
             row,
             line_height,
             whitespace_setting,
+            show_whitespace_in_diff,
             window,
             cx,
         );
@@ -6357,6 +6368,7 @@ impl LineWithInvisibles {
         row: DisplayRow,
         line_height: Pixels,
         whitespace_setting: ShowWhitespaceSetting,
+        show_whitespace_in_diff: bool,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -6394,14 +6406,19 @@ impl LineWithInvisibles {
 
         let invisible_iter = self.invisibles.iter().map(extract_whitespace_info);
         match whitespace_setting {
-            ShowWhitespaceSetting::None => (),
+            ShowWhitespaceSetting::None => invisible_iter.for_each(|(_, paint)| {
+                if show_whitespace_in_diff && is_highlighted {
+                    paint(window, cx);
+                }
+            }),
             ShowWhitespaceSetting::All => invisible_iter.for_each(|(_, paint)| paint(window, cx)),
             ShowWhitespaceSetting::Selection => invisible_iter.for_each(|([start, _], paint)| {
                 let invisible_point = DisplayPoint::new(row, start as u32);
-                if !is_highlighted
-                    && !selection_ranges.iter().any(|region| {
-                        region.start <= invisible_point && invisible_point < region.end
-                    })
+                if !show_whitespace_in_diff
+                    || !is_highlighted
+                        && !selection_ranges.iter().any(|region| {
+                            region.start <= invisible_point && invisible_point < region.end
+                        })
                 {
                     return;
                 }

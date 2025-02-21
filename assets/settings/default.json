@@ -226,6 +226,9 @@
   // - It is adjacent to an edge (start or end)
   // - It is adjacent to a whitespace (left or right)
   "show_whitespaces": "selection",
+  // Whether to show whitespaces in the git diff view.
+  // This setting will override the "show_whitespaces" setting in git diff view.
+  "show_whitespaces_in_git_diff": false,
   // Settings related to calls in Zed
   "calls": {
     // Join calls with the microphone live by default
