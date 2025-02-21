@@ -185,6 +185,7 @@
       "ctrl-k h": "assistant::DeployHistory",
       "ctrl-k l": "assistant::DeployPromptLibrary",
       "new": "assistant::NewContext",
+      "ctrl-t": "assistant::NewContext",
       "ctrl-n": "assistant::NewContext"
     }
   },

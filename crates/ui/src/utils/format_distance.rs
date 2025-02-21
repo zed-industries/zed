@@ -1,5 +1,4 @@
 // This won't be documented further as it is intended to be removed, or merged with the `time_format` crate.
-#![allow(missing_docs)]
 
 use chrono::{DateTime, Local, NaiveDateTime};
 

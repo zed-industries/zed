@@ -760,7 +760,25 @@
   // Diagnostics configuration.
   "diagnostics": {
     // Whether to show warnings or not by default.
-    "include_warnings": true
+    "include_warnings": true,
+    // Settings for inline diagnostics
+    "inline": {
+      // Whether to show diagnostics inline or not
+      "enabled": false,
+      // The delay in milliseconds to show inline diagnostics after the
+      // last diagnostic update.
+      "update_debounce_ms": 150,
+      // The amount of padding between the end of the source line and the start
+      // of the inline diagnostic in units of em widths.
+      "padding": 4,
+      // The minimum column to display inline diagnostics. This setting can be
+      // used to horizontally align inline diagnostics at some column. Lines
+      // longer than this value will still push diagnostics further to the right.
+      "min_column": 0,
+      // The minimum severity of the diagnostics to show inline.
+      // Shows all diagnostics when not specified.
+      "max_severity": null
+    }
   },
   // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file
   // scans, file searches, and not be displayed in the project file tree. Takes precedence over `file_scan_inclusions`.

@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use component::{example_group_with_title, single_example, ComponentPreview};
 use gpui::{AnyElement, AnyView, DefiniteLength};
 use ui_macros::IntoComponent;
@@ -81,6 +80,7 @@ use super::button_icon::ButtonIcon;
 /// ```
 ///
 #[derive(IntoElement, IntoComponent)]
+#[component(scope = "input")]
 pub struct Button {
     base: ButtonLike,
     label: SharedString,
@@ -463,7 +463,7 @@ impl ComponentPreview for Button {
             .gap_6()
             .children(vec![
                 example_group_with_title(
-                    "Styles",
+                    "Button Styles",
                     vec![
                         single_example(
                             "Default",
@@ -482,6 +482,12 @@ impl ComponentPreview for Button {
                                 .into_any_element(),
                         ),
                         single_example(
+                            "Tinted",
+                            Button::new("tinted_accent_style", "Accent")
+                                .style(ButtonStyle::Tinted(TintColor::Accent))
+                                .into_any_element(),
+                        ),
+                        single_example(
                             "Transparent",
                             Button::new("transparent", "Transparent")
                                 .style(ButtonStyle::Transparent)
@@ -490,7 +496,7 @@ impl ComponentPreview for Button {
                     ],
                 ),
                 example_group_with_title(
-                    "Tinted",
+                    "Tint Styles",
                     vec![
                         single_example(
                             "Accent",
@@ -519,7 +525,7 @@ impl ComponentPreview for Button {
                     ],
                 ),
                 example_group_with_title(
-                    "States",
+                    "Special States",
                     vec![
                         single_example(
                             "Default",
@@ -540,7 +546,7 @@ impl ComponentPreview for Button {
                     ],
                 ),
                 example_group_with_title(
-                    "With Icons",
+                    "Buttons with Icons",
                     vec![
                         single_example(
                             "Icon Start",
@@ -561,16 +567,6 @@ impl ComponentPreview for Button {
                             Button::new("icon_color", "Icon Color")
                                 .icon(IconName::Check)
                                 .icon_color(Color::Accent)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Tinted Icons",
-                            Button::new("tinted_icons", "Error")
-                                .style(ButtonStyle::Tinted(TintColor::Error))
-                                .color(Color::Error)
-                                .icon_color(Color::Error)
-                                .icon(IconName::Trash)
-                                .icon_position(IconPosition::Start)
                                 .into_any_element(),
                         ),
                     ],

@@ -464,6 +464,15 @@ enum EditPredictionSettings {
 
 enum InlineCompletionHighlight {}
 
+#[derive(Debug, Clone)]
+struct InlineDiagnostic {
+    message: SharedString,
+    group_id: usize,
+    is_primary: bool,
+    start: Point,
+    severity: DiagnosticSeverity,
+}
+
 pub enum MenuInlineCompletionsPolicy {
     Never,
     ByProvider,
@@ -594,6 +603,10 @@ pub struct Editor {
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
+    show_inline_diagnostics: bool,
+    inline_diagnostics_update: Task<()>,
+    inline_diagnostics_enabled: bool,
+    inline_diagnostics: Vec<(Anchor, InlineDiagnostic)>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
 
     // TODO: make this a access method
@@ -963,9 +976,12 @@ struct ActiveDiagnosticGroup {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ClipboardSelection {
+    /// The number of bytes in this selection.
     pub len: usize,
+    /// Whether this was a full-line selection.
     pub is_entire_line: bool,
-    pub first_line_indent: u32,
+    /// The column where this selection originally started.
+    pub start_column: u32,
 }
 
 #[derive(Debug)]
@@ -1304,6 +1320,9 @@ impl Editor {
             select_larger_syntax_node_stack: Vec::new(),
             ime_transaction: Default::default(),
             active_diagnostics: None,
+            show_inline_diagnostics: ProjectSettings::get_global(cx).diagnostics.inline.enabled,
+            inline_diagnostics_update: Task::ready(()),
+            inline_diagnostics: Vec::new(),
             soft_wrap_mode_override,
             completion_provider: project.clone().map(|project| Box::new(project) as _),
             semantics_provider: project.clone().map(|project| Rc::new(project) as _),
@@ -1368,6 +1387,7 @@ impl Editor {
             active_inline_completion: None,
             stale_inline_completion_in_menu: None,
             edit_prediction_preview: EditPredictionPreview::Inactive,
+            inline_diagnostics_enabled: mode == EditorMode::Full,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -2256,7 +2276,7 @@ impl Editor {
     pub fn edit_with_block_indent<I, S, T>(
         &mut self,
         edits: I,
-        original_indent_columns: Vec<u32>,
+        original_start_columns: Vec<u32>,
         cx: &mut Context<Self>,
     ) where
         I: IntoIterator<Item = (Range<S>, T)>,
@@ -2271,7 +2291,7 @@ impl Editor {
             buffer.edit(
                 edits,
                 Some(AutoindentMode::Block {
-                    original_indent_columns,
+                    original_start_columns,
                 }),
                 cx,
             )
@@ -3380,7 +3400,7 @@ impl Editor {
 
     pub fn insert(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         let autoindent = text.is_empty().not().then(|| AutoindentMode::Block {
-            original_indent_columns: Vec::new(),
+            original_start_columns: Vec::new(),
         });
         self.insert_with_autoindent_mode(text, autoindent, window, cx);
     }
@@ -7926,9 +7946,7 @@ impl Editor {
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
-                    first_line_indent: buffer
-                        .indent_size_for_line(MultiBufferRow(selection.start.row))
-                        .len,
+                    start_column: selection.start.column,
                 });
             }
         }
@@ -8007,7 +8025,7 @@ impl Editor {
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
-                    first_line_indent: buffer.indent_size_for_line(MultiBufferRow(start.row)).len,
+                    start_column: start.column,
                 });
             }
         }
@@ -8037,8 +8055,8 @@ impl Editor {
                 let old_selections = this.selections.all::<usize>(cx);
                 let all_selections_were_entire_line =
                     clipboard_selections.iter().all(|s| s.is_entire_line);
-                let first_selection_indent_column =
-                    clipboard_selections.first().map(|s| s.first_line_indent);
+                let first_selection_start_column =
+                    clipboard_selections.first().map(|s| s.start_column);
                 if clipboard_selections.len() != old_selections.len() {
                     clipboard_selections.drain(..);
                 }
@@ -8052,21 +8070,21 @@ impl Editor {
 
                     let mut start_offset = 0;
                     let mut edits = Vec::new();
-                    let mut original_indent_columns = Vec::new();
+                    let mut original_start_columns = Vec::new();
                     for (ix, selection) in old_selections.iter().enumerate() {
                         let to_insert;
                         let entire_line;
-                        let original_indent_column;
+                        let original_start_column;
                         if let Some(clipboard_selection) = clipboard_selections.get(ix) {
                             let end_offset = start_offset + clipboard_selection.len;
                             to_insert = &clipboard_text[start_offset..end_offset];
                             entire_line = clipboard_selection.is_entire_line;
                             start_offset = end_offset + 1;
-                            original_indent_column = Some(clipboard_selection.first_line_indent);
+                            original_start_column = Some(clipboard_selection.start_column);
                         } else {
                             to_insert = clipboard_text.as_str();
                             entire_line = all_selections_were_entire_line;
-                            original_indent_column = first_selection_indent_column
+                            original_start_column = first_selection_start_column
                         }
 
                         // If the corresponding selection was empty when this slice of the
@@ -8082,7 +8100,7 @@ impl Editor {
                         };
 
                         edits.push((range, to_insert));
-                        original_indent_columns.extend(original_indent_column);
+                        original_start_columns.extend(original_start_column);
                     }
                     drop(snapshot);
 
@@ -8090,7 +8108,7 @@ impl Editor {
                         edits,
                         if auto_indent_on_paste {
                             Some(AutoindentMode::Block {
-                                original_indent_columns,
+                                original_start_columns,
                             })
                         } else {
                             None
@@ -9010,6 +9028,98 @@ impl Editor {
             s.move_heads_with(|map, head, _| {
                 (
                     movement::end_of_paragraph(map, head, 1),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
+    pub fn move_to_start_of_excerpt(
+        &mut self,
+        _: &MoveToStartOfExcerpt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+            cx.propagate();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.move_with(|map, selection| {
+                selection.collapse_to(
+                    movement::start_of_excerpt(
+                        map,
+                        selection.head(),
+                        workspace::searchable::Direction::Prev,
+                    ),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
+    pub fn move_to_end_of_excerpt(
+        &mut self,
+        _: &MoveToEndOfExcerpt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+            cx.propagate();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.move_with(|map, selection| {
+                selection.collapse_to(
+                    movement::end_of_excerpt(
+                        map,
+                        selection.head(),
+                        workspace::searchable::Direction::Next,
+                    ),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
+    pub fn select_to_start_of_excerpt(
+        &mut self,
+        _: &SelectToStartOfExcerpt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+            cx.propagate();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.move_heads_with(|map, head, _| {
+                (
+                    movement::start_of_excerpt(map, head, workspace::searchable::Direction::Prev),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
+    pub fn select_to_end_of_excerpt(
+        &mut self,
+        _: &SelectToEndOfExcerpt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+            cx.propagate();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.move_heads_with(|map, head, _| {
+                (
+                    movement::end_of_excerpt(map, head, workspace::searchable::Direction::Next),
                     SelectionGoal::None,
                 )
             });
@@ -11868,6 +11978,106 @@ impl Editor {
         }
     }
 
+    /// Disable inline diagnostics rendering for this editor.
+    pub fn disable_inline_diagnostics(&mut self) {
+        self.inline_diagnostics_enabled = false;
+        self.inline_diagnostics_update = Task::ready(());
+        self.inline_diagnostics.clear();
+    }
+
+    pub fn inline_diagnostics_enabled(&self) -> bool {
+        self.inline_diagnostics_enabled
+    }
+
+    pub fn show_inline_diagnostics(&self) -> bool {
+        self.show_inline_diagnostics
+    }
+
+    pub fn toggle_inline_diagnostics(
+        &mut self,
+        _: &ToggleInlineDiagnostics,
+        window: &mut Window,
+        cx: &mut Context<'_, Editor>,
+    ) {
+        self.show_inline_diagnostics = !self.show_inline_diagnostics;
+        self.refresh_inline_diagnostics(false, window, cx);
+    }
+
+    fn refresh_inline_diagnostics(
+        &mut self,
+        debounce: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.inline_diagnostics_enabled || !self.show_inline_diagnostics {
+            self.inline_diagnostics_update = Task::ready(());
+            self.inline_diagnostics.clear();
+            return;
+        }
+
+        let debounce_ms = ProjectSettings::get_global(cx)
+            .diagnostics
+            .inline
+            .update_debounce_ms;
+        let debounce = if debounce && debounce_ms > 0 {
+            Some(Duration::from_millis(debounce_ms))
+        } else {
+            None
+        };
+        self.inline_diagnostics_update = cx.spawn_in(window, |editor, mut cx| async move {
+            if let Some(debounce) = debounce {
+                cx.background_executor().timer(debounce).await;
+            }
+            let Some(snapshot) = editor
+                .update(&mut cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
+                .ok()
+            else {
+                return;
+            };
+
+            let new_inline_diagnostics = cx
+                .background_spawn(async move {
+                    let mut inline_diagnostics = Vec::<(Anchor, InlineDiagnostic)>::new();
+                    for diagnostic_entry in snapshot.diagnostics_in_range(0..snapshot.len()) {
+                        let message = diagnostic_entry
+                            .diagnostic
+                            .message
+                            .split_once('\n')
+                            .map(|(line, _)| line)
+                            .map(SharedString::new)
+                            .unwrap_or_else(|| {
+                                SharedString::from(diagnostic_entry.diagnostic.message)
+                            });
+                        let start_anchor = snapshot.anchor_before(diagnostic_entry.range.start);
+                        let (Ok(i) | Err(i)) = inline_diagnostics
+                            .binary_search_by(|(probe, _)| probe.cmp(&start_anchor, &snapshot));
+                        inline_diagnostics.insert(
+                            i,
+                            (
+                                start_anchor,
+                                InlineDiagnostic {
+                                    message,
+                                    group_id: diagnostic_entry.diagnostic.group_id,
+                                    start: diagnostic_entry.range.start.to_point(&snapshot),
+                                    is_primary: diagnostic_entry.diagnostic.is_primary,
+                                    severity: diagnostic_entry.diagnostic.severity,
+                                },
+                            ),
+                        );
+                    }
+                    inline_diagnostics
+                })
+                .await;
+
+            editor
+                .update(&mut cx, |editor, cx| {
+                    editor.inline_diagnostics = new_inline_diagnostics;
+                    cx.notify();
+                })
+                .ok();
+        });
+    }
+
     pub fn set_selections_from_remote(
         &mut self,
         selections: Vec<Selection<Anchor>>,
@@ -12559,7 +12769,7 @@ impl Editor {
         self.toggle_diff_hunks_in_ranges(ranges, cx);
     }
 
-    fn diff_hunks_in_ranges<'a>(
+    pub fn diff_hunks_in_ranges<'a>(
         &'a self,
         ranges: &'a [Range<Anchor>],
         buffer: &'a MultiBufferSnapshot,
@@ -12604,9 +12814,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let head = self.selections.newest_anchor().head();
-        self.stage_or_unstage_diff_hunks(true, &[head..head], cx);
-        self.go_to_next_hunk(&Default::default(), window, cx);
+        self.do_stage_or_unstage_and_next(true, window, cx);
     }
 
     pub fn unstage_and_next(
@@ -12615,9 +12823,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let head = self.selections.newest_anchor().head();
-        self.stage_or_unstage_diff_hunks(false, &[head..head], cx);
-        self.go_to_next_hunk(&Default::default(), window, cx);
+        self.do_stage_or_unstage_and_next(false, window, cx);
     }
 
     pub fn stage_or_unstage_diff_hunks(
@@ -12637,6 +12843,43 @@ impl Editor {
         for (buffer_id, hunks) in &chunk_by {
             Self::do_stage_or_unstage(project, stage, buffer_id, hunks, &snapshot, cx);
         }
+    }
+
+    fn do_stage_or_unstage_and_next(
+        &mut self,
+        stage: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
+        if ranges.iter().any(|range| range.start != range.end) {
+            self.stage_or_unstage_diff_hunks(stage, &ranges[..], cx);
+            return;
+        }
+
+        if !self.buffer().read(cx).is_singleton() {
+            if let Some((excerpt_id, buffer, range)) = self.active_excerpt(cx) {
+                ranges = vec![multi_buffer::Anchor::range_in_buffer(
+                    excerpt_id,
+                    buffer.read(cx).remote_id(),
+                    range,
+                )];
+                self.stage_or_unstage_diff_hunks(stage, &ranges[..], cx);
+                let snapshot = self.buffer().read(cx).snapshot(cx);
+                let mut point = ranges.last().unwrap().end.to_point(&snapshot);
+                if point.row < snapshot.max_row().0 {
+                    point.row += 1;
+                    point.column = 0;
+                    point = snapshot.clip_point(point, Bias::Right);
+                    self.change_selections(Some(Autoscroll::top_relative(6)), window, cx, |s| {
+                        s.select_ranges([point..point]);
+                    })
+                }
+                return;
+            }
+        }
+        self.stage_or_unstage_diff_hunks(stage, &ranges[..], cx);
+        self.go_to_next_hunk(&Default::default(), window, cx);
     }
 
     fn do_stage_or_unstage(
@@ -14333,6 +14576,7 @@ impl Editor {
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
+                self.refresh_inline_diagnostics(true, window, cx);
                 self.scrollbar_marker_state.dirty = true;
                 cx.notify();
             }
@@ -14383,7 +14627,13 @@ impl Editor {
         self.serialize_dirty_buffers = project_settings.session.restore_unsaved_buffers;
 
         if self.mode == EditorMode::Full {
+            let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;
             let inline_blame_enabled = project_settings.git.inline_blame_enabled();
+            if self.show_inline_diagnostics != show_inline_diagnostics {
+                self.show_inline_diagnostics = show_inline_diagnostics;
+                self.refresh_inline_diagnostics(false, window, cx);
+            }
+
             if self.git_blame_inline_enabled != inline_blame_enabled {
                 self.toggle_git_blame_inline_internal(false, window, cx);
             }
