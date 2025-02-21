@@ -102,13 +102,16 @@
 [
   (true)
   (false)
+] @boolean
+
+[
   (null)
-] @constant
+] @constant.builtin
 
 (identifier) @variable
 
-((identifier) @constant
- (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
+((identifier) @constant.variable
+ (#match? @constant.variable "^_*[A-Z][A-Z\\d_]*$"))
 
 (call_expression
   function: (identifier) @function)

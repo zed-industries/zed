@@ -77,8 +77,8 @@ type :(primitive_type) @type.primitive
 (attribute
     name: (identifier) @keyword)
 
-((identifier) @constant
- (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
+((identifier) @constant.variable
+ (#match? @constant.variable "^_*[A-Z][A-Z\\d_]*$"))
 
 (statement_identifier) @label
 (this) @variable.special
@@ -153,9 +153,12 @@ type :(primitive_type) @type.primitive
 [
   (true)
   (false)
+] @boolean
+
+[
   (null)
   ("nullptr")
-] @constant
+] @constant.builtin
 
 (number_literal) @number
 
