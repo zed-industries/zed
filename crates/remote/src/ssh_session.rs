@@ -203,7 +203,7 @@ impl SshConnectionOptions {
                 anyhow::bail!("unsupported argument: {:?}", arg);
             }
             let mut input = &arg as &str;
-            // destination might be: username1@username2@ip2@ip1
+            // Destination might be: username1@username2@ip2@ip1
             if let Some((u, rest)) = input.rsplit_once('@') {
                 input = rest;
                 username = Some(u.to_string());
@@ -239,7 +239,7 @@ impl SshConnectionOptions {
     pub fn ssh_url(&self) -> String {
         let mut result = String::from("ssh://");
         if let Some(username) = &self.username {
-            // username might be: username1@username2@ip2
+            // Username might be: username1@username2@ip2
             let username = username.replace("@", "%40");
             result.push_str(&username);
             result.push('@');
