@@ -849,6 +849,26 @@ mod test {
         );
         let clipboard: Register = cx.read_from_clipboard().unwrap().into();
         assert_eq!(clipboard.text, "fish");
+
+        cx.set_state(
+            indoc! {"
+                   ˇfish one
+                   two three
+                   "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y i w");
+        cx.simulate_keystrokes("w");
+        cx.simulate_keystrokes("v i w g r");
+        cx.assert_state(
+            indoc! {"
+                fish fisˇh
+                two three
+                "},
+            Mode::Normal,
+        );
+        let clipboard: Register = cx.read_from_clipboard().unwrap().into();
+        assert_eq!(clipboard.text, "fish");
     }
 
     #[gpui::test]
