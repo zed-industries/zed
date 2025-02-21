@@ -61,7 +61,7 @@ impl Vim {
         let mut ends = vec![];
         let mut reversed = vec![];
 
-        self.update_editor(window, cx, |_, editor, _, cx| {
+        self.update_editor(window, cx, |vim, editor, _, cx| {
             let (map, selections) = editor.selections.all_display(cx);
             for selection in selections {
                 let end = movement::saturating_left(&map, selection.end);
@@ -75,10 +75,20 @@ impl Vim {
                 );
                 reversed.push(selection.reversed)
             }
+            let Some(workspace) = editor.workspace() else {
+                return;
+            };
+            let Some(wid) = workspace.read(cx).database_id() else {
+                return;
+            };
+            let multi_buffer = editor.buffer();
+            let Some(buffer) = multi_buffer.read(cx).as_singleton() else {
+                return;
+            };
+            vim.set_mark("<".to_string(), starts, &buffer, multi_buffer, wid, cx);
+            vim.set_mark(">".to_string(), ends, &buffer, multi_buffer, wid, cx);
         });
 
-        // self.set_mark("<".to_string(), starts, cx);
-        // self.set_mark(">".to_string(), ends, cx);
         self.stored_visual_mode.replace((mode, reversed));
     }
 
@@ -108,7 +118,7 @@ impl Vim {
             }),
             "." => self.change_list.last().cloned(),
             m if m.starts_with(|c: char| c.is_digit(10)) => {
-                if let Some((path, points)) = self.get_global_mark(text.to_string(), window, cx) {
+                if let Some(path) = self.get_harpoon_mark(text.to_string(), window, cx) {
                     if let Some(workspace) = self.workspace(window) {
                         workspace.update(cx, |workspace, cx| {
                             let Some(worktree) = workspace.worktrees(cx).next() else {
@@ -118,31 +128,9 @@ impl Vim {
                             let Some(path_str) = path.to_str() else {
                                 return;
                             };
-                            let task = workspace.open_path(
-                                (worktree_id, path_str),
-                                None,
-                                true,
-                                window,
-                                cx,
-                            );
-
-                            // cx.spawn(async move |_, mut cx| {
-                            //     let item = task.await?;
-
-                            //     if let Some(editor) = item.act_as::<Editor>(cx) {
-                            //         editor.update(&mut cx, |editor, cx| {
-                            //             editor.change_selections(
-                            //                 Some(Autoscroll::fit()),
-                            //                 window,
-                            //                 cx,
-                            //                 |s| {
-                            //                     s.select(selections);
-                            //                 },
-                            //             )
-                            //         })?;
-                            //     }
-                            // })
-                            // .detach_and_log_err(cx);
+                            workspace
+                                .open_path((worktree_id, path_str), None, true, window, cx)
+                                .detach_and_log_err(cx);
                         });
                     }
                 }
@@ -181,7 +169,6 @@ impl Vim {
                                             cx,
                                             |s| {
                                                 s.select_anchor_ranges(points.iter().map(|p| {
-                                                    dbg!(text.to_string(), p);
                                                     let anchor = buffer_snapshot.anchor_before(*p);
                                                     anchor..anchor
                                                 }));
