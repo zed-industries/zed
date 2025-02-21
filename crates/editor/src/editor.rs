@@ -3021,6 +3021,12 @@ impl Editor {
         drop(snapshot);
 
         self.transact(window, cx, |this, window, cx| {
+            let edit_ranges = edits
+                .iter()
+                .map(|(range, _)| range)
+                .cloned()
+                .collect::<Vec<_>>();
+
             this.buffer.update(cx, |buffer, cx| {
                 buffer.edit(edits, this.autoindent_mode.clone(), cx);
             });
@@ -3108,8 +3114,119 @@ impl Editor {
             this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
             linked_editing_ranges::refresh_linked_ranges(this, window, cx);
             this.refresh_inline_completion(true, false, window, cx);
-            // todo! this.handle_auto_editing
+            this.handle_auto_edit_behavior(edit_ranges, cx);
         });
+    }
+
+    fn handle_auto_edit_behavior(
+        &mut self,
+        edit_ranges: Vec<Range<Point>>,
+        cx: &mut Context<Self>,
+    ) {
+        let buf = self.buffer.read(cx).snapshot(cx);
+
+        let mut buffer_edit_ranges_map = HashMap::<
+            (BufferId, Arc<language::Language>),
+            (BufferSnapshot, Vec<Range<usize>>),
+        >::default();
+
+        {
+            for edit_range in edit_ranges {
+                let Some(excerpt) = buf.excerpt_containing(edit_range) else {
+                    // None if spans multiple excerpts - which we want to ignore
+                    continue;
+                };
+                let snapshot = excerpt.buffer();
+                let edit_range_buffer = excerpt.buffer_range();
+                let Some(language) = dbg!(snapshot.language_at(edit_range_buffer.end)) else {
+                    continue;
+                };
+                if dbg!(language.edit_behavior_provider().is_none()) {
+                    continue;
+                }
+                // todo! if !langauge.is_edit_behavior_enabled() { continue; }
+                match buffer_edit_ranges_map.entry((excerpt.buffer_id(), language.clone())) {
+                    std::collections::hash_map::Entry::Occupied(mut entry) => {
+                        entry.get_mut().1.push(edit_range_buffer);
+                    }
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert((snapshot.clone(), vec![edit_range_buffer]));
+                    }
+                }
+            }
+        }
+
+        for ((buffer_id, language), (buffer_snapshot, edited_ranges)) in buffer_edit_ranges_map {
+            let mut excerpt_buffer_parse_status_rx = self
+                .buffer
+                .read(cx)
+                .buffer(buffer_id)
+                .unwrap()
+                .read(cx)
+                .parse_status();
+
+            let (reparsed_tx, reparsed_rx) = futures::channel::oneshot::channel();
+            let subscription = {
+                let mut reparsed_tx = Some(reparsed_tx);
+                cx.subscribe(
+                    &self.buffer.read(cx).buffer(buffer_id).unwrap(),
+                    move |this, buf, evt: &language::BufferEvent, cx| {
+                        if *evt == language::BufferEvent::Reparsed {
+                            dbg!(reparsed_tx.take().unwrap().send(()));
+                        }
+                    },
+                )
+            };
+
+            cx.spawn( |this, mut cx| async move {
+                let _unsubscribe_from_subscription = defer(|| drop(subscription));
+                reparsed_rx.await?;
+
+                loop {
+                    let status = excerpt_buffer_parse_status_rx.recv().await;
+                    match status {
+                        Ok(status) => match dbg!(status) {
+                            language::ParseStatus::Idle => {
+                                break;
+                            }
+                            language::ParseStatus::Parsing => {
+                                continue;
+                            }
+                        },
+                        Err(err) => {
+                            return Err(anyhow!("Autoclose Tag Operation Failed: Buffer Failed to Parse: {}", err));
+                        }
+                    }
+                }
+
+                let Some(edit_behavior_provider) = language.edit_behavior_provider() else {
+                    return Err(anyhow!("Autoclose Tag Operation Failed: Language does not support edit behavior provider"));
+                };
+
+                let Some(edit_behavior_state) = edit_behavior_provider.boxed_should_auto_edit(&buffer_snapshot, &edited_ranges) else {
+                    let should_auto_edit = false;
+                    dbg!(should_auto_edit);
+                    return Ok(());
+                };
+
+                let edits = cx.background_executor().spawn(async move {
+                    edit_behavior_provider.boxed_auto_edit(buffer_snapshot, &edited_ranges, edit_behavior_state)
+                }).await;
+
+                dbg!(edits);
+                // let Ok(edits) = edits else {
+                //     dbg!(edits);
+                //     return Ok(());
+                // };
+
+                // cx.background_executor()
+                //     .spawn(async move {
+                //         // language.
+                //     })
+                //     .detach();
+                Ok(())
+            }).detach_and_log_err(cx);
+        }
     }
 
     fn find_possible_emoji_shortcode_at_position(

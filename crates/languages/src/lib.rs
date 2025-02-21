@@ -105,10 +105,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
 
     macro_rules! edit_behavior_provider {
         ($name:expr) => {
-            Some(Arc::new($name)
-                as Arc<
-                    dyn EditBehaviorProvider<AutoEditState = dyn std::any::Any>,
-                >)
+            Some(Arc::new($name) as Arc<dyn EditBehaviorImplementation>)
         };
         () => {
             None
@@ -241,7 +238,9 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
             typescript::TypeScriptLspAdapter::new(node_runtime.clone()),
             vtsls::VtslsLspAdapter::new(node_runtime.clone()),
         ],
-        context => context_provider!(typescript_task_context())
+        context => context_provider!(typescript_task_context()),
+        toolchain => toolchain_provider!(),
+        edit_behavior => edit_behavior_provider!(tsx::JsxEditBehaviorProvider)
     );
     register_language!(
         "typescript",

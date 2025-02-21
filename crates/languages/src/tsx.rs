@@ -1,21 +1,26 @@
+use std::ops::Range;
+
 use language::EditBehaviorProvider;
 
 pub struct JsxEditBehaviorProvider;
 
 impl EditBehaviorProvider for JsxEditBehaviorProvider {
+    type AutoEditState = ();
+
     fn should_auto_edit(
         &self,
         buffer: &language::BufferSnapshot,
-        edited_ranges: Vec<std::ops::Range<usize>>,
-    ) -> Option<Vec<char>> {
-        todo!()
+        edited_ranges: &[Range<usize>],
+    ) -> Option<Self::AutoEditState> {
+        return Some(());
     }
 
     fn auto_edit(
         &self,
         buffer: language::BufferSnapshot,
-        ranges: Vec<std::ops::Range<usize>>,
+        ranges: &[Range<usize>],
+        state: Self::AutoEditState,
     ) -> gpui::Result<Vec<(std::ops::Range<usize>, String)>> {
-        todo!()
+        Ok(vec![])
     }
 }

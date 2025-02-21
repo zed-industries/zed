@@ -1,11 +1,10 @@
 use crate::{
-    edit_behavior::EditBehaviorProvider,
     language_settings::{
         all_language_settings, AllLanguageSettingsContent, LanguageSettingsContent,
     },
     task_context::ContextProvider,
-    with_parser, CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
-    LanguageServerName, LspAdapter, ToolchainLister, PLAIN_TEXT,
+    with_parser, CachedLspAdapter, EditBehaviorImplementation, File, Language, LanguageConfig,
+    LanguageId, LanguageMatcher, LanguageServerName, LspAdapter, ToolchainLister, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
@@ -223,8 +222,7 @@ pub struct LoadedLanguage {
     pub queries: LanguageQueries,
     pub context_provider: Option<Arc<dyn ContextProvider>>,
     pub toolchain_provider: Option<Arc<dyn ToolchainLister>>,
-    pub edit_behavior_provider:
-        Option<Arc<dyn EditBehaviorProvider<AutoEditState = dyn std::any::Any>>>,
+    pub edit_behavior_provider: Option<Arc<dyn EditBehaviorImplementation>>,
 }
 
 impl LanguageRegistry {
@@ -778,11 +776,17 @@ impl LanguageRegistry {
                                 Language::new_with_id(id, loaded_language.config, grammar)
                                     .with_context_provider(loaded_language.context_provider)
                                     .with_toolchain_lister(loaded_language.toolchain_provider)
+                                    .with_edit_behavior_provider(
+                                        loaded_language.edit_behavior_provider,
+                                    )
                                     .with_queries(loaded_language.queries)
                             } else {
                                 Ok(Language::new_with_id(id, loaded_language.config, None)
                                     .with_context_provider(loaded_language.context_provider)
-                                    .with_toolchain_lister(loaded_language.toolchain_provider))
+                                    .with_toolchain_lister(loaded_language.toolchain_provider)
+                                    .with_edit_behavior_provider(
+                                        loaded_language.edit_behavior_provider,
+                                    ))
                             }
                         }
                         .await;
