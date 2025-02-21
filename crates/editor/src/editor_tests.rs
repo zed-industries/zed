@@ -5532,6 +5532,75 @@ async fn test_select_previous_with_single_selection(cx: &mut gpui::TestAppContex
 }
 
 #[gpui::test]
+async fn test_select_next_prev_syntax_node(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    let text = r#"
+        use mod1::mod2::{mod3, mod4};
+
+        fn fn_1(param1: bool, param2: &str) {
+            let var1 = "text";
+        }
+    "#
+    .unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 5),
+                DisplayPoint::new(DisplayRow(2), 4)..DisplayPoint::new(DisplayRow(2), 7),
+                DisplayPoint::new(DisplayRow(3), 12)..DisplayPoint::new(DisplayRow(3), 11),
+            ]);
+        });
+        editor.select_next_syntax_node(&SelectNextSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                use mod1::«mod2ˇ»::{mod3, mod4};
+
+                fn fn_1«(param1: bool, param2: &str)ˇ» {
+                    let var1 = «ˇ"text"»;
+                }
+            "#},
+            cx,
+        );
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_previous_syntax_node(&SelectPreviousSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                use «mod1ˇ»::mod2::{mod3, mod4};
+
+                fn «fn_1ˇ»(param1: bool, param2: &str) {
+                    let «ˇvar1» = "text";
+                }
+            "#},
+            cx,
+        );
+    });
+}
+
+
+#[gpui::test]
 async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -5718,6 +5787,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
         );
     });
 }
+
 
 #[gpui::test]
 async fn test_fold_function_bodies(cx: &mut gpui::TestAppContext) {
