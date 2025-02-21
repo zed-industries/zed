@@ -2,13 +2,9 @@ mod app_menus;
 pub mod inline_completion_registry;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) mod linux_prompts;
-#[cfg(target_os = "macos")]
-pub(crate) mod mac_only_instance;
 mod migrate;
 mod open_listener;
 mod quick_action_bar;
-#[cfg(target_os = "windows")]
-pub(crate) mod windows_only_instance;
 
 use anyhow::Context as _;
 pub use app_menus::*;

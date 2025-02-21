@@ -86,7 +86,7 @@ pub enum IsOnlyInstance {
     No,
 }
 
-pub fn ensure_unique_instance() -> IsOnlyInstance {
+pub fn ensure_only_instance() -> IsOnlyInstance {
     if check_got_handshake() {
         return IsOnlyInstance::No;
     }

@@ -7,7 +7,7 @@ use windows::{
     },
 };
 
-pub fn ensure_unique_instance() -> bool {
+pub fn ensure_only_instance() -> bool {
     unsafe {
         CreateEventW(
             None,
