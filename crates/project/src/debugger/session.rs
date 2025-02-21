@@ -394,13 +394,13 @@ impl ThreadStates {
             .or(self.global_state)
     }
 
-    fn any_thread_running(&self) -> bool {
+    fn any_stopped_thread(&self) -> bool {
         self.global_state
-            .is_some_and(|state| state == ThreadStatus::Running)
+            .is_some_and(|state| state == ThreadStatus::Stopped)
             || self
                 .known_thread_states
                 .values()
-                .any(|status| *status == ThreadStatus::Running)
+                .any(|status| *status == ThreadStatus::Stopped)
     }
 }
 
@@ -910,7 +910,7 @@ impl Session {
     }
 
     pub fn modules(&mut self, cx: &mut Context<Self>) -> &[Module] {
-        if self.thread_states.any_thread_running() {
+        if self.thread_states.any_stopped_thread() {
             self.fetch(
                 dap_command::ModulesCommand,
                 |this, result, cx| {
@@ -979,7 +979,7 @@ impl Session {
     }
 
     pub fn loaded_sources(&mut self, cx: &mut Context<Self>) -> &[Source] {
-        if self.thread_states.any_thread_running() {
+        if self.thread_states.any_stopped_thread() {
             self.fetch(
                 dap_command::LoadedSourcesCommand,
                 |this, result, cx| {
