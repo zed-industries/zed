@@ -4,13 +4,13 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use editor::commit_tooltip::CommitTooltip;
 use git::repository::{Branch, GitRepository};
 use gpui::{
-    rems, AnyView, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
-    Task, WeakEntity, Window,
+    rems, AnyView, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
+    Subscription, Task, WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
-use project::ProjectPath;
 use project::git::GitRepo;
+use project::ProjectPath;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
@@ -381,19 +381,23 @@ impl PickerDelegate for BranchListDelegate {
                             )
                             .id("commit-msg-hover")
                             .hoverable_tooltip(move |window, cx| {
-                                let commit_details = commit_details.clone().unwrap_or(editor::commit_tooltip::CommitDetails {
-                                    sha: "N/A".into(),
-                                    committer_name: "Unknown".into(),
-                                    committer_email: "unknown@example.com".into(),
-                                    commit_time: OffsetDateTime::from_unix_timestamp(0).unwrap(),
-                                    message: Some(editor::commit_tooltip::ParsedCommitMessage {
-                                        message: "No commit details available".into(),
-                                        ..Default::default()
-                                    }),
-                                });
-                                let tooltip = cx.new(|cx| {
-                                    CommitTooltip::new(commit_details, window, cx)
-                                });
+                                let commit_details = commit_details.clone().unwrap_or(
+                                    editor::commit_tooltip::CommitDetails {
+                                        sha: "N/A".into(),
+                                        committer_name: "Unknown".into(),
+                                        committer_email: "unknown@example.com".into(),
+                                        commit_time: OffsetDateTime::from_unix_timestamp(0)
+                                            .unwrap(),
+                                        message: Some(
+                                            editor::commit_tooltip::ParsedCommitMessage {
+                                                message: "No commit details available".into(),
+                                                ..Default::default()
+                                            },
+                                        ),
+                                    },
+                                );
+                                let tooltip =
+                                    cx.new(|cx| CommitTooltip::new(commit_details, window, cx));
                                 AnyView::from(tooltip)
                             }),
                     )
