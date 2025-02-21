@@ -33,8 +33,9 @@ impl Vim {
                 .collect::<Vec<_>>();
             if let Some(workspace) = vim.workspace(window) {
                 if let Some(id) = workspace.read(cx).database_id() {
-                    if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                        vim.set_mark(text.to_string(), anchors, &buffer, id, cx);
+                    let multi_buffer = editor.buffer();
+                    if let Some(buffer) = multi_buffer.read(cx).as_singleton() {
+                        vim.set_mark(text.to_string(), anchors, &buffer, multi_buffer, id, cx);
                     }
                 }
             }
