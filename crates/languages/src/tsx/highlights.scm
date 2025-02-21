@@ -57,8 +57,8 @@
   (identifier)
   (shorthand_property_identifier)
   (shorthand_property_identifier_pattern)
- ] @constant.variable
- (#match? @constant.variable "^_*[A-Z_][A-Z\\d_]*$"))
+ ] @constant
+ (#match? @constant "^_*[A-Z_][A-Z\\d_]*$"))
 
 ; Literals
 
