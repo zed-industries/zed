@@ -125,8 +125,7 @@ impl EditableSettingControl for BufferFontSizeControl {
     }
 
     fn read(cx: &App) -> Self::Value {
-        let settings = ThemeSettings::get_global(cx);
-        settings.buffer_font_size
+        ThemeSettings::get_global(cx).buffer_font_size(cx)
     }
 
     fn apply(

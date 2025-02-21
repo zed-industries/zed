@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use gpui::{Action, AnyElement, AnyView, AppContext as _, FocusHandle, IntoElement, Render};
 use settings::Settings;
 use theme::ThemeSettings;
@@ -47,6 +45,24 @@ impl Tooltip {
                 title: title.clone(),
                 meta: None,
                 key_binding: KeyBinding::for_action(action.as_ref(), window, cx),
+            })
+            .into()
+        }
+    }
+
+    pub fn for_action_title_in(
+        title: impl Into<SharedString>,
+        action: &dyn Action,
+        focus_handle: &FocusHandle,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView {
+        let title = title.into();
+        let action = action.boxed_clone();
+        let focus_handle = focus_handle.clone();
+        move |window, cx| {
+            cx.new(|cx| Self {
+                title: title.clone(),
+                meta: None,
+                key_binding: KeyBinding::for_action_in(action.as_ref(), &focus_handle, window, cx),
             })
             .into()
         }

@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use std::sync::Arc;
 
 use gpui::{px, AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels};

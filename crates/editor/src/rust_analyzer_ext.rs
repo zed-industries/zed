@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use anyhow::Context as _;
 use gpui::{App, AppContext as _, Context, Entity, Window};
-use language::Language;
+use language::{Capability, Language};
 use multi_buffer::MultiBuffer;
 use project::lsp_ext_command::ExpandMacro;
 use text::ToPointUtf16;
@@ -80,14 +80,17 @@ pub fn expand_macro_recursively(
             .await?;
         workspace.update_in(&mut cx, |workspace, window, cx| {
             buffer.update(cx, |buffer, cx| {
-                buffer.edit([(0..0, macro_expansion.expansion)], None, cx);
-                buffer.set_language(Some(rust_language), cx)
+                buffer.set_text(macro_expansion.expansion, cx);
+                buffer.set_language(Some(rust_language), cx);
+                buffer.set_capability(Capability::ReadOnly, cx);
             });
             let multibuffer =
                 cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(macro_expansion.name));
             workspace.add_item_to_active_pane(
                 Box::new(cx.new(|cx| {
-                    Editor::for_multibuffer(multibuffer, Some(project), true, window, cx)
+                    let mut editor = Editor::for_multibuffer(multibuffer, None, false, window, cx);
+                    editor.set_read_only(true);
+                    editor
                 })),
                 None,
                 true,

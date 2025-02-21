@@ -1657,7 +1657,7 @@ fn test_autoindent_block_mode(cx: &mut App) {
         buffer.edit(
             [(Point::new(2, 0)..Point::new(2, 0), inserted_text.clone())],
             Some(AutoindentMode::Block {
-                original_indent_columns: original_indent_columns.clone(),
+                original_start_columns: original_indent_columns.clone(),
             }),
             cx,
         );
@@ -1685,7 +1685,7 @@ fn test_autoindent_block_mode(cx: &mut App) {
         buffer.edit(
             [(Point::new(2, 8)..Point::new(2, 8), inserted_text)],
             Some(AutoindentMode::Block {
-                original_indent_columns: original_indent_columns.clone(),
+                original_start_columns: original_indent_columns.clone(),
             }),
             cx,
         );
@@ -1734,7 +1734,7 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
         buffer.edit(
             [(Point::new(2, 0)..Point::new(2, 0), inserted_text)],
             Some(AutoindentMode::Block {
-                original_indent_columns: original_indent_columns.clone(),
+                original_start_columns: original_indent_columns.clone(),
             }),
             cx,
         );
@@ -1765,7 +1765,7 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
         buffer.edit(
             [(Point::new(2, 12)..Point::new(2, 12), inserted_text)],
             Some(AutoindentMode::Block {
-                original_indent_columns: Vec::new(),
+                original_start_columns: Vec::new(),
             }),
             cx,
         );
@@ -1821,7 +1821,7 @@ fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut App) {
                 (ranges_to_replace[2].clone(), "fn three() {\n    103\n}\n"),
             ],
             Some(AutoindentMode::Block {
-                original_indent_columns: vec![0, 0, 0],
+                original_start_columns: vec![0, 0, 0],
             }),
             cx,
         );

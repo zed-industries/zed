@@ -94,7 +94,7 @@ impl TableView {
         let text_system = window.text_system();
         let text_style = window.text_style();
         let text_font = ThemeSettings::get_global(cx).buffer_font.clone();
-        let font_size = ThemeSettings::get_global(cx).buffer_font_size;
+        let font_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
         let mut runs = [TextRun {
             len: 0,
             font: text_font,

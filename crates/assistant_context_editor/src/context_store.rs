@@ -350,6 +350,12 @@ impl ContextStore {
         }
     }
 
+    pub fn contexts(&self) -> Vec<SavedContextMetadata> {
+        let mut contexts = self.contexts_metadata.iter().cloned().collect::<Vec<_>>();
+        contexts.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.mtime));
+        contexts
+    }
+
     pub fn create(&mut self, cx: &mut Context<Self>) -> Entity<AssistantContext> {
         let context = cx.new(|cx| {
             AssistantContext::local(

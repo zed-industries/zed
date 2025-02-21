@@ -349,7 +349,11 @@ impl Dock {
             .and_then(|index| self.panel_entries.get(index))
     }
 
-    pub(crate) fn set_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn active_panel_index(&self) -> Option<usize> {
+        self.active_panel_index
+    }
+
+    pub fn set_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
         if open != self.is_open {
             self.is_open = open;
             if let Some(active_panel) = self.active_panel_entry() {

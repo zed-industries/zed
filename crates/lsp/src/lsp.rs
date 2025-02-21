@@ -100,6 +100,7 @@ pub struct LanguageServer {
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     server: Arc<Mutex<Option<Child>>>,
     workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+    root_uri: Url,
 }
 
 /// Identifies a running language server.
@@ -369,6 +370,8 @@ impl LanguageServer {
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
         let stderr = server.stderr.take().unwrap();
+        let root_uri = Url::from_file_path(&working_dir)
+            .map_err(|_| anyhow!("{} is not a valid URI", working_dir.display()))?;
         let server = Self::new_internal(
             server_id,
             server_name,
@@ -379,6 +382,7 @@ impl LanguageServer {
             Some(server),
             code_action_kinds,
             binary,
+            root_uri,
             cx,
             move |notification| {
                 log::info!(
@@ -404,6 +408,7 @@ impl LanguageServer {
         server: Option<Child>,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         binary: LanguageServerBinary,
+        root_uri: Url,
         cx: AsyncApp,
         on_unhandled_notification: F,
     ) -> Self
@@ -487,6 +492,7 @@ impl LanguageServer {
             output_done_rx: Mutex::new(Some(output_done_rx)),
             server: Arc::new(Mutex::new(server)),
             workspace_folders: Default::default(),
+            root_uri,
         }
     }
 
@@ -615,7 +621,7 @@ impl LanguageServer {
         InitializeParams {
             process_id: None,
             root_path: None,
-            root_uri: None,
+            root_uri: Some(self.root_uri.clone()),
             initialization_options: None,
             capabilities: ClientCapabilities {
                 general: Some(GeneralClientCapabilities {
@@ -1385,6 +1391,7 @@ impl FakeLanguageServer {
 
         let server_name = LanguageServerName(name.clone().into());
         let process_name = Arc::from(name.as_str());
+        let root = Self::root_path();
         let mut server = LanguageServer::new_internal(
             server_id,
             server_name.clone(),
@@ -1395,6 +1402,7 @@ impl FakeLanguageServer {
             None,
             None,
             binary.clone(),
+            root,
             cx.clone(),
             |_| {},
         );
@@ -1412,6 +1420,7 @@ impl FakeLanguageServer {
                     None,
                     None,
                     binary,
+                    Self::root_path(),
                     cx.clone(),
                     move |msg| {
                         notifications_tx
@@ -1445,6 +1454,15 @@ impl FakeLanguageServer {
         });
 
         (server, fake)
+    }
+    #[cfg(target_os = "windows")]
+    fn root_path() -> Url {
+        Url::from_file_path("C:/").unwrap()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn root_path() -> Url {
+        Url::from_file_path("/").unwrap()
     }
 }
 

@@ -12,6 +12,7 @@ pub use crate::providers::*;
 pub fn init(cx: &App) {
     let provider_registry = GitHostingProviderRegistry::global(cx);
     provider_registry.register_hosting_provider(Arc::new(Bitbucket));
+    provider_registry.register_hosting_provider(Arc::new(Chromium));
     provider_registry.register_hosting_provider(Arc::new(Codeberg));
     provider_registry.register_hosting_provider(Arc::new(Gitee));
     provider_registry.register_hosting_provider(Arc::new(Github));

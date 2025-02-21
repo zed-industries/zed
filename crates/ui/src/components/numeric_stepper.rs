@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use gpui::ClickEvent;
 
 use crate::{prelude::*, IconButtonShape};

@@ -579,6 +579,26 @@ impl ContextProvider for RustContextProvider {
             },
             TaskTemplate {
                 label: format!(
+                    "DocTest '{}' (package: {})",
+                    VariableName::Symbol.template_value(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                ),
+                command: "cargo".into(),
+                args: vec![
+                    "test".into(),
+                    "--doc".into(),
+                    "-p".into(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Symbol.template_value(),
+                    "--".into(),
+                    "--nocapture".into(),
+                ],
+                tags: vec!["rust-doc-test".to_owned()],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
                     "Test '{}' (package: {})",
                     VariableName::Stem.template_value(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),

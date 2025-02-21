@@ -1,5 +1,4 @@
 pub mod items;
-mod project_diagnostics_settings;
 mod toolbar_controls;
 
 #[cfg(test)]
@@ -15,17 +14,16 @@ use editor::{
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
 use gpui::{
-    actions, div, svg, AnyElement, AnyView, App, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, Global, HighlightStyle, InteractiveElement, IntoElement, ParentElement, Render,
-    SharedString, Styled, StyledText, Subscription, Task, WeakEntity, Window,
+    actions, div, svg, AnyElement, AnyView, App, AsyncApp, Context, Entity, EventEmitter,
+    FocusHandle, Focusable, Global, HighlightStyle, InteractiveElement, IntoElement, ParentElement,
+    Render, SharedString, Styled, StyledText, Subscription, Task, WeakEntity, Window,
 };
 use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, Diagnostic, DiagnosticEntry, DiagnosticSeverity,
     Point, Selection, SelectionGoal, ToTreeSitterPoint,
 };
 use lsp::LanguageServerId;
-use project::{DiagnosticSummary, Project, ProjectPath};
-use project_diagnostics_settings::ProjectDiagnosticsSettings;
+use project::{project_settings::ProjectSettings, DiagnosticSummary, Project, ProjectPath};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
@@ -52,7 +50,6 @@ struct IncludeWarnings(bool);
 impl Global for IncludeWarnings {}
 
 pub fn init(cx: &mut App) {
-    ProjectDiagnosticsSettings::register(cx);
     cx.observe_new(ProjectDiagnosticsEditor::register).detach();
 }
 
@@ -178,6 +175,7 @@ impl ProjectDiagnosticsEditor {
                 cx,
             );
             editor.set_vertical_scroll_margin(5, cx);
+            editor.disable_inline_diagnostics();
             editor
         });
         cx.subscribe_in(
@@ -249,8 +247,9 @@ impl ProjectDiagnosticsEditor {
                     .log_err()
                 {
                     this.update_in(&mut cx, |this, window, cx| {
-                        this.update_excerpts(path, language_server_id, buffer, window, cx);
-                    })?;
+                        this.update_excerpts(path, language_server_id, buffer, window, cx)
+                    })?
+                    .await?;
                 }
             }
             Ok(())
@@ -287,7 +286,7 @@ impl ProjectDiagnosticsEditor {
 
             let include_warnings = match cx.try_global::<IncludeWarnings>() {
                 Some(include_warnings) => include_warnings.0,
-                None => ProjectDiagnosticsSettings::get_global(cx).include_warnings,
+                None => ProjectSettings::get_global(cx).diagnostics.include_warnings,
             };
 
             let diagnostics = cx.new(|cx| {
@@ -350,7 +349,7 @@ impl ProjectDiagnosticsEditor {
         buffer: Entity<Buffer>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<Result<()>> {
         let was_empty = self.path_states.is_empty();
         let snapshot = buffer.read(cx).snapshot();
         let path_ix = match self
@@ -369,7 +368,6 @@ impl ProjectDiagnosticsEditor {
                 ix
             }
         };
-
         let mut prev_excerpt_id = if path_ix > 0 {
             let prev_path_last_group = &self.path_states[path_ix - 1]
                 .diagnostic_groups
@@ -380,7 +378,6 @@ impl ProjectDiagnosticsEditor {
             ExcerptId::min()
         };
 
-        let path_state = &mut self.path_states[path_ix];
         let mut new_group_ixs = Vec::new();
         let mut blocks_to_add = Vec::new();
         let mut blocks_to_remove = HashSet::default();
@@ -390,8 +387,14 @@ impl ProjectDiagnosticsEditor {
         } else {
             DiagnosticSeverity::ERROR
         };
-        let excerpts_snapshot = self.excerpts.update(cx, |excerpts, cx| {
-            let mut old_groups = mem::take(&mut path_state.diagnostic_groups)
+        let excerpts = self.excerpts.clone().downgrade();
+        let context = self.context;
+        let editor = self.editor.clone().downgrade();
+        cx.spawn_in(window, move |this, mut cx| async move {
+            let mut old_groups = this
+                .update(&mut cx, |this, _| {
+                    mem::take(&mut this.path_states[path_ix].diagnostic_groups)
+                })?
                 .into_iter()
                 .enumerate()
                 .peekable();
@@ -453,9 +456,19 @@ impl ProjectDiagnosticsEditor {
                     let mut is_first_excerpt_for_group = true;
                     for (ix, entry) in group.entries.iter().map(Some).chain([None]).enumerate() {
                         let resolved_entry = entry.map(|e| e.resolve::<Point>(&snapshot));
-                        let expanded_range = resolved_entry.as_ref().map(|entry| {
-                            context_range_for_entry(entry, self.context, &snapshot, cx)
-                        });
+                        let expanded_range = if let Some(entry) = &resolved_entry {
+                            Some(
+                                context_range_for_entry(
+                                    entry.range.clone(),
+                                    context,
+                                    snapshot.clone(),
+                                    (*cx).clone(),
+                                )
+                                .await,
+                            )
+                        } else {
+                            None
+                        };
                         if let Some((range, context_range, start_ix)) = &mut pending_range {
                             if let Some(expanded_range) = expanded_range.clone() {
                                 // If the entries are overlapping or next to each-other, merge them into one excerpt.
@@ -465,18 +478,20 @@ impl ProjectDiagnosticsEditor {
                                 }
                             }
 
-                            let excerpt_id = excerpts
-                                .insert_excerpts_after(
-                                    prev_excerpt_id,
-                                    buffer.clone(),
-                                    [ExcerptRange {
-                                        context: context_range.clone(),
-                                        primary: Some(range.clone()),
-                                    }],
-                                    cx,
-                                )
-                                .pop()
-                                .unwrap();
+                            let excerpt_id = excerpts.update(&mut cx, |excerpts, cx| {
+                                excerpts
+                                    .insert_excerpts_after(
+                                        prev_excerpt_id,
+                                        buffer.clone(),
+                                        [ExcerptRange {
+                                            context: context_range.clone(),
+                                            primary: Some(range.clone()),
+                                        }],
+                                        cx,
+                                    )
+                                    .pop()
+                                    .unwrap()
+                            })?;
 
                             prev_excerpt_id = excerpt_id;
                             first_excerpt_id.get_or_insert(prev_excerpt_id);
@@ -533,128 +548,156 @@ impl ProjectDiagnosticsEditor {
                         }
                     }
 
-                    new_group_ixs.push(path_state.diagnostic_groups.len());
-                    path_state.diagnostic_groups.push(group_state);
+                    this.update(&mut cx, |this, _| {
+                        new_group_ixs.push(this.path_states[path_ix].diagnostic_groups.len());
+                        this.path_states[path_ix]
+                            .diagnostic_groups
+                            .push(group_state);
+                    })?;
                 } else if let Some((_, group_state)) = to_remove {
-                    excerpts.remove_excerpts(group_state.excerpts.iter().copied(), cx);
+                    excerpts.update(&mut cx, |excerpts, cx| {
+                        excerpts.remove_excerpts(group_state.excerpts.iter().copied(), cx)
+                    })?;
                     blocks_to_remove.extend(group_state.blocks.iter().copied());
                 } else if let Some((_, group_state)) = to_keep {
                     prev_excerpt_id = *group_state.excerpts.last().unwrap();
                     first_excerpt_id.get_or_insert(prev_excerpt_id);
-                    path_state.diagnostic_groups.push(group_state);
+
+                    this.update(&mut cx, |this, _| {
+                        this.path_states[path_ix]
+                            .diagnostic_groups
+                            .push(group_state)
+                    })?;
                 }
             }
 
-            excerpts.snapshot(cx)
-        });
+            let excerpts_snapshot =
+                excerpts.update(&mut cx, |excerpts, cx| excerpts.snapshot(cx))?;
+            editor.update(&mut cx, |editor, cx| {
+                editor.remove_blocks(blocks_to_remove, None, cx);
+                let block_ids = editor.insert_blocks(
+                    blocks_to_add.into_iter().flat_map(|block| {
+                        let placement = match block.placement {
+                            BlockPlacement::Above((excerpt_id, text_anchor)) => {
+                                BlockPlacement::Above(
+                                    excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
+                                )
+                            }
+                            BlockPlacement::Below((excerpt_id, text_anchor)) => {
+                                BlockPlacement::Below(
+                                    excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
+                                )
+                            }
+                            BlockPlacement::Replace(_) => {
+                                unreachable!(
+                                    "no Replace block should have been pushed to blocks_to_add"
+                                )
+                            }
+                        };
+                        Some(BlockProperties {
+                            placement,
+                            height: block.height,
+                            style: block.style,
+                            render: block.render,
+                            priority: 0,
+                        })
+                    }),
+                    Some(Autoscroll::fit()),
+                    cx,
+                );
 
-        self.editor.update(cx, |editor, cx| {
-            editor.remove_blocks(blocks_to_remove, None, cx);
-            let block_ids = editor.insert_blocks(
-                blocks_to_add.into_iter().flat_map(|block| {
-                    let placement = match block.placement {
-                        BlockPlacement::Above((excerpt_id, text_anchor)) => BlockPlacement::Above(
-                            excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
-                        ),
-                        BlockPlacement::Below((excerpt_id, text_anchor)) => BlockPlacement::Below(
-                            excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
-                        ),
-                        BlockPlacement::Replace(_) => {
-                            unreachable!(
-                                "no Replace block should have been pushed to blocks_to_add"
-                            )
-                        }
-                    };
-                    Some(BlockProperties {
-                        placement,
-                        height: block.height,
-                        style: block.style,
-                        render: block.render,
-                        priority: 0,
-                    })
-                }),
-                Some(Autoscroll::fit()),
-                cx,
-            );
+                let mut block_ids = block_ids.into_iter();
+                this.update(cx, |this, _| {
+                    for ix in new_group_ixs {
+                        let group_state = &mut this.path_states[path_ix].diagnostic_groups[ix];
+                        group_state.blocks =
+                            block_ids.by_ref().take(group_state.block_count).collect();
+                    }
+                })?;
+                Result::<(), anyhow::Error>::Ok(())
+            })??;
 
-            let mut block_ids = block_ids.into_iter();
-            for ix in new_group_ixs {
-                let group_state = &mut path_state.diagnostic_groups[ix];
-                group_state.blocks = block_ids.by_ref().take(group_state.block_count).collect();
-            }
-        });
+            this.update_in(&mut cx, |this, window, cx| {
+                if this.path_states[path_ix].diagnostic_groups.is_empty() {
+                    this.path_states.remove(path_ix);
+                }
 
-        if path_state.diagnostic_groups.is_empty() {
-            self.path_states.remove(path_ix);
-        }
+                this.editor.update(cx, |editor, cx| {
+                    let groups;
+                    let mut selections;
+                    let new_excerpt_ids_by_selection_id;
+                    if was_empty {
+                        groups = this.path_states.first()?.diagnostic_groups.as_slice();
+                        new_excerpt_ids_by_selection_id =
+                            [(0, ExcerptId::min())].into_iter().collect();
+                        selections = vec![Selection {
+                            id: 0,
+                            start: 0,
+                            end: 0,
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        }];
+                    } else {
+                        groups = this.path_states.get(path_ix)?.diagnostic_groups.as_slice();
+                        new_excerpt_ids_by_selection_id =
+                            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                                s.refresh()
+                            });
+                        selections = editor.selections.all::<usize>(cx);
+                    }
 
-        self.editor.update(cx, |editor, cx| {
-            let groups;
-            let mut selections;
-            let new_excerpt_ids_by_selection_id;
-            if was_empty {
-                groups = self.path_states.first()?.diagnostic_groups.as_slice();
-                new_excerpt_ids_by_selection_id = [(0, ExcerptId::min())].into_iter().collect();
-                selections = vec![Selection {
-                    id: 0,
-                    start: 0,
-                    end: 0,
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                }];
-            } else {
-                groups = self.path_states.get(path_ix)?.diagnostic_groups.as_slice();
-                new_excerpt_ids_by_selection_id =
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| s.refresh());
-                selections = editor.selections.all::<usize>(cx);
-            }
-
-            // If any selection has lost its position, move it to start of the next primary diagnostic.
-            let snapshot = editor.snapshot(window, cx);
-            for selection in &mut selections {
-                if let Some(new_excerpt_id) = new_excerpt_ids_by_selection_id.get(&selection.id) {
-                    let group_ix = match groups.binary_search_by(|probe| {
-                        probe
-                            .excerpts
-                            .last()
-                            .unwrap()
-                            .cmp(new_excerpt_id, &snapshot.buffer_snapshot)
-                    }) {
-                        Ok(ix) | Err(ix) => ix,
-                    };
-                    if let Some(group) = groups.get(group_ix) {
-                        if let Some(offset) = excerpts_snapshot
-                            .anchor_in_excerpt(
-                                group.excerpts[group.primary_excerpt_ix],
-                                group.primary_diagnostic.range.start,
-                            )
-                            .map(|anchor| anchor.to_offset(&excerpts_snapshot))
+                    // If any selection has lost its position, move it to start of the next primary diagnostic.
+                    let snapshot = editor.snapshot(window, cx);
+                    for selection in &mut selections {
+                        if let Some(new_excerpt_id) =
+                            new_excerpt_ids_by_selection_id.get(&selection.id)
                         {
-                            selection.start = offset;
-                            selection.end = offset;
+                            let group_ix = match groups.binary_search_by(|probe| {
+                                probe
+                                    .excerpts
+                                    .last()
+                                    .unwrap()
+                                    .cmp(new_excerpt_id, &snapshot.buffer_snapshot)
+                            }) {
+                                Ok(ix) | Err(ix) => ix,
+                            };
+                            if let Some(group) = groups.get(group_ix) {
+                                if let Some(offset) = excerpts_snapshot
+                                    .anchor_in_excerpt(
+                                        group.excerpts[group.primary_excerpt_ix],
+                                        group.primary_diagnostic.range.start,
+                                    )
+                                    .map(|anchor| anchor.to_offset(&excerpts_snapshot))
+                                {
+                                    selection.start = offset;
+                                    selection.end = offset;
+                                }
+                            }
                         }
                     }
+                    editor.change_selections(None, window, cx, |s| {
+                        s.select(selections);
+                    });
+                    Some(())
+                });
+            })?;
+
+            this.update_in(&mut cx, |this, window, cx| {
+                if this.path_states.is_empty() {
+                    if this.editor.focus_handle(cx).is_focused(window) {
+                        window.focus(&this.focus_handle);
+                    }
+                } else if this.focus_handle.is_focused(window) {
+                    let focus_handle = this.editor.focus_handle(cx);
+                    window.focus(&focus_handle);
                 }
-            }
-            editor.change_selections(None, window, cx, |s| {
-                s.select(selections);
-            });
-            Some(())
-        });
 
-        if self.path_states.is_empty() {
-            if self.editor.focus_handle(cx).is_focused(window) {
-                window.focus(&self.focus_handle);
-            }
-        } else if self.focus_handle.is_focused(window) {
-            let focus_handle = self.editor.focus_handle(cx);
-            window.focus(&focus_handle);
-        }
+                #[cfg(test)]
+                this.check_invariants(cx);
 
-        #[cfg(test)]
-        self.check_invariants(cx);
-
-        cx.notify();
+                cx.notify();
+            })
+        })
     }
 
     #[cfg(test)]
@@ -978,29 +1021,30 @@ fn compare_diagnostics(
 const DIAGNOSTIC_EXPANSION_ROW_LIMIT: u32 = 32;
 
 fn context_range_for_entry(
-    entry: &DiagnosticEntry<Point>,
+    range: Range<Point>,
     context: u32,
-    snapshot: &BufferSnapshot,
-    cx: &App,
-) -> Range<Point> {
-    if let Some(rows) = heuristic_syntactic_expand(
-        entry.range.clone(),
-        DIAGNOSTIC_EXPANSION_ROW_LIMIT,
-        snapshot,
-        cx,
-    ) {
-        return Range {
-            start: Point::new(*rows.start(), 0),
-            end: snapshot.clip_point(Point::new(*rows.end(), u32::MAX), Bias::Left),
-        };
-    }
-    Range {
-        start: Point::new(entry.range.start.row.saturating_sub(context), 0),
-        end: snapshot.clip_point(
-            Point::new(entry.range.end.row + context, u32::MAX),
-            Bias::Left,
-        ),
-    }
+    snapshot: BufferSnapshot,
+    cx: AsyncApp,
+) -> Task<Range<Point>> {
+    cx.spawn(move |cx| async move {
+        if let Some(rows) = heuristic_syntactic_expand(
+            range.clone(),
+            DIAGNOSTIC_EXPANSION_ROW_LIMIT,
+            snapshot.clone(),
+            cx,
+        )
+        .await
+        {
+            return Range {
+                start: Point::new(*rows.start(), 0),
+                end: snapshot.clip_point(Point::new(*rows.end(), u32::MAX), Bias::Left),
+            };
+        }
+        Range {
+            start: Point::new(range.start.row.saturating_sub(context), 0),
+            end: snapshot.clip_point(Point::new(range.end.row + context, u32::MAX), Bias::Left),
+        }
+    })
 }
 
 /// Expands the input range using syntax information from TreeSitter. This expansion will be limited
@@ -1008,11 +1052,11 @@ fn context_range_for_entry(
 ///
 /// If there is a containing outline item that is less than `max_row_count`, it will be returned.
 /// Otherwise fairly arbitrary heuristics are applied to attempt to return a logical block of code.
-fn heuristic_syntactic_expand<'a>(
+async fn heuristic_syntactic_expand(
     input_range: Range<Point>,
     max_row_count: u32,
-    snapshot: &'a BufferSnapshot,
-    cx: &'a App,
+    snapshot: BufferSnapshot,
+    cx: AsyncApp,
 ) -> Option<RangeInclusive<BufferRow>> {
     let input_row_count = input_range.end.row - input_range.start.row;
     if input_row_count > max_row_count {
@@ -1042,49 +1086,62 @@ fn heuristic_syntactic_expand<'a>(
     }
 
     let mut node = snapshot.syntax_ancestor(input_range.clone())?;
+
     loop {
         let node_start = Point::from_ts_point(node.start_position());
         let node_end = Point::from_ts_point(node.end_position());
         let node_range = node_start..node_end;
         let row_count = node_end.row - node_start.row + 1;
+        let mut ancestor_range = None;
+        let reached_outline_node = cx.background_executor().scoped({
+                 let node_range = node_range.clone();
+                 let outline_range = outline_range.clone();
+                 let ancestor_range =  &mut ancestor_range;
+                |scope| {scope.spawn(async move {
+                    // Stop if we've exceeded the row count or reached an outline node. Then, find the interval
+                    // of node children which contains the query range. For example, this allows just returning
+                    // the header of a declaration rather than the entire declaration.
+                    if row_count > max_row_count || outline_range == Some(node_range.clone()) {
+                        let mut cursor = node.walk();
+                        let mut included_child_start = None;
+                        let mut included_child_end = None;
+                        let mut previous_end = node_start;
+                        if cursor.goto_first_child() {
+                            loop {
+                                let child_node = cursor.node();
+                                let child_range = previous_end..Point::from_ts_point(child_node.end_position());
+                                if included_child_start.is_none() && child_range.contains(&input_range.start) {
+                                    included_child_start = Some(child_range.start);
+                                }
+                                if child_range.contains(&input_range.end) {
+                                    included_child_end = Some(child_range.end);
+                                }
+                                previous_end = child_range.end;
+                                if !cursor.goto_next_sibling() {
+                                    break;
+                                }
+                            }
+                        }
+                        let end = included_child_end.unwrap_or(node_range.end);
+                        if let Some(start) = included_child_start {
+                            let row_count = end.row - start.row;
+                            if row_count < max_row_count {
+                                *ancestor_range = Some(Some(RangeInclusive::new(start.row, end.row)));
+                                return;
+                            }
+                        }
 
-        // Stop if we've exceeded the row count or reached an outline node. Then, find the interval
-        // of node children which contains the query range. For example, this allows just returning
-        // the header of a declaration rather than the entire declaration.
-        if row_count > max_row_count || outline_range == Some(node_range.clone()) {
-            let mut cursor = node.walk();
-            let mut included_child_start = None;
-            let mut included_child_end = None;
-            let mut previous_end = node_start;
-            if cursor.goto_first_child() {
-                loop {
-                    let child_node = cursor.node();
-                    let child_range = previous_end..Point::from_ts_point(child_node.end_position());
-                    if included_child_start.is_none() && child_range.contains(&input_range.start) {
-                        included_child_start = Some(child_range.start);
+                        log::info!(
+                            "Expanding to ancestor started on {} node exceeding row limit of {max_row_count}.",
+                            node.grammar_name()
+                        );
+                        *ancestor_range = Some(None);
                     }
-                    if child_range.contains(&input_range.end) {
-                        included_child_end = Some(child_range.end);
-                    }
-                    previous_end = child_range.end;
-                    if !cursor.goto_next_sibling() {
-                        break;
-                    }
-                }
-            }
-            let end = included_child_end.unwrap_or(node_range.end);
-            if let Some(start) = included_child_start {
-                let row_count = end.row - start.row;
-                if row_count < max_row_count {
-                    return Some(RangeInclusive::new(start.row, end.row));
-                }
-            }
-
-            log::info!(
-                "Expanding to ancestor started on {} node exceeding row limit of {max_row_count}.",
-                node.grammar_name()
-            );
-            return None;
+                })
+            }});
+        reached_outline_node.await;
+        if let Some(node) = ancestor_range {
+            return node;
         }
 
         let node_name = node.grammar_name();
@@ -1093,7 +1150,9 @@ fn heuristic_syntactic_expand<'a>(
             return Some(node_row_range);
         } else if node_name.ends_with("statement") || node_name.ends_with("declaration") {
             // Expand to the nearest dedent or blank line for statements and declarations.
-            let tab_size = snapshot.settings_at(node_range.start, cx).tab_size.get();
+            let tab_size = cx
+                .update(|cx| snapshot.settings_at(node_range.start, cx).tab_size.get())
+                .ok()?;
             let indent_level = snapshot
                 .line_indent_for_row(node_range.start.row)
                 .len(tab_size);
@@ -1101,7 +1160,9 @@ fn heuristic_syntactic_expand<'a>(
             let Some(start_row) = (node_range.start.row.saturating_sub(rows_remaining)
                 ..node_range.start.row)
                 .rev()
-                .find(|row| is_line_blank_or_indented_less(indent_level, *row, tab_size, snapshot))
+                .find(|row| {
+                    is_line_blank_or_indented_less(indent_level, *row, tab_size, &snapshot.clone())
+                })
             else {
                 return Some(node_row_range);
             };
@@ -1111,7 +1172,9 @@ fn heuristic_syntactic_expand<'a>(
                     node_range.end.row + rows_remaining + 1,
                     snapshot.row_count(),
                 ))
-                .find(|row| is_line_blank_or_indented_less(indent_level, *row, tab_size, snapshot))
+                .find(|row| {
+                    is_line_blank_or_indented_less(indent_level, *row, tab_size, &snapshot.clone())
+                })
             else {
                 return Some(node_row_range);
             };

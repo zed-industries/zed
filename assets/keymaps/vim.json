@@ -293,6 +293,7 @@
       "!": "vim::ShellCommand",
       "i": ["vim::PushObject", { "around": false }],
       "a": ["vim::PushObject", { "around": true }],
+      "g r": ["vim::Paste", { "preserve_clipboard": true }],
       "g c": "vim::ToggleComments",
       "g q": "vim::Rewrap",
       "\"": "vim::PushRegister",
