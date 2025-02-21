@@ -3556,6 +3556,9 @@ impl EditorElement {
         }
     }
 
+    const EDIT_PREDICTION_POPOVER_PADDING_X: Pixels = Pixels(24.);
+    const EDIT_PREDICTION_POPOVER_PADDING_Y: Pixels = Pixels(2.);
+
     #[allow(clippy::too_many_arguments)]
     fn layout_edit_prediction_popover(
         &self,
@@ -3574,9 +3577,6 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        const PADDING_X: Pixels = Pixels(24.);
-        const PADDING_Y: Pixels = Pixels(2.);
-
         let editor = self.editor.read(cx);
         let active_inline_completion = editor.active_inline_completion.as_ref()?;
 
@@ -3709,7 +3709,10 @@ impl EditorElement {
                         .into_any();
 
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-                    let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
+                    let offset = point(
+                        (text_bounds.size.width - size.width) / 2.,
+                        Self::EDIT_PREDICTION_POPOVER_PADDING_Y,
+                    );
 
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
                     Some(element)
@@ -3726,29 +3729,27 @@ impl EditorElement {
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point(
                         (text_bounds.size.width - size.width) / 2.,
-                        text_bounds.size.height - size.height - PADDING_Y,
+                        text_bounds.size.height
+                            - size.height
+                            - Self::EDIT_PREDICTION_POPOVER_PADDING_Y,
                     );
 
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
                     Some(element)
                 } else {
-                    let mut element = editor
-                        .render_edit_prediction_line_popover("Jump to Edit", None, window, cx)?
-                        .into_any();
-                    let target_line_end = DisplayPoint::new(
-                        target_display_point.row(),
-                        editor_snapshot.line_len(target_display_point.row()),
-                    );
-                    let origin = self.editor.update(cx, |editor, _cx| {
-                        editor.display_to_pixel_point(target_line_end, editor_snapshot, window)
-                    })?;
-
-                    element.prepaint_as_root(
-                        clamp_start(start_point + origin + point(PADDING_X, px(0.))),
-                        AvailableSpace::min_size(),
+                    let element = self.layout_edit_prediction_end_of_line_popover(
+                        "Jump to Edit",
+                        editor_snapshot,
+                        visible_row_range,
+                        target_display_point,
+                        line_height,
+                        scroll_pixel_position,
+                        content_origin,
+                        editor_width,
                         window,
                         cx,
-                    );
+                    )?;
+
                     Some(element)
                 }
             }
@@ -3786,32 +3787,18 @@ impl EditorElement {
                         let range = &edits.first()?.0;
                         let target_display_point = range.end.to_display_point(editor_snapshot);
 
-                        let target_line_end = DisplayPoint::new(
-                            target_display_point.row(),
-                            editor_snapshot.line_len(target_display_point.row()),
-                        );
-                        let (mut element, origin) = self.editor.update(cx, |editor, cx| {
-                            Some((
-                                editor
-                                    .render_edit_prediction_line_popover(
-                                        "Accept", None, window, cx,
-                                    )?
-                                    .into_any(),
-                                editor.display_to_pixel_point(
-                                    target_line_end,
-                                    editor_snapshot,
-                                    window,
-                                )?,
-                            ))
-                        })?;
-
-                        element.prepaint_as_root(
-                            clamp_start(start_point + origin + point(PADDING_X, px(0.))),
-                            AvailableSpace::min_size(),
+                        return self.layout_edit_prediction_end_of_line_popover(
+                            "Accept",
+                            editor_snapshot,
+                            visible_row_range,
+                            target_display_point,
+                            line_height,
+                            scroll_pixel_position,
+                            content_origin,
+                            editor_width,
                             window,
                             cx,
                         );
-                        return Some(element);
                     }
                     EditDisplayMode::Inline => return None,
                     EditDisplayMode::DiffPopover => {}
@@ -3887,8 +3874,10 @@ impl EditorElement {
                         ..Default::default()
                     });
 
-                let x_after_longest =
-                    text_bounds.origin.x + longest_line_width + PADDING_X - scroll_pixel_position.x;
+                let x_after_longest = text_bounds.origin.x
+                    + longest_line_width
+                    + Self::EDIT_PREDICTION_POPOVER_PADDING_X
+                    - scroll_pixel_position.x;
 
                 let element_bounds = element.layout_as_root(AvailableSpace::min_size(), window, cx);
 
@@ -3945,6 +3934,70 @@ impl EditorElement {
                 None
             }
         }
+    }
+
+    fn layout_edit_prediction_end_of_line_popover(
+        &self,
+        label: &'static str,
+        editor_snapshot: &EditorSnapshot,
+        visible_row_range: Range<DisplayRow>,
+        target_display_point: DisplayPoint,
+        line_height: Pixels,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        content_origin: gpui::Point<Pixels>,
+        editor_width: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        const ICON_SIZE: Pixels = Pixels(16.);
+
+        let target_line_end = DisplayPoint::new(
+            target_display_point.row(),
+            editor_snapshot.line_len(target_display_point.row()),
+        );
+
+        let mut element = self
+            .editor
+            .read(cx)
+            .render_edit_prediction_line_popover(label, None, window, cx)?
+            .into_any();
+
+        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+
+        let line_origin = self.editor.update(cx, |editor, _cx| {
+            editor.display_to_pixel_point(target_line_end, editor_snapshot, window)
+        })?;
+
+        let start_point = content_origin - point(scroll_pixel_position.x, Pixels::ZERO);
+        let mut origin = start_point
+            + line_origin
+            + point(Self::EDIT_PREDICTION_POPOVER_PADDING_X, Pixels::ZERO);
+        origin.x = origin.x.max(content_origin.x);
+
+        let max_x = content_origin.x + editor_width - size.width;
+
+        if origin.x > max_x {
+            let offset = line_height + Self::EDIT_PREDICTION_POPOVER_PADDING_Y;
+
+            let icon = if visible_row_range.contains(&(target_display_point.row() + 2)) {
+                origin.y += offset;
+                IconName::ArrowUp
+            } else {
+                origin.y -= offset;
+                IconName::ArrowDown
+            };
+
+            element = self
+                .editor
+                .read(cx)
+                .render_edit_prediction_line_popover(label, Some(icon), window, cx)?
+                .into_any();
+
+            origin.x = max_x - ICON_SIZE;
+        }
+
+        element.prepaint_as_root(origin, AvailableSpace::min_size(), window, cx);
+        Some(element)
     }
 
     fn layout_mouse_context_menu(
