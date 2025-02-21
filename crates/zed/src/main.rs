@@ -45,7 +45,10 @@ use std::{
     process,
     sync::Arc,
 };
-use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
+use theme::{
+    ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
+    ThemeSettings,
+};
 use time::UtcOffset;
 use util::{maybe, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -1066,7 +1069,11 @@ fn load_embedded_fonts(cx: &App) {
         .unwrap();
 }
 
-/// Eagerly loads the active theme and icon theme based on the settings.
+/// Eagerly loads the active theme and icon theme based on the selections in the
+/// theme settings.
+///
+/// This fast path exists to load these themes as soon as possible so the user
+/// doesn't see the default themes while waiting on extensions to load.
 fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
     let extension_store = ExtensionStore::global(cx);
     let theme_registry = ThemeRegistry::global(cx);
@@ -1075,10 +1082,7 @@ fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
 
     if let Some(theme_selection) = theme_settings.theme_selection.as_ref() {
         let theme_name = theme_selection.theme(appearance);
-        if matches!(
-            theme_registry.get(theme_name),
-            Err(theme::ThemeNotFoundError(_))
-        ) {
+        if matches!(theme_registry.get(theme_name), Err(ThemeNotFoundError(_))) {
             if let Some(theme_path) = extension_store.read(cx).path_to_extension_theme(theme_name) {
                 cx.spawn({
                     let theme_registry = theme_registry.clone();
@@ -1100,7 +1104,7 @@ fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
         let icon_theme_name = icon_theme_selection.icon_theme(appearance);
         if matches!(
             theme_registry.get_icon_theme(icon_theme_name),
-            Err(theme::IconThemeNotFoundError(_))
+            Err(IconThemeNotFoundError(_))
         ) {
             if let Some((icon_theme_path, icons_root_path)) = extension_store
                 .read(cx)
