@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use gpui::{Action, AnyElement, AnyView, AppContext as _, FocusHandle, IntoElement, Render};
 use settings::Settings;
 use theme::ThemeSettings;
