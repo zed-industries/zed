@@ -1,4 +1,4 @@
-(subject) @markup.heading
+(subject) @heading.markup
 (path) @string.special.path
 (branch) @string.special.symbol
 (commit) @constant

@@ -8,8 +8,8 @@
   (atx_heading)
   (setext_heading)
   (thematic_break)
-] @markup.heading
-(setext_heading (paragraph) @markup.heading)
+] @heading.markup
+(setext_heading (paragraph) @heading.markup)
 
 [
   (list_marker_plus)
@@ -27,8 +27,8 @@
 
 (fenced_code_block
   (info_string
-    (language) @punctuation.markup.embedded))
-(fenced_code_block_delimiter) @punctuation.markup.embedded
+    (language) @punctuation.embedded.markup))
+(fenced_code_block_delimiter) @punctuation.embedded.markup
 
-(link_reference_definition) @markup.link
+(link_reference_definition) @link.markup
 (link_destination) @markup.link.url
