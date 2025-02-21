@@ -915,17 +915,22 @@ impl FileFinderDelegate {
                 let components = PathComponentSlice::new(&full_path);
                 if let Some(elided_range) = components.elision_range(&full_path_positions) {
                     let elided_len = elided_range.end - elided_range.start;
-                    let placeholder = "…";
-                    full_path_positions.retain_mut(|mat| {
-                        if *mat >= elided_range.end {
-                            *mat -= elided_len;
-                            *mat += placeholder.len();
-                        } else if *mat >= elided_range.start {
-                            return false;
-                        }
-                        true
-                    });
-                    full_path.replace_range(elided_range, placeholder);
+                    let estimated_width = px(0.8)
+                        * (px(file_name.len() as f32) * normal_em
+                            + px((full_path.len() - elided_len) as f32) * small_em);
+                    if estimated_width <= max_width {
+                        let placeholder = "…";
+                        full_path_positions.retain_mut(|mat| {
+                            if *mat >= elided_range.end {
+                                *mat -= elided_len;
+                                *mat += placeholder.len();
+                            } else if *mat >= elided_range.start {
+                                return false;
+                            }
+                            true
+                        });
+                        full_path.replace_range(elided_range, placeholder);
+                    }
                 }
             }
         }
