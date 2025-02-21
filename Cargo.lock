@@ -8758,6 +8758,7 @@ version = "0.1.0"
 dependencies = [
  "paths",
  "release_channel",
+ "windows 0.58.0",
 ]
 
 [[package]]

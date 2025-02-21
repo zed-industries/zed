@@ -17,3 +17,6 @@ release_channel.workspace = true
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 paths.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
