@@ -39,7 +39,7 @@ use workspace::{
     ActivatePaneUp, ActivatePreviousPane, DraggedSelection, DraggedTab, ItemId, MoveItemToPane,
     MoveItemToPaneInDirection, NewTerminal, Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft,
     SplitRight, SplitUp, SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom,
-    Workspace,
+    Workspace, WorkspaceId,
 };
 
 use anyhow::{anyhow, Context as _, Result};
@@ -217,51 +217,58 @@ impl TerminalPanel {
         });
     }
 
+    fn serialization_key(database_id: WorkspaceId) -> String {
+        format!("{:?}-{:?}", TERMINAL_PANEL_KEY, database_id)
+    }
+
     pub async fn load(
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> Result<Entity<Self>> {
-        let serialized_panel = cx
-            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(TERMINAL_PANEL_KEY) })
-            .await
+        let mut terminal_panel = None;
+
+        if let Some(database_id) = workspace
+            .read_with(&mut cx, |workspace, _| workspace.database_id())
             .log_err()
             .flatten()
-            .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
-            .transpose()
-            .log_err()
-            .flatten();
-
-        let terminal_panel = workspace
-            .update_in(&mut cx, |workspace, window, cx| {
-                match serialized_panel.zip(workspace.database_id()) {
-                    Some((serialized_panel, database_id)) => deserialize_terminal_panel(
-                        workspace.weak_handle(),
-                        workspace.project().clone(),
-                        database_id,
-                        serialized_panel,
-                        window,
-                        cx,
-                    ),
-                    None => Task::ready(Ok(cx.new(|cx| TerminalPanel::new(workspace, window, cx)))),
-                }
-            })?
-            .await?;
-
-        if let Some(workspace) = workspace.upgrade() {
-            terminal_panel
-                .update_in(&mut cx, |_, window, cx| {
-                    cx.subscribe_in(&workspace, window, |terminal_panel, _, e, window, cx| {
-                        if let workspace::Event::SpawnTask {
-                            action: spawn_in_terminal,
-                        } = e
-                        {
-                            terminal_panel.spawn_task(spawn_in_terminal, window, cx);
-                        };
-                    })
-                    .detach();
+        {
+            if let Some(serialized_panel) = cx
+                .background_spawn(async move {
+                    KEY_VALUE_STORE.read_kvp(&TerminalPanel::serialization_key(database_id))
                 })
-                .ok();
+                .await
+                .log_err()
+                .flatten()
+                .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
+                .transpose()
+                .log_err()
+                .flatten()
+            {
+                if let Ok(serialized) = workspace
+                    .update_in(&mut cx, |workspace, window, cx| {
+                        deserialize_terminal_panel(
+                            workspace.weak_handle(),
+                            workspace.project().clone(),
+                            database_id,
+                            serialized_panel,
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await
+                {
+                    terminal_panel = Some(serialized);
+                }
+            }
         }
+
+        let terminal_panel = if let Some(panel) = terminal_panel {
+            panel
+        } else {
+            workspace.update_in(&mut cx, |workspace, window, cx| {
+                cx.new(|cx| TerminalPanel::new(workspace, window, cx))
+            })?
+        };
 
         // Since panels/docks are loaded outside from the workspace, we cleanup here, instead of through the workspace.
         if let Some(workspace) = workspace.upgrade() {
@@ -727,6 +734,14 @@ impl TerminalPanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let height = self.height;
         let width = self.width;
+        let Some(database_id) = self
+            .workspace
+            .update(cx, |workspace, _| workspace.database_id())
+            .log_err()
+            .flatten()
+        else {
+            return;
+        };
         self.pending_serialization = cx.spawn(|terminal_panel, mut cx| async move {
             cx.background_executor()
                 .timer(Duration::from_millis(50))
@@ -745,7 +760,7 @@ impl TerminalPanel {
                 async move {
                     KEY_VALUE_STORE
                         .write_kvp(
-                            TERMINAL_PANEL_KEY.into(),
+                            TerminalPanel::serialization_key(database_id),
                             serde_json::to_string(&SerializedTerminalPanel {
                                 items,
                                 active_item_id: None,
@@ -1351,8 +1366,10 @@ impl Panel for TerminalPanel {
             DockPosition::Left | DockPosition::Right => self.width = size,
             DockPosition::Bottom => self.height = size,
         }
-        self.serialize(cx);
         cx.notify();
+        cx.defer_in(window, |this, _, cx| {
+            this.serialize(cx);
+        })
     }
 
     fn is_zoomed(&self, _window: &Window, cx: &App) -> bool {
