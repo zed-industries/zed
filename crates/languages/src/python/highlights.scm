@@ -5,8 +5,8 @@
   (#match? @type.class "^_*[A-Z][A-Za-z0-9_]*$"))
 
 ; ALL_CAPS for constants:
-((identifier) @constant.variable
-  (#match? @constant.variable "^_*[A-Z][A-Z0-9_]*$"))
+((identifier) @constant
+  (#match? @constant "^_*[A-Z][A-Z0-9_]*$"))
 
 (identifier) @variable
 (attribute attribute: (identifier) @property)
