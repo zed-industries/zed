@@ -12990,14 +12990,13 @@ impl Editor {
         })
     }
 
-    fn toggle_diff_hunks_in_ranges_narrow(
-        &mut self,
-        ranges: Vec<Range<Anchor>>,
-        cx: &mut Context<'_, Editor>,
-    ) {
+    fn toggle_single_diff_hunk(&mut self, range: Range<Anchor>, cx: &mut Context<Self>) {
         self.buffer.update(cx, |buffer, cx| {
-            let expand = !buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx);
-            buffer.expand_or_collapse_diff_hunks_narrow(ranges, expand, cx);
+            let snapshot = buffer.snapshot(cx);
+            let excerpt_id = range.end.excerpt_id;
+            let point_range = range.to_point(&snapshot);
+            let expand = !buffer.single_hunk_is_expanded(range, cx);
+            buffer.expand_or_collapse_diff_hunks_inner([(point_range, excerpt_id)], expand, cx);
         })
     }
 
