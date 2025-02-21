@@ -123,7 +123,7 @@
 ] @number
 
 (const_spec
-  name: (identifier) @constant.variable)
+  name: (identifier) @constant)
 
 [
   (true)
