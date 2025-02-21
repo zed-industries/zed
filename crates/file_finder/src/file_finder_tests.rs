@@ -19,31 +19,30 @@ fn init_logger() {
 #[test]
 fn test_path_component_slice() {
     #[track_caller]
-    fn check(path: &str, matches: impl IntoIterator<Item = usize>, expected: &str) {
+    fn check(path: &str, budget: usize, matches: impl IntoIterator<Item = usize>, expected: &str) {
         let mut path = path.to_owned();
         let slice = PathComponentSlice::new(&path);
         let matches = Vec::from_iter(matches);
-        // FIXME make it work again
-        if let Some(range) = slice.elision_range(0, &matches) {
+        if let Some(range) = slice.elision_range(budget - 1, &matches) {
             path.replace_range(range, "…");
         }
         assert_eq!(path, expected);
     }
 
-    check("p/a/b/c/d/", [], "p/…/d/");
-    check("p/a/b/c/d/", [2, 4, 6], "p/a/b/c/d/");
-    check("p/a/b/c/d/", [2, 6], "p/a/…/c/d/");
-    check("p/a/b/c/d/", [6], "p/…/c/d/");
+    check("p/a/b/c/d/", 6, [], "p/…/d/");
+    check("p/a/b/c/d/", 1, [2, 4, 6], "p/a/b/c/d/");
+    check("p/a/b/c/d/", 10, [2, 6], "p/a/…/c/d/");
+    check("p/a/b/c/d/", 8, [6], "p/…/c/d/");
 
-    check("p/a/b/c/d", [], "p/…/d");
-    check("p/a/b/c/d", [2, 4, 6], "p/a/b/c/d");
-    check("p/a/b/c/d", [2, 6], "p/a/…/c/d");
-    check("p/a/b/c/d", [6], "p/…/c/d");
+    check("p/a/b/c/d", 5, [], "p/…/d");
+    check("p/a/b/c/d", 9, [2, 4, 6], "p/a/b/c/d");
+    check("p/a/b/c/d", 9, [2, 6], "p/a/…/c/d");
+    check("p/a/b/c/d", 7, [6], "p/…/c/d");
 
-    check("/p/a/b/c/d/", [], "/p/…/d/");
-    check("/p/a/b/c/d/", [3, 5, 7], "/p/a/b/c/d/");
-    check("/p/a/b/c/d/", [3, 7], "/p/a/…/c/d/");
-    check("/p/a/b/c/d/", [7], "/p/…/c/d/");
+    check("/p/a/b/c/d/", 7, [], "/p/…/d/");
+    check("/p/a/b/c/d/", 11, [3, 5, 7], "/p/a/b/c/d/");
+    check("/p/a/b/c/d/", 11, [3, 7], "/p/a/…/c/d/");
+    check("/p/a/b/c/d/", 9, [7], "/p/…/c/d/");
 }
 
 #[test]

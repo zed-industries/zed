@@ -1484,10 +1484,12 @@ impl<'a> PathComponentSlice<'a> {
             let mut len_with_elision = self.path_str.len();
             let mut i = eligible_range.start;
             while i < eligible_range.end {
-                if pick_from_end {
-                    i = eligible_range.end - i + eligible_range.start - 1;
-                }
-                len_with_elision -= self.component_ranges[i]
+                let x = if pick_from_end {
+                    eligible_range.end - i + eligible_range.start - 1
+                } else {
+                    i
+                };
+                len_with_elision -= self.component_ranges[x]
                     .0
                     .as_os_str()
                     .as_encoded_bytes()
@@ -1501,9 +1503,11 @@ impl<'a> PathComponentSlice<'a> {
             if len_with_elision > budget {
                 return None;
             } else if pick_from_end {
-                i..eligible_range.end
+                let x = eligible_range.end - i + eligible_range.start - 1;
+                x..eligible_range.end
             } else {
-                eligible_range.start..i + 1
+                let x = i;
+                eligible_range.start..x + 1
             }
         };
 
