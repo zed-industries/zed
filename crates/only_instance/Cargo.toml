@@ -1,0 +1,19 @@
+[package]
+name = "only_instance"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/only_instance.rs"
+
+[dependencies]
+# anyhow.workspace = true
+release_channel.workspace = true
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+paths.workspace = true

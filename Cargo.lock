@@ -8753,6 +8753,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "945462a4b81e43c4e3ba96bd7b49d834c6f61198356aa858733bc4acf3cbe62e"
 
 [[package]]
+name = "only_instance"
+version = "0.1.0"
+dependencies = [
+ "paths",
+ "release_channel",
+]
+
+[[package]]
 name = "oo7"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
