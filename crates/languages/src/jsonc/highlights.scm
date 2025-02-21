@@ -11,6 +11,9 @@
 [
   (true)
   (false)
+] @boolean
+
+[
   (null)
 ] @constant
 

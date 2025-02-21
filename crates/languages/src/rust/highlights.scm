@@ -100,6 +100,7 @@
   "mod"
   "move"
   "pub"
+  "raw"
   "ref"
   "return"
   "static"

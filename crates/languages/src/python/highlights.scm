@@ -95,9 +95,12 @@
 ; Literals
 
 [
-  (none)
   (true)
   (false)
+] @boolean
+
+[
+  (none)
   (ellipsis)
 ] @constant.builtin
 
