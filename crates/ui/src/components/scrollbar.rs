@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use std::{any::Any, cell::Cell, fmt::Debug, ops::Range, rc::Rc, sync::Arc};
 
 use crate::{prelude::*, px, relative, IntoElement};

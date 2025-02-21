@@ -99,6 +99,7 @@
   "mod"
   "move"
   "pub"
+  "raw"
   "ref"
   "return"
   "static"
@@ -129,7 +130,7 @@
   (float_literal)
 ] @number
 
-(boolean_literal) @constant
+(boolean_literal) @boolean
 
 [
   (line_comment)

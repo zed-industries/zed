@@ -118,6 +118,9 @@
 [
   (true)
   (false)
+] @boolean
+
+[
   (nil)
   (iota)
 ] @constant.builtin
