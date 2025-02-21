@@ -1,4 +1,4 @@
-use crate::{prelude::*, Indicator};
+use crate::prelude::*;
 
 use gpui::{img, AnyElement, Hsla, ImageSource, Img, IntoElement, Styled};
 

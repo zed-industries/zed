@@ -106,7 +106,6 @@ impl ComponentPreview {
             .py_2()
             .child(
                 v_flex()
-                    .bg(cx.theme().colors().text.opacity(0.05))
                     .border_1()
                     .border_color(cx.theme().colors().border)
                     .rounded_md()
