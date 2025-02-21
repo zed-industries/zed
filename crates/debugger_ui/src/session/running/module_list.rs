@@ -42,11 +42,6 @@ impl ModuleList {
         }
     }
 
-    pub fn on_module_event(&mut self, event: &ModuleEvent, cx: &mut Context<Self>) {
-        self.session
-            .update(cx, |state, cx| state.handle_module_event(event, cx));
-    }
-
     fn render_entry(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let Some(module) = maybe!({
             self.session
