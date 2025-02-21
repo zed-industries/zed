@@ -805,8 +805,10 @@ impl Vim {
         cx: &mut App,
     ) {
         cx.update_global::<VimGlobals, ()>(|vim_globals, cx| {
-            let marks_state = vim_globals.marks.get(&workspace_id);
-            marks_state.unwrap().update(cx, |ms, cx| {
+            let Some(marks_state) = vim_globals.marks.get(&workspace_id) else {
+                return;
+            };
+            marks_state.update(cx, |ms, cx| {
                 ms.set_mark(
                     name.clone(),
                     buffer_entity,
@@ -816,24 +818,6 @@ impl Vim {
                 );
             });
         });
-        // let Some(editor) = self.editor() else {
-        //     return;
-        // };
-        // match name {
-        //     m if m.starts_with(|c: char| c.is_uppercase())
-        //         || m.starts_with(|c: char| c.is_digit(10)) =>
-        //     {
-        //         editor.update(cx, |editor, cx| {
-        //             VimGlobals::set_global_mark(editor, m.clone(), &positions, cx);
-        //         });
-        //     } // global mark
-        //     m => {
-        //         editor.update(cx, |editor, cx| {
-        //             VimGlobals::set_local_mark(editor, m.clone(), &positions, cx);
-        //         });
-        //         // let _ = self.marks.insert(m, positions);
-        //     } // local mark
-        // };
     }
 
     fn get_local_mark(
@@ -842,33 +826,6 @@ impl Vim {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Vec<Anchor>> {
-        // let workspace_id = self
-        //     .workspace(window)
-        //     .and_then(|w| w.read(cx).database_id())?;
-
-        // let path = editor
-        //     .buffer()
-        //     .read(cx)
-        //     .as_singleton()
-        //     .and_then(|buffer| buffer.read(cx).file())?
-        //     .path()
-        //     .to_path_buf();
-        // let map = cx
-        //     .global::<VimGlobals>()
-        //     .local_marks
-        //     .get(&(workspace_id, path.into()))?;
-
-        // let points = map.get(&name)?;
-        // Some(
-        //     points
-        //         .iter()
-        //         .map(|point| {
-        //             let snapshot = editor.buffer().read(cx).snapshot(cx);
-        //             snapshot.anchor_before(point.to_offset(&snapshot))
-        //         })
-        //         .collect(),
-        // )
-
         VimGlobals::update_global(cx, |globals, cx| {
             let workspace_id = self.workspace(window)?.read(cx).database_id()?;
             globals.marks.get_mut(&workspace_id)?.update(cx, |ms, cx| {
@@ -894,6 +851,21 @@ impl Vim {
                 let path = ms.get_path_for_mark(name)?;
                 Some((path, anchors))
             })
+        })
+    }
+
+    fn get_harpoon_mark(
+        &self,
+        name: String,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Arc<Path>> {
+        let workspace_id = self.workspace(window)?.read(cx).database_id()?;
+        VimGlobals::update_global(cx, |vim_globals, cx| {
+            vim_globals
+                .marks
+                .get(&workspace_id)?
+                .update(cx, |ms, cx| ms.global_marks.get(&name.clone()).cloned())
         })
     }
 

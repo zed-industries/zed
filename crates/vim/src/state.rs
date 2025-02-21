@@ -232,7 +232,6 @@ impl MarksCollection {
             MarksCollection::Unloaded(marks) => {
                 let mut new_marks = HashMap::<String, Vec<Anchor>>::default();
                 for (name, points) in marks.iter() {
-                    println!("LOAD| name: {}, points: {:?}", name.clone(), points.clone());
                     let anchors = points
                         .iter()
                         .map(|&p| {
@@ -330,15 +329,39 @@ impl MarksCollection {
             }),
         }
     }
+
+    pub fn write_all_to_db(&mut self, workspace_id: WorkspaceId, path: Arc<Path>, cx: &App) {
+        self.unload(cx);
+        match self {
+            MarksCollection::Loaded { marks, buffer } => {}
+            MarksCollection::Unloaded(marks) => {
+                for (name, points) in marks.iter() {
+                    let Some(value) = marks.get(&name.clone()).and_then(|points| {
+                        let locations: Vec<(u32, u32)> = points
+                            .iter()
+                            .map(|point| (point.row, point.column))
+                            .collect();
+                        serde_json::to_string(&locations).ok()
+                    }) else {
+                        return;
+                    };
+                    cx.background_executor()
+                        .spawn(DB.set_mark(
+                            workspace_id.clone(),
+                            name.clone(),
+                            path.to_path_buf().into_os_string().into_vec(),
+                            value,
+                        ))
+                        .detach_and_log_err(cx);
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct MarksState {
     pub workspace_id: WorkspaceId,
-    // this allows for buffers that are not files to have global marks and for storing anchors in general
-    // pub loaded_marks: HashMap<BufferId, HashMap<String, Vec<Anchor>>>,
-    // pub path_buf_id: HashMap<Arc<Path>, BufferId>,
-    // pub marks: HashMap<Arc<Path>, HashMap<String, Vec<Point>>>,
     pub marks: HashMap<Arc<Path>, MarksCollection>,
     pub global_marks: HashMap<String, Arc<Path>>,
 }
@@ -367,13 +390,6 @@ impl MarksState {
                 continue;
             };
             let path = Arc::from(PathBuf::from(OsString::from_vec(path)));
-            println!(
-                "wid {:?}, path {:?}, name {}, values {}",
-                workspace_id.clone(),
-                path,
-                name,
-                values
-            );
 
             let points: Vec<Point> = value
                 .into_iter()
@@ -402,49 +418,19 @@ impl MarksState {
         // multi_buffer_handle: &Entity<MultiBuffer>,
         cx: &mut Context<Self>,
     ) {
-        let buffer = buffer_handle.read(cx);
-        let id = buffer.remote_id();
-        let Some(path) = buffer.file().map(|file| file.path().clone()) else {
-            return;
-        };
-
-        let Some(marks_collection) = self.marks.get_mut(&path) else {
-            return;
-        };
-
-        // marks_collection.load(buffer_handle, multi_buffer_handle, cx);
-
+        let workspace_id = self.workspace_id.clone();
         cx.subscribe(buffer_handle, move |this, buffer, event, cx| {
             match event {
                 BufferEvent::Edited => {
-                    // if let Some(m) = this.loaded_marks.get(&id) {
-                    //     let mut updates = Vec::new();
-
-                    //     for (name, anchors) in m.iter() {
-                    //         let points_from_anchors: Vec<Point> = anchors
-                    //             .iter()
-                    //             .map(|anchor| anchor.text_anchor.to_point(&snapshot))
-                    //             .collect();
-
-                    //         if let Some(map) = this.marks.get(&path) {
-                    //             if let Some(old_points) = map.get(name) {
-                    //                 if points_from_anchors
-                    //                     .iter()
-                    //                     .zip(old_points.iter())
-                    //                     .any(|(&p1, &p2)| p1 != p2)
-                    //                 {
-                    //                     updates.push((name.clone(), anchors.clone()));
-                    //                 }
-                    //             }
-                    //         }
-                    //     }
-                    //     println!("here");
-                    //     for (name, anchors) in updates {
-                    //         println!("updating: {}", name.clone());
-                    //         this.set_mark(name, &buffer, anchors, cx);
-                    //     }
-                    // }
-                    // recalculate marks for this buffer, and if they've changed update SQLite
+                    // Very inefficient at the moment
+                    let Some(path) = buffer.read(cx).file().map(|file| file.path().clone()) else {
+                        return;
+                    };
+                    let Some(marks_collection) = this.marks.get_mut(&path.clone()) else {
+                        return;
+                    };
+                    marks_collection.write_all_to_db(workspace_id, path, cx);
+                    // Should: recalculate marks for this buffer, and if they've changed update SQLite
                 }
                 // BufferEvent::Operation { operation, is_local } => todo!(),
                 // BufferEvent::DirtyChanged => todo!(),
@@ -458,11 +444,14 @@ impl MarksState {
                 // BufferEvent::Reparsed => todo!(),
                 // BufferEvent::DiagnosticsUpdated => todo!(),
                 // BufferEvent::CapabilityChanged => todo!(),
-                BufferEvent::Closed => {}
+                BufferEvent::Closed => {
+                    // This is not getting called for some reason
+                }
                 // BufferEvent::Discarded => todo!(),
                 _ => {}
             }
-        });
+        })
+        .detach();
         // cx.observe_release(buffer_handle, |buffer, cx| self.loaded_marks.remove(&id))
         // I think ^ is covered by BufferEvent::Closed event
     }
@@ -475,8 +464,6 @@ impl MarksState {
         anchors: Vec<Anchor>,
         cx: &mut Context<Self>,
     ) {
-        // the catch here is we may need to subscribe to the buffer.
-
         let Some(path) = buffer_handle
             .read(cx)
             .file()
@@ -484,16 +471,30 @@ impl MarksState {
         else {
             return;
         };
+        if name.starts_with(|c: char| c.is_digit(10)) {
+            self.global_marks.insert(name.clone(), path.clone());
+            cx.background_executor()
+                .spawn(DB.set_global_mark_path(
+                    self.workspace_id,
+                    name.clone(),
+                    path.to_path_buf().into_os_string().into_vec(),
+                ))
+                .detach_and_log_err(cx);
+            return;
+        }
 
-        let Some(marks_collection) = self.marks.get_mut(&path) else {
+        if !self.marks.contains_key(&path.clone()) {
+            self.marks.insert(
+                path.clone(),
+                MarksCollection::Unloaded(HashMap::<String, Vec<Point>>::default()),
+            );
+        }
+        let Some(marks_collection) = self.marks.get_mut(&path.clone()) else {
             return;
         };
-
         marks_collection.load(buffer_handle, multi_buffer_handle, cx);
 
-        if name.starts_with(|c: char| c.is_uppercase())
-            || name.starts_with(|c: char| c.is_digit(10))
-        {
+        if name.starts_with(|c: char| c.is_uppercase()) {
             self.global_marks.insert(name.clone(), path.clone());
             cx.background_executor()
                 .spawn(DB.set_global_mark_path(
@@ -503,20 +504,11 @@ impl MarksState {
                 ))
                 .detach_and_log_err(cx);
         }
-
         marks_collection.add_mark_by_anchors(name.clone(), anchors);
 
         let Some(value) = marks_collection.get_json(name.clone(), cx) else {
             return;
         };
-
-        println!(
-            "wid: {:?}, name: {}, path: {:?}, json: {}",
-            self.workspace_id.clone(),
-            name.clone(),
-            path.clone(),
-            value.clone()
-        );
 
         cx.background_executor()
             .spawn(DB.set_mark(
@@ -638,6 +630,15 @@ impl VimGlobals {
                                 });
                             }
                         })
+                    }
+                    project::buffer_store::BufferStoreEvent::BufferDropped(buffer_id) => {
+                        // Vim::update_globals(cx, |globals, cx| {
+                        //     if let Some(marks_state) = globals.marks.get(&workspace_id) {
+                        //         marks_state.update(cx, |ms, cx| {
+                        //             ms.marks.
+                        //         });
+                        //     }
+                        // })
                     }
                     _ => {}
                 }
