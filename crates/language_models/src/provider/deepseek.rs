@@ -163,6 +163,17 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
         IconName::AiDeepSeek
     }
 
+    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let model = deepseek::Model::Chat;
+        Some(Arc::new(DeepSeekLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        }))
+    }
+
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 

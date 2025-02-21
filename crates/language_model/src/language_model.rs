@@ -247,6 +247,7 @@ pub trait LanguageModelProvider: 'static {
     fn icon(&self) -> IconName {
         IconName::ZedAssistant
     }
+    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>>;
     fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &App) {}
     fn is_authenticated(&self, cx: &App) -> bool;

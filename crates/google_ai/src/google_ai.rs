@@ -299,7 +299,7 @@ pub struct CountTokensResponse {
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, strum::EnumIter)]
+#[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Eq, strum::EnumIter)]
 pub enum Model {
     #[serde(rename = "gemini-1.5-pro")]
     Gemini15Pro,
@@ -308,6 +308,7 @@ pub enum Model {
     #[serde(rename = "gemini-2.0-pro-exp")]
     Gemini20Pro,
     #[serde(rename = "gemini-2.0-flash")]
+    #[default]
     Gemini20Flash,
     #[serde(rename = "gemini-2.0-flash-thinking-exp")]
     Gemini20FlashThinking,
