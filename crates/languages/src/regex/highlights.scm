@@ -11,7 +11,7 @@
   "]"
   "{"
   "}"
-] @punctuation.regex.bracket
+] @punctuation.bracket.regex
 
 (group_name) @label.regex
 
@@ -42,7 +42,7 @@
 (count_quantifier
   [
     (decimal_digits) @number
-    "," @punctuation.regex.delimiter
+    "," @punctuation.delimiter.regex
   ])
 
 (character_class
