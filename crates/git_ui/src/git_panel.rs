@@ -175,7 +175,7 @@ struct PendingOperation {
 }
 
 pub struct GitPanel {
-    active_repository: Option<Entity<Repository>>,
+    pub(crate) active_repository: Option<Entity<Repository>>,
     commit_editor: Entity<Editor>,
     conflicted_count: usize,
     conflicted_staged_count: usize,
@@ -191,7 +191,7 @@ pub struct GitPanel {
     pending: Vec<PendingOperation>,
     pending_commit: Option<Task<()>>,
     pending_serialization: Task<Option<()>>,
-    project: Entity<Project>,
+    pub(crate) project: Entity<Project>,
     repository_selector: Entity<RepositorySelector>,
     scroll_handle: UniformListScrollHandle,
     scrollbar_state: ScrollbarState,
@@ -203,6 +203,7 @@ pub struct GitPanel {
     width: Option<Pixels>,
     workspace: WeakEntity<Workspace>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    modal_open: bool,
 }
 
 pub(crate) fn commit_message_editor(
@@ -313,6 +314,7 @@ impl GitPanel {
                 width: Some(px(360.)),
                 context_menu: None,
                 workspace,
+                modal_open: false,
             };
             git_panel.schedule_update(false, window, cx);
             git_panel.show_scrollbar = git_panel.should_show_scrollbar(cx);
@@ -353,6 +355,11 @@ impl GitPanel {
             }
             .log_err(),
         );
+    }
+
+    pub(crate) fn set_modal_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.modal_open = open;
+        cx.notify();
     }
 
     fn dispatch_context(&self, window: &mut Window, cx: &Context<Self>) -> KeyContext {
@@ -1001,8 +1008,14 @@ impl GitPanel {
         .detach();
     }
 
-    fn commit_message_buffer(&self, cx: &App) -> Entity<Buffer> {
-        self.commit_editor.read(cx).buffer().read(cx).as_singleton().unwrap().clone()
+    pub fn commit_message_buffer(&self, cx: &App) -> Entity<Buffer> {
+        self.commit_editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .clone()
     }
 
     fn toggle_staged_for_selected(
@@ -1029,7 +1042,7 @@ impl GitPanel {
         self.commit_changes(window, cx)
     }
 
-    fn commit_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn commit_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
@@ -1483,13 +1496,13 @@ impl GitPanel {
         entry.is_staged
     }
 
-    fn has_staged_changes(&self) -> bool {
+    pub(crate) fn has_staged_changes(&self) -> bool {
         self.tracked_staged_count > 0
             || self.new_staged_count > 0
             || self.conflicted_staged_count > 0
     }
 
-    fn has_unstaged_changes(&self) -> bool {
+    pub(crate) fn has_unstaged_changes(&self) -> bool {
         self.tracked_count > self.tracked_staged_count
             || self.new_count > self.new_staged_count
             || self.conflicted_count > self.conflicted_staged_count
@@ -1503,7 +1516,7 @@ impl GitPanel {
         self.tracked_count > 0
     }
 
-    fn has_unstaged_conflicts(&self) -> bool {
+    pub fn has_unstaged_conflicts(&self) -> bool {
         self.conflicted_count > 0 && self.conflicted_count != self.conflicted_staged_count
     }
 
@@ -1617,51 +1630,14 @@ impl GitPanel {
     pub fn can_stage_all(&self) -> bool {
         self.has_unstaged_changes()
     }
+
     pub fn can_unstage_all(&self) -> bool {
         self.has_staged_changes()
     }
 
-    pub fn render_commit_editor(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let editor = self.commit_editor.clone();
-        let can_commit = self.can_commit()
-            && self.pending_commit.is_none()
-            && !editor.read(cx).is_empty(cx)
-            && self.has_write_access(cx);
-
-        // let can_commit_all =
-        //     !self.commit_pending && self.can_commit_all && !editor.read(cx).is_empty(cx);
-        let panel_editor_style = panel_editor_style(true, window, cx);
-
-        let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
-
-        let focus_handle_1 = self.focus_handle(cx).clone();
-        let tooltip = if self.has_staged_changes() {
-            "Commit staged changes"
-        } else {
-            "Commit changes to tracked files"
-        };
-        let title = if self.has_staged_changes() {
-            "Commit"
-        } else {
-            "Commit All"
-        };
-
-        let commit_button = panel_filled_button(title)
-            .tooltip(move |window, cx| {
-                let focus_handle = focus_handle_1.clone();
-                Tooltip::for_action_in(tooltip, &Commit, &focus_handle, window, cx)
-            })
-            .disabled(!can_commit)
-            .on_click({
-                cx.listener(move |this, _: &ClickEvent, window, cx| this.commit_changes(window, cx))
-            });
-
+    pub(crate) fn render_co_authors(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let potential_co_authors = self.potential_co_authors(cx);
-        let enable_coauthors = if potential_co_authors.is_empty() {
+        if potential_co_authors.is_empty() {
             None
         } else {
             Some(
@@ -1687,9 +1663,48 @@ impl GitPanel {
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.add_coauthors = !this.add_coauthors;
                         cx.notify();
-                    })),
+                    }))
+                    .into_any_element(),
             )
+        }
+    }
+
+    pub fn render_commit_editor(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let editor = self.commit_editor.clone();
+        let can_commit = self.can_commit()
+            && self.pending_commit.is_none()
+            && !editor.read(cx).is_empty(cx)
+            && self.has_write_access(cx);
+        let panel_editor_style = panel_editor_style(true, window, cx);
+        let enable_coauthors = self.render_co_authors(cx);
+
+        let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
+
+        let focus_handle_1 = self.focus_handle(cx).clone();
+        let tooltip = if self.has_staged_changes() {
+            "Commit staged changes"
+        } else {
+            "Commit changes to tracked files"
         };
+        let title = if self.has_staged_changes() {
+            "Commit"
+        } else {
+            "Commit All"
+        };
+
+        let commit_button = panel_filled_button(title)
+            .tooltip(move |window, cx| {
+                let focus_handle = focus_handle_1.clone();
+                Tooltip::for_action_in(tooltip, &Commit, &focus_handle, window, cx)
+            })
+            .disabled(!can_commit)
+            .on_click({
+                cx.listener(move |this, _: &ClickEvent, window, cx| this.commit_changes(window, cx))
+            });
 
         let branch = self
             .active_repository
@@ -1731,26 +1746,28 @@ impl GitPanel {
             .on_click(cx.listener(move |_, _: &ClickEvent, window, _cx| {
                 window.focus(&editor_focus_handle);
             }))
-            .child(EditorElement::new(&self.commit_editor, panel_editor_style))
-            .child(
-                h_flex()
-                    .absolute()
-                    .bottom_0()
-                    .left_2()
-                    .h(footer_size)
-                    .flex_none()
-                    .child(branch_selector),
-            )
-            .child(
-                h_flex()
-                    .absolute()
-                    .bottom_0()
-                    .right_2()
-                    .h(footer_size)
-                    .flex_none()
-                    .children(enable_coauthors)
-                    .child(commit_button),
-            )
+            .when(!self.modal_open, |el| {
+                el.child(EditorElement::new(&self.commit_editor, panel_editor_style))
+                    .child(
+                        h_flex()
+                            .absolute()
+                            .bottom_0()
+                            .left_2()
+                            .h(footer_size)
+                            .flex_none()
+                            .child(branch_selector),
+                    )
+                    .child(
+                        h_flex()
+                            .absolute()
+                            .bottom_0()
+                            .right_2()
+                            .h(footer_size)
+                            .flex_none()
+                            .children(enable_coauthors)
+                            .child(commit_button),
+                    )
+            })
     }
 
     fn render_previous_commit(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
