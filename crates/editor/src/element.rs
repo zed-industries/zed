@@ -4092,6 +4092,7 @@ impl EditorElement {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_edit_prediction_end_of_line_popover(
         &self,
         label: &'static str,
