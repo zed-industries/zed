@@ -864,11 +864,12 @@ impl Vim {
 
         let buffer = self.editor()?.read(cx).buffer().read(cx).as_singleton()?;
         let workspace_id = self.workspace(window)?.read(cx).database_id()?;
-        cx.global::<VimGlobals>()
-            .marks
-            .get(&workspace_id)?
-            .read(cx)
-            .get_mark(name, buffer, cx)
+        VimGlobals::update_global(cx, |globals, cx| {
+            globals
+                .marks
+                .get_mut(&workspace_id)?
+                .update(cx, |ms, cx| ms.get_mark(name, &buffer, cx))
+        })
     }
 
     fn get_global_mark(
@@ -881,7 +882,7 @@ impl Vim {
         let buffer = self.editor()?.read(cx).buffer().read(cx).as_singleton()?;
         VimGlobals::update_global(cx, |vim_globals, cx| {
             vim_globals.marks.get(&workspace_id)?.update(cx, |ms, cx| {
-                let anchors = ms.get_mark(name.clone(), buffer, cx)?;
+                let anchors = ms.get_mark(name.clone(), &buffer, cx)?;
                 let path = ms.get_path_for_mark(name)?;
                 Some((path, anchors))
             })
