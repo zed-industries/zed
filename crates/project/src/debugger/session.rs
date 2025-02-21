@@ -104,10 +104,12 @@ pub enum ThreadStatus {
     Ended,
 }
 
+type StackFrameId = u64;
+
 #[derive(Debug)]
 pub struct Thread {
     dap: dap::Thread,
-    stack_frames: Vec<StackFrame>,
+    stack_frames: IndexMap<StackFrameId, StackFrame>,
     has_stopped: bool,
 }
 
@@ -115,7 +117,7 @@ impl From<dap::Thread> for Thread {
     fn from(dap: dap::Thread) -> Self {
         Self {
             dap,
-            stack_frames: vec![],
+            stack_frames: IndexMap::new(),
             has_stopped: false,
         }
     }
@@ -1212,8 +1214,11 @@ impl Session {
                 },
                 move |this, stack_frames, cx| {
                     let entry = this.threads.entry(thread_id).and_modify(|thread| {
-                        thread.stack_frames =
-                            stack_frames.iter().cloned().map(From::from).collect();
+                        thread.stack_frames = stack_frames
+                            .iter()
+                            .cloned()
+                            .map(|frame| (frame.id, frame.into()))
+                            .collect();
                     });
                     debug_assert!(
                         matches!(entry, indexmap::map::Entry::Occupied(_)),
@@ -1228,7 +1233,7 @@ impl Session {
 
         self.threads
             .get(&thread_id)
-            .map(|thread| thread.stack_frames.clone())
+            .map(|thread| thread.stack_frames.values().cloned().collect())
             .unwrap_or_default()
     }
 
@@ -1245,11 +1250,7 @@ impl Session {
             },
             move |this, scopes, cx| {
                 this.threads.entry(thread_id).and_modify(|thread| {
-                    if let Some(stack_frame) = thread
-                        .stack_frames
-                        .iter_mut()
-                        .find(|frame| frame.dap.id == stack_frame_id)
-                    {
+                    if let Some(stack_frame) = thread.stack_frames.get_mut(&stack_frame_id) {
                         stack_frame.scopes = scopes.iter().cloned().map(From::from).collect();
                         cx.notify();
                     }
@@ -1260,9 +1261,10 @@ impl Session {
         self.threads
             .get(&thread_id)
             .and_then(|thread| {
-                thread.stack_frames.iter().find_map(|stack_frame| {
-                    (stack_frame.dap.id == stack_frame_id).then(|| stack_frame.scopes.clone())
-                })
+                thread
+                    .stack_frames
+                    .get(&stack_frame_id)
+                    .map(|stack_frame| stack_frame.scopes.clone())
             })
             .unwrap_or_default()
     }
@@ -1274,14 +1276,15 @@ impl Session {
         variables_reference: u64,
     ) -> Option<&mut Scope> {
         self.threads.get_mut(&thread_id).and_then(|thread| {
-            let stack_frame = thread
+            thread
                 .stack_frames
-                .iter_mut()
-                .find(|stack_frame| (stack_frame.dap.id == stack_frame_id))?;
-            stack_frame
-                .scopes
-                .iter_mut()
-                .find(|scope| scope.dap.variables_reference == variables_reference)
+                .get_mut(&stack_frame_id)
+                .and_then(|frame| {
+                    frame
+                        .scopes
+                        .iter_mut()
+                        .find(|scope| scope.dap.variables_reference == variables_reference)
+                })
         })
     }
 
@@ -1394,5 +1397,13 @@ impl Session {
             )
             .detach();
         }
+    }
+
+    pub fn variable_list(&mut self, selected_thread_id: ThreadId, stack_frame_id: u64) -> &[Scope] {
+        let Some(thread) = self.threads.get_mut(&selected_thread_id) else {
+            return &[];
+        };
+
+        todo!()
     }
 }
