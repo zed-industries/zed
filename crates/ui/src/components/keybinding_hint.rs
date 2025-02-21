@@ -2,6 +2,7 @@ use crate::{h_flex, prelude::*};
 use crate::{ElevationIndex, KeyBinding};
 use gpui::{point, AnyElement, App, BoxShadow, IntoElement, Window};
 use smallvec::smallvec;
+use theme::Appearance;
 
 /// Represents a hint for a keybinding, optionally with a prefix and suffix.
 ///
@@ -166,6 +167,7 @@ impl KeybindingHint {
 impl RenderOnce for KeybindingHint {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let colors = cx.theme().colors().clone();
+        let is_light = cx.theme().appearance() == Appearance::Light;
 
         let size = self
             .size
@@ -174,7 +176,7 @@ impl RenderOnce for KeybindingHint {
         let kb_bg = if let Some(elevation) = self.elevation {
             elevation.on_elevation_bg(cx)
         } else {
-            theme::color_alpha(colors.element_background, 0.6)
+            colors.element_background.alpha(0.6)
         };
 
         h_flex()
@@ -194,7 +196,11 @@ impl RenderOnce for KeybindingHint {
                     .border_color(kb_bg)
                     .bg(kb_bg.opacity(0.8))
                     .shadow(smallvec![BoxShadow {
-                        color: cx.theme().colors().editor_background.opacity(0.8),
+                        color: if is_light {
+                            gpui::black().opacity(0.16)
+                        } else {
+                            gpui::black().opacity(0.24)
+                        },
                         offset: point(px(0.), px(1.)),
                         blur_radius: px(0.),
                         spread_radius: px(0.),

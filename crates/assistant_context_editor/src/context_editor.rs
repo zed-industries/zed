@@ -1234,8 +1234,8 @@ impl ContextEditor {
                     .px_1()
                     .mr_0p5()
                     .border_1()
-                    .border_color(theme::color_alpha(colors.border_variant, 0.6))
-                    .bg(theme::color_alpha(colors.element_background, 0.6))
+                    .border_color(colors.border_variant.alpha(0.6))
+                    .bg(colors.element_background.alpha(0.6))
                     .child("esc"),
             )
             .child("to cancel")
