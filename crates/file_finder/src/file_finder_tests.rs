@@ -17,7 +17,7 @@ fn init_logger() {
 }
 
 #[test]
-fn test_path_component_slice() {
+fn test_path_elision() {
     #[track_caller]
     fn check(path: &str, budget: usize, matches: impl IntoIterator<Item = usize>, expected: &str) {
         let mut path = path.to_owned();
@@ -29,6 +29,7 @@ fn test_path_component_slice() {
         assert_eq!(path, expected);
     }
 
+    // Simple cases, mostly to check that different path shapes are handled gracefully.
     check("p/a/b/c/d/", 6, [], "p/…/d/");
     check("p/a/b/c/d/", 1, [2, 4, 6], "p/a/b/c/d/");
     check("p/a/b/c/d/", 10, [2, 6], "p/a/…/c/d/");
@@ -43,6 +44,31 @@ fn test_path_component_slice() {
     check("/p/a/b/c/d/", 11, [3, 5, 7], "/p/a/b/c/d/");
     check("/p/a/b/c/d/", 11, [3, 7], "/p/a/…/c/d/");
     check("/p/a/b/c/d/", 9, [7], "/p/…/c/d/");
+
+    // If the budget can't be met, no elision is done.
+    check(
+        "project/dir/child/grandchild",
+        5,
+        [],
+        "project/dir/child/grandchild",
+    );
+
+    // The longest unmatched segment is picked for elision.
+    check(
+        "project/one/two/X/three/sub",
+        21,
+        [16],
+        "project/…/X/three/sub",
+    );
+
+    // Elision stops when the budget is met, even though there are more components in the chosen segment.
+    // It proceeds from the end of the unmatched segment that is closer to the midpoint of the path.
+    check(
+        "project/one/two/three/X/sub",
+        21,
+        [22],
+        "project/…/three/X/sub",
+    )
 }
 
 #[test]
