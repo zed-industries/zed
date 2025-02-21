@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
