@@ -49,17 +49,35 @@ impl ThreadId {
     pub const MAX: ThreadId = ThreadId(u64::MAX);
 }
 
+pub enum VariableListContainer {
+    Scope(Scope),
+    Variable(Variable),
+}
+
+#[derive(Clone, Debug)]
+enum ToggledState {
+    Toggled,
+    UnToggled,
+    Leaf,
+}
+
 #[derive(Clone, Debug)]
 pub struct Variable {
-    _dap: dap::Variable,
-    _variables: Vec<Variable>,
+    dap: dap::Variable,
+    children: Vec<Variable>,
+    is_toggled: ToggledState,
 }
 
 impl From<dap::Variable> for Variable {
     fn from(dap: dap::Variable) -> Self {
         Self {
-            _dap: dap,
-            _variables: vec![],
+            children: vec![],
+            is_toggled: if dap.variables_reference == 0 {
+                ToggledState::Leaf
+            } else {
+                ToggledState::UnToggled
+            },
+            dap,
         }
     }
 }
@@ -68,6 +86,7 @@ impl From<dap::Variable> for Variable {
 pub struct Scope {
     pub dap: dap::Scope,
     pub variables: Vec<Variable>,
+    pub is_toggled: bool,
 }
 
 impl From<dap::Scope> for Scope {
@@ -75,6 +94,7 @@ impl From<dap::Scope> for Scope {
         Self {
             dap: scope,
             variables: vec![],
+            is_toggled: true,
         }
     }
 }
@@ -1406,11 +1426,27 @@ impl Session {
         }
     }
 
-    pub fn variable_list(&mut self, selected_thread_id: ThreadId, stack_frame_id: u64) -> &[Scope] {
-        let Some(thread) = self.threads.get_mut(&selected_thread_id) else {
-            return &[];
-        };
+    pub fn variable_list(
+        &mut self,
+        selected_thread_id: ThreadId,
+        stack_frame_id: u64,
+        cx: &mut Context<Self>,
+    ) -> Vec<VariableListContainer> {
+        self.scopes(selected_thread_id, stack_frame_id, cx)
+            .iter()
+            .cloned()
+            .map(|scope| {
+                if scope.is_toggled {
+                    self.variables(
+                        selected_thread_id,
+                        stack_frame_id,
+                        scope.dap.variables_reference,
+                        cx,
+                    );
+                }
 
-        todo!()
+                VariableListContainer::Scope(scope)
+            })
+            .collect()
     }
 }

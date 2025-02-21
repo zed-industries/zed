@@ -7,7 +7,7 @@ use gpui::{
     FocusHandle, Focusable, Hsla, ListOffset, ListState, MouseDownEvent, Point, Subscription, Task,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::debugger::session::Session;
+use project::debugger::session::{self, Session};
 use rpc::proto::{
     self, DebuggerScopeVariableIndex, DebuggerVariableContainer, VariableListScopes,
     VariableListVariables,
@@ -18,7 +18,7 @@ use std::{
 };
 use sum_tree::{Dimension, Item, SumTree, Summary};
 use ui::{prelude::*, ContextMenu, ListItem};
-use util::ResultExt;
+use util::{debug_panic, ResultExt};
 
 actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
 
@@ -237,31 +237,6 @@ impl Summary for ScopeVariableSummary {
     }
 }
 
-impl ProtoConversion for ScopeVariableIndex {
-    type ProtoType = DebuggerScopeVariableIndex;
-    type Output = Self;
-
-    fn to_proto(&self) -> Self::ProtoType {
-        DebuggerScopeVariableIndex {
-            fetched_ids: self.fetched_ids.iter().copied().collect(),
-            variables: self.variables.iter().map(|var| var.to_proto()).collect(),
-        }
-    }
-
-    fn from_proto(payload: Self::ProtoType) -> Self {
-        Self {
-            fetched_ids: payload.fetched_ids.iter().copied().collect(),
-            variables: SumTree::from_iter(
-                payload
-                    .variables
-                    .iter()
-                    .filter_map(|var| VariableContainer::from_proto(var.clone()).log_err()),
-                &(),
-            ),
-        }
-    }
-}
-
 impl ScopeVariableIndex {
     pub fn new() -> Self {
         Self {
@@ -395,67 +370,6 @@ impl VariableList {
         }
     }
 
-    pub(crate) fn _to_proto(&self) -> proto::DebuggerVariableList {
-        let variables = self
-            .variables
-            .iter()
-            .map(
-                |((stack_frame_id, scope_id), scope_variable_index)| VariableListVariables {
-                    scope_id: *scope_id,
-                    stack_frame_id: *stack_frame_id,
-                    variables: Some(scope_variable_index.to_proto()),
-                },
-            )
-            .collect();
-
-        let scopes = self
-            .scopes
-            .iter()
-            .map(|(key, scopes)| VariableListScopes {
-                stack_frame_id: *key,
-                scopes: scopes.to_proto(),
-            })
-            .collect();
-
-        proto::DebuggerVariableList { scopes, variables }
-    }
-
-    pub(crate) fn set_from_proto(
-        &mut self,
-        state: &proto::DebuggerVariableList,
-        cx: &mut Context<Self>,
-    ) {
-        self.variables = state
-            .variables
-            .iter()
-            .filter_map(|variable| {
-                Some((
-                    (variable.stack_frame_id, variable.scope_id),
-                    ScopeVariableIndex::from_proto(variable.variables.clone()?),
-                ))
-            })
-            .collect();
-
-        self.scopes = state
-            .scopes
-            .iter()
-            .map(|scope| {
-                (
-                    scope.stack_frame_id,
-                    scope
-                        .scopes
-                        .clone()
-                        .into_iter()
-                        .map(Scope::from_proto)
-                        .collect(),
-                )
-            })
-            .collect();
-
-        self.build_entries(true, cx);
-        cx.notify();
-    }
-
     fn handle_stack_frame_list_events(
         &mut self,
         _: Entity<StackFrameList>,
@@ -559,34 +473,23 @@ impl VariableList {
 
     fn render_entry(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
+        let Some(thread_id) = self.stack_frame_list.read(cx).current_thread_id() else {
+            return div().into_any_element();
+        };
 
-        let Some(entries) = self.entries.get(&stack_frame_id) else {
+        let entries = self.session.update(cx, |session, cx| {
+            session.variable_list(thread_id, stack_frame_id, cx)
+        });
+
+        let Some(entry) = entries.get(ix) else {
+            debug_panic!("Trying to render entry in variable list that has an out of bounds index");
             return div().into_any_element();
         };
 
         let entry = &entries[ix];
         match entry {
-            VariableListEntry::Scope(scope) => {
-                self.render_scope(scope, Some(entry) == self.selection.as_ref(), cx)
-            }
-            VariableListEntry::SetVariableEditor { depth, state } => {
-                self.render_set_variable_editor(*depth, state, cx)
-            }
-            VariableListEntry::Variable {
-                depth,
-                scope,
-                variable,
-                has_children,
-                container_reference,
-            } => self.render_variable(
-                *container_reference,
-                variable,
-                scope,
-                *depth,
-                *has_children,
-                Some(entry) == self.selection.as_ref(),
-                cx,
-            ),
+            session::VariableListContainer::Scope(scope) => self.render_scope(scope, false, cx), // todo(debugger) pass a valid value for is selected
+            _ => div().into_any_element(),
         }
     }
 
@@ -1291,13 +1194,19 @@ impl VariableList {
             .into_any()
     }
 
-    fn render_scope(&self, scope: &Scope, is_selected: bool, cx: &mut Context<Self>) -> AnyElement {
-        let element_id = scope.variables_reference;
+    fn render_scope(
+        &self,
+        scope: &session::Scope,
+        is_selected: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let element_id = scope.dap.variables_reference;
 
         let entry_id = OpenEntry::Scope {
-            name: scope.name.clone(),
+            name: scope.dap.name.clone(),
         };
-        let disclosed = self.open_entries.binary_search(&entry_id).is_ok();
+
+        let disclosed = scope.is_toggled;
 
         let colors = get_entry_color(cx);
         let bg_hover_color = if !is_selected {
@@ -1322,26 +1231,21 @@ impl VariableList {
             .h_full()
             .hover(|style| style.bg(bg_hover_color))
             .on_click(cx.listener({
-                let scope = scope.clone();
                 move |this, _, _window, cx| {
-                    this.selection = Some(VariableListEntry::Scope(scope.clone()));
                     cx.notify();
                 }
             }))
             .child(
                 ListItem::new(SharedString::from(format!(
                     "scope-{}",
-                    scope.variables_reference
+                    scope.dap.variables_reference
                 )))
                 .selectable(false)
                 .indent_level(1)
                 .indent_step_size(px(20.))
                 .always_show_disclosure_icon(true)
                 .toggle(disclosed)
-                .on_toggle(
-                    cx.listener(move |this, _, _window, cx| this.toggle_entry(&entry_id, cx)),
-                )
-                .child(div().text_ui(cx).w_full().child(scope.name.clone())),
+                .child(div().text_ui(cx).w_full().child(scope.dap.name.clone())),
             )
             .into_any()
     }
@@ -1355,6 +1259,23 @@ impl Focusable for VariableList {
 
 impl Render for VariableList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // todo(debugger): We are reconstructing the variable list list state every frame
+        // which is very bad!! We should only reconstruct the variable list state when necessary.
+        // Will fix soon
+        let (stack_frame_id, thread_id) = self.stack_frame_list.read_with(cx, |list, cx| {
+            (list.current_stack_frame_id(), list.current_thread_id())
+        });
+        let len = if let Some(thread_id) = thread_id {
+            self.session
+                .update(cx, |session, cx| {
+                    session.variable_list(thread_id, stack_frame_id, cx)
+                })
+                .len()
+        } else {
+            0
+        };
+        self.list.reset(len);
+
         div()
             .key_context("VariableList")
             .id("variable-list")

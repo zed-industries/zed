@@ -115,6 +115,10 @@ impl StackFrameList {
         self.current_stack_frame_id
     }
 
+    pub fn current_thread_id(&self) -> Option<ThreadId> {
+        self.thread_id
+    }
+
     fn build_entries(&mut self, cx: &mut Context<Self>) {
         let mut entries = Vec::new();
         let mut collapsed_entries = Vec::new();
