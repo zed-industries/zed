@@ -8,12 +8,12 @@ use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use db::sqlez_macros::sql;
 use db::{define_connection, query};
-use editor::{Anchor, ClipboardSelection, Editor, ExcerptId};
+use editor::{Anchor, ClipboardSelection, Editor, ExcerptId, MultiBuffer};
 use gpui::{
     Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, Global,
     WeakEntity,
 };
-use language::{Buffer, BufferEvent, BufferId, Point, ToPoint};
+use language::{Buffer, BufferEvent, Point, ToOffset, ToPoint};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
@@ -223,19 +223,22 @@ enum MarksCollection {
 }
 
 impl MarksCollection {
-    pub fn load(&mut self, entity: &Entity<Buffer>, cx: &App) {
+    pub fn load(&mut self, entity: &Entity<Buffer>, multi_buffer: &Entity<MultiBuffer>, cx: &App) {
         let buffer = entity.read(cx);
-        let snapshot = buffer.snapshot();
-        let id = buffer.remote_id();
-
+        let buffer_snapshot = buffer.snapshot();
+        let multi_buffer = multi_buffer.read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         match self {
             MarksCollection::Unloaded(marks) => {
                 let mut new_marks = HashMap::<String, Vec<Anchor>>::default();
                 for (name, points) in marks.iter() {
+                    println!("LOAD| name: {}, points: {:?}", name.clone(), points.clone());
                     let anchors = points
                         .iter()
                         .map(|&p| {
-                            Anchor::in_buffer(ExcerptId::min(), id, snapshot.anchor_before(p))
+                            multi_buffer_snapshot.anchor_after(p.to_offset(&buffer_snapshot))
+
+                            // Anchor::in_buffer(ExcerptId::min(), id, snapshot.anchor_before(p))
                         })
                         .collect();
                     new_marks.insert(name.clone(), anchors);
@@ -293,9 +296,10 @@ impl MarksCollection {
         &mut self,
         name: String,
         buffer: &Entity<Buffer>,
+        multi_buffer: &Entity<MultiBuffer>,
         cx: &App,
     ) -> Option<Vec<Anchor>> {
-        self.load(buffer, cx);
+        self.load(buffer, multi_buffer, cx);
         match self {
             MarksCollection::Loaded { marks, buffer } => marks.get(&name).cloned(),
             _ => None,
@@ -363,6 +367,13 @@ impl MarksState {
                 continue;
             };
             let path = Arc::from(PathBuf::from(OsString::from_vec(path)));
+            println!(
+                "wid {:?}, path {:?}, name {}, values {}",
+                workspace_id.clone(),
+                path,
+                name,
+                values
+            );
 
             let points: Vec<Point> = value
                 .into_iter()
@@ -385,7 +396,12 @@ impl MarksState {
         }
     }
 
-    pub fn on_buffer_loaded(&mut self, buffer_handle: &Entity<Buffer>, cx: &mut Context<Self>) {
+    pub fn on_buffer_loaded(
+        &mut self,
+        buffer_handle: &Entity<Buffer>,
+        // multi_buffer_handle: &Entity<MultiBuffer>,
+        cx: &mut Context<Self>,
+    ) {
         let buffer = buffer_handle.read(cx);
         let id = buffer.remote_id();
         let Some(path) = buffer.file().map(|file| file.path().clone()) else {
@@ -396,7 +412,7 @@ impl MarksState {
             return;
         };
 
-        marks_collection.load(buffer_handle, cx);
+        // marks_collection.load(buffer_handle, multi_buffer_handle, cx);
 
         cx.subscribe(buffer_handle, move |this, buffer, event, cx| {
             match event {
@@ -455,6 +471,7 @@ impl MarksState {
         &mut self,
         name: String,
         buffer_handle: &Entity<Buffer>,
+        multi_buffer_handle: &Entity<MultiBuffer>,
         anchors: Vec<Anchor>,
         cx: &mut Context<Self>,
     ) {
@@ -472,7 +489,7 @@ impl MarksState {
             return;
         };
 
-        marks_collection.load(buffer_handle, cx);
+        marks_collection.load(buffer_handle, multi_buffer_handle, cx);
 
         if name.starts_with(|c: char| c.is_uppercase())
             || name.starts_with(|c: char| c.is_digit(10))
@@ -493,6 +510,14 @@ impl MarksState {
             return;
         };
 
+        println!(
+            "wid: {:?}, name: {}, path: {:?}, json: {}",
+            self.workspace_id.clone(),
+            name.clone(),
+            path.clone(),
+            value.clone()
+        );
+
         cx.background_executor()
             .spawn(DB.set_mark(
                 self.workspace_id,
@@ -511,6 +536,7 @@ impl MarksState {
         &mut self,
         name: String,
         entity: &Entity<Buffer>,
+        multi_buffer: &Entity<MultiBuffer>,
         cx: &App,
     ) -> Option<Vec<Anchor>> {
         let path: Arc<Path> = if name.starts_with(|c: char| c.is_uppercase())
@@ -523,7 +549,7 @@ impl MarksState {
         };
         self.marks
             .get_mut(&path)?
-            .get_anchors(name.clone(), entity, cx)
+            .get_anchors(name.clone(), entity, multi_buffer, cx)
     }
 }
 

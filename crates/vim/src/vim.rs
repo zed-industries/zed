@@ -23,7 +23,7 @@ use anyhow::Result;
 use collections::HashMap;
 use editor::{
     movement::{self, FindRange},
-    Anchor, Bias, Editor, EditorEvent, EditorMode, ToOffset, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorMode, MultiBuffer, ToOffset, ToPoint,
 };
 use gpui::{
     actions, impl_actions, Action, App, AppContext, Axis, Context, Entity, EventEmitter,
@@ -800,13 +800,20 @@ impl Vim {
         name: String,
         anchors: Vec<Anchor>,
         buffer_entity: &Entity<Buffer>,
+        multi_buffer_entity: &Entity<MultiBuffer>,
         workspace_id: WorkspaceId,
         cx: &mut App,
     ) {
         cx.update_global::<VimGlobals, ()>(|vim_globals, cx| {
             let marks_state = vim_globals.marks.get(&workspace_id);
             marks_state.unwrap().update(cx, |ms, cx| {
-                ms.set_mark(name.clone(), buffer_entity, anchors, cx);
+                ms.set_mark(
+                    name.clone(),
+                    buffer_entity,
+                    multi_buffer_entity,
+                    anchors,
+                    cx,
+                );
             });
         });
         // let Some(editor) = self.editor() else {
@@ -862,13 +869,13 @@ impl Vim {
         //         .collect(),
         // )
 
-        let buffer = self.editor()?.read(cx).buffer().read(cx).as_singleton()?;
-        let workspace_id = self.workspace(window)?.read(cx).database_id()?;
         VimGlobals::update_global(cx, |globals, cx| {
-            globals
-                .marks
-                .get_mut(&workspace_id)?
-                .update(cx, |ms, cx| ms.get_mark(name, &buffer, cx))
+            let workspace_id = self.workspace(window)?.read(cx).database_id()?;
+            globals.marks.get_mut(&workspace_id)?.update(cx, |ms, cx| {
+                let multi_buffer = self.editor()?.read(cx).buffer();
+                let buffer = multi_buffer.read(cx).as_singleton()?;
+                ms.get_mark(name, &buffer, multi_buffer, cx)
+            })
         })
     }
 
@@ -879,10 +886,11 @@ impl Vim {
         cx: &mut App,
     ) -> Option<(Arc<Path>, Vec<Anchor>)> {
         let workspace_id = self.workspace(window)?.read(cx).database_id()?;
-        let buffer = self.editor()?.read(cx).buffer().read(cx).as_singleton()?;
         VimGlobals::update_global(cx, |vim_globals, cx| {
             vim_globals.marks.get(&workspace_id)?.update(cx, |ms, cx| {
-                let anchors = ms.get_mark(name.clone(), &buffer, cx)?;
+                let multi_buffer = self.editor()?.read(cx).buffer();
+                let buffer = multi_buffer.read(cx).as_singleton()?;
+                let anchors = ms.get_mark(name.clone(), &buffer, multi_buffer, cx)?;
                 let path = ms.get_path_for_mark(name)?;
                 Some((path, anchors))
             })
