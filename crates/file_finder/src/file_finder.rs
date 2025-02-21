@@ -908,8 +908,8 @@ impl FileFinderDelegate {
                     .unwrap_or(px(10.));
                 (normal, small)
             };
-            let estimated_width =
-                px(file_name.len() as f32) * normal_em + px(full_path.len() as f32) * small_em;
+            let estimated_width = px(0.8)
+                * (px(file_name.len() as f32) * normal_em + px(full_path.len() as f32) * small_em);
 
             if estimated_width > max_width && full_path.chars().all(|c| c.is_ascii()) {
                 let mut components = PathComponentSlice::new(&full_path);
