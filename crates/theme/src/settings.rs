@@ -103,7 +103,9 @@ pub struct ThemeSettings {
     /// The font size used for buffers, and the terminal.
     ///
     /// The terminal font size can be overridden using it's own setting.
-    pub buffer_font_size: Pixels,
+    ///
+    /// Use [ThemeSettings::buffer_font_size] to access this.
+    buffer_font_size: Pixels,
     /// The font used for buffers, and the terminal.
     ///
     /// The terminal font family can be overridden using it's own setting.

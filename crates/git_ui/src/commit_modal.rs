@@ -141,7 +141,7 @@ impl CommitModal {
 
         let settings = ThemeSettings::get_global(cx);
         let line_height = relative(settings.buffer_line_height.value())
-            .to_pixels(settings.buffer_font_size.into(), window.rem_size());
+            .to_pixels(settings.buffer_font_size(cx).into(), window.rem_size());
 
         v_flex()
             .justify_between()
