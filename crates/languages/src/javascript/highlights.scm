@@ -237,8 +237,8 @@
 (jsx_self_closing_element (identifier) @tag.jsx (#match? @tag.jsx "^[a-z][^.]*$"))
 
 (jsx_attribute (property_identifier) @attribute.jsx)
-(jsx_opening_element (["<" ">"]) @punctuation.jsx.bracket)
-(jsx_closing_element (["</" ">"]) @punctuation.jsx.bracket)
-(jsx_self_closing_element (["<" "/>"]) @punctuation.jsx.bracket)
-(jsx_attribute "=" @punctuation.jsx.delimiter)
+(jsx_opening_element (["<" ">"]) @punctuation.bracket.jsx)
+(jsx_closing_element (["</" ">"]) @punctuation.bracket.jsx)
+(jsx_self_closing_element (["<" "/>"]) @punctuation.bracket.jsx)
+(jsx_attribute "=" @punctuation.delimiter.jsx)
 (jsx_text) @text.jsx
