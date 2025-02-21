@@ -2230,25 +2230,26 @@ message BlameBuffer {
 
 message BlameEntry {
     bytes sha = 1;
+    optional string remote_url = 2;
 
-    uint32 start_line = 2;
-    uint32 end_line = 3;
-    uint32 original_line_number = 4;
+    uint32 start_line = 3;
+    uint32 end_line = 4;
+    uint32 original_line_number = 5;
 
-    optional string author = 5;
-    optional string author_mail = 6;
-    optional int64 author_time = 7;
-    optional string author_tz = 8;
+    optional string author = 6;
+    optional string author_mail = 7;
+    optional int64 author_time = 8;
+    optional string author_tz = 9;
 
-    optional string committer = 9;
-    optional string committer_mail = 10;
-    optional int64 committer_time = 11;
-    optional string committer_tz = 12;
+    optional string committer = 10;
+    optional string committer_mail = 11;
+    optional int64 committer_time = 12;
+    optional string committer_tz = 13;
 
-    optional string summary = 13;
-    optional string previous = 14;
+    optional string summary = 14;
+    optional string previous = 15;
 
-    string filename = 15;
+    string filename = 16;
 }
 
 message CommitMessage {
@@ -2266,7 +2267,6 @@ message BlameBufferResponse {
         repeated BlameEntry entries = 1;
         repeated CommitMessage messages = 2;
         repeated CommitPermalink permalinks = 3;
-        optional string remote_url = 4;
     }
 
     optional BlameResponse blame_response = 5;

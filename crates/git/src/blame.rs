@@ -20,43 +20,35 @@ pub struct Blame {
     pub entries: Vec<BlameEntry>,
     pub messages: HashMap<Oid, String>,
     pub permalinks: HashMap<Oid, Url>,
-    pub remote_url: Option<String>,
 }
 
 impl Blame {
-    pub fn for_path(
+    pub fn for_path<F>(
         git_binary: &Path,
         working_directory: &Path,
         path: &Path,
         content: &Rope,
-        // remote_url: Option<String>,
         provider_registry: Arc<GitHostingProviderRegistry>,
-    ) -> Result<Self> {
+        get_remote_url: F,
+    ) -> Result<Self>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
         let output = run_git_blame(git_binary, working_directory, path, content)?;
-
-        // git branch -r --contains <sha>
-        // git remote -r --contains <sha>
-
-        // git for-each-ref --sort=authordate --contains 97ed70db925576c37d73415245845a8a03e0bf08 --format='%(refname:short)' refs/remotes/ | head -n 1 | cut -d'/' -f1
-        //
 
         let mut entries = parse_git_blame(&output)?;
         entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
 
-        let remote_url =
-            get_remote_from_sha(git_binary, working_directory, entries.first().unwrap().sha).ok();
-
-        dbg!(&remote_url);
-
         let mut permalinks = HashMap::default();
         let mut unique_shas = HashSet::default();
-        let parsed_remote_url = remote_url
-            .as_deref()
-            .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
 
         for entry in entries.iter_mut() {
             unique_shas.insert(entry.sha);
-            // Use sha to get correct remote per entry
+            let remote_name = get_remote_from_sha(git_binary, working_directory, entry.sha).ok();
+            let parsed_remote_url = remote_name
+                .and_then(|name| get_remote_url(&name))
+                .as_deref()
+                .and_then(|remote_url| parse_git_remote_url(provider_registry.clone(), remote_url));
 
             // DEPRECATED (18 Apr 24): Sending permalinks over the wire is deprecated. Clients
             // now do the parsing.
@@ -80,7 +72,6 @@ impl Blame {
             entries,
             permalinks,
             messages,
-            remote_url,
         })
     }
 }
@@ -129,9 +120,13 @@ fn get_remote_from_sha(git_binary: &Path, working_directory: &Path, sha: Oid) ->
     }
 
     let output = String::from_utf8(output.stdout)?;
-    dbg!(output.split('/').next());
+    let Some((output, _)) = output.split_once('/') else {
+        return Err(anyhow!("Couldn't find remote name"));
+    };
 
-    Ok("test".to_owned())
+    let output = output.split_at(1).1;
+
+    Ok(output.to_owned())
 }
 
 fn run_git_blame(
@@ -182,7 +177,7 @@ fn run_git_blame(
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
 pub struct BlameEntry {
     pub sha: Oid,
-    // pub remote_url: Option<String>,
+    pub remote_url: Option<String>,
     pub range: Range<u32>,
 
     pub original_line_number: u32,

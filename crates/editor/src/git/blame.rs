@@ -369,13 +369,18 @@ impl GitBlame {
                             entries,
                             permalinks,
                             messages,
-                            remote_url,
                         }) = blame.await?
                         else {
                             return Ok(None);
                         };
 
                         let entries = build_blame_entry_sum_tree(entries, snapshot.max_point().row);
+                        let remote_url = entries.first().as_ref().and_then(|entry| {
+                            entry
+                                .blame
+                                .as_ref()
+                                .and_then(|blame| blame.remote_url.clone())
+                        });
                         let commit_details = parse_commit_messages(
                             messages,
                             remote_url,

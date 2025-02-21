@@ -463,7 +463,6 @@ impl GitRepository for RealGitRepository {
         Ok(())
     }
 
-    // smit 2
     fn blame(&self, path: &Path, content: Rope) -> Result<crate::blame::Blame> {
         let working_directory = self
             .repository
@@ -472,16 +471,16 @@ impl GitRepository for RealGitRepository {
             .with_context(|| format!("failed to get git working directory for file {:?}", path))?
             .to_path_buf();
 
-        // const REMOTE_NAME: &str = "origin";
-        // let remote_url = self.remote_url(REMOTE_NAME);
+        const REMOTE_NAME: &str = "origin";
+        let remote_url = self.remote_url(REMOTE_NAME);
 
         crate::blame::Blame::for_path(
             &self.git_binary_path,
             &working_directory,
             path,
             &content,
-            // remote_url,
             self.hosting_provider_registry.clone(),
+            |remote_name| self.remote_url(remote_name),
         )
     }
 

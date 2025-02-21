@@ -1653,7 +1653,6 @@ impl BufferStore {
                 };
 
                 cx.spawn(|cx| async move {
-                    // smit 3
                     const REMOTE_NAME: &str = "origin";
                     let origin_url = repo
                         .remote_url(REMOTE_NAME)
@@ -2721,6 +2720,7 @@ fn serialize_blame_buffer_response(blame: Option<git::blame::Blame>) -> proto::B
             summary: entry.summary.clone(),
             previous: entry.previous.clone(),
             filename: entry.filename.clone(),
+            remote_url: entry.remote_url.clone(),
         })
         .collect::<Vec<_>>();
 
@@ -2747,7 +2747,6 @@ fn serialize_blame_buffer_response(blame: Option<git::blame::Blame>) -> proto::B
             entries,
             messages,
             permalinks,
-            remote_url: blame.remote_url,
         }),
     }
 }
@@ -2775,6 +2774,7 @@ fn deserialize_blame_buffer_response(
                 summary: entry.summary,
                 previous: entry.previous,
                 filename: entry.filename,
+                remote_url: entry.remote_url,
             })
         })
         .collect::<Vec<_>>();
@@ -2800,7 +2800,6 @@ fn deserialize_blame_buffer_response(
         entries,
         permalinks,
         messages,
-        remote_url: response.remote_url,
     })
 }
 
