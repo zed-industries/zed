@@ -205,15 +205,17 @@ pub struct GitPanel {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
 }
 
-fn commit_message_editor(
+pub(crate) fn commit_message_editor(
     commit_message_buffer: Entity<Buffer>,
     project: Entity<Project>,
+    in_panel: bool,
     window: &mut Window,
     cx: &mut Context<'_, Editor>,
 ) -> Editor {
     let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
+    let max_lines = if in_panel { 6 } else { 18 };
     let mut commit_editor = Editor::new(
-        EditorMode::AutoHeight { max_lines: 6 },
+        EditorMode::AutoHeight { max_lines },
         buffer,
         None,
         false,
@@ -252,8 +254,9 @@ impl GitPanel {
             // just to let us render a placeholder editor.
             // Once the active git repo is set, this buffer will be replaced.
             let temporary_buffer = cx.new(|cx| Buffer::local("", cx));
-            let commit_editor =
-                cx.new(|cx| commit_message_editor(temporary_buffer, project.clone(), window, cx));
+            let commit_editor = cx.new(|cx| {
+                commit_message_editor(temporary_buffer, project.clone(), true, window, cx)
+            });
             commit_editor.update(cx, |editor, cx| {
                 editor.clear(window, cx);
             });
@@ -998,6 +1001,10 @@ impl GitPanel {
         .detach();
     }
 
+    fn commit_message_buffer(&self, cx: &App) -> Entity<Buffer> {
+        self.commit_editor.read(cx).buffer().read(cx).as_singleton().unwrap().clone()
+    }
+
     fn toggle_staged_for_selected(
         &mut self,
         _: &git::ToggleStaged,
@@ -1288,7 +1295,7 @@ impl GitPanel {
                     != Some(&buffer)
                 {
                     git_panel.commit_editor = cx.new(|cx| {
-                        commit_message_editor(buffer, git_panel.project.clone(), window, cx)
+                        commit_message_editor(buffer, git_panel.project.clone(), true, window, cx)
                     });
                 }
             })
