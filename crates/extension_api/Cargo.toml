@@ -10,7 +10,6 @@ edition.workspace = true
 publish = false
 license = "Apache-2.0"
 
-
 [lints]
 workspace = true
 
