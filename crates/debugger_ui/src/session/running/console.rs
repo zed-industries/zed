@@ -201,7 +201,7 @@ impl Console {
             FoldPlaceholder {
                 render: Arc::new({
                     let placeholder = placeholder.clone();
-                    move |_id, _range, _window, _cx| {
+                    move |_id, _range, _cx| {
                         ButtonLike::new("output-group-placeholder")
                             .style(ButtonStyle::Transparent)
                             .layer(ElevationIndex::ElevatedSurface)
