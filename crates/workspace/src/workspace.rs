@@ -63,6 +63,7 @@ use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
 };
 use remote::{ssh_session::ConnectionIdentifier, SshClientDelegate, SshConnectionOptions};
+use ruby_runtime::RubyRuntime;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
@@ -616,6 +617,7 @@ pub struct AppState {
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options: fn(Option<Uuid>, &mut App) -> WindowOptions,
     pub node_runtime: NodeRuntime,
+    pub ruby_runtime: RubyRuntime,
     pub session: Entity<AppSession>,
 }
 
@@ -679,6 +681,7 @@ impl AppState {
             user_store,
             workspace_store,
             node_runtime: NodeRuntime::unavailable(),
+            ruby_runtime: RubyRuntime::unavailable(),
             build_window_options: |_, _| Default::default(),
             session,
         })
@@ -4887,6 +4890,7 @@ impl Workspace {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         use node_runtime::NodeRuntime;
+        use ruby_runtime::RubyRuntime;
         use session::Session;
 
         let client = project.read(cx).client();
@@ -4903,6 +4907,7 @@ impl Workspace {
             fs: project.read(cx).fs().clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: NodeRuntime::unavailable(),
+            ruby_runtime: RubyRuntime::unavailable(),
             session,
         });
         let workspace = Self::new(Default::default(), project, app_state, window, cx);

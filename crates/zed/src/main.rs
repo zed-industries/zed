@@ -33,6 +33,7 @@ use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
 use recent_projects::{open_ssh_project, SshSettings};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
+use ruby_runtime::RubyRuntime;
 use session::{AppSession, Session};
 use settings::{watch_config_file, Settings, SettingsStore};
 use simplelog::ConfigBuilder;
@@ -356,6 +357,7 @@ fn main() {
         })
         .detach();
         let node_runtime = NodeRuntime::new(client.http_client(), rx);
+        let ruby_runtime = RubyRuntime::new();
 
         language::init(cx);
         language_extension::init(extension_host_proxy.clone(), languages.clone());
@@ -401,6 +403,7 @@ fn main() {
             build_window_options,
             workspace_store,
             node_runtime: node_runtime.clone(),
+            ruby_runtime: ruby_runtime.clone(),
             session: app_session,
         });
         AppState::set_global(Arc::downgrade(&app_state), cx);
@@ -465,6 +468,7 @@ fn main() {
             app_state.fs.clone(),
             app_state.client.clone(),
             app_state.node_runtime.clone(),
+            app_state.ruby_runtime.clone(),
             cx,
         );
         recent_projects::init(cx);

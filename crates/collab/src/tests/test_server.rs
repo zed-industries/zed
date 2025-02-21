@@ -29,6 +29,7 @@ use rpc::{
     proto::{self, ChannelRole},
     RECEIVE_TIMEOUT,
 };
+use ruby_runtime::RubyRuntime;
 use semantic_version::SemanticVersion;
 use serde_json::json;
 use session::{AppSession, Session};
@@ -285,6 +286,7 @@ impl TestServer {
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: NodeRuntime::unavailable(),
+            ruby_runtime: RubyRuntime::unavailable(),
             session,
         });
 

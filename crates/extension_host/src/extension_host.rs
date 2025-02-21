@@ -40,6 +40,7 @@ use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
 use remote::SshRemoteClient;
+use ruby_runtime::RubyRuntime;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -182,6 +183,7 @@ pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
     node_runtime: NodeRuntime,
+    ruby_runtime: RubyRuntime,
     cx: &mut App,
 ) {
     ExtensionSettings::register(cx);
@@ -196,6 +198,7 @@ pub fn init(
             client.http_client().clone(),
             Some(client.telemetry().clone()),
             node_runtime,
+            ruby_runtime,
             cx,
         )
     });
@@ -228,6 +231,7 @@ impl ExtensionStore {
         builder_client: Arc<dyn HttpClient>,
         telemetry: Option<Arc<Telemetry>>,
         node_runtime: NodeRuntime,
+        ruby_runtime: RubyRuntime,
         cx: &mut Context<Self>,
     ) -> Self {
         let work_dir = extensions_dir.join("work");
@@ -250,6 +254,7 @@ impl ExtensionStore {
                 fs.clone(),
                 http_client.clone(),
                 node_runtime,
+                ruby_runtime,
                 extension_host_proxy,
                 work_dir,
                 cx,

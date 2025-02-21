@@ -21,6 +21,7 @@ use rpc::{
     proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
 };
+use ruby_runtime::RubyRuntime;
 
 use settings::initial_server_settings_content;
 use smol::stream::StreamExt;
@@ -50,6 +51,7 @@ pub struct HeadlessAppState {
     pub fs: Arc<dyn Fs>,
     pub http_client: Arc<dyn HttpClient>,
     pub node_runtime: NodeRuntime,
+    pub ruby_runtime: RubyRuntime,
     pub languages: Arc<LanguageRegistry>,
     pub extension_host_proxy: Arc<ExtensionHostProxy>,
 }
@@ -67,6 +69,7 @@ impl HeadlessProject {
             fs,
             http_client,
             node_runtime,
+            ruby_runtime,
             languages,
             extension_host_proxy: proxy,
         }: HeadlessAppState,
@@ -166,6 +169,7 @@ impl HeadlessProject {
             paths::remote_extensions_dir().to_path_buf(),
             proxy,
             node_runtime,
+            ruby_runtime,
             cx,
         );
 

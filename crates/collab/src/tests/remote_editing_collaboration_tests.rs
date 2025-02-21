@@ -23,6 +23,7 @@ use project::{
 };
 use remote::SshRemoteClient;
 use remote_server::{HeadlessAppState, HeadlessProject};
+use ruby_runtime::RubyRuntime;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc};
@@ -74,6 +75,7 @@ async fn test_sharing_an_ssh_remote_project(
     server_cx.update(HeadlessProject::init);
     let remote_http_client = Arc::new(BlockedHttpClient);
     let node = NodeRuntime::unavailable();
+    let ruby = RubyRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
     let _headless_project = server_cx.new(|cx| {
         client::init_settings(cx);
@@ -83,6 +85,7 @@ async fn test_sharing_an_ssh_remote_project(
                 fs: remote_fs.clone(),
                 http_client: remote_http_client,
                 node_runtime: node,
+                ruby_runtime: ruby,
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
@@ -241,6 +244,7 @@ async fn test_ssh_collaboration_git_branches(
     server_cx.update(HeadlessProject::init);
     let remote_http_client = Arc::new(BlockedHttpClient);
     let node = NodeRuntime::unavailable();
+    let ruby = RubyRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
     let headless_project = server_cx.new(|cx| {
         client::init_settings(cx);
@@ -250,6 +254,7 @@ async fn test_ssh_collaboration_git_branches(
                 fs: remote_fs.clone(),
                 http_client: remote_http_client,
                 node_runtime: node,
+                ruby_runtime: ruby,
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
@@ -408,6 +413,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
                 fs: remote_fs.clone(),
                 http_client: remote_http_client,
                 node_runtime: NodeRuntime::unavailable(),
+                ruby_runtime: RubyRuntime::unavailable(),
                 languages,
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },

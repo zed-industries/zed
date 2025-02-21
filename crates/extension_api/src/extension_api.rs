@@ -24,6 +24,9 @@ pub use wit::{
         npm_package_latest_version,
     },
     zed::extension::platform::{current_platform, Architecture, Os},
+    zed::extension::ruby::{
+        gems_install_gem, gems_installed_version, gems_latest_version, ruby_binary_path,
+    },
     zed::extension::slash_command::{
         SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
     },

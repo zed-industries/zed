@@ -1,0 +1,13 @@
+interface ruby {
+    /// Returns the path to the currently active Ruby binary.
+    ruby-binary-path: func() -> result<string, string>;
+
+    /// Returns the latest version of the given Ruby gem.
+    gems-latest-version: func(gem-name: string) -> result<string, string>;
+
+    /// Returns the installed version of the given Ruby gem, if it exists.
+    gems-installed-version: func(gem-name: string) -> result<option<string>, string>;
+
+    /// Installs the specified Ruby gem.
+    gems-install-gem: func(gem-name: string, version: string, binaries: list<string>) -> result<_, string>;
+}

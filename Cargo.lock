@@ -2818,6 +2818,7 @@ dependencies = [
  "reqwest 0.11.27",
  "reqwest_client",
  "rpc",
+ "ruby_runtime",
  "rustc-demangle",
  "scrypt",
  "sea-orm",
@@ -4486,6 +4487,7 @@ dependencies = [
  "release_channel",
  "remote",
  "reqwest_client",
+ "ruby_runtime",
  "schemars",
  "semantic_version",
  "serde",
@@ -10128,6 +10130,7 @@ dependencies = [
  "release_channel",
  "remote",
  "rpc",
+ "ruby_runtime",
  "schemars",
  "serde",
  "serde_json",
@@ -10962,6 +10965,7 @@ dependencies = [
  "remote",
  "reqwest_client",
  "rpc",
+ "ruby_runtime",
  "rust-embed",
  "serde",
  "serde_json",
@@ -11334,6 +11338,31 @@ dependencies = [
  "spki 0.7.3",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "ruby_runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-std",
+ "async-tar",
+ "async-trait",
+ "async-watch",
+ "async_zip",
+ "futures 0.3.31",
+ "http_client",
+ "log",
+ "paths",
+ "semver",
+ "serde",
+ "serde_json",
+ "smol",
+ "tempfile",
+ "util",
+ "walkdir",
+ "which 6.0.3",
 ]
 
 [[package]]
@@ -16322,6 +16351,7 @@ dependencies = [
  "postage",
  "project",
  "remote",
+ "ruby_runtime",
  "schemars",
  "serde",
  "serde_json",
@@ -16739,6 +16769,7 @@ dependencies = [
  "repl",
  "reqwest_client",
  "rope",
+ "ruby_runtime",
  "search",
  "serde",
  "serde_json",

@@ -13,6 +13,7 @@ use http_client::HttpClient;
 use language::{LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
+use ruby_runtime::RubyRuntime;
 
 use crate::wasm_host::{WasmExtension, WasmHost};
 
@@ -40,6 +41,7 @@ impl HeadlessExtensionStore {
         extension_dir: PathBuf,
         extension_host_proxy: Arc<ExtensionHostProxy>,
         node_runtime: NodeRuntime,
+        ruby_runtime: RubyRuntime,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx| Self {
@@ -48,6 +50,7 @@ impl HeadlessExtensionStore {
                 fs.clone(),
                 http_client.clone(),
                 node_runtime,
+                ruby_runtime,
                 extension_host_proxy.clone(),
                 extension_dir.join("work"),
                 cx,

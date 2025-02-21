@@ -497,6 +497,52 @@ impl nodejs::Host for WasmState {
     }
 }
 
+impl ruby::Host for WasmState {
+    async fn ruby_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
+        self.host
+            .ruby_runtime
+            .binary_path()
+            .await
+            .map(|path| path.to_string_lossy().to_string())
+            .to_wasmtime_result()
+    }
+
+    async fn gems_installed_version(
+        &mut self,
+        gem_name: String,
+    ) -> wasmtime::Result<Result<Option<String>, String>> {
+        self.host
+            .ruby_runtime
+            .gem_installed_version(&self.work_dir(), &gem_name)
+            .await
+            .to_wasmtime_result()
+    }
+
+    async fn gems_latest_version(
+        &mut self,
+        gem_name: String,
+    ) -> wasmtime::Result<Result<String, String>> {
+        self.host
+            .ruby_runtime
+            .gem_latest_version(&self.work_dir(), &gem_name)
+            .await
+            .to_wasmtime_result()
+    }
+
+    async fn gems_install_gem(
+        &mut self,
+        gem_name: String,
+        version: String,
+        binaries: Vec<String>,
+    ) -> wasmtime::Result<Result<(), String>> {
+        self.host
+            .ruby_runtime
+            .gem_install_gem(&self.work_dir(), &gem_name, &version, binaries.clone())
+            .await
+            .to_wasmtime_result()
+    }
+}
+
 #[async_trait]
 impl lsp::Host for WasmState {}
 

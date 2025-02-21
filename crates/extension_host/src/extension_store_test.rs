@@ -17,6 +17,7 @@ use parking_lot::Mutex;
 use project::{Project, DEFAULT_COMPLETION_CONTEXT};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
+use ruby_runtime::RubyRuntime;
 use serde_json::json;
 use settings::{Settings as _, SettingsStore};
 use std::{
@@ -269,6 +270,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
     language_extension::init(proxy.clone(), language_registry.clone());
     let node_runtime = NodeRuntime::unavailable();
+    let ruby_runtime = RubyRuntime::unavailable();
 
     let store = cx.new(|cx| {
         ExtensionStore::new(
@@ -280,6 +282,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             http_client.clone(),
             None,
             node_runtime.clone(),
+            ruby_runtime.clone(),
             cx,
         )
     });
@@ -406,6 +409,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             http_client.clone(),
             None,
             node_runtime.clone(),
+            ruby_runtime.clone(),
             cx,
         )
     });
@@ -494,6 +498,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
     language_extension::init(proxy.clone(), language_registry.clone());
     let node_runtime = NodeRuntime::unavailable();
+    let ruby_runtime = RubyRuntime::unavailable();
 
     let mut status_updates = language_registry.language_server_binary_statuses();
 
@@ -592,6 +597,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             builder_client,
             None,
             node_runtime,
+            ruby_runtime,
             cx,
         )
     });

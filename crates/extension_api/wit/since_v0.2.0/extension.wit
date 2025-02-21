@@ -5,6 +5,7 @@ world extension {
     import http-client;
     import platform;
     import nodejs;
+    import ruby;
 
     use common.{range};
     use lsp.{completion, symbol};

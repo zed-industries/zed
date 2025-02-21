@@ -36,6 +36,7 @@ paths.workspace = true
 project.workspace = true
 remote.workspace = true
 release_channel.workspace = true
+ruby_runtime.workspace = true
 schemars.workspace = true
 semantic_version.workspace = true
 serde.workspace = true

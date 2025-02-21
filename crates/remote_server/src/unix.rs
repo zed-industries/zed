@@ -15,6 +15,7 @@ use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
+use ruby_runtime::RubyRuntime;
 
 use release_channel::{AppVersion, ReleaseChannel, RELEASE_CHANNEL};
 use remote::proxy::ProxyLaunchError;
@@ -467,6 +468,7 @@ pub fn execute_run(
             };
 
             let node_runtime = NodeRuntime::new(http_client.clone(), node_settings_rx);
+            let ruby_runtime = RubyRuntime::new();
 
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
             languages.set_language_server_download_dir(paths::languages_dir().clone());
@@ -478,6 +480,7 @@ pub fn execute_run(
                     fs,
                     http_client,
                     node_runtime,
+                    ruby_runtime,
                     languages,
                     extension_host_proxy,
                 },

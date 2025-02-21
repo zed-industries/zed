@@ -49,6 +49,7 @@ parking_lot.workspace = true
 postage.workspace = true
 project.workspace = true
 remote.workspace = true
+ruby_runtime.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

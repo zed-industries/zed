@@ -19,6 +19,7 @@ use project::{
     Project, ProjectPath,
 };
 use remote::SshRemoteClient;
+use ruby_runtime::RubyRuntime;
 use serde_json::json;
 use settings::{initial_server_settings_content, Settings, SettingsLocation, SettingsStore};
 use smol::stream::StreamExt;
@@ -1407,6 +1408,7 @@ pub async fn init_test(
     let (opts, ssh_server_client) = SshRemoteClient::fake_server(cx, server_cx);
     let http_client = Arc::new(BlockedHttpClient);
     let node_runtime = NodeRuntime::unavailable();
+    let ruby_runtime = RubyRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
     let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);
@@ -1419,6 +1421,7 @@ pub async fn init_test(
                 fs: server_fs.clone(),
                 http_client,
                 node_runtime,
+                ruby_runtime,
                 languages,
                 extension_host_proxy: proxy,
             },

@@ -23,6 +23,7 @@ use language::LanguageName;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
+use ruby_runtime::RubyRuntime;
 use semantic_version::SemanticVersion;
 use std::{
     path::{Path, PathBuf},
@@ -40,6 +41,7 @@ pub struct WasmHost {
     release_channel: ReleaseChannel,
     http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
+    ruby_runtime: RubyRuntime,
     pub(crate) proxy: Arc<ExtensionHostProxy>,
     fs: Arc<dyn Fs>,
     pub work_dir: PathBuf,
@@ -329,6 +331,7 @@ impl WasmHost {
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
+        ruby_runtime: RubyRuntime,
         proxy: Arc<ExtensionHostProxy>,
         work_dir: PathBuf,
         cx: &mut App,
@@ -345,6 +348,7 @@ impl WasmHost {
             work_dir,
             http_client,
             node_runtime,
+            ruby_runtime,
             proxy,
             release_channel: ReleaseChannel::global(cx),
             _main_thread_message_task: task,
