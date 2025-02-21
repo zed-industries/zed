@@ -108,8 +108,8 @@
 
 (identifier) @variable
 
-((identifier) @constant.variable
- (#match? @constant.variable "^_*[A-Z][A-Z\\d_]*$"))
+((identifier) @constant
+ (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
 
 (call_expression
   function: (identifier) @function)

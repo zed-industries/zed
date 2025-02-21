@@ -77,8 +77,8 @@ type :(primitive_type) @type.primitive
 (attribute
     name: (identifier) @keyword)
 
-((identifier) @constant.variable
- (#match? @constant.variable "^_*[A-Z][A-Z\\d_]*$"))
+((identifier) @constant
+ (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
 
 (statement_identifier) @label
 (this) @variable.special
