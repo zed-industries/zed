@@ -184,7 +184,7 @@ impl Vim {
                 }
                 None
             }
-            _ => self.get_local_mark(text.to_string(), window, cx), //self.marks.get(&*text).cloned(),
+            _ => self.get_local_mark(text.to_string(), window, cx),
         };
 
         let Some(mut anchors) = anchors else { return };
