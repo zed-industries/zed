@@ -13306,7 +13306,7 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, window, cx);
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
     });
     executor.run_until_parked();
     cx.assert_state_with_diff(
@@ -13634,7 +13634,7 @@ async fn test_edits_around_expanded_insertion_hunks(
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, window, cx);
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
     });
     executor.run_until_parked();
 
@@ -13905,7 +13905,7 @@ async fn test_edits_around_expanded_deletion_hunks(
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, window, cx);
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
     });
     executor.run_until_parked();
 
@@ -14028,7 +14028,7 @@ async fn test_backspace_after_deletion_hunk(executor: BackgroundExecutor, cx: &m
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, window, cx);
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
     });
     executor.run_until_parked();
 
@@ -14109,7 +14109,7 @@ async fn test_edit_after_expanded_modification_hunk(
     cx.set_diff_base(&diff_base);
     executor.run_until_parked();
     cx.update_editor(|editor, window, cx| {
-        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, window, cx);
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
     });
     executor.run_until_parked();
 
