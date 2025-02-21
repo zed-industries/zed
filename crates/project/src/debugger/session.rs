@@ -763,7 +763,7 @@ impl Session {
                 self.invalidate_state(&ModulesCommand.into());
             }
             Events::LoadedSource(_) => {
-                self.invalidate_state(&ModulesCommand.into());
+                self.invalidate_state(&LoadedSourcesCommand.into());
             }
             Events::Capabilities(event) => {
                 self.capabilities = self.capabilities.merge(event.capabilities);
