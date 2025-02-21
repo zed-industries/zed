@@ -2007,73 +2007,49 @@ pub fn normalize_path(path: &Path) -> PathBuf {
     ret
 }
 
-pub fn copy_recursive<'a>(
+pub async fn copy_recursive<'a>(
     fs: &'a dyn Fs,
     source: &'a Path,
     target: &'a Path,
     options: CopyOptions,
-) -> BoxFuture<'a, Result<()>> {
-    use futures::future::FutureExt;
-
-    async move {
-        let metadata = fs
-            .metadata(source)
-            .await?
-            .ok_or_else(|| anyhow!("path does not exist: {}", source.display()))?;
-        if metadata.is_dir {
-            if !options.overwrite && fs.metadata(target).await.is_ok_and(|m| m.is_some()) {
+) -> Result<()> {
+    for (is_dir, item) in read_dir_items(fs, source).await? {
+        let Ok(item_relative_path) = item.strip_prefix(source) else {
+            continue;
+        };
+        let target_item = target.join(item_relative_path);
+        if is_dir {
+            if !options.overwrite && fs.metadata(&target_item).await.is_ok_and(|m| m.is_some()) {
                 if options.ignore_if_exists {
-                    return Ok(());
+                    continue;
                 } else {
-                    return Err(anyhow!("{target:?} already exists"));
+                    return Err(anyhow!("{target_item:?} already exists"));
                 }
             }
-            let mut items_to_paste = Vec::new();
-            let mut items_to_copy = fs.read_dir(source).await?;
-            while let Some(item) = items_to_copy.next().await {
-                let Ok(item) = item else {
-                    continue;
-                };
-                let Ok(relative_path) = item.strip_prefix(source) else {
-                    continue;
-                };
-                let target_path = target.join(relative_path);
-                items_to_paste.push(target_path);
-            }
-
             let _ = fs
                 .remove_dir(
-                    target,
+                    &target_item,
                     RemoveOptions {
                         recursive: true,
                         ignore_if_not_exists: true,
                     },
                 )
                 .await;
-            fs.create_dir(target).await?;
-            let mut children = fs.read_dir(source).await?;
-            while let Some(child_path) = children.next().await {
-                if let Ok(child_path) = child_path {
-                    if let Some(file_name) = child_path.file_name() {
-                        let child_target_path = target.join(file_name);
-                        copy_recursive(fs, &child_path, &child_target_path, options).await?;
-                    }
-                }
-            }
-
-            Ok(())
+            fs.create_dir(&target_item).await?;
         } else {
-            fs.copy_file(source, target, options).await
+            fs.copy_file(&item, &target_item, options).await?;
         }
     }
-    .boxed()
+    Ok(())
 }
 
-// async fn read_dir_items<'a>(fs: &'a dyn Fs, source: &'a Path) -> Result<Vec<PathBuf>> {
-//     let mut items = Vec::new();
-//     let mut children = fs.r
+async fn read_dir_items<'a>(fs: &'a dyn Fs, source: &'a Path) -> Result<Vec<(bool, PathBuf)>> {
+    let mut items = Vec::new();
+    read_recursive(fs, source, &mut items).await?;
+    Ok(items)
+}
 
-async fn read_recursive<'a>(
+fn read_recursive<'a>(
     fs: &'a dyn Fs,
     source: &'a Path,
     output: &'a mut Vec<(bool, PathBuf)>,
@@ -2087,13 +2063,11 @@ async fn read_recursive<'a>(
             .ok_or_else(|| anyhow!("path does not exist: {}", source.display()))?;
 
         if metadata.is_dir {
+            output.push((true, source.to_path_buf()));
             let mut children = fs.read_dir(source).await?;
             while let Some(child_path) = children.next().await {
                 if let Ok(child_path) = child_path {
-                    if let Some(file_name) = child_path.file_name() {
-                        let child_target_path = target.join(file_name);
-                        copy_recursive(fs, &child_path, &child_target_path, options).await?;
-                    }
+                    read_recursive(fs, &child_path, output).await?;
                 }
             }
         } else {
