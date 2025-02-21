@@ -16,6 +16,11 @@ impl Point {
         column: u32::MAX,
     };
 
+    pub const MIN: Self = Self {
+        row: u32::MIN,
+        column: u32::MIN,
+    };
+
     pub fn new(row: u32, column: u32) -> Self {
         Point { row, column }
     }

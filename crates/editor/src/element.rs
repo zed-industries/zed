@@ -337,7 +337,9 @@ impl EditorElement {
         register_action(editor, window, Editor::go_to_diagnostic);
         register_action(editor, window, Editor::go_to_prev_diagnostic);
         register_action(editor, window, Editor::go_to_next_hunk);
+        register_action(editor, window, Editor::go_to_next_hunk_end);
         register_action(editor, window, Editor::go_to_prev_hunk);
+        register_action(editor, window, Editor::go_to_prev_hunk_end);
         register_action(editor, window, |editor, action, window, cx| {
             editor
                 .go_to_definition(action, window, cx)
@@ -9150,7 +9152,8 @@ fn diff_hunk_controls(
                         editor.update(cx, |editor, cx| {
                             let snapshot = editor.snapshot(window, cx);
                             let position = hunk_range.end.to_point(&snapshot.buffer_snapshot);
-                            editor.go_to_hunk_after_position(&snapshot, position, window, cx);
+                            editor
+                                .go_to_hunk_after_position(&snapshot, position, false, window, cx);
                             editor.expand_selected_diff_hunks(cx);
                         });
                     }

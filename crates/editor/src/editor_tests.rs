@@ -11033,6 +11033,8 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
             println!("hello there");
 
             println!("around the");
+            println!("all the way from");
+            println!("the Zed team!");
             println!("world");
         }
         "#
@@ -11058,6 +11060,8 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
             println!("hello there");
 
             println!("around the");
+            println!("all the way from");
+            println!("the Zed team!");
             println!("world");
         }
         "#
@@ -11080,6 +11084,8 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
         ˇ    println!("hello there");
 
             println!("around the");
+            println!("all the way from");
+            println!("the Zed team!");
             println!("world");
         }
         "#
@@ -11099,6 +11105,8 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
             println!("hello there");
 
             println!("around the");
+            println!("all the way from");
+            println!("the Zed team!");
             println!("world");
         }
         "#
@@ -11118,6 +11126,8 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
             println!("hello there");
 
             println!("around the");
+            println!("all the way from");
+            println!("the Zed team!");
             println!("world");
         }
         "#
@@ -11139,6 +11149,8 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
         ˇ    println!("hello there");
 
             println!("around the");
+            println!("all the way from");
+            println!("the Zed team!");
             println!("world");
         }
         "#
@@ -11162,6 +11174,8 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
             println!("hello there");
 
             println!("around the");
+            println!("all the way from");
+            println!("the Zed team!");
             println!("world");
         }
         "#
