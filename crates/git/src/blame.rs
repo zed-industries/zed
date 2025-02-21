@@ -29,12 +29,24 @@ impl Blame {
         working_directory: &Path,
         path: &Path,
         content: &Rope,
-        remote_url: Option<String>,
+        // remote_url: Option<String>,
         provider_registry: Arc<GitHostingProviderRegistry>,
     ) -> Result<Self> {
         let output = run_git_blame(git_binary, working_directory, path, content)?;
+
+        // git branch -r --contains <sha>
+        // git remote -r --contains <sha>
+
+        // git for-each-ref --sort=authordate --contains 97ed70db925576c37d73415245845a8a03e0bf08 --format='%(refname:short)' refs/remotes/ | head -n 1 | cut -d'/' -f1
+        //
+
         let mut entries = parse_git_blame(&output)?;
         entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
+
+        let remote_url =
+            get_remote_from_sha(git_binary, working_directory, entries.first().unwrap().sha).ok();
+
+        dbg!(&remote_url);
 
         let mut permalinks = HashMap::default();
         let mut unique_shas = HashSet::default();
@@ -44,6 +56,8 @@ impl Blame {
 
         for entry in entries.iter_mut() {
             unique_shas.insert(entry.sha);
+            // Use sha to get correct remote per entry
+
             // DEPRECATED (18 Apr 24): Sending permalinks over the wire is deprecated. Clients
             // now do the parsing.
             if let Some((provider, remote)) = parsed_remote_url.as_ref() {
@@ -73,6 +87,52 @@ impl Blame {
 
 const GIT_BLAME_NO_COMMIT_ERROR: &str = "fatal: no such ref: HEAD";
 const GIT_BLAME_NO_PATH: &str = "fatal: no such path";
+
+// git for-each-ref
+// --sort=authordate
+// --contains
+// sha <97ed70db925576c37d73415245845a8a03e0bf08>
+// --format='%(refname:short)' refs/remotes/ | head -n 1 | cut -d'/' -f1
+fn get_remote_from_sha(git_binary: &Path, working_directory: &Path, sha: Oid) -> Result<String> {
+    let child = util::command::new_std_command(git_binary)
+        .current_dir(working_directory)
+        .arg("for-each-ref")
+        .arg("--sort=authordate")
+        .arg("--contains")
+        .arg(sha.0.to_string())
+        .arg("--format='%(refname:short)'")
+        .arg("refs/remotes/")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
+
+    let mut stdin = child
+        .stdin
+        .as_ref()
+        .context("failed to get pipe to stdin of git blame command")?;
+
+    stdin.flush()?;
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| anyhow!("Failed to read git blame output: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let trimmed = stderr.trim();
+        if trimmed == GIT_BLAME_NO_COMMIT_ERROR || trimmed.contains(GIT_BLAME_NO_PATH) {
+            return Ok(String::new());
+        }
+        return Err(anyhow!("git blame process failed: {}", stderr));
+    }
+
+    let output = String::from_utf8(output.stdout)?;
+    dbg!(output.split('/').next());
+
+    Ok("test".to_owned())
+}
 
 fn run_git_blame(
     git_binary: &Path,
@@ -122,7 +182,7 @@ fn run_git_blame(
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
 pub struct BlameEntry {
     pub sha: Oid,
-
+    // pub remote_url: Option<String>,
     pub range: Range<u32>,
 
     pub original_line_number: u32,

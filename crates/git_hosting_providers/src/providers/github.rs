@@ -163,6 +163,7 @@ impl GitHostingProvider for Github {
         permalink
     }
 
+    // smit 1
     fn extract_pull_request(&self, remote: &ParsedGitRemote, message: &str) -> Option<PullRequest> {
         let line = message.lines().next()?;
         let capture = pull_request_number_regex().captures(line)?;

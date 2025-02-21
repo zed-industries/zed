@@ -1653,6 +1653,7 @@ impl BufferStore {
                 };
 
                 cx.spawn(|cx| async move {
+                    // smit 3
                     const REMOTE_NAME: &str = "origin";
                     let origin_url = repo
                         .remote_url(REMOTE_NAME)
