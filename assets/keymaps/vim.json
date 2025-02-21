@@ -524,6 +524,12 @@
     }
   },
   {
+    "context": "vim_operator == gr",
+    "bindings": {
+      "r": "vim::CurrentLine"
+    }
+  },
+  {
     "context": "vim_mode == literal",
     "bindings": {
       "ctrl-@": ["vim::Literal", ["ctrl-@", "\u0000"]],
