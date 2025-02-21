@@ -166,15 +166,13 @@ impl LogStore {
                     }),
                     cx.subscribe(project, |this, project, event, cx| match event {
                         project::Event::DebugClientStarted(client_id) => {
-                            let client = project.update(cx, |project, cx| {
-                                project.dap_store().update(cx, |store, cx| {
-                                    store
-                                        .session_by_id(client_id)
-                                        .and_then(|client| Some(client))
-                                })
-                            });
-                            if let Some(client) = client {
-                                this.add_debug_client(*client_id, client, cx);
+                            let session = project
+                                .read(cx)
+                                .dap_store()
+                                .read(cx)
+                                .session_by_id(client_id);
+                            if let Some(session) = session {
+                                this.add_debug_client(*client_id, session, cx);
                             }
                         }
                         project::Event::DebugClientShutdown(client_id) => {

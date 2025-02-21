@@ -78,6 +78,7 @@ impl Render for InertState {
                             .entry("Delve", None, setter_for_name("Delve"))
                             .entry("LLDB", None, setter_for_name("LLDB"))
                             .entry("PHP", None, setter_for_name("PHP"))
+                            .entry("JavaScript", None, setter_for_name("JavaScript"))
                             .entry("Debugpy", None, setter_for_name("Debugpy"))
                     }),
                 )),
@@ -130,6 +131,7 @@ fn kind_for_label(label: &str) -> DebugAdapterKind {
     match label {
         "LLDB" => DebugAdapterKind::Lldb,
         "Debugpy" => DebugAdapterKind::Python(TCPHost::default()),
+        "JavaScript" => DebugAdapterKind::Javascript(TCPHost::default()),
         "PHP" => DebugAdapterKind::Php(TCPHost::default()),
         "Delve" => DebugAdapterKind::Go(TCPHost::default()),
         _ => {

@@ -13,10 +13,9 @@ use anyhow::{anyhow, Result};
 use collections::{HashMap, IndexMap};
 use dap::adapters::{DapDelegate, DapStatus, DebugAdapterName};
 use dap::client::{DebugAdapterClient, SessionId};
-use dap::requests::Request;
 use dap::{
     messages::{self, Events, Message},
-    requests::{RunInTerminal, SetBreakpoints, StartDebugging},
+    requests::SetBreakpoints,
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, SetBreakpointsArguments,
     Source, SourceBreakpoint, SteppingGranularity, StoppedEvent,
 };

@@ -243,11 +243,9 @@ impl StackFrameList {
                                     row,
                                     cx,
                                 );
-                            });
-                    });
-                });
-
-                Ok(())
+                            })
+                    })
+                })?
             }
         })
     }
