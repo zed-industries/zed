@@ -69,9 +69,10 @@ impl ScrollableHandle for TerminalScrollHandle {
         let offset_delta = (point.y.0 / state.line_height.0).round() as i32;
 
         let max_offset = state.total_lines - state.viewport_lines;
-        let display_offset = ((max_offset as i32 + offset_delta) as usize).min(max_offset);
+        let display_offset = (max_offset as i32 + offset_delta).clamp(0, max_offset as i32);
 
-        self.future_display_offset.set(Some(display_offset));
+        self.future_display_offset
+            .set(Some(display_offset as usize));
     }
 
     fn viewport(&self) -> Bounds<Pixels> {
