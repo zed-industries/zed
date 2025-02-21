@@ -12670,7 +12670,7 @@ impl Editor {
                     point.row += 1;
                     point.column = 0;
                     point = snapshot.clip_point(point, Bias::Right);
-                    self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    self.change_selections(Some(Autoscroll::top_relative(6)), window, cx, |s| {
                         s.select_ranges([point..point]);
                     })
                 }
