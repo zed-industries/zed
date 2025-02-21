@@ -202,26 +202,41 @@ fn main() {
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
-    let failed_single_instance_check =
-        if *db::ZED_STATELESS || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
-            false
-        } else {
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-            {
-                crate::zed::listen_for_cli_connections(open_listener.clone()).is_err()
+    let failed_single_instance_check = if *db::ZED_STATELESS
+        || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev
+    {
+        false
+    } else {
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        {
+            if let Ok(sock) = only_instance::ensure_only_instance() {
+                // We are the only instance
+                thread::spawn({
+                    let opener = open_listener.clone();
+                    move || {
+                        let mut buf = [0u8; 1024];
+                        while let Ok(len) = sock.recv(&mut buf) {
+                            opener
+                                .open_urls(vec![String::from_utf8_lossy(&buf[..len]).to_string()]);
+                        }
+                    }
+                });
+                false
+            } else {
+                true
             }
+        }
 
-            #[cfg(target_os = "windows")]
-            {
-                !crate::zed::windows_only_instance::check_single_instance()
-            }
+        #[cfg(target_os = "windows")]
+        {
+            !only_instance::ensure_only_instance()
+        }
 
-            #[cfg(target_os = "macos")]
-            {
-                use zed::mac_only_instance::*;
-                ensure_only_instance() != IsOnlyInstance::Yes
-            }
-        };
+        #[cfg(target_os = "macos")]
+        {
+            only_instance::ensure_only_instance() != only_instance::IsOnlyInstance::Yes
+        }
+    };
     if failed_single_instance_check {
         println!("zed is already running");
         return;

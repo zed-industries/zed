@@ -143,28 +143,6 @@ impl OpenListener {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
-    use release_channel::RELEASE_CHANNEL_NAME;
-    use std::os::unix::net::UnixDatagram;
-
-    let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
-    // remove the socket if the process listening on it has died
-    if let Err(e) = UnixDatagram::unbound()?.connect(&sock_path) {
-        if e.kind() == std::io::ErrorKind::ConnectionRefused {
-            std::fs::remove_file(&sock_path)?;
-        }
-    }
-    let listener = UnixDatagram::bind(&sock_path)?;
-    thread::spawn(move || {
-        let mut buf = [0u8; 1024];
-        while let Ok(len) = listener.recv(&mut buf) {
-            opener.open_urls(vec![String::from_utf8_lossy(&buf[..len]).to_string()]);
-        }
-    });
-    Ok(())
-}
-
 fn connect_to_cli(
     server_name: &str,
 ) -> Result<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)> {

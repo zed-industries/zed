@@ -16746,6 +16746,7 @@ dependencies = [
  "nix",
  "node_runtime",
  "notifications",
+ "only_instance",
  "outline",
  "outline_panel",
  "parking_lot",
