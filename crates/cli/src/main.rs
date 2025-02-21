@@ -281,12 +281,7 @@ fn main() -> Result<()> {
         Ok(())
     });
 
-    #[cfg(not(target_os = "windows"))]
-    let run_foreground = args.foreground;
-    #[cfg(target_os = "windows")]
-    let run_foreground = windows::check_single_instance();
-    println!("run_foreground: {}", run_foreground);
-    if run_foreground {
+    if args.foreground {
         app.run_foreground(url)?;
     } else {
         app.launch(url)?;
@@ -553,12 +548,9 @@ mod windows {
     };
 
     use crate::{Detect, InstalledApp};
-    use std::cell::OnceCell;
     use std::io;
-    use std::os::windows::process::ExitStatusExt;
     use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
-    use std::sync::OnceLock;
 
     #[inline]
     fn retrieve_app_identifier() -> &'static str {
