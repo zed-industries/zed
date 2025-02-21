@@ -27,7 +27,6 @@ collections.workspace = true
 ipc-channel = "0.19"
 only_instance.workspace = true
 parking_lot.workspace = true
-paths.workspace = true
 release_channel.workspace = true
 serde.workspace = true
 util.workspace = true

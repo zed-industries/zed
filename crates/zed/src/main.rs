@@ -211,7 +211,7 @@ fn main() {
         {
             if let Ok(sock) = only_instance::ensure_only_instance() {
                 // We are the only instance
-                thread::spawn({
+                std::thread::spawn({
                     let opener = open_listener.clone();
                     move || {
                         let mut buf = [0u8; 1024];
