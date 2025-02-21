@@ -5,9 +5,10 @@
   (#match? @type.class "^_*[A-Z][A-Za-z0-9_]*$"))
 
 ; ALL_CAPS for constants:
-((identifier) @constant
-  (#match? @constant "^_*[A-Z][A-Z0-9_]*$"))
+((identifier) @constant.variable
+  (#match? @constant.variable "^_*[A-Z][A-Z0-9_]*$"))
 
+(identifier) @variable
 (attribute attribute: (identifier) @property)
 (type (identifier) @type)
 (generic_type (identifier) @type)
@@ -95,9 +96,12 @@
 ; Literals
 
 [
-  (none)
   (true)
   (false)
+] @boolean
+
+[
+  (none)
   (ellipsis)
 ] @constant.builtin
 
@@ -113,6 +117,12 @@
   (attribute (identifier) @variable.special)
   (#match? @variable.special "^self|cls$")
 ]
+
+[
+  "."
+  ","
+  ":"
+] @punctuation.delimiter
 
 [
   "("
@@ -187,6 +197,7 @@
   "&"
   "%"
   "%="
+  "@"
   "^"
   "+"
   "->"
