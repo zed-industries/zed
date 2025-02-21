@@ -36,7 +36,7 @@ use std::{
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
-use ui::{h_flex, prelude::*, Icon, IconName, Label};
+use ui::{h_flex, prelude::*, Icon, IconName, Label, TintColor};
 use util::ResultExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
@@ -95,14 +95,39 @@ impl Render for ProjectDiagnosticsEditor {
         };
 
         let child = if warning_count + self.summary.error_count == 0 {
-            div()
+            let label = if self.summary.warning_count == 0 {
+                SharedString::new_static("No problems in workspace")
+            } else {
+                SharedString::new_static("No errors in workspace")
+            };
+            v_flex()
+                .gap_1()
                 .key_context("EmptyPane")
                 .bg(cx.theme().colors().editor_background)
-                .flex()
-                .items_center()
                 .justify_center()
+                .items_center()
                 .size_full()
-                .child(Label::new("No problems in workspace"))
+                .child(h_flex().items_center().child(Label::new(label)))
+                .when(self.summary.warning_count > 0, |this| {
+                    let plural_suffix = if self.summary.warning_count > 1 {
+                        "s"
+                    } else {
+                        ""
+                    };
+                    let label = format!(
+                        "Show {} warning{}",
+                        self.summary.warning_count, plural_suffix
+                    );
+                    this.child(
+                        Button::new("diagnostics-show-warning-label", label)
+                            .size(ButtonSize::Compact)
+                            .style(ButtonStyle::Tinted(TintColor::Warning))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_warnings(&Default::default(), window, cx);
+                                cx.notify();
+                            })),
+                    )
+                })
         } else {
             div().size_full().child(self.editor.clone())
         };
