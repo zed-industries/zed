@@ -790,8 +790,8 @@ jobs:
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: |
           cargo build --release --package zed --package cli
-          Copy-Item -Path ".\target\release\zed.exe" -Destination ".\crates\zed\resources\windows\Zed.exe"
-          Copy-Item -Path ".\target\release\cli.exe" -Destination ".\crates\zed\resources\windows\cli.exe"
+          Copy-Item -Path ".\target\release\zed.exe" -Destination ".\crates\zed\resources\windows\Zed.exe" -Force
+          Copy-Item -Path ".\target\release\cli.exe" -Destination ".\crates\zed\resources\windows\cli.exe" -Force
           $channel = $env:RELEASE_CHANNEL
           switch ($channel) {
             "stable" {
@@ -804,7 +804,7 @@ jobs:
               cargo build --release --package explorer_command_injector
             }
           }
-          Copy-Item -Path ".\target\release\explorer_command_injector.dll" -Destination ".\crates\zed\resources\windows\zed_explorer_command_injector.dll"
+          Copy-Item -Path ".\target\release\explorer_command_injector.dll" -Destination ".\crates\zed\resources\windows\zed_explorer_command_injector.dll" -Force
 
       - name: Make appx for dll
         working-directory: ${{ env.ZED_WORKSPACE }}
@@ -826,10 +826,10 @@ jobs:
         run: |
           $windowsDir = ${{ env.ZED_WORKSPACE }}\crates\zed\resources\windows
           mkdir -p $windowsDir\installer\appx -ErrorAction Ignore
-          Move-Item -Path "$windowsDir\zed_explorer_command_injector.appx" -Destination "$windowsDir\installer\appx\zed_explorer_command_injector.appx"
-          Move-Item -Path "$windowsDir\zed_explorer_command_injector.dll" -Destination "$windowsDir\installer\appx\zed_explorer_command_injector.dll"
+          Move-Item -Path "$windowsDir\zed_explorer_command_injector.appx" -Destination "$windowsDir\installer\appx\zed_explorer_command_injector.appx" -Force
+          Move-Item -Path "$windowsDir\zed_explorer_command_injector.dll" -Destination "$windowsDir\installer\appx\zed_explorer_command_injector.dll" -Force
           mkdir -p "$windowsDir\installer\bin" -ErrorAction Ignore
-          Move-Item -Path "$windowsDir\cli.exe" -Destination "$windowsDir\installer\bin\zed.exe"
+          Move-Item -Path "$windowsDir\cli.exe" -Destination "$windowsDir\installer\bin\zed.exe" -Force
 
       - name: Run Inno Setup
         env:

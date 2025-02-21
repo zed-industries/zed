@@ -133,7 +133,7 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
 fn main() -> Result<()> {
     #[cfg(all(not(debug_assertions), target_os = "windows"))]
     unsafe {
-        use ::windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+        use ::windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
 
         let _ = AttachConsole(ATTACH_PARENT_PROCESS);
     }
@@ -319,7 +319,12 @@ fn main() -> Result<()> {
         .map(|(file, tmp_file)| thread::spawn(move || pipe_to_tmp(file, tmp_file)))
         .collect();
 
-    if args.foreground {
+    #[cfg(not(target_os = "windows"))]
+    let run_foreground = args.foreground;
+    #[cfg(target_os = "windows")]
+    let run_foreground = windows::check_single_instance();
+    println!("run_foreground: {}", run_foreground);
+    if run_foreground {
         app.run_foreground(url, user_data_dir.as_deref())?;
     } else {
         app.launch(url)?;
@@ -649,6 +654,7 @@ mod flatpak {
 mod windows {
     use anyhow::Context;
     use release_channel::app_identifier;
+    use windows::Win32::System::Threading::CreateMutexW;
     use windows::{
         Win32::{
             Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GENERIC_WRITE, GetLastError},
@@ -661,9 +667,12 @@ mod windows {
     };
 
     use crate::{Detect, InstalledApp};
+    use std::cell::OnceCell;
     use std::io;
+    use std::os::windows::process::ExitStatusExt;
     use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
+    use std::sync::OnceLock;
 
     #[inline]
     fn retrieve_app_identifier() -> &'static str {
