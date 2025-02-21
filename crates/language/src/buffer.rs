@@ -393,9 +393,17 @@ pub enum AutoindentMode {
     /// Apply the same indentation adjustment to all of the lines
     /// in a given insertion.
     Block {
-        /// The original indentation level of the first line of each
-        /// insertion, if it has been copied.
-        original_indent_columns: Vec<u32>,
+        /// The original start column of each insertion, if it was
+        /// copied from elsewhere.
+        ///
+        /// Knowing this start column makes it possible to preserve the
+        /// relative indentation of every line in the insertion from
+        /// when it was copied.
+        ///
+        /// If the start column is `a`, and the first line of insertion
+        /// is then auto-indented to column `b`, then every other line of
+        /// the insertion will be auto-indented to column `b - a`
+        original_start_columns: Vec<u32>,
     },
 }
 
@@ -2191,16 +2199,16 @@ impl Buffer {
 
                     let mut original_indent_column = None;
                     if let AutoindentMode::Block {
-                        original_indent_columns,
+                        original_start_columns,
                     } = &mode
                     {
-                        original_indent_column =
-                            Some(original_indent_columns.get(ix).copied().unwrap_or_else(|| {
-                                indent_size_for_text(
+                        original_indent_column = Some(
+                            original_start_columns.get(ix).copied().unwrap_or(0)
+                                + indent_size_for_text(
                                     new_text[range_of_insertion_to_indent.clone()].chars(),
                                 )
-                                .len
-                            }));
+                                .len,
+                        );
 
                         // Avoid auto-indenting the line after the edit.
                         if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
