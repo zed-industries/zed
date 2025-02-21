@@ -8803,10 +8803,13 @@ impl Editor {
     ) {
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_cursors_with(|map, head, _| {
-                (
-                    movement::indented_line_beginning(map, head, action.stop_at_soft_wraps),
-                    SelectionGoal::None,
-                )
+                let point = if action.stop_at_first_char {
+                    movement::indented_line_beginning(map, head, true)
+                } else {
+                    movement::line_beginning(map, head, action.stop_at_soft_wraps)
+                };
+
+                (point, SelectionGoal::None)
             });
         })
     }
@@ -8819,17 +8822,20 @@ impl Editor {
     ) {
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_heads_with(|map, head, _| {
-                (
-                    movement::indented_line_beginning(map, head, action.stop_at_soft_wraps),
-                    SelectionGoal::None,
-                )
+                let point = if action.stop_at_first_char {
+                    movement::indented_line_beginning(map, head, true)
+                } else {
+                    movement::line_beginning(map, head, action.stop_at_soft_wraps)
+                };
+
+                (point, SelectionGoal::None)
             });
         });
     }
 
     pub fn delete_to_beginning_of_line(
         &mut self,
-        _: &DeleteToBeginningOfLine,
+        action: &DeleteToBeginningOfLine,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -8843,6 +8849,7 @@ impl Editor {
             this.select_to_beginning_of_line(
                 &SelectToBeginningOfLine {
                     stop_at_soft_wraps: false,
+                    stop_at_first_char: action.stop_at_first_char,
                 },
                 window,
                 cx,

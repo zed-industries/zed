@@ -22,6 +22,8 @@ pub struct SelectPrevious {
 pub struct MoveToBeginningOfLine {
     #[serde(default = "default_true")]
     pub stop_at_soft_wraps: bool,
+    #[serde(default)]
+    pub stop_at_first_char: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -29,6 +31,15 @@ pub struct MoveToBeginningOfLine {
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
     pub(super) stop_at_soft_wraps: bool,
+    #[serde(default)]
+    pub(super) stop_at_first_char: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteToBeginningOfLine {
+    #[serde(default)]
+    pub(super) stop_at_first_char: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -210,6 +221,7 @@ impl_actions!(
         ConfirmCompletion,
         DeleteToNextWordEnd,
         DeleteToPreviousWordStart,
+        DeleteToBeginningOfLine,
         ExpandExcerpts,
         ExpandExcerptsDown,
         ExpandExcerptsUp,
@@ -272,7 +284,6 @@ gpui::actions!(
         CutToEndOfLine,
         Delete,
         DeleteLine,
-        DeleteToBeginningOfLine,
         DeleteToEndOfLine,
         DeleteToNextSubwordEnd,
         DeleteToPreviousSubwordStart,

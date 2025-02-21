@@ -1031,6 +1031,7 @@ impl ProjectPanel {
                     editor.move_to_beginning_of_line(
                         &editor::actions::MoveToBeginningOfLine {
                             stop_at_soft_wraps: false,
+                            stop_at_first_char: false,
                         },
                         window,
                         cx,
