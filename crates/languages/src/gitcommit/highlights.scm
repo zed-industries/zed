@@ -2,7 +2,7 @@
 (path) @string.special.path
 (branch) @string.special.symbol
 (commit) @constant
-(item) @markup.link.url
+(item) @link.uri.markup
 (header) @tag
 
 (change kind: "new file" @diff.plus)

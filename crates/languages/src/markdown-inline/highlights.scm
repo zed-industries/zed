@@ -11,10 +11,10 @@
   (image)
 ] @link.markup
 
-(inline_link ["(" ")"] @markup.link.url)
-(image ["(" ")"] @markup.link.url)
+(inline_link ["(" ")"] @link.uri.markup)
+(image ["(" ")"] @link.uri.markup)
 [
   (link_destination)
   (uri_autolink)
   (email_autolink)
-] @markup.link.url
+] @link.uri.markup

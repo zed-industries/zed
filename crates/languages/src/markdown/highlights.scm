@@ -31,4 +31,4 @@
 (fenced_code_block_delimiter) @punctuation.embedded.markup
 
 (link_reference_definition) @link.markup
-(link_destination) @markup.link.url
+(link_destination) @link.uri.markup
