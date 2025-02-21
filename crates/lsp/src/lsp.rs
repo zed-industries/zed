@@ -791,7 +791,7 @@ impl LanguageServer {
                 }),
             },
             trace: None,
-            workspace_folders: None,
+            workspace_folders: Some(vec![]),
             client_info: release_channel::ReleaseChannel::try_global(cx).map(|release_channel| {
                 ClientInfo {
                     name: release_channel.display_name().to_string(),
