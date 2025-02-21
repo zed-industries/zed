@@ -12,10 +12,12 @@ workspace = true
 path = "src/only_instance.rs"
 
 [dependencies]
-# anyhow.workspace = true
 release_channel.workspace = true
 
-[target.'cfg(not(target_os = "windows"))'.dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
+sysinfo.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
 paths.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
