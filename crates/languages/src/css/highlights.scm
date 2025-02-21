@@ -29,12 +29,8 @@
   "only"
 ] @keyword.operator
 
-(attribute_selector (plain_value) @string)
-
-[
-  (id_name)
-  (class_name)
-] @selector
+(id_name) @selector.id
+(class_name) @selector.class
 
 (namespace_name) @namespace
 (namespace_selector (tag_name) @namespace "|")
@@ -54,7 +50,13 @@
   (plain_value)
   (keyframes_name)
   (keyword_query)
-] @constant
+] @constant.builtin
+
+(attribute_selector
+  (plain_value) @string)
+
+(parenthesized_query
+  (keyword_query) @property)
 
 (
   [
@@ -85,7 +87,7 @@
   (float_value)
 ] @number
 
-(unit) @constant.unit
+(unit) @type.unit
 
 [
   ","
@@ -93,8 +95,9 @@
   "."
   "::"
   ";"
-  (id_selector "#")
 ] @punctuation.delimiter
+
+(id_selector "#" @punctuation.delimiter)
 
 [
   "{"
