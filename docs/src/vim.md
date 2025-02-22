@@ -160,7 +160,7 @@ Zed's vim mode includes some features that are usually provided by very popular 
 - The project panel supports many shortcuts modeled after the Vim plugin `netrw`: navigation with `hjkl`, open file with `o`, open file in a new tab with `t`, etc.
 - You can add key bindings to your keymap to navigate "camelCase" names. [Head down to the Optional key bindings](#optional-key-bindings) section to learn how.
 - You can use `gr` to do [ReplaceWithRegister](https://github.com/vim-scripts/ReplaceWithRegister).
-- You can use `cx` for [vim-exchange](https://github.com/tommcdo/vim-exchange) functionality; `X` in visual mode.
+- You can use `cx` for [vim-exchange](https://github.com/tommcdo/vim-exchange) functionality. Note that it does not have a default binding in visual mode, but you can add one to your keymap (refer to the [optional key bindings](#optional-key-bindings) section).
 
 ## Command palette
 
