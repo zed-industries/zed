@@ -31,8 +31,10 @@ impl Command {
         mut self,
         envs: impl IntoIterator<Item = (impl Into<String>, impl Into<String>)>,
     ) -> Self {
-        self.env
-            .extend(envs.into_iter().map(|(k, v)| (k.into(), v.into())));
+        self.env.extend(
+            envs.into_iter()
+                .map(|(key, value)| (key.into(), value.into())),
+        );
         self
     }
 
