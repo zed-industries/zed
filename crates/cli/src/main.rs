@@ -525,33 +525,31 @@ mod flatpak {
 #[cfg(target_os = "windows")]
 mod windows {
     use anyhow::Context;
-    use release_channel::ReleaseChannel;
+    use release_channel::APP_IDENTIFIER;
+    use windows::{
+        core::HSTRING,
+        Win32::{
+            Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS},
+            System::Threading::CreateMutexW,
+        },
+    };
 
     use crate::{Detect, InstalledApp};
     use std::io;
     use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
 
-    fn retrieve_app_instance_event_identifier() -> &'static str {
-        match *release_channel::RELEASE_CHANNEL {
-            ReleaseChannel::Dev => "Local\\Zed-Editor-Dev-Instance-Event",
-            ReleaseChannel::Nightly => "Local\\Zed-Editor-Nightly-Instance-Event",
-            ReleaseChannel::Preview => "Local\\Zed-Editor-Preview-Instance-Event",
-            ReleaseChannel::Stable => "Local\\Zed-Editor-Stable-Instance-Event",
-        }
-    }
-
-    pub fn check_single_instance() -> bool {
-        unsafe {
-            CreateEventW(
+    fn check_single_instance() -> bool {
+        let mutex = unsafe {
+            CreateMutexW(
                 None,
                 false,
-                false,
-                &HSTRING::from(retrieve_app_instance_event_identifier()),
+                &HSTRING::from(format!("{}-Instance-Mutex", *APP_IDENTIFIER)),
             )
             .expect("Unable to create instance sync event")
         };
         let last_err = unsafe { GetLastError() };
+        let _ = unsafe { CloseHandle(mutex) };
         last_err != ERROR_ALREADY_EXISTS
     }
 
