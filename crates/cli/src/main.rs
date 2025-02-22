@@ -529,7 +529,10 @@ mod windows {
     use windows::{
         core::HSTRING,
         Win32::{
-            Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS},
+            Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, GENERIC_WRITE},
+            Storage::FileSystem::{
+                CreateFileW, WriteFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, OPEN_EXISTING,
+            },
             System::Threading::CreateMutexW,
         },
     };
@@ -578,6 +581,22 @@ mod windows {
                 std::process::Command::new(self.0.clone())
                     .arg(ipc_url)
                     .spawn()?;
+            } else {
+                unsafe {
+                    let pipe = CreateFileW(
+                        &HSTRING::from(format!("\\\\.\\pipe\\{}-Named-Pipe", *APP_IDENTIFIER)),
+                        GENERIC_WRITE.0,
+                        FILE_SHARE_MODE::default(),
+                        None,
+                        OPEN_EXISTING,
+                        FILE_FLAGS_AND_ATTRIBUTES::default(),
+                        None,
+                    )?;
+                    let message = ipc_url.as_bytes();
+                    let mut bytes_written = 0;
+                    WriteFile(pipe, Some(message), Some(&mut bytes_written), None)?;
+                    CloseHandle(pipe)?;
+                }
             }
             Ok(())
         }
