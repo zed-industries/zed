@@ -326,13 +326,6 @@ pub fn cursor_style_methods(input: TokenStream) -> TokenStream {
             self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeLeft);
             self
         }
-
-        /// Sets cursor style when hovering over an element to `none`.
-        /// [Docs](https://tailwindcss.com/docs/cursor)
-        #visibility fn cursor_none(mut self, cursor: CursorStyle) -> Self {
-            self.style().mouse_cursor = Some(gpui::CursorStyle::None);
-            self
-        }
     };
 
     output.into()
