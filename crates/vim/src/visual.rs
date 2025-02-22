@@ -1293,7 +1293,7 @@ mod test {
         cx.simulate_keystrokes("shift-v a {");
         cx.assert_state(
             indoc! {
-                "«func empty(a string) bool {
+                "func empty(a string) bool «{
                    if a == \"\" {
                       return true
                    }
