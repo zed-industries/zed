@@ -630,6 +630,10 @@ impl Session {
         self.is_session_terminated
     }
 
+    pub fn is_local(&self) -> bool {
+        matches!(self.mode, Mode::Local(_))
+    }
+
     fn send_changed_breakpoints(
         &mut self,
         _breakpoint_store: Entity<BreakpointStore>,

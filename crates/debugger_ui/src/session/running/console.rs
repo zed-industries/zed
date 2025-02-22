@@ -117,9 +117,8 @@ impl Console {
         &self.query_bar
     }
 
-    fn is_local(&self, _cx: &Context<Self>) -> bool {
-        // todo(debugger): Fix this function
-        true
+    fn is_local(&self, cx: &Context<Self>) -> bool {
+        self.session.read(cx).is_local()
     }
 
     fn handle_stack_frame_list_events(
