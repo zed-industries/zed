@@ -25,7 +25,7 @@ use language::{
 };
 use lsp::LanguageServerId;
 use project::{DiagnosticSummary, Project, ProjectPath};
-use project_diagnostics_settings::ProjectDiagnosticsSettings;
+pub use project_diagnostics_settings::ProjectDiagnosticsSettings;
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
@@ -48,7 +48,7 @@ use workspace::{
 
 actions!(diagnostics, [Deploy, ToggleWarnings]);
 
-struct IncludeWarnings(bool);
+pub struct IncludeWarnings(pub bool);
 impl Global for IncludeWarnings {}
 
 pub fn init(cx: &mut App) {

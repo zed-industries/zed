@@ -13412,6 +13412,7 @@ dependencies = [
  "client",
  "collections",
  "db",
+ "diagnostics",
  "dirs 4.0.0",
  "editor",
  "futures 0.3.31",

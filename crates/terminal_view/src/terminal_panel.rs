@@ -2,6 +2,7 @@ use std::{cmp, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
     default_working_directory,
+    diagnostics_view::DiagnosticsView,
     persistence::{
         deserialize_terminal_panel, serialize_pane_group, SerializedItems, SerializedTerminalPanel,
     },
@@ -37,9 +38,9 @@ use workspace::{
     ui::IconName,
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
     ActivatePaneUp, ActivatePreviousPane, DraggedSelection, DraggedTab, ItemId, MoveItemToPane,
-    MoveItemToPaneInDirection, NewTerminal, Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft,
-    SplitRight, SplitUp, SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom,
-    Workspace,
+    MoveItemToPaneInDirection, NewDiagnostics, NewTerminal, Pane, PaneGroup, SplitDirection,
+    SplitDown, SplitLeft, SplitRight, SplitUp, SwapPaneDown, SwapPaneLeft, SwapPaneRight,
+    SwapPaneUp, ToggleZoom, Workspace,
 };
 
 use anyhow::{anyhow, Context as _, Result};
@@ -54,6 +55,7 @@ pub fn init(cx: &mut App) {
         |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
+            workspace.register_action(TerminalPanel::new_diagnostics);
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 if is_enabled_in_workspace(workspace, cx) {
                     workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
@@ -159,6 +161,10 @@ impl TerminalPanel {
                                         .action(
                                             "Spawn task",
                                             zed_actions::Spawn::modal().boxed_clone(),
+                                        )
+                                        .action(
+                                            "Open diagnostics",
+                                            workspace::NewDiagnostics.boxed_clone(),
                                         )
                                 });
 
@@ -433,6 +439,64 @@ impl TerminalPanel {
         Some(pane)
     }
 
+    // fn new_pane_with_diagnostics(
+    //     &mut self,
+    //     window: &mut Window,
+    //     cx: &mut Context<Self>,
+    // ) -> Option<Entity<Pane>> {
+    //     let workspace = self.workspace.upgrade()?;
+    //     let workspace = workspace.read(cx);
+    //     let database_id = workspace.database_id();
+    //     let weak_workspace = self.workspace.clone();
+    //     let project = workspace.project().clone();
+    //     let (working_directory, python_venv_directory) = self
+    //         .active_pane
+    //         .read(cx)
+    //         .active_item()
+    //         .and_then(|item| item.downcast::<TerminalView>())
+    //         .map(|terminal_view| {
+    //             let terminal = terminal_view.read(cx).terminal().read(cx);
+    //             (
+    //                 terminal
+    //                     .working_directory()
+    //                     .or_else(|| default_working_directory(workspace, cx)),
+    //                 terminal.python_venv_directory.clone(),
+    //             )
+    //         })
+    //         .unwrap_or((None, None));
+    //     let kind = TerminalKind::Shell(working_directory);
+    //     let window_handle = window.window_handle();
+    //     let terminal = project
+    //         .update(cx, |project, cx| {
+    //             project.create_terminal_with_venv(kind, python_venv_directory, window_handle, cx)
+    //         })
+    //         .ok()?;
+
+    //     let terminal_view = Box::new(cx.new(|cx| {
+    //         TerminalView::new(
+    //             terminal.clone(),
+    //             weak_workspace.clone(),
+    //             database_id,
+    //             project.downgrade(),
+    //             window,
+    //             cx,
+    //         )
+    //     }));
+    //     let pane = new_diagnostics_pane(
+    //         weak_workspace,
+    //         project,
+    //         self.active_pane.read(cx).is_zoomed(),
+    //         window,
+    //         cx,
+    //     );
+    //     self.apply_tab_bar_buttons(&pane, cx);
+    //     pane.update(cx, |pane, cx| {
+    //         pane.add_item(terminal_view, true, true, None, window, cx);
+    //     });
+
+    //     Some(pane)
+    // }
+
     pub fn open_terminal(
         workspace: &mut Workspace,
         action: &workspace::OpenTerminal,
@@ -569,6 +633,26 @@ impl TerminalPanel {
             .detach_and_log_err(cx);
     }
 
+    /// Create a new diagnostics view
+    fn new_diagnostics(
+        workspace: &mut Workspace,
+        _: &workspace::NewDiagnostics,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
+            return;
+        };
+
+        let kind = TerminalKind::Shell(default_working_directory(workspace, cx));
+
+        terminal_panel
+            .update(cx, |this, cx| {
+                this.add_diagnostics(RevealStrategy::Always, window, cx)
+            })
+            .detach_and_log_err(cx);
+    }
+
     fn terminals_for_task(
         &self,
         label: &str,
@@ -668,6 +752,7 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
+        dbg!("add_terminal");
         let workspace = self.workspace.clone();
         cx.spawn_in(window, |terminal_panel, mut cx| async move {
             if workspace.update(&mut cx, |workspace, cx| {
@@ -720,6 +805,59 @@ impl TerminalPanel {
                 this.pending_terminals_to_add = this.pending_terminals_to_add.saturating_sub(1);
                 this.serialize(cx)
             })?;
+            result
+        })
+    }
+
+    fn add_diagnostics(
+        &mut self,
+        reveal_strategy: RevealStrategy,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let workspace = self.workspace.clone();
+
+        cx.spawn_in(window, |terminal_panel, mut cx| async move {
+            let pane = terminal_panel.update(&mut cx, |terminal_panel, _| {
+                terminal_panel.pending_terminals_to_add += 1;
+                terminal_panel.active_pane.clone()
+            })?;
+            let project = workspace.update(&mut cx, |workspace, _| workspace.project().clone())?;
+            let window_handle = cx.window_handle();
+            let result = workspace.update_in(&mut cx, |workspace, window, cx| {
+                let diagnostics_view = Box::new(cx.new(|cx| {
+                    DiagnosticsView::new(
+                        workspace.weak_handle(),
+                        workspace.database_id(),
+                        workspace.project().clone(),
+                        window,
+                        cx,
+                    )
+                }));
+
+                match reveal_strategy {
+                    RevealStrategy::Always => {
+                        workspace.focus_panel::<Self>(window, cx);
+                    }
+                    RevealStrategy::NoFocus => {
+                        workspace.open_panel::<Self>(window, cx);
+                    }
+                    RevealStrategy::Never => {}
+                }
+
+                pane.update(cx, |pane, cx| {
+                    let focus = pane.has_focus(window, cx)
+                        || matches!(reveal_strategy, RevealStrategy::Always);
+                    pane.add_item(diagnostics_view, true, focus, None, window, cx);
+                });
+
+                Ok(())
+            })?;
+
+            // terminal_panel.update(&mut cx, |this, cx| {
+            //     this.pending_terminals_to_add = this.pending_terminals_to_add.saturating_sub(1);
+            //     this.serialize(cx)
+            // })?;
             result
         })
     }
@@ -1177,11 +1315,13 @@ impl Render for TerminalPanel {
             .map(|div| {
                 div.on_action({
                     cx.listener(|terminal_panel, _: &ActivatePaneLeft, window, cx| {
+                        dbg!("ActivatePaneLeft");
                         terminal_panel.activate_pane_in_direction(SplitDirection::Left, window, cx);
                     })
                 })
                 .on_action({
                     cx.listener(|terminal_panel, _: &ActivatePaneRight, window, cx| {
+                        dbg!("ActivatePaneRight");
                         terminal_panel.activate_pane_in_direction(
                             SplitDirection::Right,
                             window,
@@ -1191,16 +1331,19 @@ impl Render for TerminalPanel {
                 })
                 .on_action({
                     cx.listener(|terminal_panel, _: &ActivatePaneUp, window, cx| {
+                        dbg!("ActivatePaneUp");
                         terminal_panel.activate_pane_in_direction(SplitDirection::Up, window, cx);
                     })
                 })
                 .on_action({
                     cx.listener(|terminal_panel, _: &ActivatePaneDown, window, cx| {
+                        dbg!("ActivatePaneDown");
                         terminal_panel.activate_pane_in_direction(SplitDirection::Down, window, cx);
                     })
                 })
                 .on_action(
                     cx.listener(|terminal_panel, _action: &ActivateNextPane, window, cx| {
+                        dbg!("ActivateNextPane");
                         let panes = terminal_panel.center.panes();
                         if let Some(ix) = panes
                             .iter()
@@ -1213,6 +1356,7 @@ impl Render for TerminalPanel {
                 )
                 .on_action(cx.listener(
                     |terminal_panel, _action: &ActivatePreviousPane, window, cx| {
+                        dbg!("ActivatePreviousPane");
                         let panes = terminal_panel.center.panes();
                         if let Some(ix) = panes
                             .iter()
@@ -1225,6 +1369,8 @@ impl Render for TerminalPanel {
                 ))
                 .on_action(
                     cx.listener(|terminal_panel, action: &ActivatePane, window, cx| {
+                        dbg!("activatePane");
+
                         let panes = terminal_panel.center.panes();
                         if let Some(&pane) = panes.get(action.0) {
                             window.focus(&pane.read(cx).focus_handle(cx));
@@ -1245,6 +1391,58 @@ impl Render for TerminalPanel {
                         }
                     }),
                 )
+                // .on_action(cx.listener(
+                //     |terminal_panel, action: &workspace::NewDiagnostics, window, cx| {
+                //         println!("iciiii");
+                //         let panes = terminal_panel.center.panes();
+                //         // if let Some(&pane) = panes.get(action.0) {
+                //         //     window.focus(&pane.read(cx).focus_handle(cx));
+                //         // } else {
+                //         // if let Some(new_pane) =
+                //         //     terminal_panel.new_pane_with_cloned_active_terminal(window, cx)
+                //         // {
+                //         //     // terminal_panel
+                //         //     //     .center
+                //         //     //     .split(
+                //         //     //         &terminal_panel.active_pane,
+                //         //     //         &new_pane,
+                //         //     //         SplitDirection::Right,
+                //         //     //     )
+                //         //     //     .log_err();
+                //         //     window.focus(&new_pane.focus_handle(cx));
+                //         // }
+                //         let workspace = match terminal_panel.workspace.upgrade() {
+                //             Some(ws) => ws,
+                //             None => return,
+                //         };
+                //         let workspace = workspace.read(cx);
+                //         let weak_workspace = terminal_panel.workspace.clone();
+                //         let project = workspace.project().clone();
+                //         let new_pane = new_diagnostics_pane(
+                //             weak_workspace,
+                //             project,
+                //             terminal_panel.active_pane.read(cx).is_zoomed(),
+                //             window,
+                //             cx,
+                //         );
+                //         // registrar.size_full().child(self.center.render(
+                //         //     workspace.project(),
+                //         //     &HashMap::default(),
+                //         //     None,
+                //         //     &terminal_panel.active_pane,
+                //         //     workspace.zoomed_item(),
+                //         //     workspace.app_state(),
+                //         //     window,
+                //         //     cx,
+                //         // ));
+                //         // terminal_panel
+                //         //     .center
+                //         //     .swap(&terminal_panel.active_pane, &new_pane);
+                //         window.focus(&new_pane.focus_handle(cx));
+                //         terminal_panel.active_pane = new_pane;
+                //         // }
+                //     },
+                // ))
                 .on_action(cx.listener(|terminal_panel, _: &SwapPaneLeft, _, cx| {
                     terminal_panel.swap_pane_in_direction(SplitDirection::Left, cx);
                 }))
@@ -1369,6 +1567,7 @@ impl Panel for TerminalPanel {
     }
 
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
+        dbg!("set_active");
         let old_active = self.active;
         self.active = active;
         if !active || old_active == active || !self.has_no_terminals(cx) {
@@ -1454,3 +1653,193 @@ impl Render for InlineAssistTabBarButton {
             })
     }
 }
+
+// pub fn new_diagnostics_pane(
+//     workspace: WeakEntity<Workspace>,
+//     project: Entity<Project>,
+//     zoomed: bool,
+//     window: &mut Window,
+//     cx: &mut Context<TerminalPanel>,
+// ) -> Entity<Pane> {
+//     let is_local = project.read(cx).is_local();
+//     let terminal_panel = cx.entity().clone();
+//     let pane = cx.new(|cx| {
+//         dbg!("iciiii");
+//         let mut pane = Pane::new(
+//             workspace.clone(),
+//             project.clone(),
+//             Default::default(),
+//             None,
+//             NewDiagnostics.boxed_clone(),
+//             window,
+//             cx,
+//         );
+//         pane.set_zoomed(zoomed, cx);
+//         pane.set_can_navigate(false, cx);
+//         pane.display_nav_history_buttons(None);
+//         pane.set_should_display_tab_bar(|_, _| true);
+//         pane.set_zoom_out_on_close(false);
+
+//         let split_closure_terminal_panel = terminal_panel.downgrade();
+//         pane.set_can_split(Some(Arc::new(move |pane, dragged_item, _window, cx| {
+//             dbg!("split");
+//             if let Some(tab) = dragged_item.downcast_ref::<DraggedTab>() {
+//                 let is_current_pane = tab.pane == cx.entity();
+//                 let Some(can_drag_away) = split_closure_terminal_panel
+//                     .update(cx, |terminal_panel, _| {
+//                         let current_panes = terminal_panel.center.panes();
+//                         !current_panes.contains(&&tab.pane)
+//                             || current_panes.len() > 1
+//                             || (!is_current_pane || pane.items_len() > 1)
+//                     })
+//                     .ok()
+//                 else {
+//                     return false;
+//                 };
+//                 if can_drag_away {
+//                     let item = if is_current_pane {
+//                         pane.item_for_index(tab.ix)
+//                     } else {
+//                         tab.pane.read(cx).item_for_index(tab.ix)
+//                     };
+//                     if let Some(item) = item {
+//                         return item.downcast::<TerminalView>().is_some();
+//                     }
+//                 }
+//             }
+//             false
+//         })));
+
+//         let buffer_search_bar = cx.new(|cx| search::BufferSearchBar::new(window, cx));
+//         let breadcrumbs = cx.new(|_| Breadcrumbs::new());
+//         pane.toolbar().update(cx, |toolbar, cx| {
+//             toolbar.add_item(buffer_search_bar, window, cx);
+//             toolbar.add_item(breadcrumbs, window, cx);
+//         });
+
+//         // let drop_closure_project = project.downgrade();
+//         // let drop_closure_terminal_panel = terminal_panel.downgrade();
+//         pane.set_custom_drop_handle(cx, move |pane, dropped_item, window, cx| {
+//             //     let Some(project) = drop_closure_project.upgrade() else {
+//             //         dbg!("laaa");
+//             //         return ControlFlow::Break(());
+//             //     };
+//             //     if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
+//             //         let this_pane = cx.entity().clone();
+//             //         dbg!("laaa");
+//             //         let item = if tab.pane == this_pane {
+//             //             pane.item_for_index(tab.ix)
+//             //         } else {
+//             //             tab.pane.read(cx).item_for_index(tab.ix)
+//             //         };
+//             //         if let Some(item) = item {
+//             //             dbg!("laaa");
+//             //             if item.downcast::<TerminalView>().is_some() {
+//             //                 let source = tab.pane.clone();
+//             //                 let item_id_to_move = item.item_id();
+
+//             //                 let Ok(new_split_pane) = pane
+//             //                     .drag_split_direction()
+//             //                     .map(|split_direction| {
+//             //                         drop_closure_terminal_panel.update(cx, |terminal_panel, cx| {
+//             //                             let is_zoomed = if terminal_panel.active_pane == this_pane {
+//             //                                 pane.is_zoomed()
+//             //                             } else {
+//             //                                 terminal_panel.active_pane.read(cx).is_zoomed()
+//             //                             };
+//             //                             dbg!("laaa");
+//             //                             let new_pane = new_terminal_pane(
+//             //                                 workspace.clone(),
+//             //                                 project.clone(),
+//             //                                 is_zoomed,
+//             //                                 window,
+//             //                                 cx,
+//             //                             );
+//             //                             terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
+//             //                             terminal_panel.center.split(
+//             //                                 &this_pane,
+//             //                                 &new_pane,
+//             //                                 split_direction,
+//             //                             )?;
+//             //                             anyhow::Ok(new_pane)
+//             //                         })
+//             //                     })
+//             //                     .transpose()
+//             //                 else {
+//             //                     dbg!("laaa");
+//             //                     return ControlFlow::Break(());
+//             //                 };
+
+//             //                 match new_split_pane.transpose() {
+//             //                     // Source pane may be the one currently updated, so defer the move.
+//             //                     Ok(Some(new_pane)) => cx
+//             //                         .spawn_in(window, |_, mut cx| async move {
+//             //                             cx.update(|window, cx| {
+//             //                                 move_item(
+//             //                                     &source,
+//             //                                     &new_pane,
+//             //                                     item_id_to_move,
+//             //                                     new_pane.read(cx).active_item_index(),
+//             //                                     window,
+//             //                                     cx,
+//             //                                 );
+//             //                             })
+//             //                             .ok();
+//             //                         })
+//             //                         .detach(),
+//             //                     // If we drop into existing pane or current pane,
+//             //                     // regular pane drop handler will take care of it,
+//             //                     // using the right tab index for the operation.
+//             //                     Ok(None) => return ControlFlow::Continue(()),
+//             //                     err @ Err(_) => {
+//             //                         err.log_err();
+//             //                         return ControlFlow::Break(());
+//             //                     }
+//             //                 };
+//             //             } else if let Some(project_path) = item.project_path(cx) {
+//             //                 if let Some(entry_path) = project.read(cx).absolute_path(&project_path, cx)
+//             //                 {
+//             //                     add_paths_to_terminal(pane, &[entry_path], window, cx);
+//             //                 }
+//             //             }
+//             //         }
+//             //     } else if let Some(selection) = dropped_item.downcast_ref::<DraggedSelection>() {
+//             //         let project = project.read(cx);
+//             //         let paths_to_add = selection
+//             //             .items()
+//             //             .map(|selected_entry| selected_entry.entry_id)
+//             //             .filter_map(|entry_id| project.path_for_entry(entry_id, cx))
+//             //             .filter_map(|project_path| project.absolute_path(&project_path, cx))
+//             //             .collect::<Vec<_>>();
+//             //         if !paths_to_add.is_empty() {
+//             //             add_paths_to_terminal(pane, &paths_to_add, window, cx);
+//             //         }
+//             //     } else if let Some(&entry_id) = dropped_item.downcast_ref::<ProjectEntryId>() {
+//             //         if let Some(entry_path) = project
+//             //             .read(cx)
+//             //             .path_for_entry(entry_id, cx)
+//             //             .and_then(|project_path| project.read(cx).absolute_path(&project_path, cx))
+//             //         {
+//             //             add_paths_to_terminal(pane, &[entry_path], window, cx);
+//             //         }
+//             //     } else if is_local {
+//             //         if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
+//             //             add_paths_to_terminal(pane, paths.paths(), window, cx);
+//             //         }
+//             //     }
+
+//             dbg!("iciii");
+//             ControlFlow::Break(())
+//         });
+
+//         dbg!("loool");
+
+//         pane
+//     });
+
+//     cx.subscribe_in(&pane, window, TerminalPanel::handle_pane_event)
+//         .detach();
+//     cx.observe(&pane, |_, _, cx| cx.notify()).detach();
+
+//     pane
+// }

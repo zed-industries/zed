@@ -10853,6 +10853,7 @@ impl Editor {
         url_finder.detach();
     }
 
+    //ICI
     pub fn open_selected_filename(
         &mut self,
         _: &OpenSelectedFilename,
@@ -10871,6 +10872,34 @@ impl Editor {
             return;
         };
 
+        let project = self.project.clone();
+
+        cx.spawn_in(window, |_, mut cx| async move {
+            let result = find_file(&buffer, project, buffer_position, &mut cx).await;
+
+            if let Some((_, path)) = result {
+                workspace
+                    .update_in(&mut cx, |workspace, window, cx| {
+                        workspace.open_resolved_path(path, window, cx)
+                    })?
+                    .await?;
+            }
+            anyhow::Ok(())
+        })
+        .detach();
+    }
+
+    pub fn open_anchor(
+        &mut self,
+        buffer: Entity<Buffer>,
+        buffer_position: Anchor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let buffer_position = buffer_position.text_anchor;
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
         let project = self.project.clone();
 
         cx.spawn_in(window, |_, mut cx| async move {
