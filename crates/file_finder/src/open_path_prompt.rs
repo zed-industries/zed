@@ -3,7 +3,7 @@ use fuzzy::StringMatchCandidate;
 use picker::{Picker, PickerDelegate};
 use project::DirectoryLister;
 use std::{
-    path::{Path, PathBuf},
+    path::{Path, PathBuf, MAIN_SEPARATOR},
     sync::{
         atomic::{self, AtomicBool},
         Arc,
@@ -93,8 +93,6 @@ impl PickerDelegate for OpenPathDelegate {
         cx.notify();
     }
 
-    // todo(windows)
-    // Is this method woring correctly on Windows? This method uses `/` for path separator.
     fn update_matches(
         &mut self,
         query: String,
@@ -102,13 +100,13 @@ impl PickerDelegate for OpenPathDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
         let lister = self.lister.clone();
-        let (mut dir, suffix) = if let Some(index) = query.rfind('/') {
+        let (mut dir, suffix) = if let Some(index) = query.rfind(MAIN_SEPARATOR) {
             (query[..index].to_string(), query[index + 1..].to_string())
         } else {
             (query, String::new())
         };
         if dir == "" {
-            dir = "/".to_string();
+            dir = MAIN_SEPARATOR.to_string();
         }
 
         let query = if self
@@ -245,10 +243,14 @@ impl PickerDelegate for OpenPathDelegate {
                         .as_ref(),
                 )
                 .join(&candidate.string);
-                let trailing_slash = if full_path.is_dir() { "/" } else { "" };
+                let trailing_slash = if full_path.is_dir() {
+                    MAIN_SEPARATOR.to_string()
+                } else {
+                    String::new()
+                };
                 Some(format!(
-                    "{}/{}{trailing_slash}",
-                    directory_state.path, candidate.string
+                    "{}{MAIN_SEPARATOR}{}{}",
+                    directory_state.path, candidate.string, trailing_slash
                 ))
             })
             .unwrap_or(query),
@@ -317,6 +319,6 @@ impl PickerDelegate for OpenPathDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        Arc::from("[directory/]filename.ext")
+        Arc::from(format!("[directory{}]filename.ext", MAIN_SEPARATOR))
     }
 }
