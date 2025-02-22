@@ -611,19 +611,10 @@ impl PlatformWindow for WindowsWindow {
                         let encoded = HSTRING::from(btn_string);
                         let button_id = if btn_string == "Cancel" {
                             IDCANCEL.0
-                        } else if btn_string == "No" {
-                            IDNO.0
-                        } else if btn_string == "OK" {
-                            IDOK.0
-                        } else if btn_string == "Retry" {
-                            IDRETRY.0
-                        } else if btn_string == "Yes" {
-                            IDYES.0
                         } else {
                             index as i32 - 100
                         };
                         button_id_map.push(button_id);
-                        println!("Creating button {}, {}, {}", btn_string, index, button_id);
                         buttons.push(TASKDIALOG_BUTTON {
                             nButtonID: button_id,
                             pszButtonText: PCWSTR::from_raw(encoded.as_ptr()),
@@ -642,7 +633,6 @@ impl PlatformWindow for WindowsWindow {
                         .iter()
                         .position(|&button_id| button_id == res)
                         .unwrap_or(0);
-                    println!("Clicked: {}, {}", res, clicked);
                     let _ = done_tx.send(clicked as usize);
                 }
             })
