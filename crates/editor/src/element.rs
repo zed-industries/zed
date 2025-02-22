@@ -2547,14 +2547,15 @@ impl EditorElement {
             Block::FoldedBuffer {
                 first_excerpt,
                 prev_excerpt,
-                show_excerpt_controls,
+                excerpt_controls_before,
                 height,
+                ..
             } => {
                 let selected = selected_buffer_ids.contains(&first_excerpt.buffer_id);
                 let mut result = v_flex().id(block_id).w_full();
 
                 if let Some(prev_excerpt) = prev_excerpt {
-                    if *show_excerpt_controls {
+                    if *excerpt_controls_before {
                         result = result.child(self.render_expand_excerpt_control(
                             block_id,
                             ExpandExcerptDirection::Down,
@@ -2582,7 +2583,8 @@ impl EditorElement {
             Block::ExcerptBoundary {
                 prev_excerpt,
                 next_excerpt,
-                show_excerpt_controls,
+                excerpt_controls_before,
+                excerpt_controls_after,
                 height,
                 starts_new_buffer,
             } => {
@@ -2590,7 +2592,7 @@ impl EditorElement {
                 let mut result = v_flex().id(block_id).w_full();
 
                 if let Some(prev_excerpt) = prev_excerpt {
-                    if *show_excerpt_controls {
+                    if *excerpt_controls_before {
                         result = result.child(self.render_expand_excerpt_control(
                             block_id,
                             ExpandExcerptDirection::Down,
@@ -2623,7 +2625,7 @@ impl EditorElement {
                                 .child(div().h(FILE_HEADER_HEIGHT as f32 * window.line_height()));
                         }
 
-                        if *show_excerpt_controls {
+                        if *excerpt_controls_after {
                             result = result.child(self.render_expand_excerpt_control(
                                 block_id,
                                 ExpandExcerptDirection::Up,
@@ -2634,7 +2636,7 @@ impl EditorElement {
                             ));
                         }
                     } else {
-                        if *show_excerpt_controls {
+                        if *excerpt_controls_after {
                             result = result.child(
                                 h_flex()
                                     .relative()
@@ -3162,11 +3164,7 @@ impl EditorElement {
     #[allow(clippy::too_many_arguments)]
     fn layout_sticky_buffer_header(
         &self,
-        StickyHeaderExcerpt {
-            excerpt,
-            next_excerpt_controls_present,
-            next_buffer_row,
-        }: StickyHeaderExcerpt<'_>,
+        StickyHeaderExcerpt { excerpt, max_row }: StickyHeaderExcerpt<'_>,
         scroll_position: f32,
         line_height: Pixels,
         snapshot: &EditorSnapshot,
@@ -3208,16 +3206,9 @@ impl EditorElement {
 
         let mut origin = hitbox.origin;
 
-        if let Some(next_buffer_row) = next_buffer_row {
+        if let Some(max_row) = max_row {
             // Push up the sticky header when the excerpt is getting close to the top of the viewport
-
-            let mut max_row = next_buffer_row - FILE_HEADER_HEIGHT * 2;
-
-            if next_excerpt_controls_present {
-                max_row -= MULTI_BUFFER_EXCERPT_HEADER_HEIGHT;
-            }
-
-            let offset = scroll_position - max_row as f32;
+            let offset = scroll_position - (max_row - FILE_HEADER_HEIGHT) as f32;
 
             if offset > 0.0 {
                 origin.y -= Pixels(offset) * line_height;

@@ -1094,7 +1094,6 @@ impl DisplaySnapshot {
             .blocks_in_range(rows.start.0..rows.end.0)
             .map(|(row, block)| (DisplayRow(row), block))
     }
-
     pub fn sticky_header_excerpt(&self, row: DisplayRow) -> Option<StickyHeaderExcerpt<'_>> {
         self.block_snapshot.sticky_header_excerpt(row.0)
     }

@@ -1118,6 +1118,7 @@ mod tests {
             let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
 
             assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
+            assert_eq!(snapshot.text(), "\nabc\ndefg\n\n\nhijkl\nmn");
 
             let col_2_x = snapshot
                 .x_for_display_point(DisplayPoint::new(DisplayRow(2), 2), &text_layout_details);

@@ -312,6 +312,8 @@ pub struct ExcerptInfo {
     pub buffer_id: BufferId,
     pub range: ExcerptRange<text::Anchor>,
     pub end_row: MultiBufferRow,
+    pub starts_at_start: bool,
+    pub ends_at_end: bool,
 }
 
 impl std::fmt::Debug for ExcerptInfo {
@@ -5035,7 +5037,19 @@ impl MultiBufferSnapshot {
         } else {
             cursor.seek_to_start_of_current_excerpt();
         }
-        let mut prev_region = cursor.region();
+        struct RegionWithEnds<'a> {
+            region: MultiBufferRegion<'a, DimensionPair<usize, Point>>,
+            starts_at_start: bool,
+            ends_at_end: bool,
+        }
+
+        let mut prev_region = cursor.region().map(|region| RegionWithEnds {
+            starts_at_start: false,
+            ends_at_end: region.excerpt.range.context.end.to_point(region.buffer).row
+                == region.buffer.max_point().row
+                && cursor.is_at_start_of_excerpt(),
+            region,
+        });
 
         cursor.next_excerpt();
 
@@ -5044,16 +5058,40 @@ impl MultiBufferSnapshot {
             if self.singleton {
                 return None;
             }
+            let mut next_region = cursor.region().map(|region| RegionWithEnds {
+                starts_at_start: region
+                    .excerpt
+                    .range
+                    .context
+                    .start
+                    .to_point(region.buffer)
+                    .row
+                    == 0
+                    && cursor.is_at_start_of_excerpt(),
+                ends_at_end: false,
+                region,
+            });
 
-            let next_region = cursor.region();
             cursor.next_excerpt();
+            if let Some(next_region) = next_region.as_mut() {
+                next_region.ends_at_end = cursor.is_at_start_of_excerpt()
+                    && next_region
+                        .region
+                        .excerpt
+                        .range
+                        .context
+                        .end
+                        .to_point(next_region.region.buffer)
+                        .row
+                        == next_region.region.buffer.max_point().row
+            }
 
             let next_region_start = if let Some(region) = &next_region {
-                if !bounds.contains(&region.range.start.key) {
+                if !bounds.contains(&region.region.range.start.key) {
                     prev_region = next_region;
                     continue;
                 }
-                region.range.start.value.unwrap()
+                region.region.range.start.value.unwrap()
             } else {
                 if !bounds.contains(&self.len()) {
                     return None;
@@ -5067,23 +5105,27 @@ impl MultiBufferSnapshot {
             };
 
             let prev = prev_region.as_ref().map(|region| ExcerptInfo {
-                id: region.excerpt.id,
-                buffer: region.excerpt.buffer.clone(),
-                buffer_id: region.excerpt.buffer_id,
-                range: region.excerpt.range.clone(),
+                id: region.region.excerpt.id,
+                buffer: region.region.excerpt.buffer.clone(),
+                buffer_id: region.region.excerpt.buffer_id,
+                range: region.region.excerpt.range.clone(),
                 end_row: MultiBufferRow(next_region_start.row),
+                ends_at_end: region.ends_at_end,
+                starts_at_start: region.starts_at_start,
             });
 
             let next = next_region.as_ref().map(|region| ExcerptInfo {
-                id: region.excerpt.id,
-                buffer: region.excerpt.buffer.clone(),
-                buffer_id: region.excerpt.buffer_id,
-                range: region.excerpt.range.clone(),
-                end_row: if region.excerpt.has_trailing_newline {
+                id: region.region.excerpt.id,
+                buffer: region.region.excerpt.buffer.clone(),
+                buffer_id: region.region.excerpt.buffer_id,
+                range: region.region.excerpt.range.clone(),
+                end_row: if region.region.excerpt.has_trailing_newline {
                     MultiBufferRow(next_region_end.row - 1)
                 } else {
                     MultiBufferRow(next_region_end.row)
                 },
+                ends_at_end: region.ends_at_end,
+                starts_at_start: region.starts_at_start,
             });
 
             if next.is_none() {
@@ -6161,6 +6203,22 @@ where
             self.cached_region = self.build_region();
         }
         self.cached_region.clone()
+    }
+
+    fn is_at_start_of_excerpt(&mut self) -> bool {
+        if self.diff_transforms.start().1 > *self.excerpts.start() {
+            return false;
+        } else if self.diff_transforms.start().1 < *self.excerpts.start() {
+            return true;
+        }
+
+        self.diff_transforms.prev(&());
+        let prev_transform = self.diff_transforms.item();
+        self.diff_transforms.next(&());
+
+        prev_transform.map_or(true, |next_transform| {
+            matches!(next_transform, DiffTransform::BufferContent { .. })
+        })
     }
 
     fn is_at_end_of_excerpt(&mut self) -> bool {
