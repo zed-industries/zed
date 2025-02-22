@@ -1146,8 +1146,10 @@ impl Vim {
         self.stop_recording_immediately(NormalBefore.boxed_clone(), cx);
         self.store_visual_marks(window, cx);
         self.clear_operator(window, cx);
-        self.update_editor(window, cx, |_, editor, _, cx| {
-            editor.set_cursor_shape(language::CursorShape::Hollow, cx);
+        self.update_editor(window, cx, |vim, editor, _, cx| {
+            if vim.cursor_shape() == CursorShape::Block {
+                editor.set_cursor_shape(CursorShape::Hollow, cx);
+            }
         });
     }
 

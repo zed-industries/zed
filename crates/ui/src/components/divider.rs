@@ -3,6 +3,24 @@ use gpui::{Hsla, IntoElement};
 
 use crate::prelude::*;
 
+pub fn divider() -> Divider {
+    Divider {
+        style: DividerStyle::Solid,
+        direction: DividerDirection::Horizontal,
+        color: DividerColor::default(),
+        inset: false,
+    }
+}
+
+pub fn vertical_divider() -> Divider {
+    Divider {
+        style: DividerStyle::Solid,
+        direction: DividerDirection::Vertical,
+        color: DividerColor::default(),
+        inset: false,
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum DividerStyle {
     Solid,

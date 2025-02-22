@@ -28,6 +28,7 @@ use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
 use theme::ThemeSettings;
+use zed_actions::outline::ToggleOutline;
 
 use ui::{
     h_flex, prelude::*, utils::SearchInputWidth, IconButton, IconButtonShape, IconName, Tooltip,
@@ -482,6 +483,11 @@ impl Render for BufferSearchBar {
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::select_next_match))
             .on_action(cx.listener(Self::select_prev_match))
+            .on_action(cx.listener(|this, _: &ToggleOutline, window, cx| {
+                if let Some(active_searchable_item) = &mut this.active_searchable_item {
+                    active_searchable_item.relay_action(Box::new(ToggleOutline), window, cx);
+                }
+            }))
             .when(self.supported_options(cx).replacement, |this| {
                 this.on_action(cx.listener(Self::toggle_replace))
                     .when(in_replace, |this| {

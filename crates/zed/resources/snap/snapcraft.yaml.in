@@ -9,7 +9,6 @@ description: |
 grade: stable
 confinement: classic
 compression: lzo
-icon: crates/zed/resources/app-icon.png
 website: https://zed.dev/
 source-code: https://github.com/zed-industries/zed
 issues: https://github.com/zed-industries/zed/issues

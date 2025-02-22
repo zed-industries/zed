@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-CARGO_ABOUT_VERSION="0.6.1"
+CARGO_ABOUT_VERSION="0.6.6"
 OUTPUT_FILE="${1:-$(pwd)/assets/licenses.md}"
 TEMPLATE_FILE="script/licenses/template.md.hbs"
 
@@ -25,19 +25,10 @@ fi
 
 echo "Generating cargo licenses"
 
-stderr_file=$(mktemp)
-
 cargo about generate \
     --fail \
     -c script/licenses/zed-licenses.toml \
-    "${TEMPLATE_FILE}" \
-    2> >(tee "$stderr_file") \
-    >> $OUTPUT_FILE
-
-if cat "$stderr_file" | grep -v "\[WARN\]" > /dev/null; then
-    echo "Error: License check failed - warnings found" >&2
-    exit 1
-fi
+    "${TEMPLATE_FILE}" >> $OUTPUT_FILE
 
 sed -i.bak 's/&quot;/"/g' $OUTPUT_FILE
 sed -i.bak 's/&#x27;/'\''/g' $OUTPUT_FILE # The ` '\'' ` thing ends the string, appends a single quote, and re-opens the string

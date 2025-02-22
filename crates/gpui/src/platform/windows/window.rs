@@ -49,7 +49,7 @@ pub struct WindowsWindowState {
 
     pub click_state: ClickState,
     pub system_settings: WindowsSystemSettings,
-    pub current_cursor: HCURSOR,
+    pub current_cursor: Option<HCURSOR>,
     pub nc_button_pressed: Option<u32>,
 
     pub display: WindowsDisplay,
@@ -77,7 +77,7 @@ impl WindowsWindowState {
         hwnd: HWND,
         transparent: bool,
         cs: &CREATESTRUCTW,
-        current_cursor: HCURSOR,
+        current_cursor: Option<HCURSOR>,
         display: WindowsDisplay,
         gpu_context: &BladeContext,
     ) -> Result<Self> {
@@ -352,7 +352,7 @@ struct WindowCreateContext<'a> {
     transparent: bool,
     is_movable: bool,
     executor: ForegroundExecutor,
-    current_cursor: HCURSOR,
+    current_cursor: Option<HCURSOR>,
     windows_version: WindowsVersion,
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
