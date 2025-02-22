@@ -573,8 +573,13 @@ mod windows {
             )
         }
 
-        fn launch(&self, _ipc_url: String) -> anyhow::Result<()> {
-            unimplemented!()
+        fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
+            if check_single_instance() {
+                std::process::Command::new(self.0.clone())
+                    .arg(ipc_url)
+                    .spawn()?;
+            }
+            Ok(())
         }
 
         fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
