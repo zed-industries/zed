@@ -576,6 +576,35 @@ impl platform::Host for WasmState {
     }
 }
 
+impl From<std::process::Output> for process::Output {
+    fn from(output: std::process::Output) -> Self {
+        Self {
+            status: output.status.code(),
+            stdout: output.stdout,
+            stderr: output.stderr,
+        }
+    }
+}
+
+impl process::Host for WasmState {
+    async fn run_command(
+        &mut self,
+        command: process::Command,
+    ) -> wasmtime::Result<Result<process::Output, String>> {
+        maybe!(async {
+            let output = util::command::new_smol_command(command.command.as_str())
+                .args(&command.args)
+                .envs(command.env)
+                .output()
+                .await?;
+
+            Ok(output.into())
+        })
+        .await
+        .to_wasmtime_result()
+    }
+}
+
 #[async_trait]
 impl slash_command::Host for WasmState {}
 
