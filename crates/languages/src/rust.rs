@@ -527,12 +527,14 @@ impl ContextProvider for RustContextProvider {
     ) -> Option<TaskTemplates> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         const CUSTOM_TARGET_DIR: &str = "RUST_TARGET_DIR";
-        let package_to_run = language_settings(Some("Rust".into()), file.as_ref(), cx)
+
+        let language_sets = language_settings(Some("Rust".into()), file.as_ref(), cx);
+        let package_to_run = language_sets
             .tasks
             .variables
             .get(DEFAULT_RUN_NAME_STR)
             .cloned();
-        let custom_target_dir = language_settings(Some("Rust".into()), file.as_ref(), cx)
+        let custom_target_dir = language_sets
             .tasks
             .variables
             .get(CUSTOM_TARGET_DIR)
