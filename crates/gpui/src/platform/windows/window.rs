@@ -14,7 +14,6 @@ use ::util::ResultExt;
 use anyhow::{Context as _, Result};
 use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
-use itertools::Itertools;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use windows::{
@@ -605,12 +604,28 @@ impl PlatformWindow for WindowsWindow {
                         hints_encoded = HSTRING::from(hints);
                         config.pszContent = PCWSTR::from_raw(hints_encoded.as_ptr());
                     };
+                    let mut button_id_map = Vec::with_capacity(answers.len());
                     let mut buttons = Vec::new();
                     let mut btn_encoded = Vec::new();
                     for (index, btn_string) in answers.iter().enumerate() {
                         let encoded = HSTRING::from(btn_string);
+                        let button_id = if btn_string == "Cancel" {
+                            IDCANCEL.0
+                        } else if btn_string == "No" {
+                            IDNO.0
+                        } else if btn_string == "OK" {
+                            IDOK.0
+                        } else if btn_string == "Retry" {
+                            IDRETRY.0
+                        } else if btn_string == "Yes" {
+                            IDYES.0
+                        } else {
+                            index as i32 - 100
+                        };
+                        button_id_map.push(button_id);
+                        println!("Creating button {}, {}, {}", btn_string, index, button_id);
                         buttons.push(TASKDIALOG_BUTTON {
-                            nButtonID: index as _,
+                            nButtonID: button_id,
                             pszButtonText: PCWSTR::from_raw(encoded.as_ptr()),
                         });
                         btn_encoded.push(encoded);
@@ -623,7 +638,12 @@ impl PlatformWindow for WindowsWindow {
                     let _ = TaskDialogIndirect(&config, Some(&mut res), None, None)
                         .inspect_err(|e| log::error!("unable to create task dialog: {}", e));
 
-                    let _ = done_tx.send(res as usize);
+                    let clicked = button_id_map
+                        .iter()
+                        .position(|&button_id| button_id == res)
+                        .unwrap_or(0);
+                    println!("Clicked: {}, {}", res, clicked);
+                    let _ = done_tx.send(clicked as usize);
                 }
             })
             .detach();
