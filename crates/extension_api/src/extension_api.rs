@@ -1,6 +1,7 @@
 //! The Zed Rust Extension API allows you write extensions for [Zed](https://zed.dev/) in Rust.
 
 pub mod http_client;
+pub mod process;
 pub mod settings;
 
 use core::fmt;
