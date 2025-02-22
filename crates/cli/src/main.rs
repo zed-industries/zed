@@ -526,10 +526,11 @@ mod flatpak {
 mod windows {
     use crate::{Detect, InstalledApp};
     use std::io;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
 
-    struct App;
+    struct App(PathBuf);
+
     impl InstalledApp for App {
         fn zed_version_string(&self) -> String {
             unimplemented!()
