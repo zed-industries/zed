@@ -2605,6 +2605,7 @@ dependencies = [
  "serde",
  "tempfile",
  "util",
+ "windows 0.58.0",
 ]
 
 [[package]]
