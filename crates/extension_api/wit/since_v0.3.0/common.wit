@@ -6,4 +6,7 @@ interface common {
         /// The end of the range (exclusive).
         end: u32,
     }
+
+    /// A list of environment variables.
+    type env-vars = list<tuple<string, string>>;
 }
