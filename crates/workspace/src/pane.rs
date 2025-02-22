@@ -2544,7 +2544,8 @@ impl Pane {
                             .read(cx)
                             .item_for_entry(entry, cx)
                             .and_then(|item| item.project_path(cx))
-                            .map(|project_path| project_path.path);
+                            .map(|project_path| project_path.path)
+                            .filter(|path| !path.as_os_str().is_empty());
 
                         let entry_id = entry.to_proto();
                         menu = menu
