@@ -4,13 +4,17 @@ use crate::git_panel::{commit_message_editor, GitPanel};
 use crate::repository_selector::RepositorySelector;
 use anyhow::Result;
 use git::Commit;
+use language::language_settings::LanguageSettings;
 use language::Buffer;
-use panel::{panel_editor_container, panel_editor_style, panel_filled_button, panel_icon_button};
+use panel::{
+    panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
+    panel_icon_button,
+};
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{prelude::*, Tooltip};
+use ui::{prelude::*, KeybindingHint, Tooltip};
 
-use editor::{Editor, EditorElement, EditorMode, MultiBuffer};
+use editor::{Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer};
 use gpui::*;
 use project::git::Repository;
 use project::{Fs, Project};
@@ -129,12 +133,58 @@ impl CommitModal {
         }
     }
 
+    /// Returns the width and padding_x
+    fn width(&self, window: &mut Window, cx: &mut Context<Self>) -> (f32, f32) {
+        // TODO: Let's set the width based on your set wrap guide if possible
+
+        // let settings = EditorSettings::get_global(cx);
+
+        // let first_wrap_guide = self
+        //     .commit_editor
+        //     .read(cx)
+        //     .wrap_guides(cx)
+        //     .iter()
+        //     .next()
+        //     .map(|(guide, active)| if *active { Some(*guide) } else { None })
+        //     .flatten();
+
+        // let preferred_width = if let Some(guide) = first_wrap_guide {
+        //     guide
+        // } else {
+        //     80
+        // };
+
+        let preferred_width = 72;
+
+        let mut width = 460.0;
+        let padding_x = 16.0;
+
+        let mut snapshot = self
+            .commit_editor
+            .update(cx, |editor, cx| editor.snapshot(window, cx));
+        let style = window.text_style().clone();
+
+        let font_id = window.text_system().resolve_font(&style.font());
+        let font_size = style.font_size.to_pixels(window.rem_size());
+        let line_height = style.line_height_in_pixels(window.rem_size());
+        if let Ok(em_width) = window.text_system().em_width(font_id, font_size) {
+            width = preferred_width as f32 * em_width.0 + (padding_x * 2.0);
+            cx.notify();
+        }
+
+        // cx.notify();
+
+        (width, padding_x)
+    }
+
     pub fn render_commit_editor(
         &self,
         name_and_email: Option<(SharedString, SharedString)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let (width, padding_x) = self.width(window, cx);
+
         let editor = self.commit_editor.clone();
 
         let panel_editor_style = panel_editor_style(true, window, cx);
@@ -143,15 +193,41 @@ impl CommitModal {
         let line_height = relative(settings.buffer_line_height.value())
             .to_pixels(settings.buffer_font_size(cx).into(), window.rem_size());
 
+        let changes_count = self.git_panel.read(cx).total_staged_count();
+        let branch = self
+            .git_panel
+            .read(cx)
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.read(cx).branch().map(|b| b.name.clone()))
+            .unwrap_or_else(|| "<no branch>".into());
+
+        let mut snapshot = self
+            .commit_editor
+            .update(cx, |editor, cx| editor.snapshot(window, cx));
+        let style = window.text_style().clone();
+
+        let font_id = window.text_system().resolve_font(&style.font());
+        let font_size = style.font_size.to_pixels(window.rem_size());
+        let line_height = style.line_height_in_pixels(window.rem_size());
+        let em_width = window.text_system().em_width(font_id, font_size);
+
         v_flex()
-            .justify_between()
             .relative()
             .w_full()
             .h_full()
-            .pt_2()
+            .py_4()
+            .px(px(padding_x))
+            .gap_5()
+            .rounded_tl_xl()
+            .rounded_tr_xl()
             .bg(cx.theme().colors().editor_background)
             .child(EditorElement::new(&self.commit_editor, panel_editor_style))
-            .child(self.render_footer(window, cx))
+            .child(
+                Label::new(format!("Commiting {changes_count} changes → {branch}"))
+                    .color(Color::Muted)
+                    .size(LabelSize::XSmall),
+            )
     }
 
     pub fn render_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -175,13 +251,10 @@ impl CommitModal {
             (branch, tooltip, title, co_authors)
         });
 
-        let branch_selector = Button::new("branch-selector", branch)
-            .color(Color::Muted)
-            .style(ButtonStyle::Subtle)
+        let branch_selector = panel_button(branch)
             .icon(IconName::GitBranch)
             .icon_size(IconSize::Small)
             .icon_color(Color::Muted)
-            .size(ButtonSize::Compact)
             .icon_position(IconPosition::Start)
             .tooltip(Tooltip::for_action_title(
                 "Switch Branch",
@@ -191,18 +264,40 @@ impl CommitModal {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
             }))
             .style(ButtonStyle::Transparent);
+
+        let close_kb_hint =
+            if let Some(close_kb) = ui::KeyBinding::for_action(&menu::Cancel, window, cx) {
+                Some(
+                    KeybindingHint::new(close_kb, cx.theme().colors().editor_background)
+                        .suffix("Cancel"),
+                )
+            } else {
+                None
+            };
+
         h_flex()
+            .rounded_bl_xl()
+            .rounded_br_xl()
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().elevated_surface_background)
+            .px_4()
+            .py_2()
             .w_full()
             .justify_between()
-            .child(branch_selector)
+            .children(close_kb_hint)
             .child(
-                h_flex().children(co_authors).child(
-                    panel_filled_button(title)
-                        .tooltip(Tooltip::for_action_title(tooltip, &git::Commit))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.commit(&Default::default(), window, cx);
-                        })),
-                ),
+                h_flex()
+                    .gap_1p5()
+                    .child(branch_selector)
+                    .children(co_authors)
+                    .child(
+                        panel_button(title)
+                            .tooltip(Tooltip::for_action_title(tooltip, &git::Commit))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.commit(&Default::default(), window, cx);
+                            })),
+                    ),
             )
     }
 
@@ -218,21 +313,23 @@ impl CommitModal {
 
 impl Render for CommitModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let (width, _) = self.width(window, cx);
+
         v_flex()
             .id("commit-modal")
             .key_context("GitCommit")
             .elevation_3(cx)
+            .overflow_hidden()
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::commit))
             .relative()
+            .justify_between()
             .bg(cx.theme().colors().editor_background)
             .rounded(px(16.))
             .border_1()
             .border_color(cx.theme().colors().border)
-            .py_2()
-            .px_4()
-            .w(px(480.))
-            .min_h(rems(18.))
+            .w(px(width))
+            .h(px(450.))
             .flex_1()
             .overflow_hidden()
             .child(
@@ -240,5 +337,6 @@ impl Render for CommitModal {
                     .flex_1()
                     .child(self.render_commit_editor(None, window, cx)),
             )
+            .child(self.render_footer(window, cx))
     }
 }

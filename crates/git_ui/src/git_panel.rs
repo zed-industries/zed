@@ -1008,6 +1008,10 @@ impl GitPanel {
         .detach();
     }
 
+    pub fn total_staged_count(&self) -> usize {
+        self.tracked_staged_count + self.new_staged_count + self.conflicted_staged_count
+    }
+
     pub fn commit_message_buffer(&self, cx: &App) -> Entity<Buffer> {
         self.commit_editor
             .read(cx)
