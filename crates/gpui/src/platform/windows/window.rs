@@ -627,12 +627,13 @@ impl PlatformWindow for WindowsWindow {
                     config.pfCallback = None;
                     let mut res = std::mem::zeroed();
                     let _ = TaskDialogIndirect(&config, Some(&mut res), None, None)
-                        .inspect_err(|e| log::error!("unable to create task dialog: {}", e));
+                        .context("unable to create task dialog")
+                        .log_err();
 
                     let clicked = button_id_map
                         .iter()
                         .position(|&button_id| button_id == res)
-                        .unwrap_or(0);
+                        .unwrap();
                     let _ = done_tx.send(clicked);
                 }
             })
