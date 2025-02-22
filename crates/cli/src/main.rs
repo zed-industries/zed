@@ -533,7 +533,20 @@ mod windows {
 
     impl InstalledApp for App {
         fn zed_version_string(&self) -> String {
-            unimplemented!()
+            format!(
+                "Zed {}{}{} – {}",
+                if *release_channel::RELEASE_CHANNEL_NAME == "stable" {
+                    "".to_string()
+                } else {
+                    format!("{} ", *release_channel::RELEASE_CHANNEL_NAME)
+                },
+                option_env!("RELEASE_VERSION").unwrap_or_default(),
+                match option_env!("ZED_COMMIT_SHA") {
+                    Some(commit_sha) => format!(" {commit_sha} "),
+                    None => "".to_string(),
+                },
+                self.0.display(),
+            )
         }
         fn launch(&self, _ipc_url: String) -> anyhow::Result<()> {
             unimplemented!()
@@ -545,7 +558,7 @@ mod windows {
 
     impl Detect {
         pub fn detect(_path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
-            Ok(App)
+            Ok(App(PathBuf::from("")))
         }
     }
 }
