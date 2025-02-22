@@ -50,7 +50,7 @@ pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
     menus: Vec<OwnedMenu>,
     // NOTE: standard cursor handles don't need to close.
-    pub(crate) current_cursor: Option<HCURSOR>,
+    pub(crate) current_cursor: HCURSOR,
 }
 
 #[derive(Default)]
@@ -506,11 +506,11 @@ impl Platform for WindowsPlatform {
     fn set_cursor_style(&self, style: CursorStyle) {
         let hcursor = load_cursor(style);
         let mut lock = self.state.borrow_mut();
-        if lock.current_cursor.map(|c| c.0) != hcursor.map(|c| c.0) {
+        if lock.current_cursor.0 != hcursor.0 {
             self.post_message(
                 WM_GPUI_CURSOR_STYLE_CHANGED,
                 WPARAM(0),
-                LPARAM(hcursor.map_or(0, |c| c.0 as isize)),
+                LPARAM(hcursor.0 as isize),
             );
             lock.current_cursor = hcursor;
         }
@@ -613,7 +613,7 @@ impl Drop for WindowsPlatform {
 pub(crate) struct WindowCreationInfo {
     pub(crate) icon: HICON,
     pub(crate) executor: ForegroundExecutor,
-    pub(crate) current_cursor: Option<HCURSOR>,
+    pub(crate) current_cursor: HCURSOR,
     pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,

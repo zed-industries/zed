@@ -938,7 +938,6 @@ impl Platform for MacPlatform {
                 CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
                 CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
                 CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
-                CursorStyle::None => msg_send![class!(NSCursor), setHiddenUntilMouseMoves:YES],
             };
 
             let old_cursor: id = msg_send![class!(NSCursor), currentCursor];
