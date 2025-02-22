@@ -729,13 +729,14 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 }
 
 async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
+    let has_credentials = client.has_credentials(cx).await;
     if stdout_is_a_pty() {
         if client::IMPERSONATE_LOGIN.is_some() {
             client.authenticate_and_connect(false, cx).await?;
-        } else {
-            client.authenticate_and_connect(true, cx).await?
+        } else if has_credentials {
+            client.authenticate_and_connect(true, cx).await?;
         }
-    } else if client.has_credentials(cx).await {
+    } else if has_credentials {
         client.authenticate_and_connect(true, cx).await?;
     }
     Ok::<_, anyhow::Error>(())
