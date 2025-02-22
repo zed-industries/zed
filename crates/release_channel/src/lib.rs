@@ -23,6 +23,29 @@ pub static RELEASE_CHANNEL: LazyLock<ReleaseChannel> =
         _ => panic!("invalid release channel {}", *RELEASE_CHANNEL_NAME),
     });
 
+/// The app identifier for the current release channel, Windows only.
+#[cfg(target_os = "windows")]
+pub static APP_IDENTIFIER: LazyLock<&str> = LazyLock::new(|| match *RELEASE_CHANNEL {
+    ReleaseChannel::Dev => "Zed-Editor-Dev",
+    ReleaseChannel::Nightly => "Zed-Editor-Nightly",
+    ReleaseChannel::Preview => "Zed-Editor-Preview",
+    ReleaseChannel::Stable => "Zed-Editor-Stable",
+});
+
+/// Generates an identifier with the given name, used for NamedPipe and other named objects on Windows.
+#[inline]
+#[cfg(target_os = "windows")]
+pub fn generate_identifier(name: &str) -> String {
+    format!("{}-{}", *APP_IDENTIFIER, name)
+}
+
+/// Generates an identifier with the given name and prefix, used for NamedPipe and other named objects on Windows.
+#[inline]
+#[cfg(target_os = "windows")]
+pub fn generate_identifier_with_prefix(prefix: &str, name: &str) -> String {
+    format!("{}{}-{}", prefix, *APP_IDENTIFIER, name)
+}
+
 /// The Git commit SHA that Zed was built at.
 #[derive(Clone)]
 pub struct AppCommitSha(pub String);
