@@ -1101,18 +1101,21 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
-        let confirmation = if self.commit_editor.read(cx).is_empty(cx) {
-            Task::ready(true)
-        } else {
-            let prompt = window.prompt(
-                PromptLevel::Warning,
-                "Uncomitting will replace the current commit message with the previous commit's message",
-                None,
-                &["Ok", "Cancel"],
-                cx,
-            );
-            cx.spawn(|_, _| async move { prompt.await.is_ok_and(|i| i == 0) })
-        };
+
+        // TODO: Use git merge-base to find the upstream and main branch split
+        let confirmation = Task::ready(true);
+        // let confirmation = if self.commit_editor.read(cx).is_empty(cx) {
+        //     Task::ready(true)
+        // } else {
+        //     let prompt = window.prompt(
+        //         PromptLevel::Warning,
+        //         "Uncomitting will replace the current commit message with the previous commit's message",
+        //         None,
+        //         &["Ok", "Cancel"],
+        //         cx,
+        //     );
+        //     cx.spawn(|_, _| async move { prompt.await.is_ok_and(|i| i == 0) })
+        // };
 
         let prior_head = self.load_commit_details("HEAD", cx);
 
@@ -1149,11 +1152,29 @@ impl GitPanel {
         self.pending_commit = Some(task);
     }
 
-    fn push(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    // TODO: support more remotes other than `origin`
+    fn push(
+        &mut self,
+        push_action: Option<PushAction>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
-        todo!();
+        let Some(push_action) = push_action else {
+            return;
+        };
+        let repo = repo.read(cx);
+
+        let push = match push_action {
+            PushAction::Republish => repo.push_upstream(),
+            PushAction::Publish => repo.push_upstream(),
+            PushAction::ForcePush { .. } => repo.force_push(),
+            PushAction::Push { .. } => repo.push(),
+        };
+
+        cx.spawn(move |_, _| push).detach();
     }
 
     fn potential_co_authors(&self, cx: &App) -> Vec<(String, String)> {
@@ -2239,7 +2260,7 @@ impl GitPanel {
         };
 
         let tooltip: SharedString = match action {
-            Some(PushAction::Republish) => "git push".into(),
+            Some(PushAction::Republish) => "git push --set-upstream".into(),
             Some(PushAction::Publish) => "git push --set-upstream".into(),
             Some(PushAction::ForcePush { .. }) => "git push --force-with-lease".into(),
             Some(PushAction::Push { .. }) => "git push".into(),
@@ -2253,7 +2274,7 @@ impl GitPanel {
             .icon_position(IconPosition::Start)
             .disabled(disabled)
             .tooltip(Tooltip::for_action_title(tooltip, &git::Push))
-            .on_click(cx.listener(|this, _, window, cx| this.push(window, cx)))
+            .on_click(cx.listener(move |this, _, window, cx| this.push(action, window, cx)))
             .into_any_element()
     }
 

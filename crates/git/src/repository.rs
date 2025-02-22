@@ -28,6 +28,7 @@ pub struct Branch {
     pub most_recent_commit: Option<CommitSummary>,
 }
 
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum PushAction {
     Republish,
     Publish,
@@ -187,6 +188,9 @@ pub trait GitRepository: Send + Sync {
     fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()>;
 
     fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()>;
+
+    fn push(&self, set_upstream: bool) -> Result<()>;
+    fn force_push(&self) -> Result<()>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -212,6 +216,14 @@ impl RealGitRepository {
             git_binary_path: git_binary_path.unwrap_or_else(|| PathBuf::from("git")),
             hosting_provider_registry,
         }
+    }
+
+    fn working_directory(&self) -> Result<PathBuf> {
+        self.repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")
+            .map(Path::to_path_buf)
     }
 }
 
@@ -257,12 +269,7 @@ impl GitRepository for RealGitRepository {
     }
 
     fn reset(&self, commit: &str, mode: ResetMode) -> Result<()> {
-        let working_directory = self
-            .repository
-            .lock()
-            .workdir()
-            .context("failed to read git work directory")?
-            .to_path_buf();
+        let working_directory = self.working_directory()?;
 
         let mode_flag = match mode {
             ResetMode::Mixed => "--mixed",
@@ -286,12 +293,7 @@ impl GitRepository for RealGitRepository {
         if paths.is_empty() {
             return Ok(());
         }
-        let working_directory = self
-            .repository
-            .lock()
-            .workdir()
-            .context("failed to read git work directory")?
-            .to_path_buf();
+        let working_directory = self.working_directory()?;
 
         let output = new_std_command(&self.git_binary_path)
             .current_dir(&working_directory)
@@ -344,12 +346,7 @@ impl GitRepository for RealGitRepository {
     }
 
     fn set_index_text(&self, path: &RepoPath, content: Option<String>) -> anyhow::Result<()> {
-        let working_directory = self
-            .repository
-            .lock()
-            .workdir()
-            .context("failed to read git work directory")?
-            .to_path_buf();
+        let working_directory = self.working_directory()?;
         if let Some(content) = content {
             let mut child = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
@@ -533,12 +530,7 @@ impl GitRepository for RealGitRepository {
     }
 
     fn stage_paths(&self, paths: &[RepoPath]) -> Result<()> {
-        let working_directory = self
-            .repository
-            .lock()
-            .workdir()
-            .context("failed to read git work directory")?
-            .to_path_buf();
+        let working_directory = self.working_directory()?;
 
         if !paths.is_empty() {
             let output = new_std_command(&self.git_binary_path)
@@ -557,12 +549,7 @@ impl GitRepository for RealGitRepository {
     }
 
     fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()> {
-        let working_directory = self
-            .repository
-            .lock()
-            .workdir()
-            .context("failed to read git work directory")?
-            .to_path_buf();
+        let working_directory = self.working_directory()?;
 
         if !paths.is_empty() {
             let output = new_std_command(&self.git_binary_path)
@@ -581,12 +568,7 @@ impl GitRepository for RealGitRepository {
     }
 
     fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()> {
-        let working_directory = self
-            .repository
-            .lock()
-            .workdir()
-            .context("failed to read git work directory")?
-            .to_path_buf();
+        let working_directory = self.working_directory()?;
         let mut args = vec!["commit", "--quiet", "-m", message, "--cleanup=strip"];
         let author = name_and_email.map(|(name, email)| format!("{name} <{email}>"));
         if let Some(author) = author.as_deref() {
@@ -605,6 +587,45 @@ impl GitRepository for RealGitRepository {
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
+        Ok(())
+    }
+
+    fn push(&self, set_upstream: bool) -> Result<()> {
+        let working_directory = self.working_directory()?;
+
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["push", "--quiet"])
+            .args(set_upstream.then(|| "--set-upstream"))
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to push:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        // TODO: Get remote response out of this and show it to the user
+        Ok(())
+    }
+
+    fn force_push(&self) -> Result<()> {
+        let working_directory = self.working_directory()?;
+
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["push", "--quiet", "--force-with-lease"])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to force push:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        // TODO: Get remote response out of this and show it to the user
         Ok(())
     }
 }
@@ -789,6 +810,14 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn commit(&self, _message: &str, _name_and_email: Option<(&str, &str)>) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn push(&self, _set_upstream: bool) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn force_push(&self) -> Result<()> {
         unimplemented!()
     }
 }
