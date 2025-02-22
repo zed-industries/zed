@@ -2,6 +2,7 @@ use crate::AllLanguageModelSettings;
 use anthropic::{AnthropicError, ContentDelta, Event, ResponseContent};
 use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
+use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::Stream;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryStreamExt as _};
@@ -70,10 +71,16 @@ pub struct State {
 
 impl State {
     fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let delete_credentials =
-            cx.delete_credentials(&AllLanguageModelSettings::get_global(cx).anthropic.api_url);
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .anthropic
+            .api_url
+            .clone();
         cx.spawn(|this, mut cx| async move {
-            delete_credentials.await.ok();
+            credentials_provider
+                .delete_credentials(&api_url, &cx)
+                .await
+                .ok();
             this.update(&mut cx, |this, cx| {
                 this.api_key = None;
                 this.api_key_from_env = false;
@@ -83,16 +90,16 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let write_credentials = cx.write_credentials(
-            AllLanguageModelSettings::get_global(cx)
-                .anthropic
-                .api_url
-                .as_str(),
-            "Bearer",
-            api_key.as_bytes(),
-        );
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .anthropic
+            .api_url
+            .clone();
         cx.spawn(|this, mut cx| async move {
-            write_credentials.await?;
+            credentials_provider
+                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
+                .await
+                .ok();
 
             this.update(&mut cx, |this, cx| {
                 this.api_key = Some(api_key);
@@ -110,6 +117,7 @@ impl State {
             return Task::ready(Ok(()));
         }
 
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let api_url = AllLanguageModelSettings::get_global(cx)
             .anthropic
             .api_url
@@ -119,8 +127,8 @@ impl State {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(ANTHROPIC_API_KEY_VAR) {
                 (api_key, true)
             } else {
-                let (_, api_key) = cx
-                    .update(|cx| cx.read_credentials(&api_url))?
+                let (_, api_key) = credentials_provider
+                    .read_credentials(&api_url, &cx)
                     .await?
                     .ok_or(AuthenticateError::CredentialsNotFound)?;
                 (

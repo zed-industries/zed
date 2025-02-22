@@ -64,7 +64,6 @@ settings.workspace = true
 sha2.workspace = true
 shellexpand.workspace = true
 shlex.workspace = true
-similar = "1.3"
 smol.workspace = true
 snippet.workspace = true
 snippet_provider.workspace = true
