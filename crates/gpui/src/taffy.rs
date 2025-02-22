@@ -247,7 +247,7 @@ impl ToTaffy<taffy::style::Style> for Style {
         taffy::style::Style {
             display: self.display,
             overflow: self.overflow.into(),
-            scrollbar_width: self.scrollbar_width,
+            scrollbar_width: self.scrollbar_width.to_taffy(rem_size),
             position: self.position,
             inset: self.inset.to_taffy(rem_size),
             size: self.size.to_taffy(rem_size),
@@ -286,6 +286,15 @@ impl ToTaffy<taffy::style::Dimension> for Length {
         match self {
             Length::Definite(length) => length.to_taffy(rem_size),
             Length::Auto => taffy::prelude::Dimension::Auto,
+        }
+    }
+}
+
+impl ToTaffy<f32> for AbsoluteLength {
+    fn to_taffy(&self, rem_size: Pixels) -> f32 {
+        match self {
+            AbsoluteLength::Pixels(pixels) => pixels.into(),
+            AbsoluteLength::Rems(rems) => (*rems * rem_size).into(),
         }
     }
 }
