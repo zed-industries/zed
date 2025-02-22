@@ -81,32 +81,32 @@ impl Vim {
                     }
                 }
 
-                let first_selection_indent_column =
+                let first_selection_start_column =
                     clipboard_selections.as_ref().and_then(|zed_selections| {
                         zed_selections
                             .first()
-                            .map(|selection| selection.first_line_indent)
+                            .map(|selection| selection.start_column)
                     });
                 let before = action.before || vim.mode == Mode::VisualLine;
 
                 let mut edits = Vec::new();
                 let mut new_selections = Vec::new();
-                let mut original_indent_columns = Vec::new();
+                let mut original_start_columns = Vec::new();
                 let mut start_offset = 0;
 
                 for (ix, (selection, preserve)) in selections_to_process.iter().enumerate() {
-                    let (mut to_insert, original_indent_column) =
+                    let (mut to_insert, original_start_column) =
                         if let Some(clipboard_selections) = &clipboard_selections {
                             if let Some(clipboard_selection) = clipboard_selections.get(ix) {
                                 let end_offset = start_offset + clipboard_selection.len;
                                 let text = text[start_offset..end_offset].to_string();
                                 start_offset = end_offset + 1;
-                                (text, Some(clipboard_selection.first_line_indent))
+                                (text, Some(clipboard_selection.start_column))
                             } else {
-                                ("".to_string(), first_selection_indent_column)
+                                ("".to_string(), first_selection_start_column)
                             }
                         } else {
-                            (text.to_string(), first_selection_indent_column)
+                            (text.to_string(), first_selection_start_column)
                         };
                     let line_mode = to_insert.ends_with('\n');
                     let is_multiline = to_insert.contains('\n');
@@ -152,10 +152,10 @@ impl Vim {
                         new_selections.push((anchor, line_mode, is_multiline));
                     }
                     edits.push((point_range, to_insert.repeat(count)));
-                    original_indent_columns.extend(original_indent_column);
+                    original_start_columns.extend(original_start_column);
                 }
 
-                editor.edit_with_block_indent(edits, original_indent_columns, cx);
+                editor.edit_with_block_indent(edits, original_start_columns, cx);
 
                 // in line_mode vim will insert the new text on the next (or previous if before) line
                 // and put the cursor on the first non-blank character of the first inserted line (or at the end if the first line is blank).
@@ -849,5 +849,56 @@ mod test {
         );
         let clipboard: Register = cx.read_from_clipboard().unwrap().into();
         assert_eq!(clipboard.text, "fish");
+
+        cx.set_state(
+            indoc! {"
+                   ˇfish one
+                   two three
+                   "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y i w");
+        cx.simulate_keystrokes("w");
+        cx.simulate_keystrokes("v i w g r");
+        cx.assert_state(
+            indoc! {"
+                fish fisˇh
+                two three
+                "},
+            Mode::Normal,
+        );
+        let clipboard: Register = cx.read_from_clipboard().unwrap().into();
+        assert_eq!(clipboard.text, "fish");
+    }
+
+    #[gpui::test]
+    async fn test_replace_with_register_dot_repeat(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                   ˇfish one
+                   two three
+                   "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y i w");
+        cx.simulate_keystrokes("w");
+        cx.simulate_keystrokes("g r i w");
+        cx.assert_state(
+            indoc! {"
+                fish fisˇh
+                two three
+                "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("j .");
+        cx.assert_state(
+            indoc! {"
+                fish fish
+                two fisˇh
+                "},
+            Mode::Normal,
+        );
     }
 }

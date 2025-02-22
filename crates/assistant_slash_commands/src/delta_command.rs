@@ -86,7 +86,7 @@ impl SlashCommand for DeltaSlashCommand {
             }
         }
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let mut output = SlashCommandOutput::default();
             let mut changes_detected = false;
 

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use futures::{channel::mpsc::UnboundedSender, StreamExt};
-use gpui::App;
+use gpui::{App, AppContext};
 use parking_lot::RwLock;
 use serde::Deserialize;
 use util::ResultExt;
@@ -33,35 +33,34 @@ impl<T: PartialEq + 'static + Sync> TrackedFile<T> {
         T: for<'a> Deserialize<'a> + Default + Send,
     {
         let parsed_contents: Arc<RwLock<T>> = Arc::default();
-        cx.background_executor()
-            .spawn({
-                let parsed_contents = parsed_contents.clone();
-                async move {
-                    while let Some(new_contents) = tracker.next().await {
-                        if Arc::strong_count(&parsed_contents) == 1 {
-                            // We're no longer being observed. Stop polling.
-                            break;
-                        }
-                        if !new_contents.trim().is_empty() {
-                            let Some(new_contents) =
-                                serde_json_lenient::from_str::<T>(&new_contents).log_err()
-                            else {
-                                continue;
-                            };
-                            let mut contents = parsed_contents.write();
-                            if *contents != new_contents {
-                                *contents = new_contents;
-                                if notification_outlet.unbounded_send(()).is_err() {
-                                    // Whoever cared about contents is not around anymore.
-                                    break;
-                                }
+        cx.background_spawn({
+            let parsed_contents = parsed_contents.clone();
+            async move {
+                while let Some(new_contents) = tracker.next().await {
+                    if Arc::strong_count(&parsed_contents) == 1 {
+                        // We're no longer being observed. Stop polling.
+                        break;
+                    }
+                    if !new_contents.trim().is_empty() {
+                        let Some(new_contents) =
+                            serde_json_lenient::from_str::<T>(&new_contents).log_err()
+                        else {
+                            continue;
+                        };
+                        let mut contents = parsed_contents.write();
+                        if *contents != new_contents {
+                            *contents = new_contents;
+                            if notification_outlet.unbounded_send(()).is_err() {
+                                // Whoever cared about contents is not around anymore.
+                                break;
                             }
                         }
                     }
-                    anyhow::Ok(())
                 }
-            })
-            .detach_and_log_err(cx);
+                anyhow::Ok(())
+            }
+        })
+        .detach_and_log_err(cx);
         Self { parsed_contents }
     }
 
@@ -75,39 +74,38 @@ impl<T: PartialEq + 'static + Sync> TrackedFile<T> {
         T: Default + Send,
     {
         let parsed_contents: Arc<RwLock<T>> = Arc::default();
-        cx.background_executor()
-            .spawn({
-                let parsed_contents = parsed_contents.clone();
-                async move {
-                    while let Some(new_contents) = tracker.next().await {
-                        if Arc::strong_count(&parsed_contents) == 1 {
-                            // We're no longer being observed. Stop polling.
-                            break;
-                        }
+        cx.background_spawn({
+            let parsed_contents = parsed_contents.clone();
+            async move {
+                while let Some(new_contents) = tracker.next().await {
+                    if Arc::strong_count(&parsed_contents) == 1 {
+                        // We're no longer being observed. Stop polling.
+                        break;
+                    }
 
-                        if !new_contents.trim().is_empty() {
-                            let Some(new_contents) =
-                                serde_json_lenient::from_str::<U>(&new_contents).log_err()
-                            else {
-                                continue;
-                            };
-                            let Some(new_contents) = new_contents.try_into().log_err() else {
-                                continue;
-                            };
-                            let mut contents = parsed_contents.write();
-                            if *contents != new_contents {
-                                *contents = new_contents;
-                                if notification_outlet.unbounded_send(()).is_err() {
-                                    // Whoever cared about contents is not around anymore.
-                                    break;
-                                }
+                    if !new_contents.trim().is_empty() {
+                        let Some(new_contents) =
+                            serde_json_lenient::from_str::<U>(&new_contents).log_err()
+                        else {
+                            continue;
+                        };
+                        let Some(new_contents) = new_contents.try_into().log_err() else {
+                            continue;
+                        };
+                        let mut contents = parsed_contents.write();
+                        if *contents != new_contents {
+                            *contents = new_contents;
+                            if notification_outlet.unbounded_send(()).is_err() {
+                                // Whoever cared about contents is not around anymore.
+                                break;
                             }
                         }
                     }
-                    anyhow::Ok(())
                 }
-            })
-            .detach_and_log_err(cx);
+                anyhow::Ok(())
+            }
+        })
+        .detach_and_log_err(cx);
         Self {
             parsed_contents: Default::default(),
         }

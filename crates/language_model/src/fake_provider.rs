@@ -1,6 +1,6 @@
 use crate::{
-    LanguageModel, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest,
 };
 use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
@@ -54,7 +54,7 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         true
     }
 
-    fn authenticate(&self, _: &mut App) -> Task<Result<()>> {
+    fn authenticate(&self, _: &mut App) -> Task<Result<(), AuthenticateError>> {
         Task::ready(Ok(()))
     }
 

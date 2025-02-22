@@ -83,7 +83,7 @@ impl LspAdapter for PythonLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        if let Some(pyright_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await {
+        if let Some(pyright_bin) = delegate.which("pyright-langserver".as_ref()).await {
             let env = delegate.shell_env().await;
             Some(LanguageServerBinary {
                 path: pyright_bin,

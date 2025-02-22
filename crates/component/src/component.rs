@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use collections::HashMap;
-use gpui::{div, prelude::*, AnyElement, App, IntoElement, RenderOnce, SharedString, Window};
+use gpui::{div, prelude::*, px, AnyElement, App, IntoElement, RenderOnce, SharedString, Window};
 use linkme::distributed_slice;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
@@ -173,9 +173,9 @@ pub enum ExampleLabelSide {
     Left,
     /// Right side
     Right,
-    #[default]
     /// Top side
     Top,
+    #[default]
     /// Bottom side
     Bottom,
 }
@@ -200,8 +200,9 @@ impl RenderOnce for ComponentExample {
             ExampleLabelSide::Top => base.flex_col_reverse(),
         };
 
-        base.gap_1()
-            .text_xs()
+        base.gap_2()
+            .p_2()
+            .text_size(px(10.))
             .text_color(cx.theme().colors().text_muted)
             .when(self.grow, |this| this.flex_1())
             .child(self.element)
@@ -243,7 +244,29 @@ impl RenderOnce for ComponentExampleGroup {
             .text_sm()
             .text_color(cx.theme().colors().text_muted)
             .when(self.grow, |this| this.w_full().flex_1())
-            .when_some(self.title, |this, title| this.gap_4().child(title))
+            .when_some(self.title, |this, title| {
+                this.gap_4().child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .pb_1()
+                        .child(div().h_px().w_4().bg(cx.theme().colors().border))
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_size(px(10.))
+                                .child(title.to_uppercase()),
+                        )
+                        .child(
+                            div()
+                                .h_px()
+                                .w_full()
+                                .flex_1()
+                                .bg(cx.theme().colors().border),
+                        ),
+                )
+            })
             .child(
                 div()
                     .flex()

@@ -132,8 +132,8 @@ pub struct BlameEntry {
     pub author_time: Option<i64>,
     pub author_tz: Option<String>,
 
-    pub committer: Option<String>,
-    pub committer_mail: Option<String>,
+    pub committer_name: Option<String>,
+    pub committer_email: Option<String>,
     pub committer_time: Option<i64>,
     pub committer_tz: Option<String>,
 
@@ -255,10 +255,12 @@ fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
                         .clone_from(&existing_entry.author_mail);
                     new_entry.author_time = existing_entry.author_time;
                     new_entry.author_tz.clone_from(&existing_entry.author_tz);
-                    new_entry.committer.clone_from(&existing_entry.committer);
                     new_entry
-                        .committer_mail
-                        .clone_from(&existing_entry.committer_mail);
+                        .committer_name
+                        .clone_from(&existing_entry.committer_name);
+                    new_entry
+                        .committer_email
+                        .clone_from(&existing_entry.committer_email);
                     new_entry.committer_time = existing_entry.committer_time;
                     new_entry
                         .committer_tz
@@ -288,8 +290,8 @@ fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
                     }
                     "author-tz" if is_committed => entry.author_tz = Some(value.into()),
 
-                    "committer" if is_committed => entry.committer = Some(value.into()),
-                    "committer-mail" if is_committed => entry.committer_mail = Some(value.into()),
+                    "committer" if is_committed => entry.committer_name = Some(value.into()),
+                    "committer-mail" if is_committed => entry.committer_email = Some(value.into()),
                     "committer-time" if is_committed => {
                         entry.committer_time = Some(value.parse::<i64>()?)
                     }

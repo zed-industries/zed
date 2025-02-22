@@ -1,7 +1,7 @@
 use crate::inline_prompt_editor::CodegenStatus;
 use client::telemetry::Telemetry;
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use gpui::{App, Context, Entity, EventEmitter, Task};
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
 use language_model::{LanguageModelRegistry, LanguageModelRequest};
 use language_models::report_assistant_event;
 use std::{sync::Arc, time::Instant};
@@ -53,7 +53,7 @@ impl TerminalCodegen {
 
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
 
-                let task = cx.background_executor().spawn({
+                let task = cx.background_spawn({
                     let message_id = message_id.clone();
                     let executor = cx.background_executor().clone();
                     async move {

@@ -1,5 +1,6 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::BTreeMap;
+use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::{
@@ -7,8 +8,8 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    LanguageModel, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
 use open_ai::{
@@ -63,10 +64,16 @@ impl State {
     }
 
     fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let settings = &AllLanguageModelSettings::get_global(cx).openai;
-        let delete_credentials = cx.delete_credentials(&settings.api_url);
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .openai
+            .api_url
+            .clone();
         cx.spawn(|this, mut cx| async move {
-            delete_credentials.await.log_err();
+            credentials_provider
+                .delete_credentials(&api_url, &cx)
+                .await
+                .log_err();
             this.update(&mut cx, |this, cx| {
                 this.api_key = None;
                 this.api_key_from_env = false;
@@ -76,12 +83,16 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let settings = &AllLanguageModelSettings::get_global(cx).openai;
-        let write_credentials =
-            cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
-
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .openai
+            .api_url
+            .clone();
         cx.spawn(|this, mut cx| async move {
-            write_credentials.await?;
+            credentials_provider
+                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
+                .await
+                .log_err();
             this.update(&mut cx, |this, cx| {
                 this.api_key = Some(api_key);
                 cx.notify();
@@ -89,31 +100,37 @@ impl State {
         })
     }
 
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         if self.is_authenticated() {
-            Task::ready(Ok(()))
-        } else {
-            let api_url = AllLanguageModelSettings::get_global(cx)
-                .openai
-                .api_url
-                .clone();
-            cx.spawn(|this, mut cx| async move {
-                let (api_key, from_env) = if let Ok(api_key) = std::env::var(OPENAI_API_KEY_VAR) {
-                    (api_key, true)
-                } else {
-                    let (_, api_key) = cx
-                        .update(|cx| cx.read_credentials(&api_url))?
-                        .await?
-                        .ok_or_else(|| anyhow!("credentials not found"))?;
-                    (String::from_utf8(api_key)?, false)
-                };
-                this.update(&mut cx, |this, cx| {
-                    this.api_key = Some(api_key);
-                    this.api_key_from_env = from_env;
-                    cx.notify();
-                })
-            })
+            return Task::ready(Ok(()));
         }
+
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .openai
+            .api_url
+            .clone();
+        cx.spawn(|this, mut cx| async move {
+            let (api_key, from_env) = if let Ok(api_key) = std::env::var(OPENAI_API_KEY_VAR) {
+                (api_key, true)
+            } else {
+                let (_, api_key) = credentials_provider
+                    .read_credentials(&api_url, &cx)
+                    .await?
+                    .ok_or(AuthenticateError::CredentialsNotFound)?;
+                (
+                    String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
+                    false,
+                )
+            };
+            this.update(&mut cx, |this, cx| {
+                this.api_key = Some(api_key);
+                this.api_key_from_env = from_env;
+                cx.notify();
+            })?;
+
+            Ok(())
+        })
     }
 }
 
@@ -197,7 +214,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         self.state.read(cx).is_authenticated()
     }
 
-    fn authenticate(&self, cx: &mut App) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
@@ -343,34 +360,31 @@ pub fn count_open_ai_tokens(
     model: open_ai::Model,
     cx: &App,
 ) -> BoxFuture<'static, Result<usize>> {
-    cx.background_executor()
-        .spawn(async move {
-            let messages = request
-                .messages
-                .into_iter()
-                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(message.string_contents()),
-                    name: None,
-                    function_call: None,
-                })
-                .collect::<Vec<_>>();
+    cx.background_spawn(async move {
+        let messages = request
+            .messages
+            .into_iter()
+            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+                role: match message.role {
+                    Role::User => "user".into(),
+                    Role::Assistant => "assistant".into(),
+                    Role::System => "system".into(),
+                },
+                content: Some(message.string_contents()),
+                name: None,
+                function_call: None,
+            })
+            .collect::<Vec<_>>();
 
-            match model {
-                open_ai::Model::Custom { .. }
-                | open_ai::Model::O1Mini
-                | open_ai::Model::O1
-                | open_ai::Model::O3Mini => {
-                    tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
-                }
-                _ => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
-            }
-        })
-        .boxed()
+        match model {
+            open_ai::Model::Custom { .. }
+            | open_ai::Model::O1Mini
+            | open_ai::Model::O1
+            | open_ai::Model::O3Mini => tiktoken_rs::num_tokens_from_messages("gpt-4", &messages),
+            _ => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
+        }
+    })
+    .boxed()
 }
 
 struct ConfigurationView {

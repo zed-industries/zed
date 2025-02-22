@@ -414,7 +414,7 @@ impl Modifiers {
         }
     }
 
-    /// Returns [`Modifiers`] with just control.
+    /// Returns [`Modifiers`] with just alt.
     pub fn alt() -> Modifiers {
         Modifiers {
             alt: true,

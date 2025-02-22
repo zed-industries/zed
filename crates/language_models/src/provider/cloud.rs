@@ -17,9 +17,10 @@ use gpui::{
 };
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
-    CloudModel, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId, LanguageModelName,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelProviderTosView, LanguageModelRequest, RateLimiter, ZED_CLOUD_PROVIDER_ID,
+    AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
+    LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelProviderTosView, LanguageModelRequest, RateLimiter,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
     LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider,
@@ -363,7 +364,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         !self.state.read(cx).is_signed_out()
     }
 
-    fn authenticate(&self, _cx: &mut App) -> Task<Result<()>> {
+    fn authenticate(&self, _cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         Task::ready(Ok(()))
     }
 

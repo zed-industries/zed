@@ -22,7 +22,14 @@ test-support = [
     "x11",
 ]
 runtime_shaders = []
-macos-blade = ["blade-graphics", "blade-macros", "blade-util", "bytemuck", "objc2", "objc2-metal"]
+macos-blade = [
+    "blade-graphics",
+    "blade-macros",
+    "blade-util",
+    "bytemuck",
+    "objc2",
+    "objc2-metal",
+]
 wayland = [
     "blade-graphics",
     "blade-macros",
@@ -133,7 +140,10 @@ pathfinder_geometry = "0.5"
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 # Always used
 flume = "0.11"
-oo7 = { git = "https://github.com/zed-industries/oo7", branch = "avoid-crypto-panic" }
+oo7 = { version = "0.4.0", default-features = false, features = [
+    "async-std",
+    "native_crypto",
+] }
 
 # Used in both windowing options
 ashpd = { workspace = true, optional = true }
@@ -265,3 +275,7 @@ path = "examples/uniform_list.rs"
 [[example]]
 name = "window_shadow"
 path = "examples/window_shadow.rs"
+
+[[example]]
+name = "on_window_close_quit"
+path = "examples/on_window_close_quit.rs"

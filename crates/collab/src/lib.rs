@@ -274,7 +274,7 @@ impl ServiceMode {
 pub struct AppState {
     pub db: Arc<Database>,
     pub llm_db: Option<Arc<LlmDatabase>>,
-    pub livekit_client: Option<Arc<dyn livekit_server::api::Client>>,
+    pub livekit_client: Option<Arc<dyn livekit_api::Client>>,
     pub blob_store_client: Option<aws_sdk_s3::Client>,
     pub stripe_client: Option<Arc<stripe::Client>>,
     pub stripe_billing: Option<Arc<StripeBilling>>,
@@ -311,11 +311,11 @@ impl AppState {
             .zip(config.livekit_key.as_ref())
             .zip(config.livekit_secret.as_ref())
         {
-            Some(Arc::new(livekit_server::api::LiveKitClient::new(
+            Some(Arc::new(livekit_api::LiveKitClient::new(
                 server.clone(),
                 key.clone(),
                 secret.clone(),
-            )) as Arc<dyn livekit_server::api::Client>)
+            )) as Arc<dyn livekit_api::Client>)
         } else {
             None
         };

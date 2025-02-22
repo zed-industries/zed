@@ -1068,7 +1068,7 @@ pub enum WindowKind {
 ///
 /// On macOS, this corresponds to named [`NSAppearance`](https://developer.apple.com/documentation/appkit/nsappearance)
 /// values.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum WindowAppearance {
     /// A light appearance.
     ///
