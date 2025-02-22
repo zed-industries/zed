@@ -319,8 +319,9 @@ pub trait GitRepository: Send + Sync {
     fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()>;
 
     // With set_upstream, we pass this configured remote to push
-    // Otherwise we just use git push
-    fn push(&self, set_upstream: Option<Remote>) -> Result<()>;
+    // Otherwise we just use git push origin
+    //
+    fn push(&self, upstream: Remote, set_upstream: bool) -> Result<()>;
     fn force_push(&self) -> Result<()>;
 }
 
