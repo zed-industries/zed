@@ -312,6 +312,8 @@ message Envelope {
         Stage stage = 293;
         Unstage unstage = 294;
         Commit commit = 295;
+        Push push = 304;
+        ForcePush force_push = 305;  // current max
         OpenCommitMessageBuffer open_commit_message_buffer = 296;
 
         OpenUncommittedDiff open_uncommitted_diff = 297;
@@ -321,7 +323,7 @@ message Envelope {
         GitCommitDetails git_commit_details = 302;
 
         SetIndexText set_index_text = 299;
-        GitCheckoutFiles git_checkout_files = 303; // current max
+        GitCheckoutFiles git_checkout_files = 303;
     }
 
     reserved 87 to 88;
@@ -2768,6 +2770,19 @@ message Commit {
 }
 
 message OpenCommitMessageBuffer {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+}
+
+message Push {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    bool set_upstream = 4;
+}
+
+message ForcePush {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;

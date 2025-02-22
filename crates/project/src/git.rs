@@ -74,6 +74,8 @@ pub enum Message {
     Stage(GitRepo, Vec<RepoPath>),
     Unstage(GitRepo, Vec<RepoPath>),
     SetIndexText(GitRepo, RepoPath, Option<String>),
+    Push(GitRepo, bool),
+    ForcePush(GitRepo),
 }
 
 pub enum GitEvent {
@@ -107,6 +109,8 @@ impl GitStore {
     }
 
     pub fn init(client: &AnyProtoClient) {
+        client.add_entity_request_handler(Self::handle_push);
+        client.add_entity_request_handler(Self::handle_force_push);
         client.add_entity_request_handler(Self::handle_stage);
         client.add_entity_request_handler(Self::handle_unstage);
         client.add_entity_request_handler(Self::handle_commit);
@@ -242,8 +246,10 @@ impl GitStore {
             mpsc::unbounded::<(Message, oneshot::Sender<Result<()>>)>();
         cx.spawn(|_, cx| async move {
             while let Some((msg, respond)) = update_receiver.next().await {
-                let result = cx.background_spawn(Self::process_git_msg(msg)).await;
-                respond.send(result).ok();
+                if !respond.is_canceled() {
+                    let result = cx.background_spawn(Self::process_git_msg(msg)).await;
+                    respond.send(result).ok();
+                }
             }
         })
         .detach();
@@ -252,6 +258,49 @@ impl GitStore {
 
     async fn process_git_msg(msg: Message) -> Result<()> {
         match msg {
+            Message::ForcePush(repo) => {
+                match repo {
+                    GitRepo::Local(git_repository) => git_repository.force_push()?,
+                    GitRepo::Remote {
+                        project_id,
+                        client,
+                        worktree_id,
+                        work_directory_id,
+                    } => {
+                        client
+                            .request(proto::ForcePush {
+                                project_id: project_id.0,
+                                worktree_id: worktree_id.to_proto(),
+                                work_directory_id: work_directory_id.to_proto(),
+                            })
+                            .await
+                            .context("sending force push request")?;
+                    }
+                }
+                Ok(())
+            }
+            Message::Push(repo, upstream) => {
+                match repo {
+                    GitRepo::Local(git_repository) => git_repository.push(upstream)?,
+                    GitRepo::Remote {
+                        project_id,
+                        client,
+                        worktree_id,
+                        work_directory_id,
+                    } => {
+                        client
+                            .request(proto::Push {
+                                project_id: project_id.0,
+                                worktree_id: worktree_id.to_proto(),
+                                work_directory_id: work_directory_id.to_proto(),
+                                set_upstream: upstream,
+                            })
+                            .await
+                            .context("sending push request")?;
+                    }
+                }
+                Ok(())
+            }
             Message::Stage(repo, paths) => {
                 match repo {
                     GitRepo::Local(repo) => repo.stage_paths(&paths)?,
@@ -411,6 +460,46 @@ impl GitStore {
                 }),
             },
         }
+    }
+
+    async fn handle_force_push(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ForcePush>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _cx| {
+                repository_handle.force_push()
+            })?
+            .await??;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_push(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Push>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _cx| {
+                if envelope.payload.set_upstream {
+                    repository_handle.push_upstream()
+                } else {
+                    repository_handle.push()
+                }
+            })?
+            .await??;
+        Ok(proto::Ack {})
     }
 
     async fn handle_stage(
@@ -802,35 +891,19 @@ impl Repository {
         commit: &str,
         paths: Vec<RepoPath>,
     ) -> oneshot::Receiver<Result<()>> {
-        let (result_tx, result_rx) = futures::channel::oneshot::channel();
-        let commit = commit.to_string().into();
-        self.update_sender
-            .unbounded_send((
-                Message::CheckoutFiles {
-                    repo: self.git_repo.clone(),
-                    commit,
-                    paths,
-                },
-                result_tx,
-            ))
-            .ok();
-        result_rx
+        self.send_message(Message::CheckoutFiles {
+            repo: self.git_repo.clone(),
+            commit: commit.to_string().into(),
+            paths,
+        })
     }
 
     pub fn reset(&self, commit: &str, reset_mode: ResetMode) -> oneshot::Receiver<Result<()>> {
-        let (result_tx, result_rx) = futures::channel::oneshot::channel();
-        let commit = commit.to_string().into();
-        self.update_sender
-            .unbounded_send((
-                Message::Reset {
-                    repo: self.git_repo.clone(),
-                    commit,
-                    reset_mode,
-                },
-                result_tx,
-            ))
-            .ok();
-        result_rx
+        self.send_message(Message::Reset {
+            repo: self.git_repo.clone(),
+            commit: commit.to_string().into(),
+            reset_mode,
+        })
     }
 
     pub fn show(&self, commit: &str, cx: &Context<Self>) -> Task<Result<CommitDetails>> {
@@ -987,18 +1060,23 @@ impl Repository {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
     ) -> oneshot::Receiver<Result<()>> {
-        let (result_tx, result_rx) = futures::channel::oneshot::channel();
-        self.update_sender
-            .unbounded_send((
-                Message::Commit {
-                    git_repo: self.git_repo.clone(),
-                    message,
-                    name_and_email,
-                },
-                result_tx,
-            ))
-            .ok();
-        result_rx
+        self.send_message(Message::Commit {
+            git_repo: self.git_repo.clone(),
+            message,
+            name_and_email,
+        })
+    }
+
+    pub fn push(&self) -> oneshot::Receiver<Result<()>> {
+        self.send_message(Message::Push(self.git_repo.clone(), false))
+    }
+
+    pub fn push_upstream(&self) -> oneshot::Receiver<Result<()>> {
+        self.send_message(Message::Push(self.git_repo.clone(), true))
+    }
+
+    pub fn force_push(&self) -> oneshot::Receiver<Result<()>> {
+        self.send_message(Message::ForcePush(self.git_repo.clone()))
     }
 
     pub fn set_index_text(
@@ -1006,13 +1084,16 @@ impl Repository {
         path: &RepoPath,
         content: Option<String>,
     ) -> oneshot::Receiver<anyhow::Result<()>> {
+        self.send_message(Message::SetIndexText(
+            self.git_repo.clone(),
+            path.clone(),
+            content,
+        ))
+    }
+
+    fn send_message(&self, message: Message) -> oneshot::Receiver<anyhow::Result<()>> {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
-        self.update_sender
-            .unbounded_send((
-                Message::SetIndexText(self.git_repo.clone(), path.clone(), content),
-                result_tx,
-            ))
-            .ok();
+        self.update_sender.unbounded_send((message, result_tx)).ok();
         result_rx
     }
 }

@@ -445,6 +445,8 @@ messages!(
     (GitShow, Background),
     (GitCommitDetails, Background),
     (SetIndexText, Background),
+    (Push, Background),
+    (ForcePush, Background),
 );
 
 request_messages!(
@@ -582,6 +584,8 @@ request_messages!(
     (GitReset, Ack),
     (GitCheckoutFiles, Ack),
     (SetIndexText, Ack),
+    (Push, Ack),
+    (ForcePush, Ack),
 );
 
 entity_messages!(
@@ -678,6 +682,8 @@ entity_messages!(
     GitReset,
     GitCheckoutFiles,
     SetIndexText,
+    Push,
+    ForcePush,
 );
 
 entity_messages!(
