@@ -224,6 +224,7 @@ impl ScrollManager {
         self.anchor.scroll_position(snapshot)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn set_scroll_position(
         &mut self,
         scroll_position: gpui::Point<f32>,
@@ -298,6 +299,7 @@ impl ScrollManager {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn set_anchor(
         &mut self,
         anchor: ScrollAnchor,

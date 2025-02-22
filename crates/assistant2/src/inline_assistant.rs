@@ -480,6 +480,7 @@ impl InlineAssistant {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn suggest_assist(
         &mut self,
         editor: &Entity<Editor>,
@@ -1450,6 +1451,7 @@ struct InlineAssistScrollLock {
 }
 
 impl EditorInlineAssists {
+    #[allow(clippy::too_many_arguments)]
     fn new(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Self {
         let (highlight_updates_tx, mut highlight_updates_rx) = async_watch::channel(());
         Self {
@@ -1561,6 +1563,7 @@ pub struct InlineAssist {
 }
 
 impl InlineAssist {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         assist_id: InlineAssistId,
         group_id: InlineAssistGroupId,

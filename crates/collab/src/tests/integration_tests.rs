@@ -2618,7 +2618,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(1..2, "", "two\n", DiffHunkStatus::added())],
+            &[(1..2, "", "two\n", DiffHunkStatus::added_none())],
         );
     });
 
@@ -2646,7 +2646,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(1..2, "", "two\n", DiffHunkStatus::added())],
+            &[(1..2, "", "two\n", DiffHunkStatus::added_none())],
         );
     });
 
@@ -2672,7 +2672,7 @@ async fn test_git_diff_base_change(
                 1..2,
                 "TWO\n",
                 "two\n",
-                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::HasSecondaryHunk),
+                DiffHunkStatus::modified(DiffHunkSecondaryStatus::HasSecondaryHunk),
             )],
         );
     });
@@ -2699,7 +2699,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(2..3, "", "three\n", DiffHunkStatus::added())],
+            &[(2..3, "", "three\n", DiffHunkStatus::added_none())],
         );
     });
 
@@ -2713,7 +2713,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(2..3, "", "three\n", DiffHunkStatus::added())],
+            &[(2..3, "", "three\n", DiffHunkStatus::added_none())],
         );
     });
 
@@ -2731,7 +2731,7 @@ async fn test_git_diff_base_change(
                 1..2,
                 "TWO_HUNDRED\n",
                 "two\n",
-                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk),
+                DiffHunkStatus::modified(DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk),
             )],
         );
     });
@@ -2778,7 +2778,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(1..2, "", "two\n", DiffHunkStatus::added())],
+            &[(1..2, "", "two\n", DiffHunkStatus::added_none())],
         );
     });
 
@@ -2805,7 +2805,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &staged_text,
-            &[(1..2, "", "two\n", DiffHunkStatus::added())],
+            &[(1..2, "", "two\n", DiffHunkStatus::added_none())],
         );
     });
 
@@ -2827,7 +2827,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &new_staged_text,
-            &[(2..3, "", "three\n", DiffHunkStatus::added())],
+            &[(2..3, "", "three\n", DiffHunkStatus::added_none())],
         );
     });
 
@@ -2841,7 +2841,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &new_staged_text,
-            &[(2..3, "", "three\n", DiffHunkStatus::added())],
+            &[(2..3, "", "three\n", DiffHunkStatus::added_none())],
         );
     });
 }

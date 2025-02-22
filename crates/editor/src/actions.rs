@@ -280,7 +280,6 @@ gpui::actions!(
         DuplicateLineDown,
         DuplicateLineUp,
         DuplicateSelection,
-        ExpandAllHunkDiffs,
         ExpandMacroRecursively,
         FindAllReferences,
         Fold,
@@ -329,6 +328,8 @@ gpui::actions!(
         MoveToPreviousSubwordStart,
         MoveToPreviousWordStart,
         MoveToStartOfParagraph,
+        MoveToStartOfExcerpt,
+        MoveToEndOfExcerpt,
         MoveUp,
         Newline,
         NewlineAbove,
@@ -357,7 +358,6 @@ gpui::actions!(
         ReverseLines,
         RevertFile,
         ReloadFile,
-        RevertSelectedHunks,
         Rewrap,
         ScrollCursorBottom,
         ScrollCursorCenter,
@@ -365,6 +365,8 @@ gpui::actions!(
         ScrollCursorTop,
         SelectAll,
         SelectAllMatches,
+        SelectToStartOfExcerpt,
+        SelectToEndOfExcerpt,
         SelectDown,
         SelectEnclosingSymbol,
         SelectLargerSyntaxNode,
@@ -398,9 +400,9 @@ gpui::actions!(
         ToggleGitBlameInline,
         ToggleIndentGuides,
         ToggleInlayHints,
+        ToggleInlineDiagnostics,
         ToggleEditPrediction,
         ToggleLineNumbers,
-        ToggleStagedSelectedDiffHunks,
         SwapSelectionEnds,
         SetMark,
         ToggleRelativeLineNumbers,
@@ -422,3 +424,4 @@ action_as!(go_to_line, ToggleGoToLine as Toggle);
 
 action_with_deprecated_aliases!(editor, OpenSelectedFilename, ["editor::OpenFile"]);
 action_with_deprecated_aliases!(editor, ToggleSelectedDiffHunks, ["editor::ToggleHunkDiff"]);
+action_with_deprecated_aliases!(editor, ExpandAllDiffHunks, ["editor::ExpandAllHunkDiffs"]);

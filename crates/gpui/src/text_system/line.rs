@@ -132,6 +132,7 @@ impl WrappedLine {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_line(
     origin: Point<Pixels>,
     layout: &LineLayout,

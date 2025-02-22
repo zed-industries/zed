@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 mod decorated_icon;
 mod icon_decoration;
 

@@ -14,8 +14,6 @@ use ui::prelude::*;
 pub enum ComponentStory {
     ApplicationMenu,
     AutoHeightEditor,
-    Avatar,
-    Button,
     CollabNotification,
     ContextMenu,
     Cursor,
@@ -47,8 +45,6 @@ impl ComponentStory {
                 .new(|cx| title_bar::ApplicationMenuStory::new(window, cx))
                 .into(),
             Self::AutoHeightEditor => AutoHeightEditorStory::new(window, cx).into(),
-            Self::Avatar => cx.new(|_| ui::AvatarStory).into(),
-            Self::Button => cx.new(|_| ui::ButtonStory).into(),
             Self::CollabNotification => cx
                 .new(|_| collab_ui::notifications::CollabNotificationStory)
                 .into(),

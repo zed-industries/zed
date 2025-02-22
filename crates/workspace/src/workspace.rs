@@ -2696,6 +2696,7 @@ impl Workspace {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add_item(
         &mut self,
         pane: Entity<Pane>,
@@ -4382,6 +4383,10 @@ impl Workspace {
 
     pub fn database_id(&self) -> Option<WorkspaceId> {
         self.database_id
+    }
+
+    pub fn session_id(&self) -> Option<String> {
+        self.session_id.clone()
     }
 
     fn local_paths(&self, cx: &App) -> Option<Vec<Arc<Path>>> {

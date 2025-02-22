@@ -59,7 +59,6 @@ search.workspace = true
 semantic_index.workspace = true
 serde.workspace = true
 settings.workspace = true
-similar.workspace = true
 smol.workspace = true
 streaming_diff.workspace = true
 telemetry.workspace = true

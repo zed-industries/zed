@@ -91,6 +91,8 @@ impl Render for QuickActionBar {
             selection_menu_enabled,
             inlay_hints_enabled,
             supports_inlay_hints,
+            inline_diagnostics_enabled,
+            supports_inline_diagnostics,
             git_blame_inline_enabled,
             show_git_blame_gutter,
             auto_signature_help_enabled,
@@ -102,6 +104,8 @@ impl Render for QuickActionBar {
             let editor = editor.read(cx);
             let selection_menu_enabled = editor.selection_menu_enabled(cx);
             let inlay_hints_enabled = editor.inlay_hints_enabled();
+            let show_inline_diagnostics = editor.show_inline_diagnostics();
+            let supports_inline_diagnostics = editor.inline_diagnostics_enabled();
             let git_blame_inline_enabled = editor.git_blame_inline_enabled();
             let show_git_blame_gutter = editor.show_git_blame_gutter();
             let auto_signature_help_enabled = editor.auto_signature_help_enabled(cx);
@@ -112,6 +116,8 @@ impl Render for QuickActionBar {
                 selection_menu_enabled,
                 inlay_hints_enabled,
                 supports_inlay_hints,
+                show_inline_diagnostics,
+                supports_inline_diagnostics,
                 git_blame_inline_enabled,
                 show_git_blame_gutter,
                 auto_signature_help_enabled,
@@ -247,6 +253,29 @@ impl Render for QuickActionBar {
                                                 .update(cx, |editor, cx| {
                                                     editor.toggle_inlay_hints(
                                                         &editor::actions::ToggleInlayHints,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    },
+                                );
+                            }
+
+                            if supports_inline_diagnostics {
+                                menu = menu.toggleable_entry(
+                                    "Inline Diagnostics",
+                                    inline_diagnostics_enabled,
+                                    IconPosition::Start,
+                                    Some(editor::actions::ToggleInlineDiagnostics.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_inline_diagnostics(
+                                                        &editor::actions::ToggleInlineDiagnostics,
                                                         window,
                                                         cx,
                                                     );

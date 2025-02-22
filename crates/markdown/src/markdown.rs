@@ -77,7 +77,6 @@ impl Markdown {
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
         fallback_code_block_language: Option<String>,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -99,7 +98,7 @@ impl Markdown {
             },
             open_url: None,
         };
-        this.parse(window, cx);
+        this.parse(cx);
         this
     }
 
@@ -113,14 +112,7 @@ impl Markdown {
         }
     }
 
-    pub fn new_text(
-        source: SharedString,
-        style: MarkdownStyle,
-        language_registry: Option<Arc<LanguageRegistry>>,
-        fallback_code_block_language: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new_text(source: SharedString, style: MarkdownStyle, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         let mut this = Self {
             source,
@@ -132,15 +124,15 @@ impl Markdown {
             parsed_markdown: ParsedMarkdown::default(),
             pending_parse: None,
             focus_handle,
-            language_registry,
-            fallback_code_block_language,
+            language_registry: None,
+            fallback_code_block_language: None,
             options: Options {
                 parse_links_only: true,
                 copy_code_block_buttons: true,
             },
             open_url: None,
         };
-        this.parse(window, cx);
+        this.parse(cx);
         this
     }
 
@@ -148,12 +140,12 @@ impl Markdown {
         &self.source
     }
 
-    pub fn append(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn append(&mut self, text: &str, cx: &mut Context<Self>) {
         self.source = SharedString::new(self.source.to_string() + text);
-        self.parse(window, cx);
+        self.parse(cx);
     }
 
-    pub fn reset(&mut self, source: SharedString, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn reset(&mut self, source: SharedString, cx: &mut Context<Self>) {
         if source == self.source() {
             return;
         }
@@ -163,7 +155,7 @@ impl Markdown {
         self.pending_parse = None;
         self.should_reparse = false;
         self.parsed_markdown = ParsedMarkdown::default();
-        self.parse(window, cx);
+        self.parse(cx);
     }
 
     pub fn parsed_markdown(&self) -> &ParsedMarkdown {
@@ -178,7 +170,7 @@ impl Markdown {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
-    fn parse(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn parse(&mut self, cx: &mut Context<Self>) {
         if self.source.is_empty() {
             return;
         }
@@ -224,14 +216,14 @@ impl Markdown {
         });
 
         self.should_reparse = false;
-        self.pending_parse = Some(cx.spawn_in(window, |this, mut cx| {
+        self.pending_parse = Some(cx.spawn(|this, mut cx| {
             async move {
                 let parsed = parsed.await?;
-                this.update_in(&mut cx, |this, window, cx| {
+                this.update(&mut cx, |this, cx| {
                     this.parsed_markdown = parsed;
                     this.pending_parse.take();
                     if this.should_reparse {
-                        this.parse(window, cx);
+                        this.parse(cx);
                     }
                     cx.notify();
                 })
@@ -294,7 +286,7 @@ impl Selection {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct ParsedMarkdown {
     source: SharedString,
     events: Arc<[(Range<usize>, MarkdownEvent)]>,
@@ -554,7 +546,7 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
-        let parsed_markdown = self.markdown.read(cx).parsed_markdown.clone();
+        let parsed_markdown = &self.markdown.read(cx).parsed_markdown;
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
         } else {

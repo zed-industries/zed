@@ -290,15 +290,10 @@ impl MacPlatform {
                 action,
                 os_action,
             } => {
-                // Note that this is not the standard logic for selecting which keybinding to
-                // display. Typically the last binding takes precedence for display. However, in
-                // this case the menus are not updated on context changes. To make these bindings
-                // more likely to be correct, the first binding instead takes precedence (typically
-                // from the base keymap).
-                let keystrokes = keymap
-                    .bindings_for_action(action.as_ref())
-                    .next()
-                    .map(|binding| binding.keystrokes());
+                let keystrokes = crate::Keymap::binding_to_display_from_bindings(
+                    keymap.bindings_for_action(action.as_ref()),
+                )
+                .map(|binding| binding.keystrokes());
 
                 let selector = match os_action {
                     Some(crate::OsAction::Cut) => selector("cut:"),
@@ -943,6 +938,7 @@ impl Platform for MacPlatform {
                 CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
                 CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
                 CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
+                CursorStyle::None => msg_send![class!(NSCursor), setHiddenUntilMouseMoves:YES],
             };
 
             let old_cursor: id = msg_send![class!(NSCursor), currentCursor];

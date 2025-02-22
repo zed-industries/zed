@@ -56,7 +56,7 @@ impl<T: 'static> EventEmitter<PromptEditorEvent> for PromptEditor<T> {}
 
 impl<T: 'static> Render for PromptEditor<T> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let mut buttons = Vec::new();
 
         let left_gutter_width = match &self.mode {
@@ -823,6 +823,7 @@ impl InlineAssistId {
 }
 
 impl PromptEditor<BufferCodegen> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new_buffer(
         id: InlineAssistId,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
@@ -983,6 +984,7 @@ impl TerminalInlineAssistId {
 }
 
 impl PromptEditor<TerminalCodegen> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new_terminal(
         id: TerminalInlineAssistId,
         prompt_history: VecDeque<String>,

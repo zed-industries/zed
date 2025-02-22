@@ -517,6 +517,7 @@ impl ContextEditor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn run_command(
         &mut self,
         command_range: Range<language::Anchor>,
@@ -633,7 +634,7 @@ impl ContextEditor {
                                 }
                             });
                             let placeholder = FoldPlaceholder {
-                                render: Arc::new(move |_, _, _, _| Empty.into_any()),
+                                render: Arc::new(move |_, _, _| Empty.into_any()),
                                 ..Default::default()
                             };
                             let render_toggle = {
@@ -2042,6 +2043,15 @@ impl ContextEditor {
         });
     }
 
+    fn toggle_model_selector(
+        &mut self,
+        _: &ToggleModelSelector,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.language_model_selector_menu_handle.toggle(window, cx);
+    }
+
     fn save(&mut self, _: &Save, _window: &mut Window, cx: &mut Context<Self>) {
         self.context.update(cx, |context, cx| {
             context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx)
@@ -2057,6 +2067,7 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_patch_block(
         &mut self,
         range: Range<text::Anchor>,
@@ -2657,8 +2668,8 @@ fn render_fold_icon_button(
     editor: WeakEntity<Editor>,
     icon: IconName,
     label: SharedString,
-) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut Window, &mut App) -> AnyElement> {
-    Arc::new(move |fold_id, fold_range, _window, _cx| {
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
+    Arc::new(move |fold_id, fold_range, _cx| {
         let editor = editor.clone();
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
@@ -2718,7 +2729,7 @@ pub fn fold_toggle(
 fn quote_selection_fold_placeholder(title: String, editor: WeakEntity<Editor>) -> FoldPlaceholder {
     FoldPlaceholder {
         render: Arc::new({
-            move |fold_id, fold_range, _window, _cx| {
+            move |fold_id, fold_range, _cx| {
                 let editor = editor.clone();
                 ButtonLike::new(fold_id)
                     .style(ButtonStyle::Filled)
@@ -2884,6 +2895,7 @@ impl Render for ContextEditor {
             .on_action(cx.listener(ContextEditor::edit))
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
+            .on_action(cx.listener(ContextEditor::toggle_model_selector))
             .size_full()
             .children(self.render_notice(cx))
             .child(
@@ -3401,7 +3413,7 @@ fn invoked_slash_command_fold_placeholder(
     FoldPlaceholder {
         constrain_width: false,
         merge_adjacent: false,
-        render: Arc::new(move |fold_id, _, _window, cx| {
+        render: Arc::new(move |fold_id, _, cx| {
             let Some(context) = context.upgrade() else {
                 return Empty.into_any();
             };

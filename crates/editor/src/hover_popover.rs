@@ -339,7 +339,7 @@ fn show_hover(
                         base_text_style.refine(&TextStyleRefinement {
                             font_family: Some(settings.ui_font.family.clone()),
                             font_fallbacks: settings.ui_font.fallbacks.clone(),
-                            font_size: Some(settings.ui_font_size.into()),
+                            font_size: Some(settings.ui_font_size(cx).into()),
                             color: Some(cx.theme().colors().editor_foreground),
                             background_color: Some(gpui::transparent_black()),
 
@@ -358,15 +358,8 @@ fn show_hover(
                             },
                             ..Default::default()
                         };
-                        Markdown::new_text(
-                            SharedString::new(text),
-                            markdown_style.clone(),
-                            None,
-                            None,
-                            window,
-                            cx,
-                        )
-                        .open_url(open_markdown_url)
+                        Markdown::new_text(SharedString::new(text), markdown_style.clone(), cx)
+                            .open_url(open_markdown_url)
                     })
                     .ok();
 
@@ -573,7 +566,6 @@ async fn parse_blocks(
                 hover_markdown_style(window, cx),
                 Some(language_registry.clone()),
                 fallback_language_name,
-                window,
                 cx,
             )
             .copy_code_block_buttons(false)

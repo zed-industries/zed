@@ -869,6 +869,7 @@ impl CollabPanel {
             })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_participant_project(
         &self,
         project_id: u64,
@@ -2457,8 +2458,8 @@ impl CollabPanel {
                 Avatar::new(contact.user.avatar_uri.clone())
                     .indicator::<AvatarAvailabilityIndicator>(if online {
                         Some(AvatarAvailabilityIndicator::new(match busy {
-                            true => ui::Availability::Busy,
-                            false => ui::Availability::Free,
+                            true => ui::CollaboratorAvailability::Busy,
+                            false => ui::CollaboratorAvailability::Free,
                         }))
                     } else {
                         None

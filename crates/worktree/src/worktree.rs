@@ -5491,7 +5491,8 @@ impl BackgroundScanner {
                         entry.merge_message = std::fs::read_to_string(
                             local_repository.dot_git_dir_abs_path.join("MERGE_MSG"),
                         )
-                        .ok();
+                        .ok()
+                        .and_then(|merge_msg| Some(merge_msg.lines().next()?.to_owned()));
                         entry.status_scan_id += 1;
                     },
                 );

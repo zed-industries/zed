@@ -1068,7 +1068,7 @@ pub enum WindowKind {
 ///
 /// On macOS, this corresponds to named [`NSAppearance`](https://developer.apple.com/documentation/appkit/nsappearance)
 /// values.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum WindowAppearance {
     /// A light appearance.
     ///
@@ -1227,6 +1227,9 @@ pub enum CursorStyle {
     /// A cursor indicating that the operation will result in a context menu
     /// corresponds to the CSS cursor value `context-menu`
     ContextualMenu,
+
+    /// Hide the cursor
+    None,
 }
 
 impl Default for CursorStyle {

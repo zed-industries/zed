@@ -3,8 +3,9 @@
 //! A view for exploring Zed components.
 
 use component::{components, ComponentMetadata};
-use gpui::{prelude::*, App, EventEmitter, FocusHandle, Focusable, Window};
-use ui::prelude::*;
+use gpui::{list, prelude::*, uniform_list, App, EventEmitter, FocusHandle, Focusable, Window};
+use gpui::{ListState, ScrollHandle, UniformListScrollHandle};
+use ui::{prelude::*, ListItem};
 
 use workspace::{item::ItemEvent, Item, Workspace, WorkspaceId};
 
@@ -12,7 +13,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _cx| {
         workspace.register_action(
             |workspace, _: &workspace::OpenComponentPreview, window, cx| {
-                let component_preview = cx.new(ComponentPreview::new);
+                let component_preview = cx.new(|cx| ComponentPreview::new(window, cx));
                 workspace.add_item_to_active_pane(
                     Box::new(component_preview),
                     None,
@@ -28,124 +29,161 @@ pub fn init(cx: &mut App) {
 
 struct ComponentPreview {
     focus_handle: FocusHandle,
+    _view_scroll_handle: ScrollHandle,
+    nav_scroll_handle: UniformListScrollHandle,
+    components: Vec<ComponentMetadata>,
+    component_list: ListState,
+    selected_index: usize,
 }
 
 impl ComponentPreview {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let components = components().all_sorted();
+        let initial_length = components.len();
+
+        let component_list = ListState::new(initial_length, gpui::ListAlignment::Top, px(500.0), {
+            let this = cx.entity().downgrade();
+            move |ix, window: &mut Window, cx: &mut App| {
+                this.update(cx, |this, cx| {
+                    this.render_preview(ix, window, cx).into_any_element()
+                })
+                .unwrap()
+            }
+        });
+
         Self {
             focus_handle: cx.focus_handle(),
+            _view_scroll_handle: ScrollHandle::new(),
+            nav_scroll_handle: UniformListScrollHandle::new(),
+            components,
+            component_list,
+            selected_index: 0,
         }
     }
 
-    fn render_sidebar(&self, _window: &Window, _cx: &Context<Self>) -> impl IntoElement {
-        let components = components().all_sorted();
-        let sorted_components = components.clone();
+    fn scroll_to_preview(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.component_list.scroll_to_reveal_item(ix);
+        self.selected_index = ix;
+        cx.notify();
+    }
 
-        v_flex()
-            .max_w_48()
-            .gap_px()
-            .p_1()
-            .children(
-                sorted_components
-                    .into_iter()
-                    .map(|component| self.render_sidebar_entry(&component, _cx)),
-            )
-            .child(
-                Label::new("These will be clickable once the layout is moved to a gpui::List.")
-                    .color(Color::Muted)
-                    .size(LabelSize::XSmall)
-                    .italic(),
-            )
+    fn get_component(&self, ix: usize) -> ComponentMetadata {
+        self.components[ix].clone()
     }
 
     fn render_sidebar_entry(
         &self,
-        component: &ComponentMetadata,
-        _cx: &Context<Self>,
+        ix: usize,
+        selected: bool,
+        cx: &Context<Self>,
     ) -> impl IntoElement {
-        h_flex()
-            .w_40()
-            .px_1p5()
-            .py_0p5()
-            .text_sm()
-            .child(component.name().clone())
+        let component = self.get_component(ix);
+
+        ListItem::new(ix)
+            .child(Label::new(component.name().clone()).color(Color::Default))
+            .selectable(true)
+            .toggle_state(selected)
+            .inset(true)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.scroll_to_preview(ix, cx);
+            }))
     }
 
     fn render_preview(
         &self,
-        component: &ComponentMetadata,
+        ix: usize,
         window: &mut Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
+        let component = self.get_component(ix);
+
         let name = component.name();
         let scope = component.scope();
 
         let description = component.description();
 
         v_flex()
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
-            .w_full()
-            .gap_3()
-            .py_6()
+            .py_2()
             .child(
                 v_flex()
-                    .gap_1()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_md()
+                    .w_full()
+                    .gap_4()
+                    .py_4()
+                    .px_6()
+                    .flex_none()
                     .child(
-                        h_flex()
+                        v_flex()
                             .gap_1()
-                            .text_2xl()
-                            .child(div().child(name))
-                            .when_some(scope, |this, scope| {
-                                this.child(div().opacity(0.5).child(format!("({})", scope)))
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .text_xl()
+                                    .child(div().child(name))
+                                    .when_some(scope, |this, scope| {
+                                        this.child(div().opacity(0.5).child(format!("({})", scope)))
+                                    }),
+                            )
+                            .when_some(description, |this, description| {
+                                this.child(
+                                    div()
+                                        .text_ui_sm(cx)
+                                        .text_color(cx.theme().colors().text_muted)
+                                        .max_w(px(600.0))
+                                        .child(description),
+                                )
                             }),
                     )
-                    .when_some(description, |this, description| {
-                        this.child(
-                            div()
-                                .text_ui_sm(cx)
-                                .text_color(cx.theme().colors().text_muted)
-                                .max_w(px(600.0))
-                                .child(description),
-                        )
+                    .when_some(component.preview(), |this, preview| {
+                        this.child(preview(window, cx))
                     }),
             )
-            .when_some(component.preview(), |this, preview| {
-                this.child(preview(window, cx))
-            })
             .into_any_element()
-    }
-
-    fn render_previews(&self, window: &mut Window, cx: &Context<Self>) -> impl IntoElement {
-        v_flex()
-            .id("component-previews")
-            .size_full()
-            .overflow_y_scroll()
-            .p_4()
-            .gap_4()
-            .children(
-                components()
-                    .all_previews_sorted()
-                    .iter()
-                    .map(|component| self.render_preview(component, window, cx)),
-            )
     }
 }
 
 impl Render for ComponentPreview {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         h_flex()
             .id("component-preview")
             .key_context("ComponentPreview")
             .items_start()
             .overflow_hidden()
             .size_full()
-            .max_h_full()
             .track_focus(&self.focus_handle)
             .px_2()
             .bg(cx.theme().colors().editor_background)
-            .child(self.render_sidebar(window, cx))
-            .child(self.render_previews(window, cx))
+            .child(
+                uniform_list(
+                    cx.entity().clone(),
+                    "component-nav",
+                    self.components.len(),
+                    move |this, range, _window, cx| {
+                        range
+                            .map(|ix| this.render_sidebar_entry(ix, ix == this.selected_index, cx))
+                            .collect()
+                    },
+                )
+                .track_scroll(self.nav_scroll_handle.clone())
+                .pt_4()
+                .w(px(240.))
+                .h_full()
+                .flex_grow(),
+            )
+            .child(
+                v_flex()
+                    .id("component-list")
+                    .px_8()
+                    .pt_4()
+                    .size_full()
+                    .child(
+                        list(self.component_list.clone())
+                            .flex_grow()
+                            .with_sizing_behavior(gpui::ListSizingBehavior::Auto),
+                    ),
+            )
     }
 }
 
@@ -175,13 +213,13 @@ impl Item for ComponentPreview {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Entity<Self>>
     where
         Self: Sized,
     {
-        Some(cx.new(Self::new))
+        Some(cx.new(|cx| Self::new(window, cx)))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {

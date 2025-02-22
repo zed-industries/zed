@@ -650,6 +650,7 @@ impl AssistantContext {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: ContextId,
         replica_id: ReplicaId,
@@ -770,6 +771,7 @@ impl AssistantContext {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn deserialize(
         saved_context: SavedContext,
         path: PathBuf,
@@ -3364,7 +3366,7 @@ impl SavedContextV0_1_0 {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SavedContextMetadata {
     pub title: String,
     pub path: PathBuf,

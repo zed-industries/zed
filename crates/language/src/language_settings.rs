@@ -109,6 +109,11 @@ pub struct LanguageSettings {
     /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
     pub language_servers: Vec<String>,
+    /// Controls where the `editor::Rewrap` action is allowed for this language.
+    ///
+    /// Note: This setting has no effect in Vim mode, as rewrap is already
+    /// allowed everywhere.
+    pub allow_rewrap: RewrapBehavior,
     /// Controls whether edit predictions are shown immediately (true)
     /// or manually by triggering `editor::ShowEditPrediction` (false).
     pub show_edit_predictions: bool,
@@ -349,6 +354,14 @@ pub struct LanguageSettingsContent {
     /// Default: ["..."]
     #[serde(default)]
     pub language_servers: Option<Vec<String>>,
+    /// Controls where the `editor::Rewrap` action is allowed for this language.
+    ///
+    /// Note: This setting has no effect in Vim mode, as rewrap is already
+    /// allowed everywhere.
+    ///
+    /// Default: "in_comments"
+    #[serde(default)]
+    pub allow_rewrap: Option<RewrapBehavior>,
     /// Controls whether edit predictions are shown immediately (true)
     /// or manually by triggering `editor::ShowEditPrediction` (false).
     ///
@@ -425,6 +438,19 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub show_completion_documentation: Option<bool>,
+}
+
+/// The behavior of `editor::Rewrap`.
+#[derive(Debug, PartialEq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RewrapBehavior {
+    /// Only rewrap within comments.
+    #[default]
+    InComments,
+    /// Only rewrap within the current selection(s).
+    InSelections,
+    /// Allow rewrapping anywhere.
+    Anywhere,
 }
 
 /// The contents of the edit prediction settings.
@@ -1224,6 +1250,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.enable_language_server,
     );
     merge(&mut settings.language_servers, src.language_servers.clone());
+    merge(&mut settings.allow_rewrap, src.allow_rewrap);
     merge(
         &mut settings.show_edit_predictions,
         src.show_edit_predictions,

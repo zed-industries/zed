@@ -17,6 +17,7 @@
 - [Key bindings](./key-bindings.md)
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
+- [Icon Themes](./icon-themes.md)
 - [Vim Mode](./vim.md)
 
 <!-- - [Globs](./globs.md) -->

@@ -15,11 +15,11 @@ mod outline;
 pub mod proto;
 mod syntax_map;
 mod task_context;
+mod text_diff;
 mod toolchain;
 
 #[cfg(test)]
 pub mod buffer_tests;
-pub mod markdown;
 
 pub use crate::language_settings::EditPredictionsMode;
 use crate::language_settings::SoftWrap;
@@ -63,6 +63,7 @@ use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextProvider, RunnableRange};
+pub use text_diff::{line_diff, text_diff, text_diff_with_options, unified_diff, DiffOptions};
 use theme::SyntaxTheme;
 pub use toolchain::{LanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister};
 use tree_sitter::{self, wasmtime, Query, QueryCursor, WasmStore};
@@ -917,7 +918,7 @@ pub struct Grammar {
     pub ts_language: tree_sitter::Language,
     pub(crate) error_query: Option<Query>,
     pub(crate) highlights_query: Option<Query>,
-    pub(crate) brackets_config: Option<BracketConfig>,
+    pub(crate) brackets_config: Option<BracketsConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
     pub(crate) runnable_config: Option<RunnableConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
@@ -1038,10 +1039,16 @@ struct InjectionPatternConfig {
     combined: bool,
 }
 
-struct BracketConfig {
+struct BracketsConfig {
     query: Query,
     open_capture_ix: u32,
     close_capture_ix: u32,
+    patterns: Vec<BracketsPatternConfig>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct BracketsPatternConfig {
+    newline_only: bool,
 }
 
 impl Language {
@@ -1283,11 +1290,24 @@ impl Language {
                 ("close", &mut close_capture_ix),
             ],
         );
+        let patterns = (0..query.pattern_count())
+            .map(|ix| {
+                let mut config = BracketsPatternConfig::default();
+                for setting in query.property_settings(ix) {
+                    match setting.key.as_ref() {
+                        "newline.only" => config.newline_only = true,
+                        _ => {}
+                    }
+                }
+                config
+            })
+            .collect();
         if let Some((open_capture_ix, close_capture_ix)) = open_capture_ix.zip(close_capture_ix) {
-            grammar.brackets_config = Some(BracketConfig {
+            grammar.brackets_config = Some(BracketsConfig {
                 query,
                 open_capture_ix,
                 close_capture_ix,
+                patterns,
             });
         }
         Ok(self)

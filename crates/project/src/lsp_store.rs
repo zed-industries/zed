@@ -63,7 +63,6 @@ use rpc::{
 use serde::Serialize;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
-use similar::{ChangeTag, TextDiff};
 use smol::channel::Sender;
 use snippet::Snippet;
 use std::{
@@ -110,15 +109,13 @@ pub enum LspFormatTarget {
     Ranges(BTreeMap<BufferId, Vec<Range<Anchor>>>),
 }
 
-// proto::RegisterBufferWithLanguageServer {}
-
 pub type OpenLspBufferHandle = Entity<Entity<Buffer>>;
 
 // Currently, formatting operations are represented differently depending on
 // whether they come from a language server or an external command.
 #[derive(Debug)]
 pub enum FormatOperation {
-    Lsp(Vec<(Range<Anchor>, String)>),
+    Lsp(Vec<(Range<Anchor>, Arc<str>)>),
     External(Diff),
     Prettier(Diff),
 }
@@ -1201,6 +1198,7 @@ impl LocalLspStore {
         Ok(project_transaction)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn execute_formatters(
         lsp_store: WeakEntity<LspStore>,
         formatters: &[Formatter],
@@ -1387,7 +1385,7 @@ impl LocalLspStore {
         language_server: &Arc<LanguageServer>,
         settings: &LanguageSettings,
         cx: &mut AsyncApp,
-    ) -> Result<Vec<(Range<Anchor>, String)>> {
+    ) -> Result<Vec<(Range<Anchor>, Arc<str>)>> {
         let capabilities = &language_server.capabilities();
         let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
         if range_formatting_provider.map_or(false, |provider| provider == &OneOf::Left(false)) {
@@ -1450,6 +1448,7 @@ impl LocalLspStore {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn format_via_lsp(
         this: &WeakEntity<LspStore>,
         buffer: &Entity<Buffer>,
@@ -1457,7 +1456,7 @@ impl LocalLspStore {
         language_server: &Arc<LanguageServer>,
         settings: &LanguageSettings,
         cx: &mut AsyncApp,
-    ) -> Result<Vec<(Range<Anchor>, String)>> {
+    ) -> Result<Vec<(Range<Anchor>, Arc<str>)>> {
         let uri = lsp::Url::from_file_path(abs_path)
             .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
         let text_document = lsp::TextDocumentIdentifier::new(uri);
@@ -2142,7 +2141,7 @@ impl LocalLspStore {
         server_id: LanguageServerId,
         version: Option<i32>,
         cx: &mut Context<LspStore>,
-    ) -> Task<Result<Vec<(Range<Anchor>, String)>>> {
+    ) -> Task<Result<Vec<(Range<Anchor>, Arc<str>)>>> {
         let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx);
         cx.background_spawn(async move {
             let snapshot = snapshot?;
@@ -2190,48 +2189,23 @@ impl LocalLspStore {
                 // we can identify the changes more precisely, preserving the locations
                 // of any anchors positioned in the unchanged regions.
                 if range.end.row > range.start.row {
-                    let mut offset = range.start.to_offset(&snapshot);
+                    let offset = range.start.to_offset(&snapshot);
                     let old_text = snapshot.text_for_range(range).collect::<String>();
-
-                    let diff = TextDiff::from_lines(old_text.as_str(), &new_text);
-                    let mut moved_since_edit = true;
-                    for change in diff.iter_all_changes() {
-                        let tag = change.tag();
-                        let value = change.value();
-                        match tag {
-                            ChangeTag::Equal => {
-                                offset += value.len();
-                                moved_since_edit = true;
-                            }
-                            ChangeTag::Delete => {
-                                let start = snapshot.anchor_after(offset);
-                                let end = snapshot.anchor_before(offset + value.len());
-                                if moved_since_edit {
-                                    edits.push((start..end, String::new()));
-                                } else {
-                                    edits.last_mut().unwrap().0.end = end;
-                                }
-                                offset += value.len();
-                                moved_since_edit = false;
-                            }
-                            ChangeTag::Insert => {
-                                if moved_since_edit {
-                                    let anchor = snapshot.anchor_after(offset);
-                                    edits.push((anchor..anchor, value.to_string()));
-                                } else {
-                                    edits.last_mut().unwrap().1.push_str(value);
-                                }
-                                moved_since_edit = false;
-                            }
-                        }
-                    }
+                    let range_edits = language::text_diff(old_text.as_str(), &new_text);
+                    edits.extend(range_edits.into_iter().map(|(range, replacement)| {
+                        (
+                            snapshot.anchor_after(offset + range.start)
+                                ..snapshot.anchor_before(offset + range.end),
+                            replacement,
+                        )
+                    }));
                 } else if range.end == range.start {
                     let anchor = snapshot.anchor_after(range.start);
-                    edits.push((anchor..anchor, new_text));
+                    edits.push((anchor..anchor, new_text.into()));
                 } else {
                     let edit_start = snapshot.anchor_after(range.start);
                     let edit_end = snapshot.anchor_before(range.end);
-                    edits.push((edit_start..edit_end, new_text));
+                    edits.push((edit_start..edit_end, new_text.into()));
                 }
             }
 
@@ -2958,6 +2932,7 @@ impl LspStore {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new_local(
         buffer_store: Entity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
@@ -3051,6 +3026,7 @@ impl LspStore {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new_remote(
         buffer_store: Entity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
@@ -4462,6 +4438,7 @@ impl LspStore {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn resolve_completion_remote(
         project_id: u64,
         server_id: LanguageServerId,
@@ -4764,7 +4741,7 @@ impl LspStore {
                     .await
                     .into_iter()
                     .flatten()
-                    .filter(|help| !help.markdown.is_empty())
+                    .filter(|help| !help.label.is_empty())
                     .collect::<Vec<_>>()
             })
         }
@@ -7514,6 +7491,7 @@ impl LspStore {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn insert_newly_running_language_server(
         &mut self,
         adapter: Arc<CachedLspAdapter>,

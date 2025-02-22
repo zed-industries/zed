@@ -183,7 +183,6 @@ impl ActiveThread {
                 markdown_style,
                 Some(self.language_registry.clone()),
                 None,
-                window,
                 cx,
             )
         });
@@ -215,7 +214,7 @@ impl ActiveThread {
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(markdown) = self.rendered_messages_by_id.get_mut(&message_id) {
                     markdown.update(cx, |markdown, cx| {
-                        markdown.append(text, window, cx);
+                        markdown.append(text, cx);
                     });
                 }
             }
