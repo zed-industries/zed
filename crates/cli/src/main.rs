@@ -548,11 +548,16 @@ mod windows {
                 self.0.display(),
             )
         }
+
         fn launch(&self, _ipc_url: String) -> anyhow::Result<()> {
             unimplemented!()
         }
-        fn run_foreground(&self, _ipc_url: String) -> io::Result<ExitStatus> {
-            unimplemented!()
+
+        fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
+            std::process::Command::new(self.0.clone())
+                .arg(ipc_url)
+                .spawn()?
+                .wait()
         }
     }
 
