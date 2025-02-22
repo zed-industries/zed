@@ -1438,16 +1438,13 @@ impl LinuxClient for X11Client {
         let cursor = match state.cursor_cache.get(&style) {
             Some(cursor) => *cursor,
             None => {
-                let Some(cursor) = (match style {
-                    CursorStyle::None => create_invisible_cursor(&state.xcb_connection).log_err(),
-                    _ => state
-                        .cursor_handle
-                        .load_cursor(&state.xcb_connection, &style.to_icon_name())
-                        .log_err(),
-                }) else {
+                let Some(cursor) = state
+                    .cursor_handle
+                    .load_cursor(&state.xcb_connection, &style.to_icon_name())
+                    .log_err()
+                else {
                     return;
                 };
-
                 state.cursor_cache.insert(style, cursor);
                 cursor
             }
@@ -1940,20 +1937,4 @@ fn make_scroll_wheel_event(
         modifiers,
         touch_phase: TouchPhase::default(),
     }
-}
-
-fn create_invisible_cursor(
-    connection: &XCBConnection,
-) -> anyhow::Result<crate::platform::linux::x11::client::xproto::Cursor> {
-    let empty_pixmap = connection.generate_id()?;
-    let root = connection.setup().roots[0].root;
-    connection.create_pixmap(1, empty_pixmap, root, 1, 1)?;
-
-    let cursor = connection.generate_id()?;
-    connection.create_cursor(cursor, empty_pixmap, empty_pixmap, 0, 0, 0, 0, 0, 0, 0, 0)?;
-
-    connection.free_pixmap(empty_pixmap)?;
-
-    connection.flush()?;
-    Ok(cursor)
 }
