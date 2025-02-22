@@ -1285,10 +1285,6 @@ impl DisplaySnapshot {
         self.inlay_highlights.get(&type_id)
     }
 
-    pub fn buffer_header_height(&self) -> u32 {
-        self.block_snapshot.buffer_header_height
-    }
-
     pub fn excerpt_footer_height(&self) -> u32 {
         self.block_snapshot.excerpt_footer_height
     }

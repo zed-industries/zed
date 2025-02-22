@@ -8769,26 +8769,25 @@ mod tests {
         // multi-buffer support
         // in DisplayPoint coordinates, this is what we're dealing with:
         //  0: [[file
-        //  1:   header
-        //  2:   section]]
-        //  3: aaaaaa
-        //  4: bbbbbb
-        //  5: cccccc
-        //  6:
-        //  7: [[footer]]
-        //  8: [[header]]
-        //  9: ffffff
-        // 10: gggggg
-        // 11: hhhhhh
-        // 12:
-        // 13: [[footer]]
-        // 14: [[file
-        // 15:   header
-        // 16:   section]]
-        // 17: bbbbbb
-        // 18: cccccc
-        // 19: dddddd
-        // 20: [[footer]]
+        //  1:   header]]
+        //  2: aaaaaa
+        //  3: bbbbbb
+        //  4: cccccc
+        //  5:
+        //  6: [[footer]]
+        //  7: [[header]]
+        //  8: ffffff
+        //  9: gggggg
+        // 10: hhhhhh
+        // 11:
+        // 12: [[footer]]
+        // 13: [[file
+        // 14:   header
+        // 15:   section]]
+        // 16: bbbbbb
+        // 17: cccccc
+        // 18: dddddd
+        // 19: [[footer]]
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_multi(
                 [
@@ -8814,8 +8813,8 @@ mod tests {
             editor.cursor_shape = CursorShape::Block;
             editor.change_selections(None, window, cx, |s| {
                 s.select_display_ranges([
-                    DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(7), 0),
-                    DisplayPoint::new(DisplayRow(10), 0)..DisplayPoint::new(DisplayRow(13), 0),
+                    DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(6), 0),
+                    DisplayPoint::new(DisplayRow(10), 0)..DisplayPoint::new(DisplayRow(12), 0),
                 ]);
             });
         });
@@ -8833,21 +8832,21 @@ mod tests {
         // and doesn't allow selection to bleed through
         assert_eq!(
             local_selections[0].range,
-            DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(7), 0)
+            DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(6), 0)
         );
         assert_eq!(
             local_selections[0].head,
-            DisplayPoint::new(DisplayRow(6), 0)
+            DisplayPoint::new(DisplayRow(5), 0)
         );
         // moves cursor on buffer boundary back two lines
         // and doesn't allow selection to bleed through
         assert_eq!(
             local_selections[1].range,
-            DisplayPoint::new(DisplayRow(10), 0)..DisplayPoint::new(DisplayRow(13), 0)
+            DisplayPoint::new(DisplayRow(10), 0)..DisplayPoint::new(DisplayRow(12), 0)
         );
         assert_eq!(
             local_selections[1].head,
-            DisplayPoint::new(DisplayRow(12), 0)
+            DisplayPoint::new(DisplayRow(11), 0)
         );
     }
 
