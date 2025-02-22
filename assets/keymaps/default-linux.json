@@ -118,7 +118,7 @@
       "ctrl-;": "editor::ToggleLineNumbers",
       "ctrl-k ctrl-r": "git::Restore",
       "ctrl-'": "editor::ToggleSelectedDiffHunks",
-      "ctrl-\"": "editor::ExpandAllHunkDiffs",
+      "ctrl-\"": "editor::ExpandAllDiffHunks",
       "ctrl-i": "editor::ShowSignatureHelp",
       "alt-g b": "editor::ToggleGitBlame",
       "menu": "editor::OpenContextMenu",

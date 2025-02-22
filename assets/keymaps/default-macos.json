@@ -133,7 +133,7 @@
       "cmd-y": "git::StageAndNext",
       "cmd-shift-y": "git::UnstageAndNext",
       "cmd-'": "editor::ToggleSelectedDiffHunks",
-      "cmd-\"": "editor::ExpandAllHunkDiffs",
+      "cmd-\"": "editor::ExpandAllDiffHunks",
       "cmd-alt-g b": "editor::ToggleGitBlame",
       "cmd-i": "editor::ShowSignatureHelp",
       "ctrl-f12": "editor::GoToDeclaration",
