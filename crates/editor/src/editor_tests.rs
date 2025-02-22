@@ -14843,7 +14843,7 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
     );
     cx.set_diff_base(&diff_base);
     cx.update_editor(|editor, window, cx| {
-        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, window, cx);
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
     });
     executor.run_until_parked();
 
@@ -14936,7 +14936,7 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
     );
 
     cx.update_editor(|editor, window, cx| {
-        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, window, cx);
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
     });
 
     cx.assert_state_with_diff(
