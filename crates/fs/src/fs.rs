@@ -2278,11 +2278,77 @@ mod tests {
         .unwrap();
 
         assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner1/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/outer/inner1/a")),
+            ]
+        );
+        assert_eq!(
             fs.load(path!("/outer/inner1/outer/inner1/a").as_ref())
                 .await
                 .unwrap(),
             "A"
         );
+    }
+
+    #[gpui::test]
+    async fn test_copy_recursive_with_ignoring(executor: BackgroundExecutor) {
+        let fs = FakeFs::new(executor.clone());
+        fs.insert_tree(
+            path!("/outer"),
+            json!({
+                "inner1": {
+                    "a": "A",
+                    "b": "B",
+                    "outer": {
+                        "inner1": {
+                            "a": "B"
+                        }
+                    }
+                },
+                "inner2": {
+                    "c": "C",
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/a")),
+            ]
+        );
+        assert_eq!(
+            fs.load(path!("/outer/inner1/outer/inner1/a").as_ref())
+                .await
+                .unwrap(),
+            "B",
+        );
+
+        let source = Path::new(path!("/outer"));
+        let target = Path::new(path!("/outer/inner1/outer"));
+        copy_recursive(
+            fs.as_ref(),
+            source,
+            target,
+            CopyOptions {
+                ignore_if_exists: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
         assert_eq!(
             fs.files(),
             vec![
@@ -2294,6 +2360,12 @@ mod tests {
                 PathBuf::from(path!("/outer/inner1/outer/inner2/c")),
                 PathBuf::from(path!("/outer/inner1/outer/inner1/outer/inner1/a")),
             ]
+        );
+        assert_eq!(
+            fs.load(path!("/outer/inner1/outer/inner1/a").as_ref())
+                .await
+                .unwrap(),
+            "B"
         );
     }
 }
