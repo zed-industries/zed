@@ -92,7 +92,7 @@ impl Vim {
         self.stop_recording(cx);
         let current_mode = self.mode;
         let target_mode = object.target_visual_mode(current_mode, around);
-        if target_mode != current_mode && object != Object::Paragraph {
+        if object != Object::Paragraph {
             self.switch_mode(target_mode, true, window, cx);
         }
         self.update_editor(window, cx, |vim, editor, window, cx| {
@@ -171,9 +171,7 @@ impl Vim {
                 editor.refresh_inline_completion(true, false, window, cx);
             });
         });
-        if target_mode != current_mode {
-            self.switch_mode(current_mode, true, window, cx);
-        }
+        self.switch_mode(current_mode, false, window, cx);
     }
 }
 
