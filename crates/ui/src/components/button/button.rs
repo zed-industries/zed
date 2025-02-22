@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use component::{example_group_with_title, single_example, ComponentPreview};
 use gpui::{AnyElement, AnyView, DefiniteLength};
 use ui_macros::IntoComponent;
@@ -81,6 +80,7 @@ use super::button_icon::ButtonIcon;
 /// ```
 ///
 #[derive(IntoElement, IntoComponent)]
+#[component(scope = "input")]
 pub struct Button {
     base: ButtonLike,
     label: SharedString,
@@ -95,7 +95,7 @@ pub struct Button {
     selected_icon: Option<IconName>,
     selected_icon_color: Option<Color>,
     key_binding: Option<KeyBinding>,
-    keybinding_position: KeybindingPosition,
+    key_binding_position: KeybindingPosition,
     alpha: Option<f32>,
 }
 
@@ -121,7 +121,7 @@ impl Button {
             selected_icon: None,
             selected_icon_color: None,
             key_binding: None,
-            keybinding_position: KeybindingPosition::default(),
+            key_binding_position: KeybindingPosition::default(),
             alpha: None,
         }
     }
@@ -197,7 +197,7 @@ impl Button {
     /// This method allows you to specify where the keybinding should be displayed
     /// in relation to the button's label.
     pub fn key_binding_position(mut self, position: KeybindingPosition) -> Self {
-        self.keybinding_position = position;
+        self.key_binding_position = position;
         self
     }
 
@@ -427,7 +427,7 @@ impl RenderOnce for Button {
                 .child(
                     h_flex()
                         .when(
-                            self.keybinding_position == KeybindingPosition::Start,
+                            self.key_binding_position == KeybindingPosition::Start,
                             |this| this.flex_row_reverse(),
                         )
                         .gap(DynamicSpacing::Base06.rems(cx))
@@ -456,13 +456,14 @@ impl RenderOnce for Button {
     }
 }
 
+// View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Button {
     fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
         v_flex()
             .gap_6()
             .children(vec![
                 example_group_with_title(
-                    "Styles",
+                    "Button Styles",
                     vec![
                         single_example(
                             "Default",
@@ -481,6 +482,12 @@ impl ComponentPreview for Button {
                                 .into_any_element(),
                         ),
                         single_example(
+                            "Tinted",
+                            Button::new("tinted_accent_style", "Accent")
+                                .style(ButtonStyle::Tinted(TintColor::Accent))
+                                .into_any_element(),
+                        ),
+                        single_example(
                             "Transparent",
                             Button::new("transparent", "Transparent")
                                 .style(ButtonStyle::Transparent)
@@ -489,7 +496,7 @@ impl ComponentPreview for Button {
                     ],
                 ),
                 example_group_with_title(
-                    "Tinted",
+                    "Tint Styles",
                     vec![
                         single_example(
                             "Accent",
@@ -518,7 +525,7 @@ impl ComponentPreview for Button {
                     ],
                 ),
                 example_group_with_title(
-                    "States",
+                    "Special States",
                     vec![
                         single_example(
                             "Default",
@@ -539,7 +546,7 @@ impl ComponentPreview for Button {
                     ],
                 ),
                 example_group_with_title(
-                    "With Icons",
+                    "Buttons with Icons",
                     vec![
                         single_example(
                             "Icon Start",
@@ -560,16 +567,6 @@ impl ComponentPreview for Button {
                             Button::new("icon_color", "Icon Color")
                                 .icon(IconName::Check)
                                 .icon_color(Color::Accent)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Tinted Icons",
-                            Button::new("tinted_icons", "Error")
-                                .style(ButtonStyle::Tinted(TintColor::Error))
-                                .color(Color::Error)
-                                .icon_color(Color::Error)
-                                .icon(IconName::Trash)
-                                .icon_position(IconPosition::Start)
                                 .into_any_element(),
                         ),
                     ],

@@ -42,6 +42,7 @@ serde_json.workspace = true
 settings.workspace = true
 sha2.workspace = true
 smol.workspace = true
+streaming-iterator.workspace = true
 theme.workspace = true
 tree-sitter.workspace = true
 ui.workspace = true

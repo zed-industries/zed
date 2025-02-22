@@ -117,7 +117,7 @@ async fn test_open_item_on_modifiers_release(cx: &mut gpui::TestAppContext) {
         .fs
         .as_fake()
         .insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "1.txt": "First file",
                 "2.txt": "Second file",
@@ -125,7 +125,7 @@ async fn test_open_item_on_modifiers_release(cx: &mut gpui::TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
     let (workspace, cx) =
         cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 

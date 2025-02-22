@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use std::ops::Range;
 
 use gpui::{FontWeight, HighlightStyle, StyledText};
@@ -46,13 +44,13 @@ impl LabelCommon for HighlightedLabel {
         self
     }
 
-    fn strikethrough(mut self, strikethrough: bool) -> Self {
-        self.base = self.base.strikethrough(strikethrough);
+    fn strikethrough(mut self) -> Self {
+        self.base = self.base.strikethrough();
         self
     }
 
-    fn italic(mut self, italic: bool) -> Self {
-        self.base = self.base.italic(italic);
+    fn italic(mut self) -> Self {
+        self.base = self.base.italic();
         self
     }
 
@@ -61,8 +59,8 @@ impl LabelCommon for HighlightedLabel {
         self
     }
 
-    fn underline(mut self, underline: bool) -> Self {
-        self.base = self.base.underline(underline);
+    fn underline(mut self) -> Self {
+        self.base = self.base.underline();
         self
     }
 

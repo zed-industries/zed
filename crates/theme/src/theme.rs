@@ -23,6 +23,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use ::settings::Settings;
+use ::settings::SettingsStore;
 use anyhow::Result;
 use fallback_themes::apply_status_color_defaults;
 use fs::Fs;
@@ -101,6 +102,16 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
 
     ThemeSettings::register(cx);
     FontFamilyCache::init_global(cx);
+
+    let mut prev_buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size(cx);
+        if buffer_font_size != prev_buffer_font_size {
+            prev_buffer_font_size = buffer_font_size;
+            reset_buffer_font_size(cx);
+        }
+    })
+    .detach();
 }
 
 /// Implementing this trait allows accessing the active theme.

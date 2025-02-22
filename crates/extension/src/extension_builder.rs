@@ -168,7 +168,7 @@ impl ExtensionBuilder {
         let wasm_bytes = fs::read(&wasm_path)
             .with_context(|| format!("failed to read output module `{}`", wasm_path.display()))?;
 
-        let encoder = ComponentEncoder::default()
+        let mut encoder = ComponentEncoder::default()
             .module(&wasm_bytes)?
             .adapter("wasi_snapshot_preview1", &adapter_bytes)
             .context("failed to load adapter module")?

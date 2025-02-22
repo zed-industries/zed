@@ -16,7 +16,7 @@ use workspace::searchable::Direction;
 
 use crate::{
     motion::{first_non_whitespace, next_line_end, start_of_line, Motion},
-    object::Object,
+    object::{self, Object},
     state::{Mode, Operator},
     Vim,
 };
@@ -374,6 +374,9 @@ impl Vim {
                                     selection.start = range.start;
                                 } else {
                                     selection.end = range.end;
+                                }
+                                if !around && object.is_multiline() {
+                                    object::preserve_indented_newline(map, selection);
                                 }
                             }
 

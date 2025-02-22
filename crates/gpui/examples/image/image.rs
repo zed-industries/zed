@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -9,6 +8,7 @@ use gpui::{
     Bounds, Context, ImageSource, KeyBinding, Menu, MenuItem, Point, SharedString, SharedUri,
     TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
+use reqwest_client::ReqwestClient;
 
 struct Assets {
     base: PathBuf,
@@ -127,11 +127,16 @@ actions!(image, [Quit]);
 fn main() {
     env_logger::init();
 
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
     Application::new()
         .with_assets(Assets {
-            base: PathBuf::from("crates/gpui/examples"),
+            base: manifest_dir.join("examples"),
         })
-        .run(|cx: &mut App| {
+        .run(move |cx: &mut App| {
+            let http_client = ReqwestClient::user_agent("gpui example").unwrap();
+            cx.set_http_client(Arc::new(http_client));
+
             cx.activate(true);
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
@@ -158,9 +163,7 @@ fn main() {
             cx.open_window(window_options, |_, cx| {
                 cx.new(|_| ImageShowcase {
                     // Relative path to your root project path
-                    local_resource: PathBuf::from_str("crates/gpui/examples/image/app-icon.png")
-                        .unwrap()
-                        .into(),
+                    local_resource: manifest_dir.join("examples/image/app-icon.png").into(),
 
                     remote_resource: "https://picsum.photos/512/512".into(),
 

@@ -1,7 +1,7 @@
 use crate::{
     display_map::{invisibles::is_invisible, InlayOffset, ToDisplayPoint},
     hover_links::{InlayHighlight, RangeInEditor},
-    scroll::ScrollAmount,
+    scroll::{Autoscroll, ScrollAmount},
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     Hover,
 };
@@ -18,12 +18,14 @@ use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
-use std::rc::Rc;
 use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
+use std::{path::PathBuf, rc::Rc};
 use theme::ThemeSettings;
 use ui::{prelude::*, theme_is_transparent, Scrollbar, ScrollbarState};
+use url::Url;
 use util::TryFutureExt;
+use workspace::Workspace;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
@@ -337,7 +339,7 @@ fn show_hover(
                         base_text_style.refine(&TextStyleRefinement {
                             font_family: Some(settings.ui_font.family.clone()),
                             font_fallbacks: settings.ui_font.fallbacks.clone(),
-                            font_size: Some(settings.ui_font_size.into()),
+                            font_size: Some(settings.ui_font_size(cx).into()),
                             color: Some(cx.theme().colors().editor_foreground),
                             background_color: Some(gpui::transparent_black()),
 
@@ -356,7 +358,8 @@ fn show_hover(
                             },
                             ..Default::default()
                         };
-                        Markdown::new_text(text, markdown_style.clone(), None, None, window, cx)
+                        Markdown::new_text(SharedString::new(text), markdown_style.clone(), cx)
+                            .open_url(open_markdown_url)
                     })
                     .ok();
 
@@ -558,67 +561,119 @@ async fn parse_blocks(
 
     let rendered_block = cx
         .new_window_entity(|window, cx| {
-            let settings = ThemeSettings::get_global(cx);
-            let ui_font_family = settings.ui_font.family.clone();
-            let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
-            let buffer_font_family = settings.buffer_font.family.clone();
-            let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
-
-            let mut base_text_style = window.text_style();
-            base_text_style.refine(&TextStyleRefinement {
-                font_family: Some(ui_font_family.clone()),
-                font_fallbacks: ui_font_fallbacks,
-                color: Some(cx.theme().colors().editor_foreground),
-                ..Default::default()
-            });
-
-            let markdown_style = MarkdownStyle {
-                base_text_style,
-                code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
-                inline_code: TextStyleRefinement {
-                    background_color: Some(cx.theme().colors().background),
-                    font_family: Some(buffer_font_family),
-                    font_fallbacks: buffer_font_fallbacks,
-                    ..Default::default()
-                },
-                rule_color: cx.theme().colors().border,
-                block_quote_border_color: Color::Muted.color(cx),
-                block_quote: TextStyleRefinement {
-                    color: Some(Color::Muted.color(cx)),
-                    ..Default::default()
-                },
-                link: TextStyleRefinement {
-                    color: Some(cx.theme().colors().editor_foreground),
-                    underline: Some(gpui::UnderlineStyle {
-                        thickness: px(1.),
-                        color: Some(cx.theme().colors().editor_foreground),
-                        wavy: false,
-                    }),
-                    ..Default::default()
-                },
-                syntax: cx.theme().syntax().clone(),
-                selection_background_color: { cx.theme().players().local().selection },
-
-                heading: StyleRefinement::default()
-                    .font_weight(FontWeight::BOLD)
-                    .text_base()
-                    .mt(rems(1.))
-                    .mb_0(),
-            };
-
             Markdown::new(
-                combined_text,
-                markdown_style.clone(),
+                combined_text.into(),
+                hover_markdown_style(window, cx),
                 Some(language_registry.clone()),
                 fallback_language_name,
-                window,
                 cx,
             )
             .copy_code_block_buttons(false)
+            .open_url(open_markdown_url)
         })
         .ok();
 
     rendered_block
+}
+
+pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+    let settings = ThemeSettings::get_global(cx);
+    let ui_font_family = settings.ui_font.family.clone();
+    let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
+    let buffer_font_family = settings.buffer_font.family.clone();
+    let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
+
+    let mut base_text_style = window.text_style();
+    base_text_style.refine(&TextStyleRefinement {
+        font_family: Some(ui_font_family.clone()),
+        font_fallbacks: ui_font_fallbacks,
+        color: Some(cx.theme().colors().editor_foreground),
+        ..Default::default()
+    });
+    MarkdownStyle {
+        base_text_style,
+        code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
+        inline_code: TextStyleRefinement {
+            background_color: Some(cx.theme().colors().background),
+            font_family: Some(buffer_font_family),
+            font_fallbacks: buffer_font_fallbacks,
+            ..Default::default()
+        },
+        rule_color: cx.theme().colors().border,
+        block_quote_border_color: Color::Muted.color(cx),
+        block_quote: TextStyleRefinement {
+            color: Some(Color::Muted.color(cx)),
+            ..Default::default()
+        },
+        link: TextStyleRefinement {
+            color: Some(cx.theme().colors().editor_foreground),
+            underline: Some(gpui::UnderlineStyle {
+                thickness: px(1.),
+                color: Some(cx.theme().colors().editor_foreground),
+                wavy: false,
+            }),
+            ..Default::default()
+        },
+        syntax: cx.theme().syntax().clone(),
+        selection_background_color: { cx.theme().players().local().selection },
+
+        heading: StyleRefinement::default()
+            .font_weight(FontWeight::BOLD)
+            .text_base()
+            .mt(rems(1.))
+            .mb_0(),
+    }
+}
+
+pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) {
+    if let Ok(uri) = Url::parse(&link) {
+        if uri.scheme() == "file" {
+            if let Some(workspace) = window.root::<Workspace>().flatten() {
+                workspace.update(cx, |workspace, cx| {
+                    let task =
+                        workspace.open_abs_path(PathBuf::from(uri.path()), false, window, cx);
+
+                    cx.spawn_in(window, |_, mut cx| async move {
+                        let item = task.await?;
+                        // Ruby LSP uses URLs with #L1,1-4,4
+                        // we'll just take the first number and assume it's a line number
+                        let Some(fragment) = uri.fragment() else {
+                            return anyhow::Ok(());
+                        };
+                        let mut accum = 0u32;
+                        for c in fragment.chars() {
+                            if c >= '0' && c <= '9' && accum < u32::MAX / 2 {
+                                accum *= 10;
+                                accum += c as u32 - '0' as u32;
+                            } else if accum > 0 {
+                                break;
+                            }
+                        }
+                        if accum == 0 {
+                            return Ok(());
+                        }
+                        let Some(editor) = cx.update(|_, cx| item.act_as::<Editor>(cx))? else {
+                            return Ok(());
+                        };
+                        editor.update_in(&mut cx, |editor, window, cx| {
+                            editor.change_selections(
+                                Some(Autoscroll::fit()),
+                                window,
+                                cx,
+                                |selections| {
+                                    selections.select_ranges([text::Point::new(accum - 1, 0)
+                                        ..text::Point::new(accum - 1, 0)]);
+                                },
+                            );
+                        })
+                    })
+                    .detach_and_log_err(cx);
+                });
+                return;
+            }
+        }
+    }
+    cx.open_url(&link);
 }
 
 #[derive(Default, Debug)]

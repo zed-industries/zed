@@ -1,8 +1,7 @@
-#![allow(missing_docs)]
 use gpui::{AnyView, DefiniteLength, Hsla};
 
 use super::button_like::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle};
-use crate::{prelude::*, ElevationIndex, Indicator, SelectableButton};
+use crate::{prelude::*, ElevationIndex, Indicator, SelectableButton, TintColor};
 use crate::{IconName, IconSize};
 
 use super::button_icon::ButtonIcon;
@@ -14,7 +13,8 @@ pub enum IconButtonShape {
     Wide,
 }
 
-#[derive(IntoElement)]
+#[derive(IntoElement, IntoComponent)]
+#[component(scope = "input")]
 pub struct IconButton {
     base: ButtonLike,
     shape: IconButtonShape,
@@ -22,6 +22,7 @@ pub struct IconButton {
     icon_size: IconSize,
     icon_color: Color,
     selected_icon: Option<IconName>,
+    selected_icon_color: Option<Color>,
     indicator: Option<Indicator>,
     indicator_border_color: Option<Hsla>,
     alpha: Option<f32>,
@@ -36,6 +37,7 @@ impl IconButton {
             icon_size: IconSize::default(),
             icon_color: Color::Default,
             selected_icon: None,
+            selected_icon_color: None,
             indicator: None,
             indicator_border_color: None,
             alpha: None,
@@ -66,6 +68,12 @@ impl IconButton {
 
     pub fn selected_icon(mut self, icon: impl Into<Option<IconName>>) -> Self {
         self.selected_icon = icon.into();
+        self
+    }
+
+    /// Sets the icon color used when the button is in a selected state.
+    pub fn selected_icon_color(mut self, color: impl Into<Option<Color>>) -> Self {
+        self.selected_icon_color = color.into();
         self
     }
 
@@ -181,6 +189,7 @@ impl RenderOnce for IconButton {
                     .disabled(is_disabled)
                     .toggle_state(is_selected)
                     .selected_icon(self.selected_icon)
+                    .selected_icon_color(self.selected_icon_color)
                     .when_some(selected_style, |this, style| this.selected_style(style))
                     .when_some(self.indicator, |this, indicator| {
                         this.indicator(indicator)
@@ -189,5 +198,162 @@ impl RenderOnce for IconButton {
                     .size(self.icon_size)
                     .color(Color::Custom(color)),
             )
+    }
+}
+
+impl ComponentPreview for IconButton {
+    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Icon Button Styles",
+                    vec![
+                        single_example(
+                            "Default",
+                            IconButton::new("default", IconName::Check)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Filled",
+                            IconButton::new("filled", IconName::Check)
+                                .layer(ElevationIndex::Background)
+                                .style(ButtonStyle::Filled)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Subtle",
+                            IconButton::new("subtle", IconName::Check)
+                                .layer(ElevationIndex::Background)
+                                .style(ButtonStyle::Subtle)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Tinted",
+                            IconButton::new("tinted", IconName::Check)
+                                .layer(ElevationIndex::Background)
+                                .style(ButtonStyle::Tinted(TintColor::Accent))
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Transparent",
+                            IconButton::new("transparent", IconName::Check)
+                                .layer(ElevationIndex::Background)
+                                .style(ButtonStyle::Transparent)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Icon Button Shapes",
+                    vec![
+                        single_example(
+                            "Square",
+                            IconButton::new("square", IconName::Check)
+                                .shape(IconButtonShape::Square)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Wide",
+                            IconButton::new("wide", IconName::Check)
+                                .shape(IconButtonShape::Wide)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Icon Button Sizes",
+                    vec![
+                        single_example(
+                            "Small",
+                            IconButton::new("small", IconName::Check)
+                                .icon_size(IconSize::XSmall)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Small",
+                            IconButton::new("small", IconName::Check)
+                                .icon_size(IconSize::Small)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Medium",
+                            IconButton::new("medium", IconName::Check)
+                                .icon_size(IconSize::Medium)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "XLarge",
+                            IconButton::new("xlarge", IconName::Check)
+                                .icon_size(IconSize::XLarge)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Special States",
+                    vec![
+                        single_example(
+                            "Disabled",
+                            IconButton::new("disabled", IconName::Check)
+                                .disabled(true)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Selected",
+                            IconButton::new("selected", IconName::Check)
+                                .toggle_state(true)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "With Indicator",
+                            IconButton::new("indicator", IconName::Check)
+                                .indicator(Indicator::dot().color(Color::Success))
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Custom Colors",
+                    vec![
+                        single_example(
+                            "Custom Icon Color",
+                            IconButton::new("custom_color", IconName::Check)
+                                .icon_color(Color::Accent)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "With Alpha",
+                            IconButton::new("alpha", IconName::Check)
+                                .alpha(0.5)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+            ])
+            .into_any_element()
     }
 }

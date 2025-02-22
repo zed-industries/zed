@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use std::cmp::Ordering;
 
 use gpui::{AnyElement, IntoElement, Stateful};
@@ -172,6 +171,7 @@ impl RenderOnce for Tab {
     }
 }
 
+// View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Tab {
     fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
         v_flex()

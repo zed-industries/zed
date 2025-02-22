@@ -6,6 +6,7 @@ use project_diff::ProjectDiff;
 use ui::{ActiveTheme, Color, Icon, IconName, IntoElement};
 
 pub mod branch_picker;
+mod commit_modal;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod project_diff;
@@ -15,6 +16,7 @@ pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);
     branch_picker::init(cx);
     cx.observe_new(ProjectDiff::register).detach();
+    commit_modal::init(cx);
 }
 
 // TODO: Add updated status colors to theme

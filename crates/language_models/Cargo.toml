@@ -16,6 +16,7 @@ anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
+credentials_provider.workspace = true
 copilot = { workspace = true, features = ["schemars"] }
 deepseek = { workspace = true, features = ["schemars"] }
 editor.workspace = true
@@ -28,6 +29,7 @@ http_client.workspace = true
 language_model.workspace = true
 lmstudio = { workspace = true, features = ["schemars"] }
 menu.workspace = true
+mistral = { workspace = true, features = ["schemars"] }
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 project.workspace = true

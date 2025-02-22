@@ -21,7 +21,7 @@ use terminal::{
         },
     },
     terminal_settings::TerminalSettings,
-    HoveredWord, IndexedCell, Terminal, TerminalContent, TerminalSize,
+    HoveredWord, IndexedCell, Terminal, TerminalBounds, TerminalContent,
 };
 use theme::{ActiveTheme, Theme, ThemeSettings};
 use ui::{ParentElement, Tooltip};
@@ -40,7 +40,7 @@ pub struct LayoutState {
     relative_highlighted_ranges: Vec<(RangeInclusive<AlacPoint>, Hsla)>,
     cursor: Option<CursorLayout>,
     background_color: Hsla,
-    dimensions: TerminalSize,
+    dimensions: TerminalBounds,
     mode: TermMode,
     display_offset: usize,
     hyperlink_tooltip: Option<AnyElement>,
@@ -86,7 +86,7 @@ impl LayoutCell {
     pub fn paint(
         &self,
         origin: Point<Pixels>,
-        dimensions: &TerminalSize,
+        dimensions: &TerminalBounds,
         _visible_bounds: Bounds<Pixels>,
         window: &mut Window,
         cx: &mut App,
@@ -130,7 +130,7 @@ impl LayoutRect {
         }
     }
 
-    pub fn paint(&self, origin: Point<Pixels>, dimensions: &TerminalSize, window: &mut Window) {
+    pub fn paint(&self, origin: Point<Pixels>, dimensions: &TerminalBounds, window: &mut Window) {
         let position = {
             let alac_point = self.point;
             point(
@@ -314,7 +314,7 @@ impl TerminalElement {
     /// the same position for sequential indexes. Use em_width instead
     fn shape_cursor(
         cursor_point: DisplayCursor,
-        size: TerminalSize,
+        size: TerminalBounds,
         text_fragment: &ShapedLine,
     ) -> Option<(Point<Pixels>, Pixels)> {
         if cursor_point.line() < size.total_lines() as i32 {
@@ -413,27 +413,20 @@ impl TerminalElement {
 
     fn generic_button_handler<E>(
         connection: Entity<Terminal>,
-        origin: Point<Pixels>,
         focus_handle: FocusHandle,
-        f: impl Fn(&mut Terminal, Point<Pixels>, &E, &mut Context<Terminal>),
+        f: impl Fn(&mut Terminal, &E, &mut Context<Terminal>),
     ) -> impl Fn(&E, &mut Window, &mut App) {
         move |event, window, cx| {
             window.focus(&focus_handle);
             connection.update(cx, |terminal, cx| {
-                f(terminal, origin, event, cx);
+                f(terminal, event, cx);
 
                 cx.notify();
             })
         }
     }
 
-    fn register_mouse_listeners(
-        &mut self,
-        origin: Point<Pixels>,
-        mode: TermMode,
-        hitbox: &Hitbox,
-        window: &mut Window,
-    ) {
+    fn register_mouse_listeners(&mut self, mode: TermMode, hitbox: &Hitbox, window: &mut Window) {
         let focus = self.focus.clone();
         let terminal = self.terminal.clone();
 
@@ -443,29 +436,26 @@ impl TerminalElement {
             move |e, window, cx| {
                 window.focus(&focus);
                 terminal.update(cx, |terminal, cx| {
-                    terminal.mouse_down(e, origin, cx);
+                    terminal.mouse_down(e, cx);
                     cx.notify();
                 })
             }
         });
 
         window.on_mouse_event({
-            let focus = self.focus.clone();
             let terminal = self.terminal.clone();
             let hitbox = hitbox.clone();
+            let focus = focus.clone();
             move |e: &MouseMoveEvent, phase, window, cx| {
-                if phase != DispatchPhase::Bubble || !focus.is_focused(window) {
+                if phase != DispatchPhase::Bubble {
                     return;
                 }
 
-                if e.pressed_button.is_some() && !cx.has_active_drag() {
+                if e.pressed_button.is_some() && !cx.has_active_drag() && focus.is_focused(window) {
                     let hovered = hitbox.is_hovered(window);
                     terminal.update(cx, |terminal, cx| {
-                        if terminal.selection_started() {
-                            terminal.mouse_drag(e, origin, hitbox.bounds);
-                            cx.notify();
-                        } else if hovered {
-                            terminal.mouse_drag(e, origin, hitbox.bounds);
+                        if terminal.selection_started() || hovered {
+                            terminal.mouse_drag(e, hitbox.bounds, cx);
                             cx.notify();
                         }
                     })
@@ -473,8 +463,7 @@ impl TerminalElement {
 
                 if hitbox.is_hovered(window) {
                     terminal.update(cx, |terminal, cx| {
-                        terminal.mouse_move(e, origin);
-                        cx.notify();
+                        terminal.mouse_move(e, cx);
                     })
                 }
             }
@@ -484,10 +473,9 @@ impl TerminalElement {
             MouseButton::Left,
             TerminalElement::generic_button_handler(
                 terminal.clone(),
-                origin,
                 focus.clone(),
-                move |terminal, origin, e, cx| {
-                    terminal.mouse_up(e, origin, cx);
+                move |terminal, e, cx| {
+                    terminal.mouse_up(e, cx);
                 },
             ),
         );
@@ -495,10 +483,9 @@ impl TerminalElement {
             MouseButton::Middle,
             TerminalElement::generic_button_handler(
                 terminal.clone(),
-                origin,
                 focus.clone(),
-                move |terminal, origin, e, cx| {
-                    terminal.mouse_down(e, origin, cx);
+                move |terminal, e, cx| {
+                    terminal.mouse_down(e, cx);
                 },
             ),
         );
@@ -507,7 +494,7 @@ impl TerminalElement {
             move |e, _, cx| {
                 terminal_view
                     .update(cx, |terminal_view, cx| {
-                        terminal_view.scroll_wheel(e, origin, cx);
+                        terminal_view.scroll_wheel(e, cx);
                         cx.notify();
                     })
                     .ok();
@@ -521,10 +508,9 @@ impl TerminalElement {
                 MouseButton::Right,
                 TerminalElement::generic_button_handler(
                     terminal.clone(),
-                    origin,
                     focus.clone(),
-                    move |terminal, origin, e, cx| {
-                        terminal.mouse_down(e, origin, cx);
+                    move |terminal, e, cx| {
+                        terminal.mouse_down(e, cx);
                     },
                 ),
             );
@@ -532,30 +518,24 @@ impl TerminalElement {
                 MouseButton::Right,
                 TerminalElement::generic_button_handler(
                     terminal.clone(),
-                    origin,
                     focus.clone(),
-                    move |terminal, origin, e, cx| {
-                        terminal.mouse_up(e, origin, cx);
+                    move |terminal, e, cx| {
+                        terminal.mouse_up(e, cx);
                     },
                 ),
             );
             self.interactivity.on_mouse_up(
                 MouseButton::Middle,
-                TerminalElement::generic_button_handler(
-                    terminal,
-                    origin,
-                    focus,
-                    move |terminal, origin, e, cx| {
-                        terminal.mouse_up(e, origin, cx);
-                    },
-                ),
+                TerminalElement::generic_button_handler(terminal, focus, move |terminal, e, cx| {
+                    terminal.mouse_up(e, cx);
+                }),
             );
         }
     }
 
     fn rem_size(&self, cx: &mut App) -> Option<Pixels> {
         let settings = ThemeSettings::get_global(cx).clone();
-        let buffer_font_size = settings.buffer_font_size();
+        let buffer_font_size = settings.buffer_font_size(cx);
         let rem_size_scale = {
             // Our default UI font size is 14px on a 16px base scale.
             // This means the default UI font size is 0.875rems.
@@ -619,7 +599,7 @@ impl Element for TerminalElement {
                 let hitbox = hitbox.unwrap();
                 let settings = ThemeSettings::get_global(cx).clone();
 
-                let buffer_font_size = settings.buffer_font_size();
+                let buffer_font_size = settings.buffer_font_size(cx);
 
                 let terminal_settings = TerminalSettings::get_global(cx);
 
@@ -646,7 +626,8 @@ impl Element for TerminalElement {
                 let line_height = terminal_settings.line_height.value();
                 let font_size = terminal_settings.font_size;
 
-                let font_size = font_size.unwrap_or(buffer_font_size);
+                let font_size =
+                    font_size.map_or(buffer_font_size, |size| theme::adjusted_font_size(size, cx));
 
                 let theme = cx.theme().clone();
 
@@ -705,7 +686,10 @@ impl Element for TerminalElement {
                         size.width = cell_width * 2.0;
                     }
 
-                    TerminalSize::new(line_height, cell_width, size)
+                    let mut origin = bounds.origin;
+                    origin.x += gutter;
+
+                    TerminalBounds::new(line_height, cell_width, Bounds { origin, size })
                 };
 
                 let search_matches = self.terminal.read(cx).matches.clone();
@@ -714,9 +698,11 @@ impl Element for TerminalElement {
 
                 let last_hovered_word = self.terminal.update(cx, |terminal, cx| {
                     terminal.set_size(dimensions);
-                    terminal.sync(cx);
+                    terminal.sync(window, cx);
+
                     if self.can_navigate_to_selected_word
-                        && terminal.can_navigate_to_selected_word()
+                        && window.modifiers().secondary()
+                        && bounds.contains(&window.mouse_position())
                     {
                         terminal.last_content.last_hovered_word.clone()
                     } else {
@@ -898,7 +884,7 @@ impl Element for TerminalElement {
                 workspace: self.workspace.clone(),
             };
 
-            self.register_mouse_listeners(origin, layout.mode, &layout.hitbox, window);
+            self.register_mouse_listeners(layout.mode, &layout.hitbox, window);
             if self.can_navigate_to_selected_word && layout.last_hovered_word.is_some() {
                 window.set_cursor_style(gpui::CursorStyle::PointingHand, &layout.hitbox);
             } else {
@@ -924,12 +910,9 @@ impl Element for TerminalElement {
                                 return;
                             }
 
-                            let handled = this
-                                .update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
-
-                            if handled {
-                                window.refresh();
-                            }
+                            this.update(cx, |term, cx| {
+                                term.try_modifiers_change(&event.modifiers, window, cx)
+                            });
                         }
                     });
 

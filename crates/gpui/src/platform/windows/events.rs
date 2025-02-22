@@ -1121,7 +1121,19 @@ fn handle_nc_mouse_up_msg(
 }
 
 fn handle_cursor_changed(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    state_ptr.state.borrow_mut().current_cursor = HCURSOR(lparam.0 as _);
+    let mut state = state_ptr.state.borrow_mut();
+    let had_cursor = state.current_cursor.is_some();
+
+    state.current_cursor = if lparam.0 == 0 {
+        None
+    } else {
+        Some(HCURSOR(lparam.0 as _))
+    };
+
+    if had_cursor != state.current_cursor.is_some() {
+        unsafe { SetCursor(state.current_cursor.as_ref()) };
+    }
+
     Some(0)
 }
 
@@ -1132,7 +1144,9 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
     ) {
         return None;
     }
-    unsafe { SetCursor(state_ptr.state.borrow().current_cursor) };
+    unsafe {
+        SetCursor(state_ptr.state.borrow().current_cursor.as_ref());
+    };
     Some(1)
 }
 
@@ -1201,13 +1215,22 @@ fn handle_system_theme_changed(
 
 fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     let modifiers = current_modifiers();
-    if !modifiers.alt {
-        // on Windows, F10 can trigger this event, not just the alt key
-        // and we just don't care about F10
-        return None;
-    }
-
     let vk_code = wparam.loword();
+
+    // on Windows, F10 can trigger this event, not just the alt key,
+    // so when F10 was pressed, handle only it
+    if !modifiers.alt {
+        if vk_code == VK_F10.0 {
+            let offset = vk_code - VK_F1.0;
+            return Some(Keystroke {
+                modifiers,
+                key: format!("f{}", offset + 1),
+                key_char: None,
+            });
+        } else {
+            return None;
+        }
+    }
 
     let key = match VIRTUAL_KEY(vk_code) {
         VK_BACK => "backspace",
@@ -1226,7 +1249,24 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
         VK_DELETE => "delete",
-        _ => return basic_vkcode_to_string(vk_code, modifiers),
+        VK_APPS => "menu",
+        _ => {
+            let basic_key = basic_vkcode_to_string(vk_code, modifiers);
+            if basic_key.is_some() {
+                return basic_key;
+            } else {
+                if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
+                    let offset = vk_code - VK_F1.0;
+                    return Some(Keystroke {
+                        modifiers,
+                        key: format!("f{}", offset + 1),
+                        key_char: None,
+                    });
+                } else {
+                    return None;
+                }
+            }
+        }
     }
     .to_owned();
 
@@ -1264,6 +1304,7 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
         VK_DELETE => "delete",
+        VK_APPS => "menu",
         _ => {
             if is_modifier(VIRTUAL_KEY(vk_code)) {
                 return Some(KeystrokeOrModifier::Modifier(modifiers));

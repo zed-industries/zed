@@ -2,10 +2,12 @@ use std::sync::Arc;
 
 use feature_flags::ZedPro;
 use gpui::{
-    Action, AnyElement, AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, WeakEntity,
+    Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, Subscription, Task, WeakEntity,
 };
-use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
+use language_model::{
+    AuthenticateError, LanguageModel, LanguageModelAvailability, LanguageModelRegistry,
+};
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
@@ -20,6 +22,7 @@ pub struct LanguageModelSelector {
     /// The task used to update the picker's matches when there is a change to
     /// the language model registry.
     update_matches_task: Option<Task<()>>,
+    _authenticate_all_providers_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -37,16 +40,20 @@ impl LanguageModelSelector {
             on_model_changed: on_model_changed.clone(),
             all_models: all_models.clone(),
             filtered_models: all_models,
-            selected_index: 0,
+            selected_index: Self::get_active_model_index(cx),
         };
 
         let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
+            Picker::uniform_list(delegate, window, cx)
+                .show_scrollbar(true)
+                .width(rems(20.))
+                .max_height(Some(rems(20.).into()))
         });
 
         LanguageModelSelector {
             picker,
             update_matches_task: None,
+            _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
             _subscriptions: vec![cx.subscribe_in(
                 &LanguageModelRegistry::global(cx),
                 window,
@@ -77,6 +84,56 @@ impl LanguageModelSelector {
         }
     }
 
+    /// Authenticates all providers in the [`LanguageModelRegistry`].
+    ///
+    /// We do this so that we can populate the language selector with all of the
+    /// models from the configured providers.
+    fn authenticate_all_providers(cx: &mut App) -> Task<()> {
+        let authenticate_all_providers = LanguageModelRegistry::global(cx)
+            .read(cx)
+            .providers()
+            .iter()
+            .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
+            .collect::<Vec<_>>();
+
+        cx.spawn(|_cx| async move {
+            for (provider_id, provider_name, authenticate_task) in authenticate_all_providers {
+                if let Err(err) = authenticate_task.await {
+                    if matches!(err, AuthenticateError::CredentialsNotFound) {
+                        // Since we're authenticating these providers in the
+                        // background for the purposes of populating the
+                        // language selector, we don't care about providers
+                        // where the credentials are not found.
+                    } else {
+                        // Some providers have noisy failure states that we
+                        // don't want to spam the logs with every time the
+                        // language model selector is initialized.
+                        //
+                        // Ideally these should have more clear failure modes
+                        // that we know are safe to ignore here, like what we do
+                        // with `CredentialsNotFound` above.
+                        match provider_id.0.as_ref() {
+                            "lmstudio" | "ollama" => {
+                                // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
+                                //
+                                // These fail noisily, so we don't log them.
+                            }
+                            "copilot_chat" => {
+                                // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.
+                            }
+                            _ => {
+                                log::error!(
+                                    "Failed to authenticate provider: {}: {err}",
+                                    provider_name.0
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+
     fn all_models(cx: &App) -> Vec<ModelInfo> {
         LanguageModelRegistry::global(cx)
             .read(cx)
@@ -97,6 +154,16 @@ impl LanguageModelSelector {
                 })
             })
             .collect::<Vec<_>>()
+    }
+
+    fn get_active_model_index(cx: &App) -> usize {
+        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+        Self::all_models(cx)
+            .iter()
+            .position(|model_info| {
+                Some(model_info.model.id()) == active_model.as_ref().map(|model| model.id())
+            })
+            .unwrap_or(0)
     }
 }
 
@@ -124,6 +191,7 @@ where
     trigger: T,
     tooltip: TT,
     handle: Option<PopoverMenuHandle<LanguageModelSelector>>,
+    anchor: Corner,
 }
 
 impl<T, TT> LanguageModelSelectorPopoverMenu<T, TT>
@@ -135,12 +203,14 @@ where
         language_model_selector: Entity<LanguageModelSelector>,
         trigger: T,
         tooltip: TT,
+        anchor: Corner,
     ) -> Self {
         Self {
             language_model_selector,
             trigger,
             tooltip,
             handle: None,
+            anchor,
         }
     }
 
@@ -161,7 +231,7 @@ where
         PopoverMenu::new("model-switcher")
             .menu(move |_window, _cx| Some(language_model_selector.clone()))
             .trigger_with_tooltip(self.trigger, self.tooltip)
-            .anchor(gpui::Corner::BottomRight)
+            .anchor(self.anchor)
             .when_some(self.handle.clone(), |menu, handle| menu.with_handle(handle))
             .offset(gpui::Point {
                 x: px(0.0),
@@ -214,9 +284,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         let all_models = self.all_models.clone();
         let current_index = self.selected_index;
 
-        let llm_registry = LanguageModelRegistry::global(cx);
+        let language_model_registry = LanguageModelRegistry::global(cx);
 
-        let configured_providers = llm_registry
+        let configured_providers = language_model_registry
             .read(cx)
             .providers()
             .iter()
@@ -226,8 +296,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
         cx.spawn_in(window, |this, mut cx| async move {
             let filtered_models = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     let displayed_models = if configured_providers.is_empty() {
                         all_models
                     } else {
@@ -305,7 +374,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                     .color(Color::Muted)
                     .mt_1()
                     .mb_0p5()
-                    .ml_3()
+                    .ml_2()
                     .into_any_element(),
             )
         } else {
@@ -337,25 +406,34 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         let is_selected = Some(model_info.model.provider_id()) == active_provider_id
             && Some(model_info.model.id()) == active_model_id;
 
+        let model_icon_color = if is_selected {
+            Color::Accent
+        } else {
+            Color::Muted
+        };
+
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .start_slot(
-                    div().pr_0p5().child(
-                        Icon::new(model_info.icon)
-                            .color(Color::Muted)
-                            .size(IconSize::Medium),
-                    ),
+                    Icon::new(model_info.icon)
+                        .color(model_icon_color)
+                        .size(IconSize::Small),
                 )
                 .child(
                     h_flex()
                         .w_full()
                         .items_center()
                         .gap_1p5()
-                        .min_w(px(200.))
-                        .child(Label::new(model_info.model.name().0.clone()))
+                        .pl_0p5()
+                        .w(px(240.))
+                        .child(
+                            div().max_w_40().child(
+                                Label::new(model_info.model.name().0.clone()).text_ellipsis(),
+                            ),
+                        )
                         .child(
                             h_flex()
                                 .gap_0p5()
@@ -377,7 +455,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 }),
                         ),
                 )
-                .end_slot(div().when(is_selected, |this| {
+                .end_slot(div().pr_3().when(is_selected, |this| {
                     this.child(
                         Icon::new(IconName::Check)
                             .color(Color::Accent)

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use collections::{btree_map::Entry as BTreeEntry, hash_map::Entry, BTreeMap, HashMap, HashSet};
 use futures::Stream;
 use gpui::{BackgroundExecutor, SurfaceSource};
-use livekit_server::{proto, token};
+use livekit_api::{proto, token};
 
 use parking_lot::Mutex;
 use postage::watch;
@@ -102,7 +102,7 @@ impl TestServer {
         #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
 
-        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let identity = claims.sub.unwrap().to_string();
         let room_name = claims.video.room.unwrap();
         let mut server_rooms = self.rooms.lock();
@@ -150,7 +150,7 @@ impl TestServer {
         // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
         #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
-        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let identity = claims.sub.unwrap().to_string();
         let room_name = claims.video.room.unwrap();
         let mut server_rooms = self.rooms.lock();
@@ -224,7 +224,7 @@ impl TestServer {
         // todo(linux): Remove this once the cross-platform LiveKit implementation is merged
         #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
-        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let identity = claims.sub.unwrap().to_string();
         let room_name = claims.video.room.unwrap();
 
@@ -280,7 +280,7 @@ impl TestServer {
         #[cfg(any(test, feature = "test-support"))]
         self.executor.simulate_random_delay().await;
 
-        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let identity = claims.sub.unwrap().to_string();
         let room_name = claims.video.room.unwrap();
 
@@ -332,7 +332,7 @@ impl TestServer {
     }
 
     fn set_track_muted(&self, token: &str, track_sid: &str, muted: bool) -> Result<()> {
-        let claims = livekit_server::token::validate(token, &self.secret_key)?;
+        let claims = livekit_api::token::validate(token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = claims.sub.unwrap();
         let mut server_rooms = self.rooms.lock();
@@ -363,7 +363,7 @@ impl TestServer {
     }
 
     fn is_track_muted(&self, token: &str, track_sid: &str) -> Option<bool> {
-        let claims = livekit_server::token::validate(token, &self.secret_key).ok()?;
+        let claims = livekit_api::token::validate(token, &self.secret_key).ok()?;
         let room_name = claims.video.room.unwrap();
 
         let mut server_rooms = self.rooms.lock();
@@ -378,7 +378,7 @@ impl TestServer {
     }
 
     fn video_tracks(&self, token: String) -> Result<Vec<Arc<RemoteVideoTrack>>> {
-        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = claims.sub.unwrap();
 
@@ -401,7 +401,7 @@ impl TestServer {
     }
 
     fn audio_tracks(&self, token: String) -> Result<Vec<Arc<RemoteAudioTrack>>> {
-        let claims = livekit_server::token::validate(&token, &self.secret_key)?;
+        let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = claims.sub.unwrap();
 
@@ -455,7 +455,7 @@ pub struct TestApiClient {
 }
 
 #[async_trait]
-impl livekit_server::api::Client for TestApiClient {
+impl livekit_api::Client for TestApiClient {
     fn url(&self) -> &str {
         &self.url
     }
@@ -482,7 +482,7 @@ impl livekit_server::api::Client for TestApiClient {
         &self,
         room: String,
         identity: String,
-        permission: livekit_server::proto::ParticipantPermission,
+        permission: livekit_api::proto::ParticipantPermission,
     ) -> Result<()> {
         let server = TestServer::get(&self.url)?;
         server

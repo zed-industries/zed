@@ -190,9 +190,7 @@ impl PickerDelegate for BranchListDelegate {
                         // Truncate list of recent branches
                         // Do a partial sort to show recent-ish branches first.
                         branches.select_nth_unstable_by(RECENT_BRANCHES_COUNT - 1, |lhs, rhs| {
-                            rhs.is_head
-                                .cmp(&lhs.is_head)
-                                .then(rhs.unix_timestamp.cmp(&lhs.unix_timestamp))
+                            rhs.priority_key().cmp(&lhs.priority_key())
                         });
                         branches.truncate(RECENT_BRANCHES_COUNT);
                     }
@@ -255,6 +253,25 @@ impl PickerDelegate for BranchListDelegate {
         let Some(branch) = self.matches.get(self.selected_index()) else {
             return;
         };
+
+        let current_branch = self
+            .workspace
+            .update(cx, |workspace, cx| {
+                workspace
+                    .project()
+                    .read(cx)
+                    .active_repository(cx)
+                    .and_then(|repo| repo.read(cx).branch())
+                    .map(|branch| branch.name.to_string())
+            })
+            .ok()
+            .flatten();
+
+        if current_branch == Some(branch.name().to_string()) {
+            cx.emit(DismissEvent);
+            return;
+        }
+
         cx.spawn_in(window, {
             let branch = branch.clone();
             |picker, mut cx| async move {

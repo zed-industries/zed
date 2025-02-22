@@ -1,6 +1,6 @@
 # PHP
 
-PHP support is available through the [PHP extension](https://github.com/zed-industries/zed/tree/main/extensions/php).
+PHP support is available through the [PHP extension](https://github.com/zed-extensions/php).
 
 - Tree Sitter: https://github.com/tree-sitter/tree-sitter-php
 - Language Servers:

@@ -151,6 +151,7 @@ where
     }
 }
 
+// View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Table {
     fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
         v_flex()

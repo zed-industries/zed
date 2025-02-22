@@ -24,19 +24,21 @@ pub fn format_localized_timestamp(
 ) -> String {
     let timestamp_local = timestamp.to_offset(timezone);
     let reference_local = reference.to_offset(timezone);
+    format_local_timestamp(timestamp_local, reference_local, format)
+}
 
+/// Formats a timestamp, which respects the user's date and time preferences/custom format.
+pub fn format_local_timestamp(
+    timestamp: OffsetDateTime,
+    reference: OffsetDateTime,
+    format: TimestampFormat,
+) -> String {
     match format {
-        TimestampFormat::Absolute => {
-            format_absolute_timestamp(timestamp_local, reference_local, false)
-        }
-        TimestampFormat::EnhancedAbsolute => {
-            format_absolute_timestamp(timestamp_local, reference_local, true)
-        }
-        TimestampFormat::MediumAbsolute => {
-            format_absolute_timestamp_medium(timestamp_local, reference_local)
-        }
-        TimestampFormat::Relative => format_relative_time(timestamp_local, reference_local)
-            .unwrap_or_else(|| format_relative_date(timestamp_local, reference_local)),
+        TimestampFormat::Absolute => format_absolute_timestamp(timestamp, reference, false),
+        TimestampFormat::EnhancedAbsolute => format_absolute_timestamp(timestamp, reference, true),
+        TimestampFormat::MediumAbsolute => format_absolute_timestamp_medium(timestamp, reference),
+        TimestampFormat::Relative => format_relative_time(timestamp, reference)
+            .unwrap_or_else(|| format_relative_date(timestamp, reference)),
     }
 }
 

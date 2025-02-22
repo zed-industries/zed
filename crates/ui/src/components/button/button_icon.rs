@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use crate::{prelude::*, Icon, IconName, IconSize, IconWithIndicator, Indicator};
 use gpui::Hsla;
 

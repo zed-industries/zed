@@ -7,6 +7,7 @@ use gpui::{Pixels, WindowTextSystem};
 use language::Point;
 use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
 use serde::Deserialize;
+use workspace::searchable::Direction;
 
 use std::{ops::Range, sync::Arc};
 
@@ -401,6 +402,69 @@ pub fn end_of_paragraph(
     }
 
     map.max_point()
+}
+
+pub fn start_of_excerpt(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    direction: Direction,
+) -> DisplayPoint {
+    let point = map.display_point_to_point(display_point, Bias::Left);
+    let Some(excerpt) = map.buffer_snapshot.excerpt_containing(point..point) else {
+        return display_point;
+    };
+    match direction {
+        Direction::Prev => {
+            let mut start = excerpt.start_anchor().to_display_point(&map);
+            if start >= display_point && start.row() > DisplayRow(0) {
+                let Some(excerpt) = map.buffer_snapshot.excerpt_before(excerpt.id()) else {
+                    return display_point;
+                };
+                start = excerpt.start_anchor().to_display_point(&map);
+            }
+            start
+        }
+        Direction::Next => {
+            let mut end = excerpt.end_anchor().to_display_point(&map);
+            *end.row_mut() += 1;
+            map.clip_point(end, Bias::Right)
+        }
+    }
+}
+
+pub fn end_of_excerpt(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    direction: Direction,
+) -> DisplayPoint {
+    let point = map.display_point_to_point(display_point, Bias::Left);
+    let Some(excerpt) = map.buffer_snapshot.excerpt_containing(point..point) else {
+        return display_point;
+    };
+    match direction {
+        Direction::Prev => {
+            let mut start = excerpt.start_anchor().to_display_point(&map);
+            if start.row() > DisplayRow(0) {
+                *start.row_mut() -= 1;
+            }
+            map.clip_point(start, Bias::Left)
+        }
+        Direction::Next => {
+            let mut end = excerpt.end_anchor().to_display_point(&map);
+            *end.column_mut() = 0;
+            if end <= display_point {
+                *end.row_mut() += 1;
+                let point_end = map.display_point_to_point(end, Bias::Right);
+                let Some(excerpt) = map.buffer_snapshot.excerpt_containing(point_end..point_end)
+                else {
+                    return display_point;
+                };
+                end = excerpt.end_anchor().to_display_point(&map);
+                *end.column_mut() = 0;
+            }
+            end
+        }
+    }
 }
 
 /// Scans for a boundary preceding the given start point `from` until a boundary is found,
@@ -1184,6 +1248,7 @@ mod tests {
     fn init_test(cx: &mut gpui::App) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        workspace::init_settings(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         language::init(cx);
         crate::init(cx);

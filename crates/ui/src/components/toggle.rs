@@ -433,6 +433,7 @@ impl RenderOnce for Switch {
         h_flex()
             .id(self.id)
             .gap(DynamicSpacing::Base06.rems(cx))
+            .cursor_pointer()
             .child(switch)
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
@@ -449,6 +450,65 @@ impl RenderOnce for Switch {
     }
 }
 
+/// A [`Switch`] that has a [`Label`].
+#[derive(IntoElement)]
+// #[component(scope = "input")]
+pub struct SwitchWithLabel {
+    id: ElementId,
+    label: Label,
+    toggle_state: ToggleState,
+    on_click: Arc<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>,
+    disabled: bool,
+}
+
+impl SwitchWithLabel {
+    /// Creates a switch with an attached label.
+    pub fn new(
+        id: impl Into<ElementId>,
+        label: Label,
+        toggle_state: impl Into<ToggleState>,
+        on_click: impl Fn(&ToggleState, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label,
+            toggle_state: toggle_state.into(),
+            on_click: Arc::new(on_click),
+            disabled: false,
+        }
+    }
+
+    /// Sets the disabled state of the [`SwitchWithLabel`].
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+}
+
+impl RenderOnce for SwitchWithLabel {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        h_flex()
+            .id(SharedString::from(format!("{}-container", self.id)))
+            .gap(DynamicSpacing::Base08.rems(cx))
+            .child(
+                Switch::new(self.id.clone(), self.toggle_state)
+                    .disabled(self.disabled)
+                    .on_click({
+                        let on_click = self.on_click.clone();
+                        move |checked, window, cx| {
+                            (on_click)(checked, window, cx);
+                        }
+                    }),
+            )
+            .child(
+                div()
+                    .id(SharedString::from(format!("{}-label", self.id)))
+                    .child(self.label),
+            )
+    }
+}
+
+// View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Checkbox {
     fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
         v_flex()
@@ -533,6 +593,7 @@ impl ComponentPreview for Checkbox {
     }
 }
 
+// View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Switch {
     fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
         v_flex()
@@ -595,6 +656,7 @@ impl ComponentPreview for Switch {
     }
 }
 
+// View this component preview using `workspace: open component-preview`
 impl ComponentPreview for CheckboxWithLabel {
     fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
         v_flex()

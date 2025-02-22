@@ -12,41 +12,48 @@ brew install git-filter-repo
 
 ## Process
 
-1. Create an expressions.txt file somewhere (e.g. `~/projects/expressions.txt`)
+We are going to use a `$LANGNAME` variable for all these steps. Make sure it is set correctly.
 
+> **Note**
+> If you get `zsh: command not found: #` errors, run:
+> `setopt interactive_comments && echo "setopt interactive_comments" >> ~/.zshrc`
+
+1. Create a clean clone the zed repository, delete tags and delete branches.
+
+```sh
+LANGNAME=your_language_name_here
+
+rm -rf $LANGNAME
+git clone --single-branch --no-tags git@github.com:zed-industries/zed.git $LANGNAME
+cd $LANGNAME
 ```
-ruby: ==>
-extension: ==>
-chore: ==>
-zed_extension_api: ==>
-regex:(?<![\[a-zA-Z0-9])(#[0-9]{3,5})==>zed-industries/zed\1
-```
+
+2. Create an expressions.txt file somewhere (e.g. `~/projects/$LANGNAME.txt`)
 
 This file takes the form of `patern==>replacement`, where the replacement is optional.
 Note whitespace matters so `ruby: ==>` is removing the `ruby:` prefix from a commit messages and adding a space after `==> ` means the replacement begins with a space. Regex capture groups are numbered `\1`, `\2`, etc.
 
 See: [Git Filter Repo Docs](https://htmlpreview.github.io/?https://github.com/newren/git-filter-repo/blob/docs/html/git-filter-repo.html) for more.
 
-2. Create a clean clone the zed repository, delete tags, delete branches and do the work.
-
-> **Note**
-> If you get `zsh: command not found: #` errors, run:
-> `setopt interactive_comments && echo "setopt interactive_comments" >> ~/.zshrc`
-
 ```sh
-LANGNAME=ruby
-rm -rf $LANGNAME
-git clone --single-branch --no-tags git@github.com:zed-industries/zed.git $LANGNAME
-cd $LANGNAME
+# Create regex mapping for rewriting commit messages (edit as appropriate)
+mkdir -p ~/projects
+echo "${LANGNAME}: ==>
+extension: ==>
+chore: ==>
+zed_extension_api: ==>
+"'regex:(?<![\[a-zA-Z0-9])(#[0-9]{3,5})==>zed-industries/zed\1' \
+  > ~/projects/${LANGNAME}.txt
 
 # This removes the LICENSE symlink
 git filter-repo --invert-paths --path extensions/$LANGNAME/LICENSE-APACHE
 
+# This does the work
 git filter-repo \
     --use-mailmap \
     --subdirectory-filter extensions/$LANGNAME/ \
     --path LICENSE-APACHE \
-    --replace-message ~/projects/expressions.txt
+    --replace-message ~/projects/${LANGNAME}.txt
 ```
 
 3. Review the commits.
@@ -100,15 +107,23 @@ git branch --set-upstream-to=origin/main main
 
 7. Publish a new version of the extension.
 
-```
+```sh
 OLD_VERSION=$(grep '^version = ' extension.toml | cut -d'"' -f2)
 NEW_VERSION=$(echo "$OLD_VERSION" | awk -F. '{$NF = $NF + 1;} 1' OFS=.)
 echo $OLD_VERSION $NEW_VERSION
 perl -i -pe "s/$OLD_VERSION/$NEW_VERSION/" extension.toml
+perl -i -pe "s#https://github.com/zed-industries/zed#https://github.com/zed-extensions/${LANGNAME}#g" extension.toml
 
 # if there's rust code, update this too.
-test -f Cargo.toml && perl -i -pe "s/$OLD_VERSION/$NEW_VERSION/" cargo.toml
+test -f Cargo.toml && perl -i -pe "s/$OLD_VERSION/$NEW_VERSION/" Cargo.toml
+# remove workspace Cargo.toml lines
+test -f Cargo.toml && perl -ni -e 'print unless /^.*(workspace\s*=\s*true|\[lints\])\s*$/' Cargo.toml
 test -f Cargo.toml && cargo check
+
+# add a .gitignore
+echo "target/
+grammars/
+*.wasm" > .gitignore
 
 # commit and push
 git add -u
@@ -124,7 +139,19 @@ git tag v${NEW_VERSION}
 git push origin v${NEW_VERSION}
 ```
 
-7. In zed repository, `rm -rf extension/langname` and push a PR.
+7. In zed repository, remove the old extension and push a PR.
+
+```sh
+rm -rf extensions/$LANGNAME
+sed -i '' "/extensions\/$LANGNAME/d" Cargo.toml
+cargo check
+git checkoout -b remove_$LANGNAME
+git add extensions/$LANGNAME
+git add Cargo.toml Cargo.lock extensions/$LANGNAME
+git commit -m "Migrate to $LANGNAME extension to zed-extensions/$LANGNAME"
+git push
+gh pr create --web
+```
 
 8. Update extensions repository:
 

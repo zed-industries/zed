@@ -1,52 +1,33 @@
 use std::sync::Arc;
 use std::{path::Path, str};
 
-use collections::HashMap;
-
-use gpui::{App, AssetSource, Global, SharedString};
-use serde_derive::Deserialize;
+use gpui::{App, SharedString};
 use settings::Settings;
 use theme::{IconTheme, ThemeRegistry, ThemeSettings};
 use util::paths::PathExt;
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug)]
 pub struct FileIcons {
-    stems: HashMap<String, String>,
-    suffixes: HashMap<String, String>,
-}
-
-impl Global for FileIcons {}
-
-pub const FILE_TYPES_ASSET: &str = "icons/file_icons/file_types.json";
-
-pub fn init(assets: impl AssetSource, cx: &mut App) {
-    cx.set_global(FileIcons::new(assets))
+    icon_theme: Arc<IconTheme>,
 }
 
 impl FileIcons {
-    pub fn get(cx: &App) -> &Self {
-        cx.global::<FileIcons>()
-    }
+    pub fn get(cx: &App) -> Self {
+        let theme_settings = ThemeSettings::get_global(cx);
 
-    pub fn new(assets: impl AssetSource) -> Self {
-        assets
-            .load(FILE_TYPES_ASSET)
-            .ok()
-            .flatten()
-            .and_then(|file| serde_json::from_str::<FileIcons>(str::from_utf8(&file).unwrap()).ok())
-            .unwrap_or_else(|| FileIcons {
-                stems: HashMap::default(),
-                suffixes: HashMap::default(),
-            })
+        Self {
+            icon_theme: theme_settings.active_icon_theme.clone(),
+        }
     }
 
     pub fn get_icon(path: &Path, cx: &App) -> Option<SharedString> {
-        let this = cx.try_global::<Self>()?;
+        let this = Self::get(cx);
 
         let get_icon_from_suffix = |suffix: &str| -> Option<SharedString> {
-            this.stems
+            this.icon_theme
+                .file_stems
                 .get(suffix)
-                .or_else(|| this.suffixes.get(suffix))
+                .or_else(|| this.icon_theme.file_suffixes.get(suffix))
                 .and_then(|typ| this.get_icon_for_type(typ, cx))
         };
         // TODO: Associate a type with the languages and have the file's language
