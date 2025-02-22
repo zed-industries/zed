@@ -633,7 +633,7 @@ impl PlatformWindow for WindowsWindow {
                         .iter()
                         .position(|&button_id| button_id == res)
                         .unwrap_or(0);
-                    let _ = done_tx.send(clicked as usize);
+                    let _ = done_tx.send(clicked);
                 }
             })
             .detach();
