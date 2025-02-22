@@ -524,6 +524,8 @@ mod flatpak {
 // todo("windows")
 #[cfg(target_os = "windows")]
 mod windows {
+    use anyhow::Context;
+
     use crate::{Detect, InstalledApp};
     use std::io;
     use std::path::{Path, PathBuf};
@@ -562,8 +564,19 @@ mod windows {
     }
 
     impl Detect {
-        pub fn detect(_path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
-            Ok(App(PathBuf::from("")))
+        pub fn detect(path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
+            let path = if let Some(path) = path {
+                path.to_path_buf().canonicalize()?
+            } else {
+                std::env::current_exe()?
+                    .parent()
+                    .context("no parent path for cli")?
+                    .parent()
+                    .context("no parent path for cli folder")?
+                    .join("Zed.exe")
+            };
+
+            Ok(App(path))
         }
     }
 }
