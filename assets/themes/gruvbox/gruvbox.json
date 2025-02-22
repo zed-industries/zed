@@ -278,7 +278,12 @@
             "font_style": "italic",
             "font_weight": null
           },
-          "link.uri": {
+          "link_text": {
+            "color": "#8ec07cff",
+            "font_style": "italic",
+            "font_weight": null
+          },
+          "link_uri": {
             "color": "#d3869bff",
             "font_style": null,
             "font_weight": null
@@ -375,6 +380,11 @@
           },
           "tag": {
             "color": "#8ec07cff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "text.literal": {
+            "color": "#83a598ff",
             "font_style": null,
             "font_weight": null
           },
@@ -676,7 +686,12 @@
             "font_style": "italic",
             "font_weight": null
           },
-          "link.uri": {
+          "link_text": {
+            "color": "#8ec07cff",
+            "font_style": "italic",
+            "font_weight": null
+          },
+          "link_uri": {
             "color": "#d3869bff",
             "font_style": null,
             "font_weight": null
@@ -773,6 +788,11 @@
           },
           "tag": {
             "color": "#8ec07cff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "text.literal": {
+            "color": "#83a598ff",
             "font_style": null,
             "font_weight": null
           },
@@ -1074,7 +1094,12 @@
             "font_style": "italic",
             "font_weight": null
           },
-          "link.uri": {
+          "link_text": {
+            "color": "#8ec07cff",
+            "font_style": "italic",
+            "font_weight": null
+          },
+          "link_uri": {
             "color": "#d3869bff",
             "font_style": null,
             "font_weight": null
@@ -1171,6 +1196,11 @@
           },
           "tag": {
             "color": "#8ec07cff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "text.literal": {
+            "color": "#83a598ff",
             "font_style": null,
             "font_weight": null
           },
@@ -1472,7 +1502,12 @@
             "font_style": "italic",
             "font_weight": null
           },
-          "link.uri": {
+          "link_text": {
+            "color": "#427b58ff",
+            "font_style": "italic",
+            "font_weight": null
+          },
+          "link_uri": {
             "color": "#8f3e71ff",
             "font_style": null,
             "font_weight": null
@@ -1569,6 +1604,11 @@
           },
           "tag": {
             "color": "#427b58ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "text.literal": {
+            "color": "#066578ff",
             "font_style": null,
             "font_weight": null
           },
@@ -1870,7 +1910,12 @@
             "font_style": "italic",
             "font_weight": null
           },
-          "link.uri": {
+          "link_text": {
+            "color": "#427b58ff",
+            "font_style": "italic",
+            "font_weight": null
+          },
+          "link_uri": {
             "color": "#8f3e71ff",
             "font_style": null,
             "font_weight": null
@@ -1967,6 +2012,11 @@
           },
           "tag": {
             "color": "#427b58ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "text.literal": {
+            "color": "#066578ff",
             "font_style": null,
             "font_weight": null
           },
@@ -2268,7 +2318,12 @@
             "font_style": "italic",
             "font_weight": null
           },
-          "link.uri": {
+          "link_text": {
+            "color": "#427b58ff",
+            "font_style": "italic",
+            "font_weight": null
+          },
+          "link_uri": {
             "color": "#8f3e71ff",
             "font_style": null,
             "font_weight": null
@@ -2365,6 +2420,11 @@
           },
           "tag": {
             "color": "#427b58ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "text.literal": {
+            "color": "#066578ff",
             "font_style": null,
             "font_weight": null
           },
