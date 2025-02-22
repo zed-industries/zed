@@ -12750,7 +12750,7 @@ impl Editor {
 
     pub fn expand_all_diff_hunks(
         &mut self,
-        _: &ExpandAllHunkDiffs,
+        _: &ExpandAllDiffHunks,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
