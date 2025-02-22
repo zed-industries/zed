@@ -577,8 +577,7 @@ impl PlatformWindow for WindowsWindow {
             .executor
             .spawn(async move {
                 unsafe {
-                    let mut config;
-                    config = std::mem::zeroed::<TASKDIALOGCONFIG>();
+                    let mut config = TASKDIALOGCONFIG::default();
                     config.cbSize = std::mem::size_of::<TASKDIALOGCONFIG>() as _;
                     config.hwndParent = handle;
                     let title;
@@ -599,17 +598,17 @@ impl PlatformWindow for WindowsWindow {
                     };
                     config.pszWindowTitle = title;
                     config.Anonymous1.pszMainIcon = main_icon;
-                    let instruction = msg.encode_utf16().chain(Some(0)).collect_vec();
+                    let instruction = HSTRING::from(msg);
                     config.pszMainInstruction = PCWSTR::from_raw(instruction.as_ptr());
                     let hints_encoded;
                     if let Some(ref hints) = detail_string {
-                        hints_encoded = hints.encode_utf16().chain(Some(0)).collect_vec();
+                        hints_encoded = HSTRING::from(hints);
                         config.pszContent = PCWSTR::from_raw(hints_encoded.as_ptr());
                     };
                     let mut buttons = Vec::new();
                     let mut btn_encoded = Vec::new();
                     for (index, btn_string) in answers.iter().enumerate() {
-                        let encoded = btn_string.encode_utf16().chain(Some(0)).collect_vec();
+                        let encoded = HSTRING::from(btn_string);
                         buttons.push(TASKDIALOG_BUTTON {
                             nButtonID: index as _,
                             pszButtonText: PCWSTR::from_raw(encoded.as_ptr()),
