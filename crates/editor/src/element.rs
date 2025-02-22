@@ -547,7 +547,7 @@ impl EditorElement {
         let mut modifiers = event.modifiers;
 
         if let Some(hovered_hunk) = hovered_hunk {
-            editor.toggle_diff_hunks_in_ranges_narrow(vec![hovered_hunk], cx);
+            editor.toggle_single_diff_hunk(hovered_hunk, cx);
             cx.notify();
             return;
         } else if gutter_hitbox.is_hovered(window) {

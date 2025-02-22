@@ -13306,7 +13306,7 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, window, cx);
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
     });
     executor.run_until_parked();
     cx.assert_state_with_diff(
@@ -13634,7 +13634,7 @@ async fn test_edits_around_expanded_insertion_hunks(
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, window, cx);
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
     });
     executor.run_until_parked();
 
@@ -13905,7 +13905,7 @@ async fn test_edits_around_expanded_deletion_hunks(
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, window, cx);
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
     });
     executor.run_until_parked();
 
@@ -14028,7 +14028,7 @@ async fn test_backspace_after_deletion_hunk(executor: BackgroundExecutor, cx: &m
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, window, cx);
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
     });
     executor.run_until_parked();
 
@@ -14109,7 +14109,7 @@ async fn test_edit_after_expanded_modification_hunk(
     cx.set_diff_base(&diff_base);
     executor.run_until_parked();
     cx.update_editor(|editor, window, cx| {
-        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, window, cx);
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
     });
     executor.run_until_parked();
 
@@ -14818,6 +14818,163 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut TestAppContext) {
             (MultiBufferRow(2)..=MultiBufferRow(6), 1),
             (MultiBufferRow(9)..=MultiBufferRow(11), 1),
         ]
+    );
+}
+
+#[gpui::test]
+async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        a
+        b
+        c
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        ˇA
+        b
+        C
+        "#
+        .unindent(),
+    );
+    cx.set_diff_base(&diff_base);
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+
+    let both_hunks_expanded = r#"
+        - a
+        + ˇA
+          b
+        - c
+        + C
+        "#
+    .unindent();
+
+    cx.assert_state_with_diff(both_hunks_expanded.clone());
+
+    let hunk_ranges = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let hunks = editor
+            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot)
+            .collect::<Vec<_>>();
+        let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
+        let buffer_id = hunks[0].buffer_id;
+        hunks
+            .into_iter()
+            .map(|hunk| Anchor::range_in_buffer(excerpt_id, buffer_id, hunk.buffer_range.clone()))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(hunk_ranges.len(), 2);
+
+    cx.update_editor(|editor, _, cx| {
+        editor.toggle_single_diff_hunk(hunk_ranges[0].clone(), cx);
+    });
+    executor.run_until_parked();
+
+    let second_hunk_expanded = r#"
+          ˇA
+          b
+        - c
+        + C
+        "#
+    .unindent();
+
+    cx.assert_state_with_diff(second_hunk_expanded);
+
+    cx.update_editor(|editor, _, cx| {
+        editor.toggle_single_diff_hunk(hunk_ranges[0].clone(), cx);
+    });
+    executor.run_until_parked();
+
+    cx.assert_state_with_diff(both_hunks_expanded.clone());
+
+    cx.update_editor(|editor, _, cx| {
+        editor.toggle_single_diff_hunk(hunk_ranges[1].clone(), cx);
+    });
+    executor.run_until_parked();
+
+    let first_hunk_expanded = r#"
+        - a
+        + ˇA
+          b
+          C
+        "#
+    .unindent();
+
+    cx.assert_state_with_diff(first_hunk_expanded);
+
+    cx.update_editor(|editor, _, cx| {
+        editor.toggle_single_diff_hunk(hunk_ranges[1].clone(), cx);
+    });
+    executor.run_until_parked();
+
+    cx.assert_state_with_diff(both_hunks_expanded);
+
+    cx.set_state(
+        &r#"
+        ˇA
+        b
+        "#
+        .unindent(),
+    );
+    cx.run_until_parked();
+
+    // TODO this cursor position seems bad
+    cx.assert_state_with_diff(
+        r#"
+        - ˇa
+        + A
+          b
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
+    });
+
+    cx.assert_state_with_diff(
+        r#"
+            - ˇa
+            + A
+              b
+            - c
+            "#
+        .unindent(),
+    );
+
+    let hunk_ranges = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let hunks = editor
+            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot)
+            .collect::<Vec<_>>();
+        let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
+        let buffer_id = hunks[0].buffer_id;
+        hunks
+            .into_iter()
+            .map(|hunk| Anchor::range_in_buffer(excerpt_id, buffer_id, hunk.buffer_range.clone()))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(hunk_ranges.len(), 2);
+
+    cx.update_editor(|editor, _, cx| {
+        editor.toggle_single_diff_hunk(hunk_ranges[1].clone(), cx);
+    });
+    executor.run_until_parked();
+
+    cx.assert_state_with_diff(
+        r#"
+        - ˇa
+        + A
+          b
+        "#
+        .unindent(),
     );
 }
 

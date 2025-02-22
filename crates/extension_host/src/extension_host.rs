@@ -442,6 +442,18 @@ impl ExtensionStore {
             .filter_map(|(name, theme)| theme.extension.as_ref().eq(extension_id).then_some(name))
     }
 
+    /// Returns the path to the theme file within an extension, if there is an
+    /// extension that provides the theme.
+    pub fn path_to_extension_theme(&self, theme_name: &str) -> Option<PathBuf> {
+        let entry = self.extension_index.themes.get(theme_name)?;
+
+        Some(
+            self.extensions_dir()
+                .join(entry.extension.as_ref())
+                .join(&entry.path),
+        )
+    }
+
     /// Returns the names of icon themes provided by extensions.
     pub fn extension_icon_themes<'a>(
         &'a self,
@@ -457,6 +469,23 @@ impl ExtensionStore {
                     .eq(extension_id)
                     .then_some(name)
             })
+    }
+
+    /// Returns the path to the icon theme file within an extension, if there is
+    /// an extension that provides the icon theme.
+    pub fn path_to_extension_icon_theme(
+        &self,
+        icon_theme_name: &str,
+    ) -> Option<(PathBuf, PathBuf)> {
+        let entry = self.extension_index.icon_themes.get(icon_theme_name)?;
+
+        let icon_theme_path = self
+            .extensions_dir()
+            .join(entry.extension.as_ref())
+            .join(&entry.path);
+        let icons_root_path = self.extensions_dir().join(entry.extension.as_ref());
+
+        Some((icon_theme_path, icons_root_path))
     }
 
     pub fn fetch_extensions(

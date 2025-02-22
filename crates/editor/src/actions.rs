@@ -280,7 +280,6 @@ gpui::actions!(
         DuplicateLineDown,
         DuplicateLineUp,
         DuplicateSelection,
-        ExpandAllHunkDiffs,
         ExpandMacroRecursively,
         FindAllReferences,
         Fold,
@@ -425,3 +424,4 @@ action_as!(go_to_line, ToggleGoToLine as Toggle);
 
 action_with_deprecated_aliases!(editor, OpenSelectedFilename, ["editor::OpenFile"]);
 action_with_deprecated_aliases!(editor, ToggleSelectedDiffHunks, ["editor::ToggleHunkDiff"]);
+action_with_deprecated_aliases!(editor, ExpandAllDiffHunks, ["editor::ExpandAllHunkDiffs"]);
