@@ -213,7 +213,7 @@ fn main() {
 
             #[cfg(target_os = "windows")]
             {
-                !crate::zed::windows_only_instance::check_single_instance()
+                !crate::zed::windows_only_instance::check_single_instance(open_listener.clone())
             }
 
             #[cfg(target_os = "macos")]
