@@ -255,36 +255,6 @@ impl Console {
                 cx,
             );
         });
-
-        // TODO(debugger): make this work again
-        // let weak_console = cx.weak_entity();
-
-        // window
-        //     .spawn(cx, |mut cx| async move {
-        //         let response = evaluate_task.await?;
-
-        //         weak_console.update_in(&mut cx, |console, window, cx| {
-        //             console.add_message(
-        //                 OutputEvent {
-        //                     category: None,
-        //                     output: response.result,
-        //                     group: None,
-        //                     variables_reference: Some(response.variables_reference),
-        //                     source: None,
-        //                     line: None,
-        //                     column: None,
-        //                     data: None,
-        //                 },
-        //                 window,
-        //                 cx,
-        //             );
-
-        //             console.variable_list.update(cx, |variable_list, cx| {
-        //                 variable_list.invalidate(window, cx);
-        //             })
-        //         })
-        //     })
-        //     .detach_and_log_err(cx);
     }
 
     fn render_console(&self, cx: &Context<Self>) -> impl IntoElement {

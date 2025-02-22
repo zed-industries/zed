@@ -11,9 +11,9 @@ use super::dap_command::{
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
 use collections::{HashMap, IndexMap};
-use dap::adapters::{DapDelegate, DapStatus, DebugAdapterName};
-use dap::client::{DebugAdapterClient, SessionId};
 use dap::{
+    adapters::{DapDelegate, DapStatus, DebugAdapterName},
+    client::{DebugAdapterClient, SessionId},
     messages::{self, Events, Message},
     requests::SetBreakpoints,
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, SetBreakpointsArguments,
@@ -1411,12 +1411,24 @@ impl Session {
                 frame_id,
                 source,
             },
-            |this, _response, cx| {
+            |this, response, cx| {
+                this.output.push(dap::OutputEvent {
+                    category: None,
+                    output: response.result.clone(),
+                    group: None,
+                    variables_reference: Some(response.variables_reference),
+                    source: None,
+                    line: None,
+                    column: None,
+                    data: None,
+                });
+
+                // TODO(debugger): only invalidate variables & scopes
                 this.invalidate(cx);
             },
             cx,
         )
-        .detach()
+        .detach();
     }
 
     pub fn disconnect_client(&mut self, cx: &mut Context<Self>) {
