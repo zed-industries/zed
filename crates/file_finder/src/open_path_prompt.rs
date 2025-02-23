@@ -137,7 +137,11 @@ impl PickerDelegate for OpenPathDelegate {
         } else {
             Some(lister.list_directory_with_info(dir.clone(), cx))
         };
-        println!("--> state: {:?}", self.directory_state);
+        if let Some(ref state) = self.directory_state {
+            println!("--> state: {:?}", state.path);
+        } else {
+            println!("--> state: None");
+        }
         self.cancel_flag.store(true, atomic::Ordering::Relaxed);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
@@ -281,8 +285,10 @@ impl PickerDelegate for OpenPathDelegate {
                 println!("--> directory_state: {:?}", directory_state);
                 println!("--> Candidate: {:?}", candidate);
                 Some(format!(
-                    "{}/{}",
-                    directory_state.path, candidate.path.string
+                    "{}/{}{}",
+                    directory_state.path,
+                    candidate.path.string,
+                    if candidate.is_dir { "/" } else { "" }
                 ))
             })
             .unwrap_or(query),
