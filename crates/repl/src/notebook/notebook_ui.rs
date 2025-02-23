@@ -20,10 +20,10 @@ use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, ProjectItem, ToolbarItemLocation};
 use workspace::{ToolbarItemEvent, ToolbarItemView};
 
-use super::{Cell, CellPosition, RenderableCell};
+use super::{Cell, CellPosition, CodeCell, MarkdownCell, RawCell, RenderableCell};
 
-use nbformat::v4::CellId;
 use nbformat::v4::Metadata as NotebookMetadata;
+use nbformat::v4::{CellId, CellType};
 
 actions!(
     notebook,
@@ -238,12 +238,47 @@ impl NotebookEditor {
         }
     }
 
+    fn add_cell(&mut self, cell_type: CellType, window: &mut Window, cx: &mut Context<Self>) {
+        let new_cell_id = CellId::new(&uuid::Uuid::new_v4().to_string()).unwrap();
+        let insert_index = self.selected_cell_index.saturating_add(1);
+
+        let languages = self.languages.clone();
+
+        let cell = match cell_type {
+            CellType::Markdown => {
+                let markdown_cell =
+                    cx.new(|_| MarkdownCell::new(new_cell_id.clone(), languages.clone()));
+                Cell::Markdown(markdown_cell)
+            }
+            _ => return, // CellType::Code => {
+                         //     let code_cell =
+                         //         cx.new(|_| CodeCell::new(new_cell_id.clone(), self.languages.clone()));
+                         //     Cell::Code(code_cell)
+                         // }
+                         // CellType::Raw => {
+                         //     let raw_cell = cx.new(|_| RawCell::new(new_cell_id.clone()));
+                         //     Cell::Raw(raw_cell)
+                         // }
+        };
+
+        self.cell_order.insert(insert_index, new_cell_id.clone());
+        self.cell_map.insert(new_cell_id.clone(), cell);
+
+        let notebook_handle = cx.entity().downgrade();
+        self.cell_list = update_cell_list(self.cell_count(), notebook_handle, cx);
+
+        self.set_selected_index(insert_index, true, window, cx);
+
+        self.cell_list.scroll_to_reveal_item(insert_index);
+        cx.notify();
+    }
+
     fn add_markdown_block(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        println!("Add markdown block triggered");
+        self.add_cell(CellType::Markdown, window, cx);
     }
 
     fn add_code_block(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        println!("Add code block triggered");
+        self.add_cell(CellType::Code, window, cx);
     }
 
     fn cell_count(&self) -> usize {
@@ -468,7 +503,6 @@ impl NotebookEditor {
                                     window,
                                     cx,
                                 )
-                                .disabled(true)
                                 .tooltip(move |window, cx| {
                                     Tooltip::for_action(
                                         "Add markdown block",

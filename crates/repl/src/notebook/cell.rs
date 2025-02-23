@@ -1,5 +1,5 @@
 #![allow(unused, dead_code)]
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use editor::{Editor, EditorMode, MultiBuffer};
 use futures::future::Shared;
@@ -72,6 +72,22 @@ impl Clickable for CellControl {
 
     fn cursor_style(self, _cursor_style: gpui::CursorStyle) -> Self {
         self
+    }
+}
+
+pub(crate) fn default_cell_metadata() -> CellMetadata {
+    CellMetadata {
+        id: None,
+        collapsed: None,
+        scrolled: None,
+        deletable: None,
+        editable: None,
+        format: None,
+        name: None,
+        tags: None,
+        jupyter: None,
+        execution: None,
+        additional: HashMap::new(),
     }
 }
 
@@ -338,6 +354,24 @@ pub struct MarkdownCell {
     languages: Arc<LanguageRegistry>,
 }
 
+impl MarkdownCell {
+    pub fn new(id: CellId, languages: Arc<LanguageRegistry>) -> Self {
+        let selected = false;
+        let cell_position = None;
+
+        MarkdownCell {
+            id,
+            metadata: default_cell_metadata(),
+            source: "".to_string(),
+            parsed_markdown: None,
+            markdown_parsing_task: Task::ready(()),
+            selected,
+            cell_position,
+            languages,
+        }
+    }
+}
+
 impl RenderableCell for MarkdownCell {
     const CELL_TYPE: CellType = CellType::Markdown;
 
@@ -382,9 +416,7 @@ impl RenderableCell for MarkdownCell {
 
 impl Render for MarkdownCell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(parsed) = self.parsed_markdown.as_ref() else {
-            return div();
-        };
+        let parsed = self.parsed_markdown.as_ref();
 
         let mut markdown_render_context =
             markdown_preview::markdown_renderer::RenderContext::new(None, window, cx);
@@ -409,12 +441,20 @@ impl Render for MarkdownCell {
                             .p_3()
                             .font_ui(cx)
                             .text_size(TextSize::Default.rems(cx))
-                            //
-                            .children(parsed.children.iter().map(|child| {
-                                div().relative().child(div().relative().child(
-                                    render_markdown_block(child, &mut markdown_render_context),
-                                ))
-                            })),
+                            .map(|this| {
+                                if let Some(parsed) = parsed {
+                                    this.children(parsed.children.iter().map(|child| {
+                                        div().relative().child(div().relative().child(
+                                            render_markdown_block(
+                                                child,
+                                                &mut markdown_render_context,
+                                            ),
+                                        ))
+                                    }))
+                                } else {
+                                    this.child(Label::new("No content").color(Color::Placeholder))
+                                }
+                            }),
                     ),
             )
             // TODO: Move base cell render into trait impl so we don't have to repeat this
