@@ -244,7 +244,7 @@ impl SystemAppearance {
 }
 
 #[derive(Default)]
-pub(crate) struct AdjustedBufferFontSize(Pixels);
+struct AdjustedBufferFontSize(Pixels);
 
 impl Global for AdjustedBufferFontSize {}
 
