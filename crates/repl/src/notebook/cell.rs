@@ -1,9 +1,14 @@
 #![allow(unused, dead_code)]
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    default,
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
 
 use editor::{Editor, EditorMode, MultiBuffer};
 use futures::future::Shared;
-use gpui::{prelude::*, App, Entity, Hsla, Task, TextStyleRefinement};
+use gpui::{prelude::*, App, ClickEvent, Entity, Hsla, MouseDownEvent, Task, TextStyleRefinement};
 use language::{Buffer, Language, LanguageRegistry};
 use markdown_preview::{markdown_parser::parse_markdown, markdown_renderer::render_markdown_block};
 use nbformat::v4::{CellId, CellMetadata, CellType};
@@ -162,6 +167,11 @@ impl Cell {
                         })
                     };
 
+                    let editor = cx.new(|cx| Editor::multi_line(window, cx));
+                    editor.update(cx, |this, cx| {
+                        this.set_text(source.clone(), window, cx);
+                    });
+
                     MarkdownCell {
                         markdown_parsing_task,
                         languages: languages.clone(),
@@ -171,6 +181,10 @@ impl Cell {
                         parsed_markdown: None,
                         selected: false,
                         cell_position: None,
+                        editing: false,
+                        editor,
+                        on_click: None,
+                        on_secondary_mouse_down: None,
                     }
                 });
 
@@ -352,12 +366,23 @@ pub struct MarkdownCell {
     selected: bool,
     cell_position: Option<CellPosition>,
     languages: Arc<LanguageRegistry>,
+    editing: bool,
+    editor: Entity<Editor>,
+    on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
 }
 
 impl MarkdownCell {
-    pub fn new(id: CellId, languages: Arc<LanguageRegistry>) -> Self {
+    pub fn new(
+        id: CellId,
+        languages: Arc<LanguageRegistry>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let selected = false;
         let cell_position = None;
+
+        let editor = cx.new(|cx| Editor::multi_line(window, cx));
 
         MarkdownCell {
             id,
@@ -368,7 +393,41 @@ impl MarkdownCell {
             selected,
             cell_position,
             languages,
+            editing: false,
+            editor,
+            on_click: None,
+            on_secondary_mouse_down: None,
         }
+    }
+
+    pub fn set_text(mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor
+            .update(cx, |this, cx| this.set_text(text, window, cx));
+    }
+
+    pub fn is_editing(&self) -> bool {
+        self.editing
+    }
+
+    pub fn editing(&mut self, editing: bool) -> &mut Self {
+        self.editing = editing;
+        self
+    }
+
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_secondary_mouse_down(
+        mut self,
+        handler: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_secondary_mouse_down = Some(Box::new(handler));
+        self
     }
 }
 
@@ -418,6 +477,9 @@ impl Render for MarkdownCell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let parsed = self.parsed_markdown.as_ref();
 
+        let source_lines = self.source.lines();
+        let source_line_count = source_lines.count();
+
         let mut markdown_render_context =
             markdown_preview::markdown_renderer::RenderContext::new(None, window, cx);
 
@@ -441,19 +503,35 @@ impl Render for MarkdownCell {
                             .p_3()
                             .font_ui(cx)
                             .text_size(TextSize::Default.rems(cx))
-                            .map(|this| {
-                                if let Some(parsed) = parsed {
-                                    this.children(parsed.children.iter().map(|child| {
-                                        div().relative().child(div().relative().child(
-                                            render_markdown_block(
-                                                child,
-                                                &mut markdown_render_context,
-                                            ),
-                                        ))
-                                    }))
-                                } else {
-                                    this.child(Label::new("No content").color(Color::Placeholder))
-                                }
+                            .when(!self.is_editing(), |this| {
+                                this.map(|this| {
+                                    if let Some(parsed) = parsed {
+                                        this.children(parsed.children.iter().map(|child| {
+                                            div().relative().child(div().relative().child(
+                                                render_markdown_block(
+                                                    child,
+                                                    &mut markdown_render_context,
+                                                ),
+                                            ))
+                                        }))
+                                    } else {
+                                        this.child(
+                                            Label::new(
+                                                "Empty markdown block. Double click to edit.",
+                                            )
+                                            .color(Color::Placeholder),
+                                        )
+                                    }
+                                })
+                            })
+                            .when(self.is_editing(), |this| {
+                                this.child(
+                                    div()
+                                        .flex_1()
+                                        .min_h(window.line_height() * px(source_line_count as f32))
+                                        .w_full()
+                                        .child(self.editor.clone()),
+                                )
                             }),
                     ),
             )

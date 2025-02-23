@@ -9,8 +9,8 @@ use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
 use futures::future::Shared;
 use futures::FutureExt;
 use gpui::{
-    actions, list, prelude::*, AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable,
-    ListScrollEvent, ListState, Point, Task, WeakEntity,
+    actions, list, prelude::*, AnyElement, App, ClickEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, ListScrollEvent, ListState, Point, Task, WeakEntity,
 };
 use language::{Language, LanguageRegistry};
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -35,6 +35,8 @@ actions!(
         MoveCellDown,
         AddMarkdownBlock,
         AddCodeBlock,
+        ToggleEditMode,
+        EditCell,
     ]
 );
 
@@ -106,6 +108,7 @@ pub struct NotebookEditor {
     cell_list: ListState,
 
     selected_cell_index: usize,
+
     cell_order: Vec<CellId>,
     cell_map: HashMap<CellId, Cell>,
 }
@@ -246,8 +249,9 @@ impl NotebookEditor {
 
         let cell = match cell_type {
             CellType::Markdown => {
-                let markdown_cell =
-                    cx.new(|_| MarkdownCell::new(new_cell_id.clone(), languages.clone()));
+                let markdown_cell = cx.new(|cx| {
+                    MarkdownCell::new(new_cell_id.clone(), languages.clone(), window, cx)
+                });
                 Cell::Markdown(markdown_cell)
             }
             _ => return, // CellType::Code => {
@@ -367,6 +371,45 @@ impl NotebookEditor {
         }
     }
 
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(cell_id) = self.cell_order.get(self.selected_cell_index).cloned() {
+            if let Some(Cell::Markdown(markdown_cell)) = self.cell_map.get_mut(&cell_id) {
+                markdown_cell.update(cx, |cell, _| {
+                    println!("Confirming cell, {}", cell.id());
+                    cell.editing(true);
+                });
+            }
+        }
+        cx.notify();
+    }
+
+    fn edit_cell(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(cell_id) = self.cell_order.get(index).cloned() {
+            if let Some(Cell::Markdown(markdown_cell)) = self.cell_map.get_mut(&cell_id) {
+                markdown_cell.update(cx, |cell, _| {
+                    println!("Editing cell, {}", cell.id());
+                    cell.editing(true);
+                });
+            }
+        }
+    }
+
+    fn toggle_edit_mode(
+        &mut self,
+        _: &ToggleEditMode,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(cell_id) = self.cell_order.get(self.selected_cell_index).cloned() {
+            if let Some(Cell::Markdown(markdown_cell)) = self.cell_map.get_mut(&cell_id) {
+                markdown_cell.update(cx, |cell, _| {
+                    cell.editing(!cell.is_editing());
+                });
+            }
+        }
+        cx.notify();
+    }
+
     fn jump_to_cell(&mut self, index: usize, _window: &mut Window, _cx: &mut Context<Self>) {
         self.cell_list.scroll_to_reveal_item(index);
     }
@@ -400,6 +443,14 @@ impl NotebookEditor {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let has_outputs = self.has_outputs(window, cx);
+        let selected_cell_id = &self.cell_order[self.selected_cell_index];
+        let selected_is_editing =
+            self.cell_map
+                .get(selected_cell_id)
+                .map_or(false, |cell| match cell {
+                    Cell::Markdown(markdown_cell) => markdown_cell.read(cx).is_editing(),
+                    _ => false,
+                });
 
         v_flex()
             .id("notebook-controls")
@@ -536,6 +587,29 @@ impl NotebookEditor {
                                     },
                                 )),
                             ),
+                    )
+                    .child(
+                        Self::button_group(window, cx).child(
+                            Self::render_notebook_control(
+                                "edit-cell",
+                                if selected_is_editing {
+                                    IconName::Eye
+                                } else {
+                                    IconName::Pencil
+                                },
+                                window,
+                                cx,
+                            )
+                            .tooltip(move |window, cx| {
+                                Tooltip::for_action("Edit Cell", &EditCell, window, cx)
+                            })
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    window.focus(&this.focus_handle);
+                                    window.dispatch_action(Box::new(ToggleEditMode), cx);
+                                },
+                            )),
+                        ),
                     ),
             )
             .child(
@@ -605,6 +679,14 @@ impl Render for NotebookEditor {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, &OpenNotebook, window, cx| {
                 this.open_notebook(&OpenNotebook, window, cx)
+            }))
+            .on_action(cx.listener(|this, &EditCell, window, cx| {
+                let selected_cell_index = this.selected_cell_index.clone();
+
+                this.edit_cell(selected_cell_index.clone(), cx)
+            }))
+            .on_action(cx.listener(|this, &ToggleEditMode, window, cx| {
+                this.toggle_edit_mode(&ToggleEditMode, window, cx)
             }))
             .on_action(
                 cx.listener(|this, &ClearOutputs, window, cx| this.clear_outputs(window, cx)),
