@@ -1,4 +1,9 @@
-use std::{assert_eq, future::IntoFuture, path::Path, path::MAIN_SEPARATOR, time::Duration};
+use std::{
+    assert_eq,
+    future::IntoFuture,
+    path::{Path, MAIN_SEPARATOR},
+    time::Duration,
+};
 
 use super::*;
 use editor::Editor;
