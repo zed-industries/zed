@@ -4404,6 +4404,10 @@ impl Workspace {
         self.database_id
     }
 
+    pub fn session_id(&self) -> Option<String> {
+        self.session_id.clone()
+    }
+
     fn local_paths(&self, cx: &App) -> Option<Vec<Arc<Path>>> {
         let project = self.project().read(cx);
 

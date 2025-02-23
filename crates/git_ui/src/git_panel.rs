@@ -2059,6 +2059,11 @@ impl GitPanel {
         let Some(entry) = self.entries.get(ix).and_then(|e| e.status_entry()) else {
             return;
         };
+        let stage_title = if entry.status.is_staged() == Some(true) {
+            "Unstage File"
+        } else {
+            "Stage File"
+        };
         let revert_title = if entry.status.is_deleted() {
             "Restore file"
         } else if entry.status.is_created() {
@@ -2068,7 +2073,7 @@ impl GitPanel {
         };
         let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
             context_menu
-                .action("Stage File", ToggleStaged.boxed_clone())
+                .action(stage_title, ToggleStaged.boxed_clone())
                 .action(revert_title, git::RestoreFile.boxed_clone())
                 .separator()
                 .action("Open Diff", Confirm.boxed_clone())
@@ -2312,15 +2317,17 @@ impl Render for GitPanel {
             .size_full()
             .overflow_hidden()
             .bg(ElevationIndex::Surface.bg(cx))
-            .children(self.render_panel_header(window, cx))
             .child(if has_entries {
-                self.render_entries(has_write_access, window, cx)
+                v_flex()
+                    .size_full()
+                    .children(self.render_panel_header(window, cx))
+                    .child(self.render_entries(has_write_access, window, cx))
+                    .children(self.render_previous_commit(cx))
+                    .child(self.render_commit_editor(window, cx))
                     .into_any_element()
             } else {
                 self.render_empty_state(cx).into_any_element()
             })
-            .children(self.render_previous_commit(cx))
-            .child(self.render_commit_editor(window, cx))
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
                     anchored()

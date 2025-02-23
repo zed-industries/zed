@@ -95,13 +95,17 @@ pub struct ThemeSettings {
     /// as well as the size of a [gpui::Rems] unit.
     ///
     /// Changing this will impact the size of all UI elements.
-    pub ui_font_size: Pixels,
+    ///
+    /// Use [ThemeSettings::ui_font_size] to access this.
+    ui_font_size: Pixels,
     /// The font used for UI elements.
     pub ui_font: Font,
     /// The font size used for buffers, and the terminal.
     ///
     /// The terminal font size can be overridden using it's own setting.
-    pub buffer_font_size: Pixels,
+    ///
+    /// Use [ThemeSettings::buffer_font_size] to access this.
+    buffer_font_size: Pixels,
     /// The font used for buffers, and the terminal.
     ///
     /// The terminal font family can be overridden using it's own setting.
@@ -569,6 +573,14 @@ impl ThemeSettings {
         clamp_font_size(font_size)
     }
 
+    /// Returns the UI font size.
+    pub fn ui_font_size(&self, cx: &App) -> Pixels {
+        let font_size = cx
+            .try_global::<AdjustedUiFontSize>()
+            .map_or(self.ui_font_size, |size| size.0);
+        clamp_font_size(font_size)
+    }
+
     // TODO: Rename: `line_height` -> `buffer_line_height`
     /// Returns the buffer's line height.
     pub fn line_height(&self) -> f32 {
@@ -715,14 +727,14 @@ pub fn setup_ui_font(window: &mut Window, cx: &mut App) -> gpui::Font {
 
 /// Gets the adjusted UI font size.
 pub fn get_ui_font_size(cx: &App) -> Pixels {
-    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
     cx.try_global::<AdjustedUiFontSize>()
         .map_or(ui_font_size, |adjusted_size| adjusted_size.0)
 }
 
 /// Sets the adjusted UI font size.
 pub fn adjust_ui_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
-    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
     let mut adjusted_size = cx
         .try_global::<AdjustedUiFontSize>()
         .map_or(ui_font_size, |adjusted_size| adjusted_size.0);
