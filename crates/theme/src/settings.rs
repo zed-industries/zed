@@ -95,8 +95,6 @@ pub struct ThemeSettings {
     /// as well as the size of a [gpui::Rems] unit.
     ///
     /// Changing this will impact the size of all UI elements.
-    ///
-    /// Use [ThemeSettings::ui_font_size] to access this.
     ui_font_size: Pixels,
     /// The font used for UI elements.
     pub ui_font: Font,
@@ -244,14 +242,14 @@ impl SystemAppearance {
 }
 
 #[derive(Default)]
-struct AdjustedBufferFontSize(Pixels);
+struct BufferFontSize(Pixels);
 
-impl Global for AdjustedBufferFontSize {}
+impl Global for BufferFontSize {}
 
 #[derive(Default)]
-pub(crate) struct AdjustedUiFontSize(Pixels);
+pub(crate) struct UiFontSize(Pixels);
 
-impl Global for AdjustedUiFontSize {}
+impl Global for UiFontSize {}
 
 /// Represents the selection of a theme, which can be either static or dynamic.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -566,7 +564,7 @@ impl ThemeSettings {
     /// Returns the buffer font size.
     pub fn buffer_font_size(&self, cx: &App) -> Pixels {
         let font_size = cx
-            .try_global::<AdjustedBufferFontSize>()
+            .try_global::<BufferFontSize>()
             .map(|size| size.0)
             .unwrap_or(self.buffer_font_size);
         clamp_font_size(font_size)
@@ -575,7 +573,7 @@ impl ThemeSettings {
     /// Returns the UI font size.
     pub fn ui_font_size(&self, cx: &App) -> Pixels {
         let font_size = cx
-            .try_global::<AdjustedUiFontSize>()
+            .try_global::<UiFontSize>()
             .map(|size| size.0)
             .unwrap_or(self.ui_font_size);
         clamp_font_size(font_size)
@@ -663,20 +661,19 @@ pub fn observe_buffer_font_size_adjustment<V: 'static>(
     cx: &mut Context<V>,
     f: impl 'static + Fn(&mut V, &mut Context<V>),
 ) -> Subscription {
-    cx.observe_global::<AdjustedBufferFontSize>(f)
+    cx.observe_global::<BufferFontSize>(f)
 }
 
-/// Sets the adjusted buffer font size.
+/// Gets the font size, adjusted by the difference between the current buffer font size and the one set in the settings.
 pub fn adjusted_font_size(size: Pixels, cx: &App) -> Pixels {
-    let adjusted_font_size = if let Some(AdjustedBufferFontSize(adjusted_size)) =
-        cx.try_global::<AdjustedBufferFontSize>()
-    {
-        let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-        let delta = *adjusted_size - buffer_font_size;
-        size + delta
-    } else {
-        size
-    };
+    let adjusted_font_size =
+        if let Some(BufferFontSize(adjusted_size)) = cx.try_global::<BufferFontSize>() {
+            let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
+            let delta = *adjusted_size - buffer_font_size;
+            size + delta
+        } else {
+            size
+        };
     clamp_font_size(adjusted_font_size)
 }
 
@@ -684,23 +681,18 @@ pub fn adjusted_font_size(size: Pixels, cx: &App) -> Pixels {
 pub fn adjust_buffer_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
     let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
     let mut adjusted_size = cx
-        .try_global::<AdjustedBufferFontSize>()
+        .try_global::<BufferFontSize>()
         .map_or(buffer_font_size, |adjusted_size| adjusted_size.0);
 
     f(&mut adjusted_size);
-    cx.set_global(AdjustedBufferFontSize(clamp_font_size(adjusted_size)));
+    cx.set_global(BufferFontSize(clamp_font_size(adjusted_size)));
     cx.refresh_windows();
-}
-
-/// Returns whether the buffer font size has been adjusted.
-pub fn has_adjusted_buffer_font_size(cx: &App) -> bool {
-    cx.has_global::<AdjustedBufferFontSize>()
 }
 
 /// Resets the buffer font size to the default value.
 pub fn reset_buffer_font_size(cx: &mut App) {
-    if cx.has_global::<AdjustedBufferFontSize>() {
-        cx.remove_global::<AdjustedBufferFontSize>();
+    if cx.has_global::<BufferFontSize>() {
+        cx.remove_global::<BufferFontSize>();
         cx.refresh_windows();
     }
 }
@@ -722,23 +714,18 @@ pub fn setup_ui_font(window: &mut Window, cx: &mut App) -> gpui::Font {
 pub fn adjust_ui_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
     let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
     let mut adjusted_size = cx
-        .try_global::<AdjustedUiFontSize>()
+        .try_global::<UiFontSize>()
         .map_or(ui_font_size, |adjusted_size| adjusted_size.0);
 
     f(&mut adjusted_size);
-    cx.set_global(AdjustedUiFontSize(clamp_font_size(adjusted_size)));
+    cx.set_global(UiFontSize(clamp_font_size(adjusted_size)));
     cx.refresh_windows();
-}
-
-/// Returns whether the UI font size has been adjusted.
-pub fn has_adjusted_ui_font_size(cx: &App) -> bool {
-    cx.has_global::<AdjustedUiFontSize>()
 }
 
 /// Resets the UI font size to the default value.
 pub fn reset_ui_font_size(cx: &mut App) {
-    if cx.has_global::<AdjustedUiFontSize>() {
-        cx.remove_global::<AdjustedUiFontSize>();
+    if cx.has_global::<UiFontSize>() {
+        cx.remove_global::<UiFontSize>();
         cx.refresh_windows();
     }
 }
