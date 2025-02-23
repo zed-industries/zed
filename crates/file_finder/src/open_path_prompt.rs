@@ -3,7 +3,7 @@ use fuzzy::StringMatchCandidate;
 use picker::{Picker, PickerDelegate};
 use project::DirectoryLister;
 use std::{
-    path::{Path, PathBuf},
+    path::{Path, PathBuf, MAIN_SEPARATOR_STR},
     sync::{
         atomic::{self, AtomicBool},
         Arc,
@@ -108,15 +108,18 @@ impl PickerDelegate for OpenPathDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
-        println!("===========");
-        println!("--> Query: {:?}", query);
         let lister = self.lister.clone();
-        let (mut dir, suffix) = if let Some(index) = query.rfind('/') {
-            (query[..index].to_string(), query[index + 1..].to_string())
+        let query_path = Path::new(&query);
+        let last_item = query_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let (mut dir, suffix) = if let Some(dir) = query.strip_suffix(&last_item) {
+            (dir.to_string(), last_item)
         } else {
             (query, String::new())
         };
-        println!("--> Dir: {:?}, Suffix: {:?}", dir, suffix);
         if dir == "" {
             #[cfg(not(target_os = "windows"))]
             {
@@ -137,11 +140,6 @@ impl PickerDelegate for OpenPathDelegate {
         } else {
             Some(lister.list_directory_with_info(dir.clone(), cx))
         };
-        if let Some(ref state) = self.directory_state {
-            println!("--> state: {:?}", state.path);
-        } else {
-            println!("--> state: None");
-        }
         self.cancel_flag.store(true, atomic::Ordering::Relaxed);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
@@ -156,7 +154,6 @@ impl PickerDelegate for OpenPathDelegate {
                 this.update(&mut cx, |this, _| {
                     this.delegate.directory_state = Some(match paths {
                         Ok(mut paths) => {
-                            println!("--> paths: {:?}", paths);
                             paths.sort_by(|a, b| compare_paths((&a.0, true), (&b.0, true)));
                             let match_candidates = paths
                                 .iter()
@@ -167,13 +164,11 @@ impl PickerDelegate for OpenPathDelegate {
                                 })
                                 .collect::<Vec<_>>();
 
-                            let x = DirectoryState {
+                            DirectoryState {
                                 match_candidates,
                                 path: dir,
                                 error: None,
-                            };
-                            println!("--> DirectoryState 1: {:?}", x);
-                            x
+                            }
                         }
                         Err(err) => DirectoryState {
                             match_candidates: vec![],
@@ -276,19 +271,20 @@ impl PickerDelegate for OpenPathDelegate {
         _window: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<String> {
-        println!("===========");
         Some(
             maybe!({
                 let m = self.matches.get(self.selected_index)?;
                 let directory_state = self.directory_state.as_ref()?;
                 let candidate = directory_state.match_candidates.get(*m)?;
-                println!("--> directory_state: {:?}", directory_state);
-                println!("--> Candidate: {:?}", candidate);
                 Some(format!(
-                    "{}/{}{}",
+                    "{}{}{}",
                     directory_state.path,
                     candidate.path.string,
-                    if candidate.is_dir { "/" } else { "" }
+                    if candidate.is_dir {
+                        MAIN_SEPARATOR_STR
+                    } else {
+                        ""
+                    }
                 ))
             })
             .unwrap_or(query),
@@ -357,6 +353,6 @@ impl PickerDelegate for OpenPathDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        Arc::from("[directory/]filename.ext")
+        Arc::from(format!("[directory{MAIN_SEPARATOR_STR}]filename.ext"))
     }
 }
