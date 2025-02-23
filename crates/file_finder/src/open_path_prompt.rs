@@ -215,13 +215,7 @@ impl PickerDelegate for OpenPathDelegate {
                 return;
             }
 
-            // TODO:
-            // Remove this clone
-            // let candidates = match_candidates.iter().map(|m| &m.path).collect::<Vec<_>>();
-            let candidates = match_candidates
-                .iter()
-                .map(|m| m.path.clone())
-                .collect::<Vec<_>>();
+            let candidates = match_candidates.iter().map(|m| &m.path).collect::<Vec<_>>();
             let matches = fuzzy::match_strings(
                 candidates.as_slice(),
                 &suffix,
@@ -231,15 +225,6 @@ impl PickerDelegate for OpenPathDelegate {
                 cx.background_executor().clone(),
             )
             .await;
-            // let matches = fuzzy::match_strings_inner(
-            //     candidates.as_slice(),
-            //     &suffix,
-            //     false,
-            //     100,
-            //     &cancel_flag,
-            //     cx.background_executor().clone(),
-            // )
-            // .await;
             if cancel_flag.load(atomic::Ordering::Relaxed) {
                 return;
             }

@@ -7,4 +7,5 @@ pub use char_bag::CharBag;
 pub use paths::{
     match_fixed_path_set, match_path_sets, PathMatch, PathMatchCandidate, PathMatchCandidateSet,
 };
-pub use strings::{match_strings, match_strings_inner, StringMatch, StringMatchCandidate};
+// pub use strings::{match_strings, match_strings_inner, StringMatch, StringMatchCandidate};
+pub use strings::{match_strings, StringMatch, StringMatchCandidate};
