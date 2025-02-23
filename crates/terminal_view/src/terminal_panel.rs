@@ -825,15 +825,13 @@ impl TerminalPanel {
             let project = workspace.update(&mut cx, |workspace, _| workspace.project().clone())?;
             let window_handle = cx.window_handle();
             let result = workspace.update_in(&mut cx, |workspace, window, cx| {
-                let diagnostics_view = Box::new(cx.new(|cx| {
-                    DiagnosticsView::new(
-                        workspace.weak_handle(),
-                        workspace.database_id(),
-                        workspace.project().clone(),
-                        window,
-                        cx,
-                    )
-                }));
+                let diagnostics_view = Box::new(DiagnosticsView::new(
+                    workspace.weak_handle(),
+                    workspace.database_id(),
+                    workspace.project().clone(),
+                    window,
+                    cx,
+                ));
 
                 match reveal_strategy {
                     RevealStrategy::Always => {

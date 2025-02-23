@@ -2,23 +2,26 @@ use std::collections::BTreeSet;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
+use collections::IndexMap;
 use diagnostics::{IncludeWarnings, ProjectDiagnosticsSettings, ToggleWarnings};
 use editor::Editor;
 use gpui::{
-    Entity, EventEmitter, Flatten, FocusHandle, Focusable, FontWeight, Subscription, Task,
-    WeakEntity,
+    list, uniform_list, AppContext, Entity, EventEmitter, Flatten, FocusHandle, Focusable,
+    FontWeight, ListAlignment, ListState, StatefulInteractiveElement, Subscription, Task,
+    UniformListScrollHandle, WeakEntity,
 };
 use language::{
-    Anchor, Buffer, DiagnosticGroup, DiagnosticSeverity, LanguageServerId, OffsetRangeExt,
+    Anchor, Buffer, DiagnosticEntry, DiagnosticGroup, DiagnosticSeverity, LanguageServerId,
+    OffsetRangeExt,
 };
 use project::Project;
 use project::{DiagnosticSummary, ProjectPath};
 use settings::Settings;
 use ui::{
-    div, h_flex, AnyElement, App, ButtonCommon, Clickable, Color, Context, Element, FluentBuilder,
-    Icon, IconButton, IconButtonShape, IconName, IconSize, InteractiveElement, IntoElement, Label,
-    LabelCommon, LabelSize, List, ListHeader, ListItem, ParentElement, Render, Styled, Tooltip,
-    Window,
+    div, h_flex, px, v_flex, AnyElement, App, ButtonCommon, Clickable, Color, Context, Element,
+    FluentBuilder, Icon, IconButton, IconButtonShape, IconName, IconSize, InteractiveElement,
+    IntoElement, Label, LabelCommon, LabelSize, List, ListHeader, ListItem, ParentElement, Render,
+    Styled, Tooltip, Window,
 };
 use util::ResultExt;
 use workspace::item::TabContentParams;
@@ -34,8 +37,10 @@ pub struct DiagnosticsView {
     _subscription: Subscription,
     update_diagnostics_task: Option<Task<anyhow::Result<()>>>,
     include_warnings: bool,
+    scroll_handle: UniformListScrollHandle,
     diagnostic_groups:
-        HashMap<ProjectPath, Vec<(Entity<Buffer>, LanguageServerId, DiagnosticGroup<Anchor>)>>,
+        IndexMap<ProjectPath, Vec<(Entity<Buffer>, LanguageServerId, DiagnosticEntry<Anchor>)>>,
+    diagnostic_list: ListState,
 }
 
 impl DiagnosticsView {
@@ -44,85 +49,106 @@ impl DiagnosticsView {
         workspace_id: Option<WorkspaceId>,
         project: Entity<Project>,
         window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let focus_handle = cx.focus_handle();
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
+        cx.new(move |cx: &mut Context<'_, Self>| {
+            let focus_handle = cx.focus_handle();
 
-        cx.observe_global_in::<IncludeWarnings>(window, |this, window, cx| {
-            this.include_warnings = cx.global::<IncludeWarnings>().0;
-            this.paths_to_update = this
-                .project
+            cx.observe_global_in::<IncludeWarnings>(window, |this, window, cx| {
+                this.include_warnings = cx.global::<IncludeWarnings>().0;
+                this.paths_to_update = this
+                    .project
+                    .read(cx)
+                    .diagnostic_summaries(false, cx)
+                    .map(|(path, lsp_id, _)| (path, Some(lsp_id)))
+                    .collect::<BTreeSet<_>>();
+                this.update_diagnostics(window, cx);
+                cx.notify();
+            })
+            .detach();
+
+            let project_event_subscription = cx.subscribe_in(
+                &project,
+                window,
+                |this, project, event, window, cx| match event {
+                    project::Event::DiskBasedDiagnosticsStarted { .. } => {
+                        cx.notify();
+                    }
+                    project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
+                        // log::debug!("disk based diagnostics finished for server {language_server_id}");
+                        // this.update_diagnostics(window, cx);
+                        dbg!("hello");
+                    }
+                    project::Event::DiagnosticsUpdated {
+                        language_server_id,
+                        path,
+                    } => {
+                        // this.paths_to_update
+                        //     .insert(dbg!((path.clone(), Some(*language_server_id))));
+                        this.paths_to_update = project
+                            .read(cx)
+                            .diagnostic_summaries(false, cx)
+                            .map(|(path, lsp_id, _)| (path, Some(lsp_id)))
+                            .collect::<BTreeSet<_>>();
+                        this.summary = project.read(cx).diagnostic_summary(false, cx);
+                        // cx.emit(EditorEvent::TitleChanged);
+
+                        // if this.editor.focus_handle(cx).contains_focused(window, cx) || this.focus_handle.contains_focused(window, cx) {
+                        //     log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. recording change");
+                        // } else {
+                        //     log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");
+                        this.update_diagnostics(window, cx);
+                        // }
+                    }
+                    _ => {}
+                },
+            );
+
+            let summary = project.read(cx).diagnostic_summary(false, cx);
+
+            let paths_to_update = project
                 .read(cx)
                 .diagnostic_summaries(false, cx)
                 .map(|(path, lsp_id, _)| (path, Some(lsp_id)))
                 .collect::<BTreeSet<_>>();
-            this.update_diagnostics(window, cx);
-            cx.notify();
+            let include_warnings = match cx.try_global::<IncludeWarnings>() {
+                Some(include_warnings) => include_warnings.0,
+                None => ProjectDiagnosticsSettings::get_global(cx).include_warnings,
+            };
+
+            let entity = cx.entity().downgrade();
+            let diagnostic_list = ListState::new(
+                dbg!(paths_to_update.len()),
+                ListAlignment::Top,
+                px(1000.),
+                move |ix, window, cx| {
+                    entity
+                        .upgrade()
+                        .and_then(|entity| {
+                            entity
+                                .update(cx, |this, cx| this.render_diagnostic_group(ix, window, cx))
+                        })
+                        .unwrap_or_else(|| div().into_any())
+                },
+            );
+
+            let mut diagnostics_view = Self {
+                workspace,
+                summary,
+                project,
+                focus_handle,
+                paths_to_update,
+                _subscription: project_event_subscription,
+                update_diagnostics_task: None,
+                diagnostic_groups: IndexMap::default(),
+                include_warnings,
+                scroll_handle: UniformListScrollHandle::default(),
+                diagnostic_list,
+            };
+            diagnostics_view.update_diagnostics(window, cx);
+
+            diagnostics_view
         })
-        .detach();
-
-        let project_event_subscription = cx.subscribe_in(
-            &project,
-            window,
-            |this, project, event, window, cx| match event {
-                project::Event::DiskBasedDiagnosticsStarted { .. } => {
-                    cx.notify();
-                }
-                project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
-                    // log::debug!("disk based diagnostics finished for server {language_server_id}");
-                    // this.update_diagnostics(window, cx);
-                }
-                project::Event::DiagnosticsUpdated {
-                    language_server_id,
-                    path,
-                } => {
-                    // this.paths_to_update
-                    //     .insert(dbg!((path.clone(), Some(*language_server_id))));
-                    this.paths_to_update = project
-                        .read(cx)
-                        .diagnostic_summaries(false, cx)
-                        .map(|(path, lsp_id, _)| (path, Some(lsp_id)))
-                        .collect::<BTreeSet<_>>();
-                    this.summary = project.read(cx).diagnostic_summary(false, cx);
-                    // cx.emit(EditorEvent::TitleChanged);
-
-                    // if this.editor.focus_handle(cx).contains_focused(window, cx) || this.focus_handle.contains_focused(window, cx) {
-                    //     log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. recording change");
-                    // } else {
-                    //     log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");
-                    this.update_diagnostics(window, cx);
-                    // }
-                }
-                _ => {}
-            },
-        );
-
-        let summary = project.read(cx).diagnostic_summary(false, cx);
-
-        let paths_to_update = project
-            .read(cx)
-            .diagnostic_summaries(false, cx)
-            .map(|(path, lsp_id, _)| (path, Some(lsp_id)))
-            .collect::<BTreeSet<_>>();
-        let include_warnings = match cx.try_global::<IncludeWarnings>() {
-            Some(include_warnings) => include_warnings.0,
-            None => ProjectDiagnosticsSettings::get_global(cx).include_warnings,
-        };
-
-        let mut diagnostics_view = Self {
-            workspace,
-            summary,
-            project,
-            focus_handle,
-            paths_to_update,
-            _subscription: project_event_subscription,
-            update_diagnostics_task: None,
-            diagnostic_groups: HashMap::new(),
-            include_warnings,
-        };
-        diagnostics_view.update_diagnostics(window, cx);
-
-        diagnostics_view
     }
 
     fn update_diagnostics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -152,7 +178,7 @@ impl DiagnosticsView {
                     })
                     .unwrap()
                 else {
-                    return Ok(());
+                    break;
                 };
 
                 if let Some(buffer) = project_handle
@@ -164,41 +190,40 @@ impl DiagnosticsView {
                     let snapshot = this.update(&mut cx, |_, cx| buffer.read(cx).snapshot())?;
                     let diagnostic_groups = snapshot.diagnostic_groups(language_server_id);
                     this.update(&mut cx, |diag_view, cx| {
-                        let diag_group =
+                        let diag_entry =
                             diagnostic_groups
                                 .into_iter()
                                 .filter_map(|(lsp_id, mut diag_group)| {
-                                    diag_group.entries.retain(|d| {
-                                        if diag_view.include_warnings {
-                                            true
-                                        } else {
-                                            d.diagnostic.severity < DiagnosticSeverity::WARNING
-                                        }
-                                    });
+                                    let diag = diag_group.entries.remove(diag_group.primary_ix);
 
-                                    (!diag_group.entries.is_empty()).then_some((
-                                        buffer.clone(),
-                                        lsp_id,
-                                        diag_group,
-                                    ))
+                                    if diag_view.include_warnings {
+                                        Some((buffer.clone(), lsp_id, diag))
+                                    } else {
+                                        (diag.diagnostic.severity > DiagnosticSeverity::WARNING)
+                                            .then_some((buffer.clone(), lsp_id, diag))
+                                    }
                                 });
                         match diag_view.diagnostic_groups.get_mut(&path) {
                             Some(e) => {
-                                e.extend(diag_group);
+                                e.extend(diag_entry);
                             }
                             None => {
                                 diag_view
                                     .diagnostic_groups
-                                    .insert(path.clone(), diag_group.collect());
+                                    .insert(path.clone(), diag_entry.collect());
                             }
                         }
 
+                        diag_view
+                            .diagnostic_list
+                            .reset(diag_view.diagnostic_groups.len());
                         cx.notify();
                     })?;
                 } else {
                     break;
                 }
             }
+
             Ok(())
         }));
     }
@@ -214,6 +239,135 @@ impl DiagnosticsView {
             .collect::<BTreeSet<_>>();
         self.update_diagnostics(window, cx);
         cx.notify();
+    }
+
+    fn render_diagnostic_group(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let (project_path, diags) = self.diagnostic_groups.get_index(ix)?;
+        let task_workspace = self.workspace.clone();
+        let task_project_path = project_path.clone();
+
+        let tooltip = if self.include_warnings {
+            "Exclude Warnings"
+        } else {
+            "Include Warnings"
+        };
+
+        let warning_color = if self.include_warnings {
+            Color::Warning
+        } else {
+            Color::Muted
+        };
+        let focused = self.focus_handle.is_focused(window);
+
+        if diags.is_empty() {
+            return None;
+        }
+        let diags_per_file: Vec<ListItem> = diags
+            .iter()
+            .enumerate()
+            .map(|(idx, (buffer, _, diag))| {
+                let icon = match diag.diagnostic.severity {
+                    DiagnosticSeverity::ERROR => Icon::new(IconName::X).color(Color::Error),
+                    DiagnosticSeverity::HINT => Icon::new(IconName::Book).color(Color::Hint),
+                    DiagnosticSeverity::INFORMATION => Icon::new(IconName::Info).color(Color::Info),
+                    DiagnosticSeverity::WARNING => {
+                        Icon::new(IconName::Warning).color(Color::Warning)
+                    }
+                    _ => unreachable!("should not happen"),
+                };
+                let point = diag.range.to_point(&buffer.read(cx).snapshot());
+
+                let task_workspace = task_workspace.clone();
+                let task_project_path = task_project_path.clone();
+                ListItem::new(idx)
+                    .child(icon)
+                    .child(
+                        div().size_full().child(Label::new(
+                            diag.diagnostic
+                                .message
+                                .split('\n')
+                                .next()
+                                .unwrap()
+                                .to_string(),
+                        )),
+                    )
+                    .child(
+                        div()
+                            .right_0()
+                            .child(Label::new(format!(
+                                "{}:{}",
+                                point.start.row, point.start.column
+                            )))
+                            .font_weight(FontWeight::THIN),
+                    )
+                    .tooltip(Tooltip::text(
+                        diag.diagnostic
+                            .data
+                            .as_ref()
+                            .and_then(|data| data.get("rendered"))
+                            .and_then(|rendered_text| rendered_text.as_str())
+                            .map(|t| t.to_string())
+                            .unwrap_or_else(|| diag.diagnostic.message.clone()),
+                    ))
+                    .on_click(cx.listener(move |_, _, window, cx| {
+                        let task_workspace = task_workspace.clone();
+                        let task_project_path = task_project_path.clone();
+
+                        cx.spawn_in(window, |_diagnostic_view, mut cx| async move {
+                            let open_path = task_workspace
+                                .update_in(&mut cx, |workspace, window, cx| {
+                                    workspace.open_path(
+                                        task_project_path.clone(),
+                                        None,
+                                        true,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .log_err()?
+                                .await
+                                .log_err()?;
+
+                            if let Some(active_editor) = open_path.downcast::<Editor>() {
+                                active_editor
+                                    .downgrade()
+                                    .update_in(&mut cx, |editor, window, cx| {
+                                        editor.go_to_singleton_buffer_point(point.start, window, cx)
+                                    })
+                                    .log_err()?;
+                            }
+
+                            Some(())
+                        })
+                        .detach();
+                    }))
+            })
+            .collect();
+
+        List::new()
+            .header(
+                ListHeader::new(project_path.path.to_string_lossy().to_string())
+                    .start_slot(Icon::new(IconName::File))
+                    .when(ix == 0, |this| {
+                        this.end_slot(
+                            IconButton::new("toggle-warnings", IconName::Warning)
+                                .tooltip(Tooltip::text(tooltip))
+                                .icon_color(warning_color)
+                                .shape(IconButtonShape::Square)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_warnings(&ToggleWarnings {}, window, cx);
+                                })),
+                        )
+                    }),
+            )
+            .children(diags_per_file)
+            .into_any_element()
+            .into()
     }
 }
 
@@ -235,13 +389,13 @@ impl Render for DiagnosticsView {
             Color::Muted
         };
         let focused = self.focus_handle.is_focused(window);
-        let mut first = true;
-        div()
+
+        v_flex()
             .id("diagnostics-view")
             .size_full()
             .relative()
             .on_action(cx.listener(Self::toggle_warnings))
-            // .track_focus(&self.focus_handle(cx))
+            .track_focus(&self.focus_handle(cx))
             // .key_context(self.dispatch_context(cx))
             // .on_action(cx.listener(TerminalView::send_text))
             // .on_action(cx.listener(TerminalView::send_keystroke))
@@ -276,184 +430,8 @@ impl Render for DiagnosticsView {
             //         this.hide_scrollbar(cx);
             //     }
             // }))
-            .child(
-                // TODO: Oddly this wrapper div is needed for TerminalElement to not steal events from the context menu
-                div().size_full().child(
-                    List::new()
-                        .empty_message(
-                            div()
-                                .size_full()
-                                .child(Label::new("No diagnostics"))
-                                .child(
-                                    div()
-                                        .child(
-                                            IconButton::new("toggle-warnings", IconName::Warning)
-                                                .tooltip(Tooltip::text(tooltip))
-                                                .icon_color(warning_color)
-                                                .shape(IconButtonShape::Square)
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    this.toggle_warnings(
-                                                        &ToggleWarnings {},
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })),
-                                        )
-                                        .right_0(),
-                                )
-                                .right_0()
-                                .into_any_element(),
-                        )
-                        .children(self.diagnostic_groups.iter().enumerate().filter_map(
-                            |(idx, (project_path, diags))| {
-                                let task_workspace = self.workspace.clone();
-                                let task_project_path = project_path.clone();
-                                let diags_per_file: Vec<ListItem> = diags
-                                    .iter()
-                                    .enumerate()
-                                    .filter_map(|(idx, (buffer, _, diag_group))| {
-                                        let diag =
-                                            &diag_group.entries.get(diag_group.primary_ix)?;
-                                        let icon = match diag.diagnostic.severity {
-                                            DiagnosticSeverity::ERROR => {
-                                                Icon::new(IconName::X).color(Color::Error)
-                                            }
-                                            DiagnosticSeverity::HINT => {
-                                                Icon::new(IconName::Book).color(Color::Hint)
-                                            }
-                                            DiagnosticSeverity::INFORMATION => {
-                                                Icon::new(IconName::Info).color(Color::Info)
-                                            }
-                                            DiagnosticSeverity::WARNING => {
-                                                Icon::new(IconName::Warning).color(Color::Warning)
-                                            }
-                                            _ => unreachable!("should not happen"),
-                                        };
-                                        let point =
-                                            diag.range.to_point(&buffer.read(cx).snapshot());
-
-                                        let task_workspace = task_workspace.clone();
-                                        let task_project_path = task_project_path.clone();
-                                        ListItem::new(idx)
-                                            .child(icon)
-                                            .child(
-                                                div().size_full().child(Label::new(
-                                                    diag.diagnostic
-                                                        .message
-                                                        .split('\n')
-                                                        .next()
-                                                        .unwrap()
-                                                        .to_string(),
-                                                )),
-                                            )
-                                            .child(
-                                                div()
-                                                    .right_0()
-                                                    .child(Label::new(format!(
-                                                        "{}:{}",
-                                                        point.start.row, point.start.column
-                                                    )))
-                                                    .font_weight(FontWeight::THIN),
-                                            )
-                                            .tooltip(Tooltip::text(
-                                                diag.diagnostic
-                                                    .data
-                                                    .as_ref()
-                                                    .and_then(|data| data.get("rendered"))
-                                                    .and_then(|rendered_text| {
-                                                        rendered_text.as_str()
-                                                    })
-                                                    .map(|t| t.to_string())
-                                                    .unwrap_or_else(|| {
-                                                        diag.diagnostic.message.clone()
-                                                    }),
-                                            ))
-                                            .on_click(cx.listener(move |_, _, window, cx| {
-                                                let task_workspace = task_workspace.clone();
-                                                let task_project_path = task_project_path.clone();
-
-                                                cx.spawn_in(
-                                                    window,
-                                                    |_diagnostic_view, mut cx| async move {
-                                                        let open_path = task_workspace
-                                                            .update_in(
-                                                                &mut cx,
-                                                                |workspace, window, cx| {
-                                                                    workspace.open_path(
-                                                                        task_project_path.clone(),
-                                                                        None,
-                                                                        true,
-                                                                        window,
-                                                                        cx,
-                                                                    )
-                                                                },
-                                                            )
-                                                            .log_err()?
-                                                            .await
-                                                            .log_err()?;
-
-                                                        if let Some(active_editor) =
-                                                            open_path.downcast::<Editor>()
-                                                        {
-                                                            active_editor
-                                                .downgrade()
-                                                .update_in(&mut cx, |editor, window, cx| {
-                                                    editor.go_to_singleton_buffer_point(
-                                                        point.start,
-                                                        window,
-                                                        cx,
-                                                    )
-                                                })
-                                                .log_err()?;
-                                                        }
-
-                                                        Some(())
-                                                    },
-                                                )
-                                                .detach();
-                                            }))
-                                            .into()
-                                    })
-                                    .collect();
-
-                                if diags_per_file.is_empty() {
-                                    return None;
-                                }
-
-                                List::new()
-                                    .header(
-                                        ListHeader::new(
-                                            project_path.path.to_string_lossy().to_string(),
-                                        )
-                                        .start_slot(Icon::new(IconName::File))
-                                        .when(
-                                            std::mem::take(&mut first),
-                                            |this| {
-                                                this.end_slot(
-                                                    IconButton::new(
-                                                        "toggle-warnings",
-                                                        IconName::Warning,
-                                                    )
-                                                    .tooltip(Tooltip::text(tooltip))
-                                                    .icon_color(warning_color)
-                                                    .shape(IconButtonShape::Square)
-                                                    .on_click(cx.listener(|this, _, window, cx| {
-                                                        this.toggle_warnings(
-                                                            &ToggleWarnings {},
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    })),
-                                                )
-                                            },
-                                        ),
-                                    )
-                                    .children(diags_per_file)
-                                    .into()
-                            },
-                        )),
-                ),
-            )
+            .child(list(self.diagnostic_list.clone()).size_full().flex_grow())
+            .flex_grow()
     }
 }
 

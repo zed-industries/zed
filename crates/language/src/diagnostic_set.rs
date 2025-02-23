@@ -36,7 +36,7 @@ pub struct DiagnosticEntry<T> {
 
 /// A group of related diagnostics, ordered by their start position
 /// in the buffer.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct DiagnosticGroup<T> {
     /// The diagnostics.
     pub entries: Vec<DiagnosticEntry<T>>,
