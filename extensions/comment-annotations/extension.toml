@@ -1,0 +1,10 @@
+[extension]
+name = "comment-annotations"
+version = "0.1.0"
+description = "Syntax highlighting for comment annotations like TODO, NOTE, FIXME, etc."
+authors = ["Zed Contributors"]
+repository = "https://github.com/zed-industries/zed"
+license = "Apache-2.0"
+
+[grammars]
+comment-annotations = "languages/comment-annotations.wasm" 
