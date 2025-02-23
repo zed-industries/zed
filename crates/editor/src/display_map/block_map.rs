@@ -56,7 +56,6 @@ pub struct BlockSnapshot {
     wrap_snapshot: WrapSnapshot,
     transforms: SumTree<Transform>,
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
-    pub(super) buffer_header_height: u32,
     pub(super) excerpt_header_height: u32,
     pub(super) excerpt_footer_height: u32,
 }
@@ -458,7 +457,6 @@ impl BlockMap {
                 wrap_snapshot,
                 transforms: self.transforms.borrow().clone(),
                 custom_blocks_by_id: self.custom_blocks_by_id.clone(),
-                buffer_header_height: self.buffer_header_height,
                 excerpt_header_height: self.excerpt_header_height,
                 excerpt_footer_height: self.excerpt_footer_height,
             },
