@@ -10,7 +10,7 @@ use futures::future::Shared;
 use futures::FutureExt;
 use gpui::{
     actions, list, prelude::*, AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable,
-    ListScrollEvent, ListState, Point, Task,
+    ListScrollEvent, ListState, Point, Task, WeakEntity,
 };
 use language::{Language, LanguageRegistry};
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -63,6 +63,36 @@ pub fn init(cx: &mut App) {
         }
     })
     .detach();
+}
+
+pub fn update_cell_list(
+    cell_count: usize,
+    notebook_handle: WeakEntity<NotebookEditor>,
+    cx: &mut Context<NotebookEditor>,
+) -> ListState {
+    ListState::new(
+        cell_count,
+        gpui::ListAlignment::Top,
+        px(1000.),
+        move |ix, window, cx| {
+            notebook_handle
+                .upgrade()
+                .and_then(|notebook_handle| {
+                    notebook_handle.update(cx, |notebook, cx| {
+                        notebook
+                            .cell_order
+                            .get(ix)
+                            .and_then(|cell_id| notebook.cell_map.get(cell_id))
+                            .map(|cell| {
+                                notebook
+                                    .render_cell(ix, cell, window, cx)
+                                    .into_any_element()
+                            })
+                    })
+                })
+                .unwrap_or_else(|| div().into_any())
+        },
+    )
 }
 
 pub struct NotebookEditor {
@@ -118,29 +148,7 @@ impl NotebookEditor {
         let cell_count = cell_order.len();
 
         let this = cx.entity();
-        let cell_list = ListState::new(
-            cell_count,
-            gpui::ListAlignment::Top,
-            px(1000.),
-            move |ix, window, cx| {
-                notebook_handle
-                    .upgrade()
-                    .and_then(|notebook_handle| {
-                        notebook_handle.update(cx, |notebook, cx| {
-                            notebook
-                                .cell_order
-                                .get(ix)
-                                .and_then(|cell_id| notebook.cell_map.get(cell_id))
-                                .map(|cell| {
-                                    notebook
-                                        .render_cell(ix, cell, window, cx)
-                                        .into_any_element()
-                                })
-                        })
-                    })
-                    .unwrap_or_else(|| div().into_any())
-            },
-        );
+        let cell_list = update_cell_list(cell_count, notebook_handle, cx);
 
         Self {
             project,
@@ -183,12 +191,45 @@ impl NotebookEditor {
         println!("Open notebook triggered");
     }
 
+    fn swap_cells(
+        &mut self,
+        index1: usize,
+        index2: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if index1 < self.cell_order.len() && index2 < self.cell_order.len() {
+            let cell_count = self.cell_count();
+            let notebook_handle = cx.entity().downgrade();
+
+            self.cell_order.swap(index1, index2);
+
+            self.cell_list = update_cell_list(cell_count, notebook_handle, cx);
+
+            cx.notify();
+        }
+    }
+
     fn move_cell_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        println!("Move cell up triggered");
+        if self.selected_cell_index > 0 {
+            let current_index = self.selected_cell_index;
+            let new_index = current_index - 1;
+
+            self.swap_cells(current_index, new_index, window, cx);
+            self.selected_cell_index = new_index;
+            self.cell_list.scroll_to_reveal_item(new_index);
+        }
     }
 
     fn move_cell_down(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        println!("Move cell down triggered");
+        if self.selected_cell_index < self.cell_order.len() - 1 {
+            let current_index = self.selected_cell_index;
+            let new_index = current_index + 1;
+
+            self.swap_cells(current_index, new_index, window, cx);
+            self.selected_cell_index = new_index;
+            self.cell_list.scroll_to_reveal_item(new_index);
+        }
     }
 
     fn add_markdown_block(&mut self, window: &mut Window, cx: &mut Context<Self>) {
