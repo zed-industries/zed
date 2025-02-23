@@ -708,7 +708,7 @@ impl LanguageServer {
                                 ],
                             }),
                             insert_replace_support: Some(true),
-                            label_details_support: Some(false),
+                            label_details_support: Some(true),
                             ..Default::default()
                         }),
                         completion_list: Some(CompletionListCapability {
