@@ -577,6 +577,37 @@ impl DirectoryLister {
             }
         }
     }
+
+    pub fn list_directory_with_info(
+        &self,
+        path: String,
+        cx: &mut App,
+    ) -> Task<Result<Vec<(PathBuf, bool)>>> {
+        match self {
+            DirectoryLister::Project(project) => {
+                project.update(cx, |project, cx| project.list_directory_with_info(path, cx))
+            }
+            DirectoryLister::Local(fs) => {
+                let fs = fs.clone();
+                cx.background_spawn(async move {
+                    let mut results = vec![];
+                    let expanded = shellexpand::tilde(&path);
+                    let query = Path::new(expanded.as_ref());
+                    let mut response = fs.read_dir(query).await?;
+                    while let Some(path) = response.next().await {
+                        let path = path?;
+                        if let Some(file_name) = path.file_name() {
+                            results.push((
+                                PathBuf::from(file_name.to_os_string()),
+                                fs.is_dir(&path).await,
+                            ));
+                        }
+                    }
+                    Ok(results)
+                })
+            }
+        }
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -3499,12 +3530,45 @@ impl Project {
             let request = proto::ListRemoteDirectory {
                 dev_server_id: SSH_PROJECT_ID,
                 path: path_buf.to_proto(),
+                config: None,
             };
 
             let response = session.read(cx).proto_client().request(request);
             cx.background_spawn(async move {
                 let response = response.await?;
                 Ok(response.entries.into_iter().map(PathBuf::from).collect())
+            })
+        } else {
+            Task::ready(Err(anyhow!("cannot list directory in remote project")))
+        }
+    }
+
+    pub fn list_directory_with_info(
+        &self,
+        query: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<(PathBuf, bool)>>> {
+        if self.is_local() {
+            DirectoryLister::Local(self.fs.clone()).list_directory_with_info(query, cx)
+        } else if let Some(session) = self.ssh_client.as_ref() {
+            let path_buf = PathBuf::from(query);
+            let request = proto::ListRemoteDirectory {
+                dev_server_id: SSH_PROJECT_ID,
+                path: path_buf.to_proto(),
+                config: Some(proto::ListRemoteDirectoryConfig { is_dir: true }),
+            };
+
+            let response = session.read(cx).proto_client().request(request);
+            cx.background_spawn(async move {
+                let proto::ListRemoteDirectoryResponse {
+                    entries,
+                    entry_info,
+                } = response.await?;
+                Ok(entries
+                    .into_iter()
+                    .zip(entry_info)
+                    .map(|(entry, info)| (PathBuf::from(entry), info.is_dir))
+                    .collect())
             })
         } else {
             Task::ready(Err(anyhow!("cannot list directory in remote project")))
