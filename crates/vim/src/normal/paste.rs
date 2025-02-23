@@ -177,7 +177,7 @@ impl Vim {
                                     )
                                     .0;
                                 }
-                                cursor = movement::indented_line_beginning(map, cursor, true);
+                                cursor = movement::indented_line_beginning(map, cursor, true, true);
                             } else if !is_multiline && !vim.temp_mode {
                                 cursor = movement::saturating_left(map, cursor)
                             }

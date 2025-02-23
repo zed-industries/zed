@@ -28,6 +28,7 @@
       "ctrl-e": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": false }], // move-end-of-line
       "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": false }], // move-beginning-of-line
       "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": false }], // move-end-of-line
+      "alt-m": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": false, "stop_at_indent": true }], // back-to-indentation
       "alt-f": "editor::MoveToNextSubwordEnd", // forward-word
       "alt-b": "editor::MoveToPreviousSubwordStart", // backward-word
       "alt-u": "editor::ConvertToUpperCase", // upcase-word

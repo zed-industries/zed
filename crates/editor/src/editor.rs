@@ -8827,7 +8827,12 @@ impl Editor {
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_cursors_with(|map, head, _| {
                 (
-                    movement::indented_line_beginning(map, head, action.stop_at_soft_wraps),
+                    movement::indented_line_beginning(
+                        map,
+                        head,
+                        action.stop_at_soft_wraps,
+                        action.stop_at_indent,
+                    ),
                     SelectionGoal::None,
                 )
             });
@@ -8843,7 +8848,12 @@ impl Editor {
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_heads_with(|map, head, _| {
                 (
-                    movement::indented_line_beginning(map, head, action.stop_at_soft_wraps),
+                    movement::indented_line_beginning(
+                        map,
+                        head,
+                        action.stop_at_soft_wraps,
+                        action.stop_at_indent,
+                    ),
                     SelectionGoal::None,
                 )
             });
@@ -8866,6 +8876,7 @@ impl Editor {
             this.select_to_beginning_of_line(
                 &SelectToBeginningOfLine {
                     stop_at_soft_wraps: false,
+                    stop_at_indent: false,
                 },
                 window,
                 cx,
