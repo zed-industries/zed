@@ -40,6 +40,7 @@ impl OpenPathDelegate {
     }
 }
 
+#[derive(Debug)]
 struct DirectoryState {
     path: String,
     match_candidates: Vec<StringMatchCandidate>,
@@ -101,14 +102,24 @@ impl PickerDelegate for OpenPathDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
+        println!("===========");
+        println!("--> Query: {:?}", query);
         let lister = self.lister.clone();
         let (mut dir, suffix) = if let Some(index) = query.rfind('/') {
             (query[..index].to_string(), query[index + 1..].to_string())
         } else {
             (query, String::new())
         };
+        println!("--> Dir: {:?}, Suffix: {:?}", dir, suffix);
         if dir == "" {
-            dir = "/".to_string();
+            #[cfg(not(target_os = "windows"))]
+            {
+                dir = "/".to_string();
+            }
+            #[cfg(target_os = "windows")]
+            {
+                dir = "C:\\".to_string();
+            }
         }
 
         let query = if self
@@ -120,6 +131,8 @@ impl PickerDelegate for OpenPathDelegate {
         } else {
             Some(lister.list_directory(dir.clone(), cx))
         };
+        println!("--> state: {:?}", self.directory_state);
+        println!("--> Query: {:?}", query);
         self.cancel_flag.store(true, atomic::Ordering::Relaxed);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
@@ -143,11 +156,13 @@ impl PickerDelegate for OpenPathDelegate {
                                 })
                                 .collect::<Vec<_>>();
 
-                            DirectoryState {
+                            let x = DirectoryState {
                                 match_candidates,
                                 path: dir,
                                 error: None,
-                            }
+                            };
+                            println!("--> DirectoryState 1: {:?}", x);
+                            x
                         }
                         Err(err) => DirectoryState {
                             match_candidates: vec![],
@@ -234,11 +249,14 @@ impl PickerDelegate for OpenPathDelegate {
         _window: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<String> {
+        println!("===========");
         Some(
             maybe!({
                 let m = self.matches.get(self.selected_index)?;
                 let directory_state = self.directory_state.as_ref()?;
                 let candidate = directory_state.match_candidates.get(*m)?;
+                println!("--> directory_state: {:?}", directory_state);
+                println!("--> Candidate: {:?}", candidate);
                 Some(format!("{}/{}", directory_state.path, candidate.string))
             })
             .unwrap_or(query),
