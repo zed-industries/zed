@@ -25,7 +25,7 @@ use rpc::{
 use settings::initial_server_settings_content;
 use smol::stream::StreamExt;
 use std::{
-    path::{self, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
 };
 use util::ResultExt;
