@@ -1030,7 +1030,6 @@
   // }
   //
   "file_types": {
-    "Plain Text": ["txt"],
     "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
     "Shell Script": [".env.*"]
   },
