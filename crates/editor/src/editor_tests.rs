@@ -1510,6 +1510,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let move_to_beg = MoveToBeginningOfLine {
         stop_at_soft_wraps: true,
+        stop_at_indents: true,
     };
 
     let move_to_end = MoveToEndOfLine {
