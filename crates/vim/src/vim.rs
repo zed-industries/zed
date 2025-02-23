@@ -30,7 +30,8 @@ use gpui::{
     KeyContext, KeystrokeEvent, Render, Subscription, Task, UpdateGlobal, WeakEntity, Window,
 };
 use insert::{NormalBefore, TemporaryNormal};
-use language::Buffer;
+use itertools::Either;
+use language::{Buffer, BufferId};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
@@ -836,20 +837,42 @@ impl Vim {
         })
     }
 
-    fn get_global_mark(
+    fn get_global_mark_identifier(
         &self,
         name: String,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<(Arc<Path>, Vec<Anchor>)> {
+    ) -> Option<Either<Arc<Path>, BufferId>> {
+        let workspace_id = self.workspace(window)?.read(cx).database_id()?;
+        VimGlobals::update_global(cx, |vim_globals, cx| {
+            let marks_collection = vim_globals.marks.get(&workspace_id)?;
+            if let Some(path) =
+                marks_collection.update(cx, |ms, cx| ms.get_path_for_mark(name.clone()))
+            {
+                return Some(Either::Left(path));
+            }
+            if let Some(buffer_id) =
+                marks_collection.update(cx, |ms, cx| ms.get_buffer_id_for_mark(name.clone()))
+            {
+                return Some(Either::Right(buffer_id));
+            }
+            None
+        })
+    }
+
+    fn get_global_mark(
+        &self,
+        name: String,
+        editor: &Editor,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Vec<Anchor>> {
         let workspace_id = self.workspace(window)?.read(cx).database_id()?;
         VimGlobals::update_global(cx, |vim_globals, cx| {
             vim_globals.marks.get(&workspace_id)?.update(cx, |ms, cx| {
-                let multi_buffer = self.editor()?.read(cx).buffer();
+                let multi_buffer = editor.buffer();
                 let buffer = multi_buffer.read(cx).as_singleton()?;
-                let anchors = ms.get_mark(name.clone(), &buffer, multi_buffer, cx)?;
-                let path = ms.get_path_for_mark(name)?;
-                Some((path, anchors))
+                ms.get_mark(name.clone(), &buffer, multi_buffer, cx)
             })
         })
     }

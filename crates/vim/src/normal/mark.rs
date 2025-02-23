@@ -1,18 +1,19 @@
 use std::{ops::Range, sync::Arc};
 
-use anyhow::Ok;
+use anyhow::{Error, Ok};
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
     Anchor, Bias, DisplayPoint, Editor,
 };
-use gpui::{Context, Window};
-use language::SelectionGoal;
+use gpui::{AppContext, Context, UpdateGlobal, Window};
+use language::{Selection, SelectionGoal};
+use ui::BorrowAppContext;
 
 use crate::{
     motion::{self, Motion},
-    state::Mode,
+    state::{Mode, VimGlobals},
     Vim,
 };
 
@@ -137,52 +138,183 @@ impl Vim {
                 None
             }
             m if m.starts_with(|c: char| c.is_uppercase()) => {
-                if let Some((path, points)) = self.get_global_mark(text.to_string(), window, cx) {
-                    if let Some(workspace) = self.workspace(window) {
-                        workspace.update(cx, |workspace, cx| {
-                            let Some(worktree) = workspace.worktrees(cx).next() else {
+                if let Some(either) = self.get_global_mark_identifier(text.to_string(), window, cx)
+                {
+                    match either {
+                        itertools::Either::Left(path) => {
+                            if let Some(workspace) = self.workspace(window) {
+                                workspace.update(cx, |workspace, cx| {
+                                    let Some(workspace_id) = workspace.database_id() else {
+                                        return;
+                                    };
+                                    let Some(worktree) = workspace.worktrees(cx).next() else {
+                                        return;
+                                    };
+                                    let worktree_id = worktree.read(cx).id();
+                                    let Some(path_str) = path.to_str() else {
+                                        return;
+                                    };
+
+                                    let task = workspace.open_path(
+                                        (worktree_id, path_str),
+                                        None,
+                                        true,
+                                        window,
+                                        cx,
+                                    );
+                                    cx.spawn_in(window, |_, mut cx| async move {
+                                        let item = task.await?;
+
+                                        if let Some(editor) = cx
+                                            .update(|_, cx| item.act_as::<Editor>(cx))
+                                            .ok()
+                                            .flatten()
+                                        {
+                                            editor.update_in(&mut cx, |editor, window, cx| {
+                                                println!("change selections");
+                                                if let Some(anchors) = VimGlobals::update_global(
+                                                    cx,
+                                                    |vim_globals, cx| {
+                                                        vim_globals
+                                                            .marks
+                                                            .get(&workspace_id)?
+                                                            .update(cx, |ms, cx| {
+                                                                let multi_buffer = editor.buffer();
+                                                                let buffer = multi_buffer
+                                                                    .read(cx)
+                                                                    .as_singleton()?;
+                                                                ms.get_mark(
+                                                                    text.to_string(),
+                                                                    &buffer,
+                                                                    multi_buffer,
+                                                                    cx,
+                                                                )
+                                                            })
+                                                    },
+                                                ) {
+                                                    editor.change_selections(
+                                                        Some(Autoscroll::fit()),
+                                                        window,
+                                                        cx,
+                                                        |s| {
+                                                            s.select_anchor_ranges(
+                                                                anchors
+                                                                    .iter()
+                                                                    .map(|&anchor| anchor..anchor),
+                                                            );
+                                                        },
+                                                    )
+                                                }
+                                            })?;
+                                            println!("after change selections");
+                                        }
+                                        Ok(())
+                                    })
+                                    .detach_and_log_err(cx);
+                                });
+                            }
+                        }
+                        itertools::Either::Right(buffer_id) => {
+                            let Some(workspace) = self.workspace(window) else {
                                 return;
                             };
-                            let worktree_id = worktree.read(cx).id();
-                            let Some(path_str) = path.to_str() else {
-                                return;
-                            };
+                            workspace.update(cx, |workspace, cx| {
+                                let Some(workspace_id) = workspace.database_id() else {
+                                    return;
+                                };
+                                workspace.active_pane().update(cx, |pane, cx| {
+                                    let Some(item_handle) =
+                                        pane.items().find(|&item_handle| -> bool {
+                                            let Some(editor) = item_handle.act_as::<Editor>(cx)
+                                            else {
+                                                return false;
+                                            };
+                                            let Some(buffer) =
+                                                editor.read(cx).buffer().read(cx).as_singleton()
+                                            else {
+                                                return false;
+                                            };
+                                            buffer_id == buffer.read(cx).remote_id()
+                                        })
+                                    else {
+                                        return;
+                                    };
+                                    let Some(editor) = item_handle.act_as::<Editor>(cx) else {
+                                        return;
+                                    };
 
-                            let task = workspace.open_path(
-                                (worktree_id, path_str),
-                                None,
-                                true,
-                                window,
-                                cx,
-                            );
-                            cx.spawn_in(window, |_, mut cx| async move {
-                                let item = task.await?;
+                                    let Some(index) = pane.index_for_item(&editor) else {
+                                        return;
+                                    };
+                                    pane.activate_item(index, true, true, window, cx);
 
-                                if let Some(editor) =
-                                    cx.update(|_, cx| item.act_as::<Editor>(cx)).ok().flatten()
-                                {
-                                    editor.update_in(&mut cx, |editor, window, cx| {
-                                        let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                                        editor.change_selections(
-                                            Some(Autoscroll::fit()),
-                                            window,
-                                            cx,
-                                            |s| {
-                                                s.select_anchor_ranges(points.iter().map(|p| {
-                                                    let anchor = buffer_snapshot.anchor_before(*p);
-                                                    anchor..anchor
-                                                }));
-                                            },
-                                        )
-                                    })?;
-                                }
-                                Ok(())
-                            })
-                            .detach_and_log_err(cx);
-                        });
+                                    cx.spawn_in(window, |_, mut cx| async move {
+                                        editor.update_in(&mut cx, |editor, window, cx| {
+                                            if let Some(anchors) =
+                                                VimGlobals::update_global(cx, |vim_globals, cx| {
+                                                    vim_globals.marks.get(&workspace_id)?.update(
+                                                        cx,
+                                                        |ms, cx| {
+                                                            let multi_buffer = editor.buffer();
+                                                            let buffer = multi_buffer
+                                                                .read(cx)
+                                                                .as_singleton()?;
+                                                            ms.get_mark(
+                                                                text.to_string(),
+                                                                &buffer,
+                                                                multi_buffer,
+                                                                cx,
+                                                            )
+                                                        },
+                                                    )
+                                                })
+                                            {
+                                                editor.change_selections(
+                                                    Some(Autoscroll::fit()),
+                                                    window,
+                                                    cx,
+                                                    |s| {
+                                                        s.select_anchor_ranges(
+                                                            anchors
+                                                                .iter()
+                                                                .map(|&anchor| anchor..anchor),
+                                                        );
+                                                    },
+                                                )
+                                            }
+                                        })?;
+                                        Ok(())
+                                    })
+                                    .detach_and_log_err(cx);
+                                });
+                            });
+
+                            // cx.spawn(|vim, mut cx| async move {
+                            //     let Some(workspace) = self.workspace(window) else {
+                            //         return;
+                            //     };
+                            //     workspace.update_in(&mut cx, |workspace, window, cx| async move {
+                            //         let task = workspace.project().update(cx, |project, cx| {
+                            //             project.open_buffer_by_id(buffer_id, cx)
+                            //         });
+                            //         let buffer = task.await.unwrap();
+                            //         cx.spawn(|workspace, cx| {
+                            //             let editor = cx
+                            //                 .new(|cx| {
+                            //                     let mut editor =
+                            //                         Editor::for_buffer(buffer, None, window, cx);
+                            //                     editor
+                            //                 })
+                            //                 .unwrap();
+                            //         })
+                            //         .detach();
+                            //     });
+                            // })
+                            // .detach();
+                        }
                     }
                 }
-                None
+                return;
             }
             _ => self.get_local_mark(text.to_string(), window, cx),
         };
