@@ -2011,13 +2011,6 @@ async fn test_trailing_slash(cx: &mut TestAppContext) {
 
     // Test Tab completion for directory (should add trailing slash)
     cx.simulate_input("par");
-    picker
-        .update_in(cx, |picker, window, cx| {
-            picker
-                .delegate
-                .update_matches("par".to_string(), window, cx)
-        })
-        .await;
     cx.dispatch_action(picker::ConfirmCompletion);
     picker.update(cx, |picker, cx| {
         let query = picker.query(cx);
@@ -2026,13 +2019,6 @@ async fn test_trailing_slash(cx: &mut TestAppContext) {
 
     // Test Tab completion for file (should not add trailing slash)
     cx.simulate_input(&format!("parent_dir{}sib", MAIN_SEPARATOR));
-    picker
-        .update_in(cx, |picker, window, cx| {
-            picker
-                .delegate
-                .update_matches(format!("parent_dir{}sib", MAIN_SEPARATOR), window, cx)
-        })
-        .await;
     cx.dispatch_action(picker::ConfirmCompletion);
     picker.update(cx, |picker, cx| {
         let query = picker.query(cx);
