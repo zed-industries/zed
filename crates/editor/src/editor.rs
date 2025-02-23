@@ -1060,7 +1060,6 @@ impl Editor {
             EditorMode::SingleLine { auto_width: false },
             buffer,
             None,
-            false,
             window,
             cx,
         )
@@ -1069,7 +1068,7 @@ impl Editor {
     pub fn multi_line(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let buffer = cx.new(|cx| Buffer::local("", cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::Full, buffer, None, false, window, cx)
+        Self::new(EditorMode::Full, buffer, None, window, cx)
     }
 
     pub fn auto_width(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -1079,7 +1078,6 @@ impl Editor {
             EditorMode::SingleLine { auto_width: true },
             buffer,
             None,
-            false,
             window,
             cx,
         )
@@ -1092,7 +1090,6 @@ impl Editor {
             EditorMode::AutoHeight { max_lines },
             buffer,
             None,
-            false,
             window,
             cx,
         )
@@ -1105,33 +1102,23 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Self {
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        Self::new(EditorMode::Full, buffer, project, false, window, cx)
+        Self::new(EditorMode::Full, buffer, project, window, cx)
     }
 
     pub fn for_multibuffer(
         buffer: Entity<MultiBuffer>,
         project: Option<Entity<Project>>,
-        show_excerpt_controls: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new(
-            EditorMode::Full,
-            buffer,
-            project,
-            show_excerpt_controls,
-            window,
-            cx,
-        )
+        Self::new(EditorMode::Full, buffer, project, window, cx)
     }
 
     pub fn clone(&self, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let show_excerpt_controls = self.display_map.read(cx).show_excerpt_controls();
         let mut clone = Self::new(
             self.mode,
             self.buffer.clone(),
             self.project.clone(),
-            show_excerpt_controls,
             window,
             cx,
         );
@@ -1151,7 +1138,6 @@ impl Editor {
         mode: EditorMode,
         buffer: Entity<MultiBuffer>,
         project: Option<Entity<Project>>,
-        show_excerpt_controls: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1196,7 +1182,6 @@ impl Editor {
                 style.font(),
                 font_size,
                 None,
-                show_excerpt_controls,
                 FILE_HEADER_HEIGHT,
                 MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
                 MULTI_BUFFER_EXCERPT_FOOTER_HEIGHT,
@@ -4487,8 +4472,8 @@ impl Editor {
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             let project = workspace.project().clone();
-            let editor = cx
-                .new(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), true, window, cx));
+            let editor =
+                cx.new(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), window, cx));
             workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
             editor.update(cx, |editor, cx| {
                 editor.highlight_background::<Self>(
@@ -11373,7 +11358,6 @@ impl Editor {
             Editor::for_multibuffer(
                 excerpt_buffer,
                 Some(workspace.project().clone()),
-                true,
                 window,
                 cx,
             )

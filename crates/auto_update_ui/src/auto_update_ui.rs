@@ -93,7 +93,7 @@ fn view_release_notes_locally(
 
                             let tab_description = SharedString::from(body.title.to_string());
                             let editor = cx.new(|cx| {
-                                Editor::for_multibuffer(buffer, Some(project), true, window, cx)
+                                Editor::for_multibuffer(buffer, Some(project), window, cx)
                             });
                             let workspace_handle = workspace.weak_handle();
                             let markdown_preview: Entity<MarkdownPreviewView> =

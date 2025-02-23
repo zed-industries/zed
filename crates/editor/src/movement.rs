@@ -888,7 +888,6 @@ mod tests {
                 font,
                 font_size,
                 None,
-                true,
                 1,
                 1,
                 1,

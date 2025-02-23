@@ -851,7 +851,6 @@ impl PromptEditor<BufferCodegen> {
                 },
                 prompt_buffer,
                 None,
-                false,
                 window,
                 cx,
             );
@@ -1011,7 +1010,6 @@ impl PromptEditor<TerminalCodegen> {
                 },
                 prompt_buffer,
                 None,
-                false,
                 window,
                 cx,
             );

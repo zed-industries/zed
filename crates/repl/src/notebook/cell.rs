@@ -177,7 +177,6 @@ impl Cell {
                         EditorMode::AutoHeight { max_lines: 1024 },
                         multi_buffer,
                         None,
-                        false,
                         window,
                         cx,
                     );

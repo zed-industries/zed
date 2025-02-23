@@ -37,7 +37,6 @@ pub struct BlockMap {
     custom_blocks: Vec<Arc<CustomBlock>>,
     custom_blocks_by_id: TreeMap<CustomBlockId, Arc<CustomBlock>>,
     transforms: RefCell<SumTree<Transform>>,
-    show_excerpt_controls: bool,
     buffer_header_height: u32,
     excerpt_header_height: u32,
     excerpt_footer_height: u32,
@@ -418,7 +417,6 @@ pub struct BlockRows<'a> {
 impl BlockMap {
     pub fn new(
         wrap_snapshot: WrapSnapshot,
-        show_excerpt_controls: bool,
         buffer_header_height: u32,
         excerpt_header_height: u32,
         excerpt_footer_height: u32,
@@ -433,7 +431,6 @@ impl BlockMap {
             folded_buffers: HashSet::default(),
             transforms: RefCell::new(transforms),
             wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
-            show_excerpt_controls,
             buffer_header_height,
             excerpt_header_height,
             excerpt_footer_height,
@@ -651,7 +648,6 @@ impl BlockMap {
 
             if buffer.show_headers() {
                 blocks_in_edit.extend(BlockMap::header_and_footer_blocks(
-                    self.show_excerpt_controls,
                     self.excerpt_footer_height,
                     self.buffer_header_height,
                     self.excerpt_header_height,
@@ -723,13 +719,8 @@ impl BlockMap {
         }
     }
 
-    pub fn show_excerpt_controls(&self) -> bool {
-        self.show_excerpt_controls
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn header_and_footer_blocks<'a, R, T>(
-        show_excerpt_controls: bool,
         excerpt_footer_height: u32,
         buffer_header_height: u32,
         excerpt_header_height: u32,
@@ -779,7 +770,7 @@ impl BlockMap {
             let mut excerpt_controls_before = false;
             let mut excerpt_controls_after = false;
             if let Some(prev_excerpt) = &prev_excerpt {
-                if show_excerpt_controls && !prev_excerpt.ends_at_end {
+                if !prev_excerpt.ends_at_end {
                     height += excerpt_footer_height;
                     excerpt_controls_before = true;
                 }
@@ -827,15 +818,10 @@ impl BlockMap {
             if let Some(next_excerpt) = &excerpt_boundary.next {
                 if new_buffer_id.is_some() {
                     height += buffer_header_height;
-                    if show_excerpt_controls && !next_excerpt.starts_at_start {
-                        height += excerpt_header_height;
-                        excerpt_controls_after = true;
-                    }
-                } else {
-                    if show_excerpt_controls && !next_excerpt.starts_at_start {
-                        height += excerpt_header_height;
-                        excerpt_controls_after = true;
-                    }
+                }
+                if !next_excerpt.starts_at_start {
+                    height += excerpt_header_height;
+                    excerpt_controls_after = true;
                 }
             }
 
@@ -2051,7 +2037,7 @@ mod tests {
         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
         let (wrap_map, wraps_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
-        let mut block_map = BlockMap::new(wraps_snapshot.clone(), true, 1, 1, 1);
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1, 1);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         let block_ids = writer.insert(vec![
@@ -2264,7 +2250,7 @@ mod tests {
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wraps_snapshot) = WrapMap::new(tab_snapshot, font, font_size, Some(wrap_width), cx);
 
-        let block_map = BlockMap::new(wraps_snapshot.clone(), true, 1, 1, 1);
+        let block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1, 1);
         let snapshot = block_map.read(wraps_snapshot, Default::default());
 
         // Each excerpt has a header above and footer below. Excerpts are also *separated* by a newline.
@@ -2298,7 +2284,7 @@ mod tests {
         let (_tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
         let (_wrap_map, wraps_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
-        let mut block_map = BlockMap::new(wraps_snapshot.clone(), false, 1, 1, 0);
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1, 0);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         let block_ids = writer.insert(vec![
@@ -2401,7 +2387,7 @@ mod tests {
         let (_, wraps_snapshot) = cx.update(|cx| {
             WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), Some(px(60.)), cx)
         });
-        let mut block_map = BlockMap::new(wraps_snapshot.clone(), true, 1, 1, 0);
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1, 0);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         writer.insert(vec![
@@ -2445,7 +2431,7 @@ mod tests {
         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, tab_size);
         let (wrap_map, wraps_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
-        let mut block_map = BlockMap::new(wraps_snapshot.clone(), false, 1, 1, 0);
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1, 0);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         let replace_block_id = writer.insert(vec![BlockProperties {
@@ -2612,7 +2598,7 @@ mod tests {
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wrap_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
-        let mut block_map = BlockMap::new(wrap_snapshot.clone(), true, 2, 1, 1);
+        let mut block_map = BlockMap::new(wrap_snapshot.clone(), 2, 1, 1);
         let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
 
         assert_eq!(
@@ -2982,7 +2968,7 @@ mod tests {
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wrap_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
-        let mut block_map = BlockMap::new(wrap_snapshot.clone(), true, 2, 1, 1);
+        let mut block_map = BlockMap::new(wrap_snapshot.clone(), 2, 1, 1);
         let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
 
         assert_eq!(blocks_snapshot.text(), "\n\n111");
@@ -3042,6 +3028,10 @@ mod tests {
         let excerpt_footer_height = rng.gen_range(1..=5);
 
         log::info!("Wrap width: {:?}", wrap_width);
+        log::info!(
+            "Buffer start header height: {:?}",
+            buffer_start_header_height
+        );
         log::info!("Excerpt Header Height: {:?}", excerpt_header_height);
         log::info!("Excerpt Footer Height: {:?}", excerpt_footer_height);
         let is_singleton = rng.gen();
@@ -3070,7 +3060,6 @@ mod tests {
             cx.update(|cx| WrapMap::new(tab_snapshot, font, font_size, wrap_width, cx));
         let mut block_map = BlockMap::new(
             wraps_snapshot,
-            true,
             buffer_start_header_height,
             excerpt_header_height,
             excerpt_footer_height,
@@ -3291,7 +3280,6 @@ mod tests {
 
             // Note that this needs to be synced with the related section in BlockMap::sync
             expected_blocks.extend(BlockMap::header_and_footer_blocks(
-                true,
                 excerpt_footer_height,
                 buffer_start_header_height,
                 excerpt_header_height,

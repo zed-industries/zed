@@ -8602,7 +8602,7 @@ mod tests {
         init_test(cx, |_| {});
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
+            Editor::new(EditorMode::Full, buffer, None, window, cx)
         });
 
         let editor = window.root(cx).unwrap();
@@ -8702,7 +8702,7 @@ mod tests {
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
+            Editor::new(EditorMode::Full, buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
@@ -8805,7 +8805,7 @@ mod tests {
                 ],
                 cx,
             );
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
+            Editor::new(EditorMode::Full, buffer, None, window, cx)
         });
         let editor = window.root(cx).unwrap();
         let style = cx.update(|_, cx| editor.read(cx).style().unwrap().clone());
@@ -8856,7 +8856,7 @@ mod tests {
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple("", cx);
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
+            Editor::new(EditorMode::Full, buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
@@ -9082,7 +9082,7 @@ mod tests {
         );
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(input_text, cx);
-            Editor::new(editor_mode, buffer, None, true, window, cx)
+            Editor::new(editor_mode, buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();

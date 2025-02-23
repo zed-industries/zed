@@ -7505,7 +7505,6 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
             EditorMode::Full,
             multi_buffer,
             Some(project.clone()),
-            true,
             window,
             cx,
         )
@@ -12943,7 +12942,6 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut TestAppContext) {
             EditorMode::Full,
             multi_buffer,
             Some(project.clone()),
-            true,
             window,
             cx,
         )
@@ -13426,9 +13424,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
         multibuffer
     });
 
-    let editor = cx.add_window(|window, cx| {
-        Editor::new(EditorMode::Full, multi_buffer, None, true, window, cx)
-    });
+    let editor =
+        cx.add_window(|window, cx| Editor::new(EditorMode::Full, multi_buffer, None, window, cx));
     editor
         .update(cx, |editor, _window, cx| {
             for (buffer, diff_base) in [
@@ -13547,9 +13544,8 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
         multibuffer
     });
 
-    let editor = cx.add_window(|window, cx| {
-        Editor::new(EditorMode::Full, multi_buffer, None, true, window, cx)
-    });
+    let editor =
+        cx.add_window(|window, cx| Editor::new(EditorMode::Full, multi_buffer, None, window, cx));
     editor
         .update(cx, |editor, _window, cx| {
             let diff = cx.new(|cx| BufferDiff::new_with_base_text(base, &buffer, cx));
@@ -15330,7 +15326,6 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
             EditorMode::Full,
             multi_buffer,
             Some(project.clone()),
-            true,
             window,
             cx,
         )
@@ -15484,7 +15479,6 @@ async fn test_multi_buffer_folding(cx: &mut TestAppContext) {
             EditorMode::Full,
             multi_buffer,
             Some(project.clone()),
-            true,
             window,
             cx,
         )
@@ -15639,7 +15633,6 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut TestAppContext) {
             EditorMode::Full,
             multi_buffer,
             Some(project.clone()),
-            true,
             window,
             cx,
         )
@@ -15759,7 +15752,6 @@ async fn test_multi_buffer_with_single_excerpt_folding(cx: &mut TestAppContext) 
             EditorMode::Full,
             multi_buffer,
             Some(project.clone()),
-            true,
             window,
             cx,
         )
@@ -15933,7 +15925,7 @@ async fn assert_highlighted_edits(
 ) {
     let window = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(text, cx);
-        Editor::new(EditorMode::Full, buffer, None, true, window, cx)
+        Editor::new(EditorMode::Full, buffer, None, window, cx)
     });
     let cx = &mut VisualTestContext::from_window(*window, cx);
 
