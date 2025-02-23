@@ -103,8 +103,6 @@ pub struct ThemeSettings {
     /// The font size used for buffers, and the terminal.
     ///
     /// The terminal font size can be overridden using it's own setting.
-    ///
-    /// Use [ThemeSettings::buffer_font_size] to access this.
     buffer_font_size: Pixels,
     /// The font used for buffers, and the terminal.
     ///
@@ -569,7 +567,8 @@ impl ThemeSettings {
     pub fn buffer_font_size(&self, cx: &App) -> Pixels {
         let font_size = cx
             .try_global::<AdjustedBufferFontSize>()
-            .map_or(self.buffer_font_size, |size| size.0);
+            .map(|size| size.0)
+            .unwrap_or(self.buffer_font_size);
         clamp_font_size(font_size)
     }
 
@@ -577,7 +576,8 @@ impl ThemeSettings {
     pub fn ui_font_size(&self, cx: &App) -> Pixels {
         let font_size = cx
             .try_global::<AdjustedUiFontSize>()
-            .map_or(self.ui_font_size, |size| size.0);
+            .map(|size| size.0)
+            .unwrap_or(self.ui_font_size);
         clamp_font_size(font_size)
     }
 
@@ -680,13 +680,6 @@ pub fn adjusted_font_size(size: Pixels, cx: &App) -> Pixels {
     clamp_font_size(adjusted_font_size)
 }
 
-/// Returns the adjusted buffer font size.
-pub fn get_buffer_font_size(cx: &App) -> Pixels {
-    let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-    cx.try_global::<AdjustedBufferFontSize>()
-        .map_or(buffer_font_size, |adjusted_size| adjusted_size.0)
-}
-
 /// Adjusts the buffer font size.
 pub fn adjust_buffer_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
     let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
@@ -718,18 +711,11 @@ pub fn setup_ui_font(window: &mut Window, cx: &mut App) -> gpui::Font {
     let (ui_font, ui_font_size) = {
         let theme_settings = ThemeSettings::get_global(cx);
         let font = theme_settings.ui_font.clone();
-        (font, get_ui_font_size(cx))
+        (font, theme_settings.ui_font_size(cx))
     };
 
     window.set_rem_size(ui_font_size);
     ui_font
-}
-
-/// Gets the adjusted UI font size.
-pub fn get_ui_font_size(cx: &App) -> Pixels {
-    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
-    cx.try_global::<AdjustedUiFontSize>()
-        .map_or(ui_font_size, |adjusted_size| adjusted_size.0)
 }
 
 /// Sets the adjusted UI font size.
