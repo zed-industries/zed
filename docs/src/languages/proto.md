@@ -2,7 +2,7 @@
 
 Proto/proto3 (Protocol Buffers definition language) support is available through the [Proto extension](https://github.com/zed-industries/zed/tree/main/extensions/proto).
 
-- Tree Sitter: [coder3101/tree-sitter-proto](https://github.com/coder3101/tree-sitter-proto)
+- Tree-sitter: [coder3101/tree-sitter-proto](https://github.com/coder3101/tree-sitter-proto)
 - Language Servers: [protobuf-language-server](https://github.com/lasorda/protobuf-language-server)
 
 <!--

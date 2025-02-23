@@ -5,7 +5,7 @@
 Luau language support in Zed is provided by the community-maintained [Luau extension](https://github.com/4teapo/zed-luau).
 Report issues to: [https://github.com/4teapo/zed-luau/issues](https://github.com/4teapo/zed-luau/issues)
 
-- Tree Sitter: [4teapo/tree-sitter-luau](https://github.com/4teapo/tree-sitter-luau)
+- Tree-sitter: [4teapo/tree-sitter-luau](https://github.com/4teapo/tree-sitter-luau)
 - Language Server: [JohnnyMorganz/luau-lsp](https://github.com/JohnnyMorganz/luau-lsp)
 
 ## Configuration
