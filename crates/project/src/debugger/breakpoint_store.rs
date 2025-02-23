@@ -1,3 +1,6 @@
+//! Module for managing breakpoints in a project.
+//!
+//! Breakpoints are separate from a session because they're not associated with any particular debug session. They can also be set up without a session running.
 use crate::{
     buffer_store::{BufferStore, BufferStoreEvent},
     BufferId, ProjectItem as _, ProjectPath, WorktreeStore,
@@ -37,6 +40,7 @@ pub struct BreakpointStore {
     buffer_store: Entity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
     downstream_client: Option<(AnyProtoClient, u64)>,
+    active_stack_frames: HashMap<u64, (Arc<Path>, Point)>,
     mode: BreakpointMode,
 }
 
@@ -44,6 +48,11 @@ pub enum BreakpointStoreEvent {
     BreakpointsChanged {
         project_path: ProjectPath,
         source_changed: bool,
+    },
+    StackFrameChanged {
+        thread_id: u64,
+        path: Arc<Path>,
+        position: Point,
     },
 }
 
@@ -68,6 +77,7 @@ impl BreakpointStore {
             worktree_store,
             mode: BreakpointMode::Local,
             downstream_client: None,
+            active_stack_frames: Default::default(),
         }
     }
 
@@ -90,6 +100,7 @@ impl BreakpointStore {
                 upstream_project_id,
             }),
             downstream_client: None,
+            active_stack_frames: Default::default(),
         }
     }
 
@@ -130,6 +141,22 @@ impl BreakpointStore {
             }) => None,
             BreakpointMode::Local => None,
         }
+    }
+
+    pub fn set_active_stack_frame(
+        &mut self,
+        thread_id: u64,
+        path: Arc<Path>,
+        position: Point,
+        cx: &mut Context<Self>,
+    ) {
+        self.active_stack_frames
+            .insert(thread_id, (path.clone(), position.clone()));
+        cx.emit(BreakpointStoreEvent::StackFrameChanged {
+            thread_id,
+            path,
+            position,
+        });
     }
 
     pub(crate) fn set_breakpoints_from_proto(

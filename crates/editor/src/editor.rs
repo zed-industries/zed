@@ -5698,7 +5698,6 @@ impl Editor {
                 if let Some(breakpoints) = breakpoints.get(&project_path) {
                     for breakpoint in breakpoints {
                         let point = breakpoint.point_for_buffer(&buffer.text_snapshot());
-
                         breakpoint_display_points
                             .insert(point.to_display_point(&snapshot).row(), breakpoint.clone());
                     }

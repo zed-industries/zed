@@ -561,8 +561,6 @@ impl Session {
                             }
                         }
                     })];
-                cx.subscribe(&breakpoints, Self::send_changed_breakpoints)
-                    .detach();
 
                 Self {
                     mode: Mode::Local(mode),
@@ -632,111 +630,6 @@ impl Session {
 
     pub fn is_local(&self) -> bool {
         matches!(self.mode, Mode::Local(_))
-    }
-
-    fn send_changed_breakpoints(
-        &mut self,
-        _breakpoint_store: Entity<BreakpointStore>,
-        event: &BreakpointStoreEvent,
-        cx: &mut Context<Self>,
-    ) {
-        let BreakpointStoreEvent::BreakpointsChanged {
-            project_path,
-            source_changed,
-        } = event;
-
-        // We still want to send an empty list of breakpoints to tell the dap server that there are no breakpoints
-        let Some((abs_path, breakpoints)) = self
-            .breakpoint_store
-            .read(cx)
-            .serialize_breakpoints_for_project_path(project_path, cx)
-        else {
-            return;
-        };
-
-        let source_breakpoints = breakpoints
-            .iter()
-            .map(|bp| bp.to_source_breakpoint())
-            .collect::<Vec<_>>();
-
-        self.send_breakpoints(
-            abs_path,
-            source_breakpoints,
-            self.ignore_breakpoints,
-            *source_changed,
-            cx,
-        )
-        .detach_and_log_err(cx);
-    }
-
-    fn send_initial_breakpoints(&self, cx: &App) -> Task<()> {
-        let mut tasks = Vec::new();
-
-        for (abs_path, serialized_breakpoints) in self
-            .breakpoint_store
-            .read_with(cx, |store, cx| store.all_breakpoints(true, cx))
-            .into_iter()
-            .filter(|(_, bps)| !bps.is_empty())
-        {
-            let source_breakpoints = serialized_breakpoints
-                .iter()
-                .map(|bp| bp.to_source_breakpoint())
-                .collect::<Vec<_>>();
-
-            tasks.push(self.send_breakpoints(
-                abs_path,
-                source_breakpoints,
-                self.ignore_breakpoints,
-                false,
-                cx,
-            ));
-        }
-
-        cx.background_executor().spawn(async move {
-            join_all(tasks).await;
-        })
-    }
-
-    pub fn send_breakpoints(
-        &self,
-        absolute_file_path: Arc<Path>,
-        mut breakpoints: Vec<SourceBreakpoint>,
-        ignore: bool,
-        source_changed: bool,
-        cx: &App,
-    ) -> Task<Result<()>> {
-        let Some(client) = self.adapter_client() else {
-            return Task::ready(Err(anyhow!(
-                "Could not get client in remote session to send breakpoints"
-            )));
-        };
-
-        // Adjust breakpoints as our client declares that indices start at one.
-        breakpoints.iter_mut().for_each(|bp| bp.line += 1u64);
-
-        cx.background_executor().spawn(async move {
-            client
-                .request::<SetBreakpoints>(SetBreakpointsArguments {
-                    source: Source {
-                        path: Some(String::from(absolute_file_path.to_string_lossy())),
-                        name: absolute_file_path
-                            .file_name()
-                            .map(|name| name.to_string_lossy().to_string()),
-                        source_reference: None,
-                        presentation_hint: None,
-                        origin: None,
-                        sources: None,
-                        adapter_data: None,
-                        checksums: None,
-                    },
-                    breakpoints: Some(if ignore { Vec::default() } else { breakpoints }),
-                    source_modified: Some(source_changed),
-                    lines: None,
-                })
-                .await?;
-
-            Ok(())
-        })
     }
 
     pub fn output(&self) -> Vec<dap::OutputEvent> {
@@ -989,7 +882,7 @@ impl Session {
         // todo(debugger): We need to propagate this change to downstream sessions and send a message to upstream sessions
 
         self.ignore_breakpoints = ignore;
-        let mut tasks = Vec::new();
+        let mut tasks: Vec<Task<()>> = Vec::new();
 
         for (abs_path, serialized_breakpoints) in self
             .breakpoint_store
@@ -1005,13 +898,15 @@ impl Session {
                 vec![]
             };
 
-            tasks.push(self.send_breakpoints(
+            todo!(
+                r#"tasks.push(self.send_breakpoints(
                 abs_path,
                 source_breakpoints,
                 self.ignore_breakpoints,
                 false,
                 cx,
-            ));
+                ));"#
+            );
         }
 
         cx.background_executor().spawn(async move {
