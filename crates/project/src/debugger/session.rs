@@ -11,9 +11,9 @@ use super::dap_command::{
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
 use collections::{HashMap, IndexMap};
-use dap::adapters::{DapDelegate, DapStatus, DebugAdapterName};
-use dap::client::{DebugAdapterClient, SessionId};
 use dap::{
+    adapters::{DapDelegate, DapStatus, DebugAdapterName},
+    client::{DebugAdapterClient, SessionId},
     messages::{self, Events, Message},
     requests::SetBreakpoints,
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, SetBreakpointsArguments,
@@ -434,6 +434,8 @@ pub struct Session {
     ignore_breakpoints: bool,
     modules: Vec<dap::Module>,
     loaded_sources: Vec<dap::Source>,
+    last_processed_output: usize,
+    output: Vec<dap::OutputEvent>,
     threads: IndexMap<ThreadId, Thread>,
     requests: HashMap<RequestSlot, Shared<Task<Option<()>>>>,
     thread_states: ThreadStates,
@@ -570,6 +572,8 @@ impl Session {
                     capabilities,
                     thread_states: ThreadStates::default(),
                     ignore_breakpoints: false,
+                    last_processed_output: 0,
+                    output: Vec::default(),
                     requests: HashMap::default(),
                     modules: Vec::default(),
                     loaded_sources: Vec::default(),
@@ -598,6 +602,8 @@ impl Session {
             breakpoint_store,
             ignore_breakpoints,
             thread_states: ThreadStates::default(),
+            last_processed_output: 0,
+            output: Vec::default(),
             requests: HashMap::default(),
             modules: Vec::default(),
             loaded_sources: Vec::default(),
@@ -622,6 +628,10 @@ impl Session {
 
     pub fn is_terminated(&self) -> bool {
         self.is_session_terminated
+    }
+
+    pub fn is_local(&self) -> bool {
+        matches!(self.mode, Mode::Local(_))
     }
 
     fn send_changed_breakpoints(
@@ -729,6 +739,18 @@ impl Session {
         })
     }
 
+    pub fn output(&self) -> Vec<dap::OutputEvent> {
+        self.output.iter().cloned().collect()
+    }
+
+    pub fn last_processed_output(&self) -> usize {
+        self.last_processed_output
+    }
+
+    pub fn set_last_processed_output(&mut self, last_processed_output: usize) {
+        self.last_processed_output = last_processed_output;
+    }
+
     fn handle_stopped_event(&mut self, event: StoppedEvent, cx: &mut Context<Self>) {
         // todo(debugger): We should query for all threads here if we don't get a thread id
         // maybe in both cases too?
@@ -777,7 +799,9 @@ impl Session {
                 }
                 self.invalidate_state(&ThreadsCommand.into());
             }
-            Events::Output(_event) => {}
+            Events::Output(event) => {
+                self.output.push(event);
+            }
             Events::Breakpoint(_) => {}
             Events::Module(_) => {
                 self.invalidate_state(&ModulesCommand.into());
@@ -1391,12 +1415,24 @@ impl Session {
                 frame_id,
                 source,
             },
-            |this, _response, cx| {
+            |this, response, cx| {
+                this.output.push(dap::OutputEvent {
+                    category: None,
+                    output: response.result.clone(),
+                    group: None,
+                    variables_reference: Some(response.variables_reference),
+                    source: None,
+                    line: None,
+                    column: None,
+                    data: None,
+                });
+
+                // TODO(debugger): only invalidate variables & scopes
                 this.invalidate(cx);
             },
             cx,
         )
-        .detach()
+        .detach();
     }
 
     pub fn disconnect_client(&mut self, cx: &mut Context<Self>) {

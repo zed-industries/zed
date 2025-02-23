@@ -77,8 +77,24 @@ impl Console {
             editor
         });
 
-        let _subscriptions =
-            vec![cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events)];
+        let _subscriptions = vec![
+            cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
+            cx.observe_in(&session, window, |console, session, window, cx| {
+                let (output, last_processed_ix) = session.update(cx, |session, cx| {
+                    (session.output(), session.last_processed_output())
+                });
+
+                if output.len() > last_processed_ix {
+                    for event in &output[last_processed_ix..] {
+                        console.add_message(event.clone(), window, cx);
+                    }
+
+                    session.update(cx, |session, cx| {
+                        session.set_last_processed_output(output.len());
+                    });
+                }
+            }),
+        ];
 
         Self {
             session,
@@ -101,9 +117,8 @@ impl Console {
         &self.query_bar
     }
 
-    fn is_local(&self, _cx: &Context<Self>) -> bool {
-        // todo(debugger): Fix this function
-        true
+    fn is_local(&self, cx: &Context<Self>) -> bool {
+        self.session.read(cx).is_local()
     }
 
     fn handle_stack_frame_list_events(
@@ -239,36 +254,6 @@ impl Console {
                 cx,
             );
         });
-
-        // TODO(debugger): make this work again
-        // let weak_console = cx.weak_entity();
-
-        // window
-        //     .spawn(cx, |mut cx| async move {
-        //         let response = evaluate_task.await?;
-
-        //         weak_console.update_in(&mut cx, |console, window, cx| {
-        //             console.add_message(
-        //                 OutputEvent {
-        //                     category: None,
-        //                     output: response.result,
-        //                     group: None,
-        //                     variables_reference: Some(response.variables_reference),
-        //                     source: None,
-        //                     line: None,
-        //                     column: None,
-        //                     data: None,
-        //                 },
-        //                 window,
-        //                 cx,
-        //             );
-
-        //             console.variable_list.update(cx, |variable_list, cx| {
-        //                 variable_list.invalidate(window, cx);
-        //             })
-        //         })
-        //     })
-        //     .detach_and_log_err(cx);
     }
 
     fn render_console(&self, cx: &Context<Self>) -> impl IntoElement {
