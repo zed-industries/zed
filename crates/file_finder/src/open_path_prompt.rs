@@ -100,8 +100,6 @@ impl PickerDelegate for OpenPathDelegate {
         cx.notify();
     }
 
-    // todo(windows)
-    // Is this method woring correctly on Windows? This method uses `/` for path separator.
     fn update_matches(
         &mut self,
         query: String,
