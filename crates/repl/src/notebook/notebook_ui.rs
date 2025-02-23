@@ -163,6 +163,12 @@ impl NotebookEditor {
         }
     }
 
+    fn has_executable_cells(&self) -> bool {
+        self.cell_map
+            .values()
+            .any(|cell| matches!(cell, Cell::Code(_)))
+    }
+
     fn has_outputs(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.cell_map.values().any(|cell| {
             if let Cell::Code(code_cell) = cell {
@@ -381,6 +387,7 @@ impl NotebookEditor {
                                     window,
                                     cx,
                                 )
+                                .disabled(!self.has_executable_cells())
                                 .tooltip(move |window, cx| {
                                     Tooltip::for_action("Execute all cells", &RunAll, window, cx)
                                 })
@@ -461,6 +468,7 @@ impl NotebookEditor {
                                     window,
                                     cx,
                                 )
+                                .disabled(true)
                                 .tooltip(move |window, cx| {
                                     Tooltip::for_action(
                                         "Add markdown block",
@@ -483,6 +491,7 @@ impl NotebookEditor {
                                     window,
                                     cx,
                                 )
+                                .disabled(true)
                                 .tooltip(move |window, cx| {
                                     Tooltip::for_action("Add code block", &AddCodeBlock, window, cx)
                                 })
@@ -499,15 +508,13 @@ impl NotebookEditor {
                 v_flex()
                     .gap(DynamicSpacing::Base08.rems(cx))
                     .items_center()
-                    .child(Self::render_notebook_control(
-                        "more-menu",
-                        IconName::Ellipsis,
-                        window,
-                        cx,
-                    ))
+                    .child(
+                        Self::render_notebook_control("more-menu", IconName::Ellipsis, window, cx)
+                            .disabled(true),
+                    )
                     .child(
                         Self::button_group(window, cx)
-                            .child(IconButton::new("repl", IconName::ReplNeutral)),
+                            .child(IconButton::new("repl", IconName::ReplNeutral).disabled(true)),
                     ),
             )
     }
