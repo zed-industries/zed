@@ -1349,8 +1349,8 @@ impl Terminal {
         let grid = terminal.grid();
         let mut lines = Vec::new();
 
-        let mut current_line = grid.bottommost_line().0 as i32;
-        let topmost_line = grid.topmost_line().0 as i32;
+        let mut current_line = grid.bottommost_line().0;
+        let topmost_line = grid.topmost_line().0;
 
         while current_line >= topmost_line && lines.len() < n {
             let logical_line_start = self.find_logical_line_start(grid, current_line, topmost_line);
