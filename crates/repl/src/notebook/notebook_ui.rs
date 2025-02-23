@@ -45,6 +45,7 @@ pub(crate) const LARGE_SPACING_SIZE: f32 = 16.0;
 pub(crate) const GUTTER_WIDTH: f32 = 19.0;
 pub(crate) const CODE_BLOCK_INSET: f32 = MEDIUM_SPACING_SIZE;
 pub(crate) const CONTROL_SIZE: f32 = 20.0;
+const MINIMUM_NOTEBOOK_VER: f32 = 4.1;
 
 pub fn init(cx: &mut App) {
     if cx.has_flag::<NotebookFeatureFlag>() || std::env::var("LOCAL_NOTEBOOK_DEV").is_ok() {
@@ -590,7 +591,11 @@ impl project::ProjectItem for NotebookItem {
                     }
                     // Bad notebooks and notebooks v4.0 and below are not supported
                     Err(e) => {
-                        anyhow::bail!("Failed to parse notebook: {:?}", e);
+                        anyhow::bail!(
+                            "Unsupported notebook version. This notebook requires version {} or later. Error details: {}",
+                            MINIMUM_NOTEBOOK_VER,
+                            e
+                        );
                     }
                 };
 
