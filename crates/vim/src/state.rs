@@ -13,7 +13,7 @@ use gpui::{
     Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, Global,
     WeakEntity,
 };
-use language::{Buffer, BufferEvent, BufferId, Point, ToOffset, ToPoint};
+use language::{Buffer, BufferEvent, BufferId, Point, ToPoint};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
@@ -224,21 +224,12 @@ pub enum MarksCollection {
 
 impl MarksCollection {
     pub fn load(&mut self, entity: &Entity<Buffer>, multi_buffer: &Entity<MultiBuffer>, cx: &App) {
-        println!("l2");
-        let buffer = entity.read(cx);
-        println!("l3");
-        let buffer_snapshot = buffer.snapshot();
-        println!("l4");
         let multi_buffer = multi_buffer.read(cx);
-        println!("l5");
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         match self {
             MarksCollection::Unloaded(marks) => {
-                println!("l6");
                 let mut new_marks = HashMap::<String, Vec<Anchor>>::default();
-                println!("l7");
                 for (name, points) in marks.iter() {
-                    println!("l8");
                     let anchors = points
                         .iter()
                         .map(|&p| {
@@ -248,7 +239,6 @@ impl MarksCollection {
                         .collect();
                     new_marks.insert(name.clone(), anchors);
                 }
-                println!("l9");
                 *self = MarksCollection::Loaded {
                     marks: new_marks,
                     buffer: entity.downgrade(),
@@ -308,9 +298,7 @@ impl MarksCollection {
         multi_buffer: &Entity<MultiBuffer>,
         cx: &App,
     ) -> Option<Vec<Anchor>> {
-        println!("g1");
         self.load(buffer, multi_buffer, cx);
-        println!("g2");
         match self {
             MarksCollection::Loaded { marks, buffer: _ } => marks.get(&name).cloned(),
             _ => None,
@@ -427,30 +415,12 @@ impl MarksState {
         }
     }
 
-    pub fn on_buffer_loaded(
-        &mut self,
-        buffer_handle: &Entity<Buffer>,
-        multi_buffer_handle: Option<Entity<MultiBuffer>>,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn on_buffer_loaded(&mut self, buffer_handle: &Entity<Buffer>, cx: &mut Context<Self>) {
         let workspace_id = self.workspace_id;
 
-        // if let Some(path) = buffer_handle
-        //     .read(cx)
-        //     .file()
-        //     .map(|file| file.path().clone())
-        // {
-        //     if let Some(marks_collection) = self.marks.get_mut(&path.clone()) {
-        //         if let Some(multi_buffer) = multi_buffer_handle {
-        //             marks_collection.load(buffer_handle, &multi_buffer, cx);
-        //             println!("loaded");
-        //         }
-        //     }
-        // }
         cx.subscribe(buffer_handle, move |this, buffer, event, cx| {
             match event {
                 BufferEvent::Edited => {
-                    println!("also here");
                     // Very inefficient at the moment
                     let Some(path) = buffer.read(cx).file().map(|file| file.path().clone()) else {
                         return;
@@ -478,30 +448,23 @@ impl MarksState {
                 .retain(|_, &mut id| buffer_id != id);
 
             // if it is a file mark unload the mark
-            marks_state
-                .marks
-                .values_mut()
-                .map(|mc| match mc {
-                    MarksCollection::Loaded { marks, buffer } => {
-                        for (_, anchors) in marks {
-                            let Some(anchor) = anchors.first() else {
-                                continue;
-                            };
+            marks_state.marks.values_mut().for_each(|mc| match mc {
+                MarksCollection::Loaded { marks, buffer: _ } => {
+                    if marks.iter().any(|(_, anchors)| {
+                        let Some(anchor) = anchors.first() else {
+                            return false;
+                        };
 
-                            let Some(id) = anchor.buffer_id else {
-                                continue;
-                            };
-                            if id == buffer_id {
-                                println!("unloaded");
-                                mc.unload(cx);
-                                return mc;
-                            }
-                        }
-                        mc
+                        let Some(id) = anchor.buffer_id else {
+                            return false;
+                        };
+                        id == buffer_id
+                    }) {
+                        mc.unload(cx);
                     }
-                    m => m,
-                })
-                .collect::<Vec<_>>();
+                }
+                _ => {}
+            });
         })
         .detach();
     }
@@ -597,13 +560,10 @@ impl MarksState {
         multi_buffer: &Entity<MultiBuffer>,
         cx: &App,
     ) -> Option<Vec<Anchor>> {
-        println!("1");
         let path: Arc<Path> = if name.starts_with(|c: char| c.is_uppercase())
             || name.starts_with(|c: char| c.is_digit(10))
         {
-            println!("2");
             if let Some(buffer_id) = self.get_buffer_id_for_mark(name.clone()) {
-                println!("3");
                 return self.buffer_marks.get_mut(&buffer_id)?.get_anchors(
                     name,
                     buffer,
@@ -613,11 +573,8 @@ impl MarksState {
             }
             self.get_path_for_mark(name.clone())?
         } else {
-            println!("4");
             let Some(path) = buffer.read(cx).file().map(|file| file.path().clone()) else {
-                println!("5");
                 let buffer_id = buffer.read(cx).remote_id();
-                println!("6");
                 return self.buffer_marks.get_mut(&buffer_id)?.get_anchors(
                     name,
                     buffer,
@@ -627,7 +584,6 @@ impl MarksState {
             };
             path
         };
-        println!("7");
         self.marks
             .get_mut(&path)?
             .get_anchors(name.clone(), buffer, multi_buffer, cx)
@@ -696,53 +652,17 @@ impl VimGlobals {
             .detach_and_log_err(cx);
 
             let buffer_store = workspace.project().read(cx).buffer_store().clone();
-            cx.subscribe(&buffer_store, move |workspace, _, event, cx| {
-                match event {
-                    project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
-                        println!("buffer added");
-                        // if we have marks for this buffer, upgrade to anchors,
-                        // watch for changes, and when the buffer is closed, convert back
-                        let mut loaded = false;
-                        let editors: Vec<_> = workspace.items_of_type::<Editor>(cx).collect();
-                        for editor in editors {
-                            editor.update(cx, |editor, cx| {
-                                let Some(buffer_from_editor) =
-                                    editor.buffer().read(cx).as_singleton()
-                                else {
-                                    return;
-                                };
-                                let buffer_from_editor = buffer_from_editor.read(cx);
-                                let buffer_id = buffer_from_editor.remote_id();
-                                if buffer.read(cx).remote_id() != buffer_id {
-                                    return;
-                                }
-                                Vim::update_globals(cx, |globals, cx| {
-                                    if let Some(marks_state) = globals.marks.get(&workspace_id) {
-                                        marks_state.update(cx, |ms, cx| {
-                                            ms.on_buffer_loaded(
-                                                buffer,
-                                                Some(editor.buffer().clone()),
-                                                cx,
-                                            );
-                                            println!("loaded = true");
-                                            loaded = true;
-                                        });
-                                    }
-                                });
+            cx.subscribe(&buffer_store, move |_, _, event, cx| match event {
+                project::buffer_store::BufferStoreEvent::BufferAdded(buffer) => {
+                    Vim::update_globals(cx, |globals, cx| {
+                        if let Some(marks_state) = globals.marks.get(&workspace_id) {
+                            marks_state.update(cx, |ms, cx| {
+                                ms.on_buffer_loaded(buffer, cx);
                             });
                         }
-                        if !loaded {
-                            Vim::update_globals(cx, |globals, cx| {
-                                if let Some(marks_state) = globals.marks.get(&workspace_id) {
-                                    marks_state.update(cx, |ms, cx| {
-                                        ms.on_buffer_loaded(buffer, None, cx);
-                                    });
-                                }
-                            })
-                        }
-                    }
-                    _ => {}
+                    })
                 }
+                _ => {}
             })
             .detach();
         })

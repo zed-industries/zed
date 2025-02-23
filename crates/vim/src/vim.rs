@@ -846,49 +846,17 @@ impl Vim {
         let workspace_id = self.workspace(window)?.read(cx).database_id()?;
         VimGlobals::update_global(cx, |vim_globals, cx| {
             let marks_collection = vim_globals.marks.get(&workspace_id)?;
-            if let Some(path) =
-                marks_collection.update(cx, |ms, cx| ms.get_path_for_mark(name.clone()))
-            {
-                return Some(Either::Left(path));
-            }
             if let Some(buffer_id) =
-                marks_collection.update(cx, |ms, cx| ms.get_buffer_id_for_mark(name.clone()))
+                marks_collection.update(cx, |ms, _| ms.get_buffer_id_for_mark(name.clone()))
             {
                 return Some(Either::Right(buffer_id));
             }
+            if let Some(path) =
+                marks_collection.update(cx, |ms, _| ms.get_path_for_mark(name.clone()))
+            {
+                return Some(Either::Left(path));
+            }
             None
-        })
-    }
-
-    fn get_global_mark(
-        &self,
-        name: String,
-        editor: &Editor,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<Vec<Anchor>> {
-        let workspace_id = self.workspace(window)?.read(cx).database_id()?;
-        VimGlobals::update_global(cx, |vim_globals, cx| {
-            vim_globals.marks.get(&workspace_id)?.update(cx, |ms, cx| {
-                let multi_buffer = editor.buffer();
-                let buffer = multi_buffer.read(cx).as_singleton()?;
-                ms.get_mark(name.clone(), &buffer, multi_buffer, cx)
-            })
-        })
-    }
-
-    fn get_harpoon_mark(
-        &self,
-        name: String,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<Arc<Path>> {
-        let workspace_id = self.workspace(window)?.read(cx).database_id()?;
-        VimGlobals::update_global(cx, |vim_globals, cx| {
-            vim_globals
-                .marks
-                .get(&workspace_id)?
-                .update(cx, |ms, _| ms.global_marks.get(&name.clone()).cloned())
         })
     }
 
