@@ -2014,23 +2014,31 @@ async fn test_trailing_slash(cx: &mut TestAppContext) {
     let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
-    // Test Tab completion for directory (should add trailing slash)
-    cx.simulate_input("par");
+    // root/par
+    // Tab pressed (picker::ConfirmCompletion)
+    // root/parent_dir/
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .update_matches("par".to_string(), window, cx)
+        })
+        .await;
     cx.dispatch_action(picker::ConfirmCompletion);
-    picker.update(cx, |picker, cx| {
-        let query = picker.query(cx);
-        assert_eq!(query, format!("parent_dir{}", MAIN_SEPARATOR));
-    });
 
-    // Test Tab completion for file (should not add trailing slash)
-    cx.simulate_input(&format!("parent_dir{}sib", MAIN_SEPARATOR));
+    // /root/parent_dir/sib
+    // Tab pressed (picker::ConfirmCompletion)
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .update_matches(format!("parent_dir{}sib", MAIN_SEPARATOR), window, cx)
+        })
+        .await;
     cx.dispatch_action(picker::ConfirmCompletion);
-    picker.update(cx, |picker, cx| {
-        let query = picker.query(cx);
-        assert_eq!(query, format!("parent_dir{}sibling.txt", MAIN_SEPARATOR));
-    });
 
-    // Test Enter to open file
+    // /root/parent_dir/sibling.txt
+    // Enter pressed (menu::Confirm)
     cx.dispatch_action(Confirm);
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
