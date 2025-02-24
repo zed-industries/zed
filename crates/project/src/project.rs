@@ -1087,7 +1087,6 @@ impl Project {
                 )
             };
 
-            bp_store.set_breakpoints_from_proto(response.payload.breakpoints, cx);
             bp_store
         })?;
 
@@ -1902,9 +1901,6 @@ impl Project {
         self.set_collaborators_from_proto(message.collaborators, cx)?;
         self.lsp_store.update(cx, |lsp_store, _| {
             lsp_store.set_language_server_statuses_from_proto(message.language_servers)
-        });
-        self.breakpoint_store.update(cx, |breakpoint_store, cx| {
-            breakpoint_store.set_breakpoints_from_proto(message.breakpoints, cx);
         });
         self.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
             .unwrap();

@@ -5606,7 +5606,7 @@ impl Editor {
             Color::Muted
         };
 
-        let position = breakpoint.as_ref().and_then(|bp| bp.active_position);
+        let position = breakpoint.as_ref().and_then(|bp| bp.position);
         let bp_kind = Arc::new(
             breakpoint
                 .map(|bp| bp.kind.clone())
@@ -6002,7 +6002,7 @@ impl Editor {
             Color::Muted
         };
 
-        let position = breakpoint.as_ref().and_then(|bp| bp.active_position);
+        let position = breakpoint.as_ref().and_then(|bp| bp.position);
         let bp_kind = Arc::new(
             breakpoint
                 .map(|bp| bp.kind)
@@ -7503,7 +7503,7 @@ impl Editor {
             )
         })?;
 
-        Some((bp.active_position?, bp.kind))
+        Some((bp.position?, bp.kind))
     }
 
     pub fn edit_log_breakpoint(
@@ -7607,7 +7607,7 @@ impl Editor {
                 buffer_id,
                 Breakpoint {
                     cached_position: cache_position,
-                    active_position: Some(breakpoint_position),
+                    position: Some(breakpoint_position),
                     kind,
                 },
                 edit_action,

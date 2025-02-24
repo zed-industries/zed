@@ -59,9 +59,7 @@ pub enum BreakpointStoreEvent {
 impl EventEmitter<BreakpointStoreEvent> for BreakpointStore {}
 
 impl BreakpointStore {
-    pub fn init(client: &AnyProtoClient) {
-        client.add_entity_message_handler(Self::handle_synchronize_breakpoints);
-    }
+    pub fn init(client: &AnyProtoClient) {}
 
     pub fn local(
         buffer_store: Entity<BufferStore>,
@@ -106,19 +104,6 @@ impl BreakpointStore {
 
     pub(crate) fn shared(&mut self, project_id: u64, downstream_client: AnyProtoClient) {
         self.downstream_client = Some((downstream_client.clone(), project_id));
-
-        for (project_path, breakpoints) in self.breakpoints.iter() {
-            downstream_client
-                .send(proto::SynchronizeBreakpoints {
-                    project_id,
-                    project_path: Some(project_path.to_proto()),
-                    breakpoints: breakpoints
-                        .iter()
-                        .filter_map(|breakpoint| breakpoint.to_proto())
-                        .collect(),
-                })
-                .log_err();
-        }
     }
 
     pub(crate) fn unshared(&mut self, cx: &mut Context<Self>) {
@@ -159,31 +144,6 @@ impl BreakpointStore {
         });
     }
 
-    pub(crate) fn set_breakpoints_from_proto(
-        &mut self,
-        breakpoints: Vec<proto::SynchronizeBreakpoints>,
-        cx: &mut Context<Self>,
-    ) {
-        let mut new_breakpoints = BTreeMap::new();
-        for project_breakpoints in breakpoints {
-            let Some(project_path) = project_breakpoints.project_path else {
-                continue;
-            };
-
-            new_breakpoints.insert(
-                ProjectPath::from_proto(project_path),
-                project_breakpoints
-                    .breakpoints
-                    .into_iter()
-                    .filter_map(Breakpoint::from_proto)
-                    .collect::<HashSet<_>>(),
-            );
-        }
-
-        std::mem::swap(&mut self.breakpoints, &mut new_breakpoints);
-        cx.notify();
-    }
-
     pub fn toggle_breakpoint(
         &mut self,
         buffer_id: BufferId,
@@ -218,19 +178,6 @@ impl BreakpointStore {
                     breakpoint_set.remove(&breakpoint);
                 }
             }
-        }
-
-        if let Some((client, project_id)) = upstream_client.or(self.downstream_client.clone()) {
-            client
-                .send(client::proto::SynchronizeBreakpoints {
-                    project_id,
-                    project_path: Some(project_path.to_proto()),
-                    breakpoints: breakpoint_set
-                        .iter()
-                        .filter_map(|breakpoint| breakpoint.to_proto())
-                        .collect(),
-                })
-                .log_err();
         }
 
         if breakpoint_set.is_empty() {
@@ -303,39 +250,6 @@ impl BreakpointStore {
         }
     }
 
-    pub(crate) fn sync_open_breakpoints_to_closed_breakpoints(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(project_path) = buffer.read(cx).project_path(cx) else {
-            return;
-        };
-
-        if let Some(breakpoint_set) = self.breakpoints.remove(&project_path) {
-            let breakpoint_iter = breakpoint_set.into_iter().filter_map(|mut breakpoint| {
-                let position = NonZeroU32::new(
-                    breakpoint.point_for_buffer(&buffer.read(cx).snapshot()).row + 1,
-                );
-                debug_assert!(position.is_some());
-                breakpoint.cached_position = position?;
-                breakpoint.active_position = None;
-                Some(breakpoint)
-            });
-
-            self.breakpoints.insert(
-                project_path.clone(),
-                breakpoint_iter.collect::<HashSet<_>>(),
-            );
-
-            cx.emit(BreakpointStoreEvent::BreakpointsChanged {
-                project_path,
-                source_changed: false,
-            });
-            cx.notify();
-        }
-    }
-
     pub fn breakpoint_at_row(
         &self,
         row: u32,
@@ -378,19 +292,6 @@ impl BreakpointStore {
             }
         }
 
-        if let Some((client, project_id)) = upstream_client.or(self.downstream_client.clone()) {
-            client
-                .send(client::proto::SynchronizeBreakpoints {
-                    project_id,
-                    project_path: Some(project_path.to_proto()),
-                    breakpoints: breakpoint_set
-                        .iter()
-                        .filter_map(|breakpoint| breakpoint.to_proto())
-                        .collect(),
-                })
-                .log_err();
-        }
-
         if breakpoint_set.is_empty() {
             self.breakpoints.remove(project_path);
         }
@@ -415,45 +316,11 @@ impl BreakpointStore {
                 })
                 .or_default()
                 .insert(Breakpoint {
-                    active_position: None,
+                    position: None,
                     cached_position: serialize_breakpoint.position,
                     kind: serialize_breakpoint.kind,
                 });
         }
-    }
-
-    async fn handle_synchronize_breakpoints(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::SynchronizeBreakpoints>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        let project_path = ProjectPath::from_proto(
-            envelope
-                .payload
-                .project_path
-                .context("Invalid Breakpoint call")?,
-        );
-
-        this.update(&mut cx, |store, cx| {
-            let breakpoints = envelope
-                .payload
-                .breakpoints
-                .into_iter()
-                .filter_map(Breakpoint::from_proto)
-                .collect::<HashSet<_>>();
-
-            if breakpoints.is_empty() {
-                store.breakpoints.remove(&project_path);
-            } else {
-                store.breakpoints.insert(project_path.clone(), breakpoints);
-            }
-
-            cx.emit(BreakpointStoreEvent::BreakpointsChanged {
-                project_path,
-                source_changed: false,
-            });
-            cx.notify();
-        })
     }
 
     pub(crate) fn serialize_breakpoints_for_project_path(
@@ -604,8 +471,7 @@ impl Hash for BreakpointKind {
 
 #[derive(Clone, Debug)]
 pub struct Breakpoint {
-    pub active_position: Option<text::Anchor>,
-    pub cached_position: NonZeroU32,
+    pub position: text::Anchor,
     pub kind: BreakpointKind,
 }
 
@@ -615,7 +481,7 @@ pub struct Breakpoint {
 // overlapping breakpoint's with them being aware.
 impl PartialEq for Breakpoint {
     fn eq(&self, other: &Self) -> bool {
-        match (&self.active_position, &other.active_position) {
+        match (&self.position, &other.position) {
             (None, None) => self.cached_position == other.cached_position,
             (None, Some(_)) => false,
             (Some(_), None) => false,
@@ -628,8 +494,8 @@ impl Eq for Breakpoint {}
 
 impl Hash for Breakpoint {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        if self.active_position.is_some() {
-            self.active_position.hash(state);
+        if self.position.is_some() {
+            self.position.hash(state);
         } else {
             self.cached_position.hash(state);
         }
@@ -638,58 +504,48 @@ impl Hash for Breakpoint {
 
 impl Breakpoint {
     fn set_active_position(&mut self, buffer: &Buffer) {
-        if self.active_position.is_none() {
-            self.active_position =
+        if self.position.is_none() {
+            self.position =
                 Some(buffer.breakpoint_anchor(Point::new(self.cached_position.get() - 1, 0)));
         }
     }
 
     pub fn point_for_buffer(&self, buffer: &text::BufferSnapshot) -> Point {
-        self.active_position
-            .map(|position| buffer.summary_for_anchor::<Point>(&position))
-            .unwrap_or(Point::new(self.cached_position.get() - 1, 0))
+        buffer.summary_for_anchor::<Point>(&self.position)
     }
 
     pub fn point_for_buffer_snapshot(&self, buffer_snapshot: &BufferSnapshot) -> Point {
-        self.active_position
-            .map(|position| buffer_snapshot.summary_for_anchor::<Point>(&position))
-            .unwrap_or(Point::new(self.cached_position.get() - 1, 0))
+        buffer_snapshot.summary_for_anchor::<Point>(&self.position)
     }
 
     fn to_serialized(&self, buffer: Option<&Buffer>, path: Arc<Path>) -> SerializedBreakpoint {
         match buffer {
-            Some(buffer) => SerializedBreakpoint {
-                position: self
-                    .active_position
-                    .and_then(|position| {
-                        let ret =
-                            NonZeroU32::new(buffer.summary_for_anchor::<Point>(&position).row + 1);
-                        debug_assert!(
-                            ret.is_some(),
-                            "Serializing breakpoint close to u32::MAX position failed"
-                        );
-                        ret
-                    })
-                    .unwrap_or(self.cached_position),
-                path,
-                kind: self.kind.clone(),
-            },
-            None => SerializedBreakpoint {
+            Some(buffer) => {
+                let position = {
+                    let ret = buffer.summary_for_anchor::<Point>(&self.position).row + 1;
+
+                    ret
+                };
+                SerializedBreakpoint {
+                    position,
+                    path,
+                    kind: self.kind.clone(),
+                }
+            }
+            None => unimplemented!(
+                r#"SerializedBreakpoint {{
                 position: self.cached_position,
                 path,
                 kind: self.kind.clone(),
-            },
+                }}"#
+            ),
         }
     }
 
     fn to_proto(&self) -> Option<client::proto::Breakpoint> {
         Some(client::proto::Breakpoint {
-            position: if let Some(position) = &self.active_position {
-                Some(serialize_text_anchor(position))
-            } else {
-                None
-            },
-            cached_position: self.cached_position.get(),
+            position: Some(serialize_text_anchor(&self.position)),
+
             kind: match self.kind {
                 BreakpointKind::Standard => proto::BreakpointKind::Standard.into(),
                 BreakpointKind::Log(_) => proto::BreakpointKind::Log.into(),
@@ -704,12 +560,11 @@ impl Breakpoint {
 
     fn from_proto(breakpoint: client::proto::Breakpoint) -> Option<Self> {
         Some(Self {
-            active_position: if let Some(position) = breakpoint.position.clone() {
+            position: if let Some(position) = breakpoint.position.clone() {
                 deserialize_anchor(position)
             } else {
                 None
             },
-            cached_position: NonZeroU32::new(breakpoint.cached_position)?,
             kind: match proto::BreakpointKind::from_i32(breakpoint.kind) {
                 Some(proto::BreakpointKind::Log) => {
                     BreakpointKind::Log(breakpoint.message.clone().unwrap_or_default().into())
@@ -722,7 +577,7 @@ impl Breakpoint {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct SerializedBreakpoint {
-    pub position: NonZeroU32,
+    pub position: u32,
     pub path: Arc<Path>,
     pub kind: BreakpointKind,
 }

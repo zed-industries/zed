@@ -324,45 +324,44 @@ message Envelope {
         GitCommitDetails git_commit_details = 302;
         GitCheckoutFiles git_checkout_files = 303;
 
-        SynchronizeBreakpoints synchronize_breakpoints = 304;
-        SetActiveDebugLine set_active_debug_line = 305;
-        RemoveActiveDebugLine remove_active_debug_line = 306;
-        UpdateDebugAdapter update_debug_adapter = 307;
-        ShutdownDebugClient shutdown_debug_client = 308;
-        SetDebugClientCapabilities set_debug_client_capabilities = 309;
-        DapNextRequest dap_next_request = 310;
-        DapStepInRequest dap_step_in_request = 311;
-        DapStepOutRequest dap_step_out_request = 312;
-        DapStepBackRequest dap_step_back_request = 313;
-        DapContinueRequest dap_continue_request = 314;
-        DapContinueResponse dap_continue_response = 315;
-        DapPauseRequest dap_pause_request = 316;
-        DapDisconnectRequest dap_disconnect_request = 317;
-        DapTerminateThreadsRequest dap_terminate_threads_request = 318;
-        DapTerminateRequest dap_terminate_request = 319;
-        DapRestartRequest dap_restart_request = 320;
-        UpdateThreadStatus update_thread_status = 321;
-        VariablesRequest variables_request = 322;
-        DapVariables dap_variables = 323;
-        DapRestartStackFrameRequest dap_restart_stack_frame_request = 324;
-        IgnoreBreakpointState ignore_breakpoint_state = 325;
-        ToggleIgnoreBreakpoints toggle_ignore_breakpoints = 326;
-        DapModulesRequest dap_modules_request = 327;
-        DapModulesResponse dap_modules_response = 328;
-        DapLoadedSourcesRequest dap_loaded_sources_request = 329;
-        DapLoadedSourcesResponse dap_loaded_sources_response = 330;
-        DapStackTraceRequest dap_stack_trace_request = 331;
-        DapStackTraceResponse dap_stack_trace_response = 332;
-        DapScopesRequest dap_scopes_request = 333;
-        DapScopesResponse dap_scopes_response = 334;
-        DapSetVariableValueRequest dap_set_variable_value_request = 335;
-        DapSetVariableValueResponse dap_set_variable_value_response = 336;
-        DapEvaluateRequest dap_evaluate_request = 337;
-        DapEvaluateResponse dap_evaluate_response = 338;
-        DapCompletionRequest dap_completion_request = 339;
-        DapCompletionResponse dap_completion_response = 340;
-        DapThreadsRequest dap_threads_request = 341;
-        DapThreadsResponse dap_threads_response = 342;// current max
+        BreakpointsForFile breakpoints_for_file = 304;
+
+        UpdateDebugAdapter update_debug_adapter = 305;
+        ShutdownDebugClient shutdown_debug_client = 306;
+        SetDebugClientCapabilities set_debug_client_capabilities = 307;
+        DapNextRequest dap_next_request = 308;
+        DapStepInRequest dap_step_in_request = 309;
+        DapStepOutRequest dap_step_out_request = 310;
+        DapStepBackRequest dap_step_back_request = 311;
+        DapContinueRequest dap_continue_request = 312;
+        DapContinueResponse dap_continue_response = 313;
+        DapPauseRequest dap_pause_request = 314;
+        DapDisconnectRequest dap_disconnect_request = 315;
+        DapTerminateThreadsRequest dap_terminate_threads_request = 316;
+        DapTerminateRequest dap_terminate_request = 317;
+        DapRestartRequest dap_restart_request = 318;
+        UpdateThreadStatus update_thread_status = 319;
+        VariablesRequest variables_request = 320;
+        DapVariables dap_variables = 321;
+        DapRestartStackFrameRequest dap_restart_stack_frame_request = 322;
+        IgnoreBreakpointState ignore_breakpoint_state = 323;
+        ToggleIgnoreBreakpoints toggle_ignore_breakpoints = 324;
+        DapModulesRequest dap_modules_request = 325;
+        DapModulesResponse dap_modules_response = 326;
+        DapLoadedSourcesRequest dap_loaded_sources_request = 327;
+        DapLoadedSourcesResponse dap_loaded_sources_response = 328;
+        DapStackTraceRequest dap_stack_trace_request = 329;
+        DapStackTraceResponse dap_stack_trace_response = 330;
+        DapScopesRequest dap_scopes_request = 331;
+        DapScopesResponse dap_scopes_response = 332;
+        DapSetVariableValueRequest dap_set_variable_value_request = 333;
+        DapSetVariableValueResponse dap_set_variable_value_response = 334;
+        DapEvaluateRequest dap_evaluate_request = 335;
+        DapEvaluateResponse dap_evaluate_response = 336;
+        DapCompletionRequest dap_completion_request = 337;
+        DapCompletionResponse dap_completion_response = 338;
+        DapThreadsRequest dap_threads_request = 339;
+        DapThreadsResponse dap_threads_response = 340;// current max
     }
 
     reserved 87 to 88;
@@ -482,7 +481,6 @@ message RejoinedProject {
     repeated WorktreeMetadata worktrees = 2;
     repeated Collaborator collaborators = 3;
     repeated LanguageServer language_servers = 4;
-    repeated SynchronizeBreakpoints breakpoints = 5;
 }
 
 message LeaveRoom {}
@@ -620,7 +618,6 @@ message JoinProjectResponse {
     repeated LanguageServer language_servers = 4;
     ChannelRole role = 6;
     reserved 7;
-    repeated SynchronizeBreakpoints breakpoints = 8;
 }
 
 message LeaveProject {
@@ -2588,26 +2585,14 @@ message SetDebugClientCapabilities {
 
 message Breakpoint {
     Anchor position = 1;
-    uint32 cached_position = 2;
     BreakpointKind kind = 3;
     optional string message = 4;
 }
 
-message SynchronizeBreakpoints {
+message BreakpointsForFile {
     uint64 project_id = 1;
-    ProjectPath project_path = 2;
+    string path = 2;
     repeated Breakpoint breakpoints = 3;
-}
-
-message SetActiveDebugLine {
-    uint64 project_id = 1;
-    ProjectPath project_path  = 2;
-    uint64 session_id = 3;
-    uint32 row = 4;
-}
-
-message RemoveActiveDebugLine {
-    uint64 project_id = 1;
 }
 
 enum DebuggerThreadItem {
