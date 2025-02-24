@@ -4,5 +4,5 @@
 
 Uiua support is available through the [Uiua extension](https://github.com/zed-industries/zed/tree/main/extensions/uiua).
 
-- Tree Sitter: [shnarazk/tree-sitter-uiua](https://github.com/shnarazk/tree-sitter-uiua)
+- Tree-sitter: [shnarazk/tree-sitter-uiua](https://github.com/shnarazk/tree-sitter-uiua)
 - Language Server: [uiua-lang/uiua](https://github.com/uiua-lang/uiua/)
