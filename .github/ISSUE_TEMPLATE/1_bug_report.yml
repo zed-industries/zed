@@ -6,7 +6,7 @@ body:
   - type: textarea
     attributes:
       label: Summary
-      description: Include all steps necessary to reproduce from a clean Zed installation.
+      description: Describe the bug with a one line summary, and provide detailed reproduction steps
       value: |
         <!-- Please insert a one line summary of the issue below -->
 
