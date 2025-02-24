@@ -16,10 +16,10 @@ use gpui::{
 };
 use language::Buffer;
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    report_assistant_event, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
-use language_models::report_assistant_event;
 use prompt_library::PromptBuilder;
 use settings::{update_settings_file, Settings};
 use std::{
