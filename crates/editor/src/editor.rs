@@ -3140,7 +3140,7 @@ impl Editor {
 
         let mut buffer_edit_ranges_map = HashMap::<
             (BufferId, Arc<language::Language>),
-            (BufferSnapshot, text::Patch<usize>),
+            (WeakEntity<Buffer>, text::Patch<usize>),
         >::default();
 
         for (buffer_id, subscription) in buffer_edits_subscriptions_map {
@@ -3160,13 +3160,13 @@ impl Editor {
                 // todo! if !langauge.is_edit_behavior_enabled() { continue; }
                 buffer_edit_ranges_map
                     .entry((snapshot.remote_id(), language.clone()))
-                    .or_insert((snapshot.clone(), text::Patch::default()))
+                    .or_insert((buffer.downgrade(), text::Patch::default()))
                     .1
                     .push(edit);
             }
         }
 
-        for ((buffer_id, language), (buffer_snapshot, edited_ranges)) in buffer_edit_ranges_map {
+        for ((buffer_id, language), (buffer, edited_ranges)) in buffer_edit_ranges_map {
             let edited_ranges: Vec<Range<usize>> =
                 edited_ranges.into_iter().map(|edit| edit.new).collect();
             let mut excerpt_buffer_parse_status_rx = self
@@ -3182,9 +3182,9 @@ impl Editor {
                 let mut reparsed_tx = Some(reparsed_tx);
                 cx.subscribe(
                     &self.buffer.read(cx).buffer(buffer_id).unwrap(),
-                    move |this, buf, evt: &language::BufferEvent, cx| {
+                    move |_, _, evt: &language::BufferEvent, _| {
                         if *evt == language::BufferEvent::Reparsed {
-                            dbg!(reparsed_tx.take().unwrap().send(()));
+                            reparsed_tx.take().map(|tx| tx.send(()).log_err());
                         }
                     },
                 )
@@ -3211,6 +3211,9 @@ impl Editor {
                     }
                 }
 
+                let Ok(buffer_snapshot) = buffer.read_with(&cx, |buf, cx| buf.snapshot()) else {
+                    return Err(anyhow!("Autoclose Tag Operation Failed: Buffer Failed to Read"));
+                };
                 let Some(edit_behavior_provider) = language.edit_behavior_provider() else {
                     return Err(anyhow!("Autoclose Tag Operation Failed: Language does not support edit behavior provider"));
                 };
