@@ -16182,6 +16182,8 @@ async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
 mod autoclose_tags {
     use super::*;
     use language::LanguageConfig;
+    use languages::language;
+    use std::sync::Arc;
 
     macro_rules! check {
         ($name:ident, $initial:literal + $input:literal => $expected:expr) => {
@@ -16191,49 +16193,108 @@ mod autoclose_tags {
 
                 let mut cx = EditorTestContext::new(cx).await;
                 cx.update_buffer(|buffer, cx| {
-                    buffer.set_language(
-                        Some(Arc::new(
-                            Language::new(
-                                LanguageConfig {
-                                    ..Default::default()
-                                },
-                                Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
-                            )
-                            .with_edit_behavior_provider(Some(Arc::new(ExampleJSXCompletion))),
-                        )),
-                        cx,
-                    )
+                    let language = Arc::try_unwrap(language(
+                        "tsx",
+                        tree_sitter_typescript::LANGUAGE_TSX.into(),
+                    ))
+                    .unwrap();
+                    let language =
+                        language.with_edit_behavior_provider(Some(Arc::new(ExampleJSXCompletion)));
+
+                    buffer.set_language(Some(Arc::new(language)), cx)
                 });
-                cx.set_state($initial);
+                let default_state = r#"
+                    function Component() {
+                        return {}
+                    }
+                    "#
+                .unindent();
+                cx.set_state(&default_state.replace("{}", $initial));
                 cx.run_until_parked();
 
                 cx.update_editor(|editor, window, cx| {
                     editor.handle_input($input, window, cx);
                 });
                 cx.run_until_parked();
-                cx.assert_editor_state($expected);
+                cx.assert_editor_state(&default_state.replace("{}", $expected));
             }
         };
     }
 
     struct ExampleJSXCompletion;
 
+    struct JsxTagCompletionState {
+        edit_index: usize,
+        open_tag_range: Range<usize>,
+    }
+
     impl language::EditBehaviorProvider for ExampleJSXCompletion {
-        type AutoEditState = ();
+        type AutoEditState = Vec<JsxTagCompletionState>;
 
         fn should_auto_edit(
             &self,
             buffer: &BufferSnapshot,
             edited_ranges: &[std::ops::Range<usize>],
         ) -> Option<Self::AutoEditState> {
-            dbg!(edited_ranges
-                .iter()
-                .map(|range| (
-                    range,
-                    buffer.text_for_range(range.clone()).collect::<String>()
-                ))
-                .collect::<Vec<_>>());
-            None
+            let mut to_auto_edit = vec![];
+            for (index, edited_range) in edited_ranges.iter().enumerate() {
+                let text = buffer
+                    .text_for_range(edited_range.clone())
+                    .collect::<String>();
+                if dbg!(!text.ends_with(">")) {
+                    continue;
+                }
+                let Some(layer) = dbg!(buffer.syntax_layer_at(edited_range.start)) else {
+                    continue;
+                };
+                let language_name = dbg!(layer.language.name());
+                if dbg!(
+                    !(language_name.as_ref().eq_ignore_ascii_case("jsx")
+                        || language_name.as_ref().eq_ignore_ascii_case("tsx"))
+                ) {
+                    continue;
+                }
+                dbg!(layer.node().to_sexp());
+                // todo! if buffer.settings_at
+                let Some(node) = dbg!(layer
+                    .node()
+                    .descendant_for_byte_range(edited_range.start, edited_range.end))
+                else {
+                    continue;
+                };
+                let mut jsx_open_tag_node = node;
+                if node.grammar_name() != "jsx_opening_element" {
+                    if let Some(parent) = node.parent() {
+                        if parent.grammar_name() == "jsx_opening_element" {
+                            jsx_open_tag_node = parent;
+                        }
+                    }
+                }
+                if dbg!(jsx_open_tag_node.grammar_name()) != "jsx_opening_element" {
+                    continue;
+                }
+
+                to_auto_edit.push(JsxTagCompletionState {
+                    edit_index: index,
+                    open_tag_range: jsx_open_tag_node.byte_range(),
+                });
+
+                dbg!(node.parent());
+            }
+            dbg!(&to_auto_edit.len());
+            if to_auto_edit.is_empty() {
+                return None;
+            } else {
+                return Some(to_auto_edit);
+            }
+            // dbg!(edited_ranges
+            //     .iter()
+            //     .map(|range| (
+            //         range,
+            //         buffer.text_for_range(range.clone()).collect::<String>()
+            //     ))
+            //     .collect::<Vec<_>>());
+            // None
         }
 
         fn auto_edit(
@@ -16252,18 +16313,13 @@ mod autoclose_tags {
 
         let mut cx = EditorTestContext::new(cx).await;
         cx.update_buffer(|buffer, cx| {
-            buffer.set_language(
-                Some(Arc::new(
-                    Language::new(
-                        LanguageConfig {
-                            ..Default::default()
-                        },
-                        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
-                    )
-                    .with_edit_behavior_provider(Some(Arc::new(ExampleJSXCompletion))),
-                )),
-                cx,
-            )
+            let language =
+                Arc::try_unwrap(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()))
+                    .unwrap();
+            let language =
+                language.with_edit_behavior_provider(Some(Arc::new(ExampleJSXCompletion)));
+
+            buffer.set_language(Some(Arc::new(language)), cx)
         });
     }
 
