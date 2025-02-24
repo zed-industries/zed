@@ -7,6 +7,7 @@ use ui::{ActiveTheme, Color, Icon, IconName, IntoElement};
 
 pub mod branch_picker;
 mod commit_modal;
+mod git_log;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod picker_prompt;
