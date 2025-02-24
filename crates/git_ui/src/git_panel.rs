@@ -1802,7 +1802,7 @@ impl GitPanel {
     pub fn render_sync_button(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let active_repository = self.project.read(cx).active_repository(cx);
         active_repository.as_ref().map(|_| {
-            panel_filled_button("Sync")
+            panel_filled_button("Fetch")
                 .icon(IconName::ArrowCircle)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
@@ -2502,41 +2502,38 @@ impl GitPanel {
 
         // TODO: Add <origin> and <branch> argument substitutions to this
         let button: SharedString;
-        let tooltip: Option<SharedString>;
+        let tooltip: SharedString;
         let action: Option<Push>;
         if let Some(upstream) = &branch.upstream {
             match upstream.tracking {
                 UpstreamTracking::Gone => {
                     button = "Republish".into();
-                    tooltip = Some("git push --set-upstream".into());
+                    tooltip = "git push --set-upstream".into();
                     action = Some(git::Push {
                         options: Some(PushOptions::SetUpstream),
                     });
                 }
                 UpstreamTracking::Tracked(tracking) => {
                     if tracking.behind > 0 {
-                        button =
-                            format!("Force Push (-{} -> +{})", tracking.behind, tracking.ahead)
-                                .into();
-                        tooltip = Some("git push --force-with-lease".into());
-                        action = Some(git::Push {
-                            options: Some(PushOptions::Force),
-                        });
+                        disabled = true;
+                        button = "Push".into();
+                        tooltip = "Upstream is ahead of local branch".into();
+                        action = None;
                     } else if tracking.ahead > 0 {
                         button = format!("Push ({})", tracking.ahead).into();
-                        tooltip = Some("git push".into());
+                        tooltip = "git push".into();
                         action = Some(git::Push { options: None });
                     } else {
                         disabled = true;
                         button = "Push".into();
-                        tooltip = None;
+                        tooltip = "Upstream matches local branch".into();
                         action = None;
                     }
                 }
             }
         } else {
             button = "Publish".into();
-            tooltip = Some("git push --set-upstream".into());
+            tooltip = "git push --set-upstream".into();
             action = Some(git::Push {
                 options: Some(PushOptions::SetUpstream),
             });
@@ -2554,10 +2551,10 @@ impl GitPanel {
                 )
             })
             .tooltip(move |window, cx| {
-                if let Some((tooltip, action)) = tooltip.as_ref().zip(action.as_ref()) {
+                if let Some(action) = action.as_ref() {
                     Tooltip::for_action(tooltip.clone(), action, window, cx)
                 } else {
-                    Tooltip::simple("Upstream matches local branch", cx)
+                    Tooltip::simple(tooltip.clone(), cx)
                 }
             })
             .into_any_element()
