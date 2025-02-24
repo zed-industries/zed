@@ -321,7 +321,13 @@ message Envelope {
         GitCommitDetails git_commit_details = 302;
 
         SetIndexText set_index_text = 299;
-        GitCheckoutFiles git_checkout_files = 303; // current max
+        GitCheckoutFiles git_checkout_files = 303;
+
+        Push push = 304;
+        Fetch fetch = 305;
+        GetRemotes get_remotes = 306;
+        GetRemotesResponse get_remotes_response = 307;
+        Pull pull = 308; // current max
     }
 
     reserved 87 to 88;
@@ -2771,4 +2777,47 @@ message OpenCommitMessageBuffer {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
+}
+
+message Push {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string remote_name = 4;
+    string branch_name = 5;
+    optional PushOptions options = 6;
+
+    enum PushOptions {
+        SET_UPSTREAM = 0;
+        FORCE = 1;
+    }
+}
+
+message Fetch {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+}
+
+message GetRemotes {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    optional string branch_name = 4;
+}
+
+message GetRemotesResponse {
+    repeated Remote remotes = 1;
+
+    message Remote {
+        string name = 1;
+    }
+}
+
+message Pull {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string remote_name = 4;
+    string branch_name = 5;
 }
