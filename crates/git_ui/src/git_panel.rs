@@ -2631,17 +2631,21 @@ impl Render for GitPanel {
             .size_full()
             .overflow_hidden()
             .bg(ElevationIndex::Surface.bg(cx))
-            .child(if has_entries {
+            .child(
                 v_flex()
                     .size_full()
                     .children(self.render_panel_header(window, cx))
-                    .child(self.render_entries(has_write_access, window, cx))
+                    .map(|this| {
+                        if has_entries {
+                            this.child(self.render_entries(has_write_access, window, cx))
+                        } else {
+                            this.child(self.render_empty_state(cx).into_any_element())
+                        }
+                    })
                     .children(self.render_previous_commit(cx))
                     .child(self.render_commit_editor(window, cx))
-                    .into_any_element()
-            } else {
-                self.render_empty_state(cx).into_any_element()
-            })
+                    .into_any_element(),
+            )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
                     anchored()
