@@ -118,6 +118,7 @@ impl CommitModal {
         cx: &mut Context<Self>,
     ) -> Self {
         let panel = git_panel.read(cx);
+        let suggested_message = panel.suggest_commit_message();
 
         let commit_editor = git_panel.update(cx, |git_panel, cx| {
             git_panel.set_modal_open(true, cx);
@@ -125,6 +126,24 @@ impl CommitModal {
             let project = git_panel.project.clone();
             cx.new(|cx| commit_message_editor(buffer, project.clone(), false, window, cx))
         });
+
+        let commit_message = commit_editor.read(cx).text(cx);
+
+        if let Some(suggested_message) = suggested_message {
+            if commit_message.is_empty() {
+                commit_editor.update(cx, |editor, cx| {
+                    editor.set_text(suggested_message, window, cx);
+                    editor.select_all(&Default::default(), window, cx);
+                });
+            } else {
+                if commit_message.as_str().trim() == suggested_message.trim() {
+                    commit_editor.update(cx, |editor, cx| {
+                        // select the message to make it easy to delete
+                        editor.select_all(&Default::default(), window, cx);
+                    });
+                }
+            }
+        }
 
         Self {
             git_panel,
@@ -177,6 +196,14 @@ impl CommitModal {
         (width, padding_x)
     }
 
+    fn commit_editor_element(&self, window: &mut Window, cx: &mut Context<Self>) -> EditorElement {
+        let mut editor = self.commit_editor.clone();
+
+        let editor_style = panel_editor_style(true, window, cx);
+
+        EditorElement::new(&self.commit_editor, editor_style)
+    }
+
     pub fn render_commit_editor(
         &self,
         name_and_email: Option<(SharedString, SharedString)>,
@@ -187,13 +214,6 @@ impl CommitModal {
 
         let editor = self.commit_editor.clone();
         let editor_focus_handle = editor.focus_handle(cx);
-
-        let mut editor_style = panel_editor_style(true, window, cx);
-
-        let font_size = px(15.);
-
-        editor_style.text.font_size = font_size.into();
-        editor_style.text.line_height = (font_size + px(5.)).into();
 
         let settings = ThemeSettings::get_global(cx);
         let line_height = relative(settings.buffer_line_height.value())
@@ -245,7 +265,7 @@ impl CommitModal {
                 div()
                     .size_full()
                     .flex_1()
-                    .child(EditorElement::new(&self.commit_editor, editor_style)),
+                    .child(self.commit_editor_element(window, cx)),
             )
             .child(
                 h_flex()
