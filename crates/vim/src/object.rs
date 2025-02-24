@@ -303,6 +303,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Quotes, window, cx| {
         vim.object(Object::Quotes, window, cx)
     });
+    Vim::action(editor, cx, |vim, _: &BackQuotes, window, cx| {
+        vim.object(Object::BackQuotes, window, cx)
+    });
     Vim::action(editor, cx, |vim, _: &AnyQuotes, window, cx| {
         vim.object(Object::AnyQuotes, window, cx)
     });
