@@ -1,4 +1,3 @@
-use super::open_ai::count_open_ai_tokens;
 use anthropic::AnthropicError;
 use anyhow::{anyhow, Result};
 use client::{
@@ -43,10 +42,12 @@ use strum::IntoEnumIterator;
 use thiserror::Error;
 use ui::{prelude::*, TintColor};
 
-use crate::provider::anthropic::map_to_language_model_completion_events;
+use crate::provider::anthropic::{
+    count_anthropic_tokens, into_anthropic, map_to_language_model_completion_events,
+};
+use crate::provider::google::into_google;
+use crate::provider::open_ai::{count_open_ai_tokens, into_open_ai};
 use crate::AllLanguageModelSettings;
-
-use super::anthropic::count_anthropic_tokens;
 
 pub const PROVIDER_NAME: &str = "Zed";
 
@@ -612,7 +613,7 @@ impl LanguageModel for CloudLanguageModel {
             CloudModel::OpenAi(model) => count_open_ai_tokens(request, model, cx),
             CloudModel::Google(model) => {
                 let client = self.client.clone();
-                let request = request.into_google(model.id().into());
+                let request = into_google(request, model.id().into());
                 let request = google_ai::CountTokensRequest {
                     contents: request.contents,
                 };
@@ -638,7 +639,8 @@ impl LanguageModel for CloudLanguageModel {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         match &self.model {
             CloudModel::Anthropic(model) => {
-                let request = request.into_anthropic(
+                let request = into_anthropic(
+                    request,
                     model.id().into(),
                     model.default_temperature(),
                     model.max_output_tokens(),
@@ -666,7 +668,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::OpenAi(model) => {
                 let client = self.client.clone();
-                let request = request.into_open_ai(model.id().into(), model.max_output_tokens());
+                let request = into_open_ai(request, model.id().into(), model.max_output_tokens());
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let response = Self::perform_llm_completion(
@@ -693,7 +695,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::Google(model) => {
                 let client = self.client.clone();
-                let request = request.into_google(model.id().into());
+                let request = into_google(request, model.id().into());
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let response = Self::perform_llm_completion(
@@ -736,7 +738,8 @@ impl LanguageModel for CloudLanguageModel {
 
         match &self.model {
             CloudModel::Anthropic(model) => {
-                let mut request = request.into_anthropic(
+                let mut request = into_anthropic(
+                    request,
                     model.tool_model_id().into(),
                     model.default_temperature(),
                     model.max_output_tokens(),
@@ -776,7 +779,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::OpenAi(model) => {
                 let mut request =
-                    request.into_open_ai(model.id().into(), model.max_output_tokens());
+                    into_open_ai(request, model.id().into(), model.max_output_tokens());
                 request.tool_choice = Some(open_ai::ToolChoice::Other(
                     open_ai::ToolDefinition::Function {
                         function: open_ai::FunctionDefinition {

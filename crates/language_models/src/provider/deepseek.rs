@@ -322,7 +322,11 @@ impl LanguageModel for DeepSeekLanguageModel {
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
-        let request = request.into_deepseek(self.model.id().to_string(), self.max_output_tokens());
+        let request = into_deepseek(
+            request,
+            self.model.id().to_string(),
+            self.max_output_tokens(),
+        );
         let stream = self.stream_completion(request, cx);
 
         async move {
@@ -357,8 +361,11 @@ impl LanguageModel for DeepSeekLanguageModel {
         schema: serde_json::Value,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let mut deepseek_request =
-            request.into_deepseek(self.model.id().to_string(), self.max_output_tokens());
+        let mut deepseek_request = into_deepseek(
+            request,
+            self.model.id().to_string(),
+            self.max_output_tokens(),
+        );
 
         deepseek_request.tools = vec![deepseek::ToolDefinition::Function {
             function: deepseek::FunctionDefinition {
@@ -399,6 +406,93 @@ impl LanguageModel for DeepSeekLanguageModel {
                 Ok(tool_args_stream)
             })
             .boxed()
+    }
+}
+
+pub fn into_deepseek(
+    request: LanguageModelRequest,
+    model: String,
+    max_output_tokens: Option<u32>,
+) -> deepseek::Request {
+    let is_reasoner = model == "deepseek-reasoner";
+
+    let len = request.messages.len();
+    let merged_messages =
+        request
+            .messages
+            .into_iter()
+            .fold(Vec::with_capacity(len), |mut acc, msg| {
+                let role = msg.role;
+                let content = msg.string_contents();
+
+                if is_reasoner {
+                    if let Some(last_msg) = acc.last_mut() {
+                        match (last_msg, role) {
+                            (deepseek::RequestMessage::User { content: last }, Role::User) => {
+                                last.push(' ');
+                                last.push_str(&content);
+                                return acc;
+                            }
+
+                            (
+                                deepseek::RequestMessage::Assistant {
+                                    content: last_content,
+                                    ..
+                                },
+                                Role::Assistant,
+                            ) => {
+                                *last_content = last_content
+                                    .take()
+                                    .map(|c| {
+                                        let mut s =
+                                            String::with_capacity(c.len() + content.len() + 1);
+                                        s.push_str(&c);
+                                        s.push(' ');
+                                        s.push_str(&content);
+                                        s
+                                    })
+                                    .or(Some(content));
+
+                                return acc;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                acc.push(match role {
+                    Role::User => deepseek::RequestMessage::User { content },
+                    Role::Assistant => deepseek::RequestMessage::Assistant {
+                        content: Some(content),
+                        tool_calls: Vec::new(),
+                    },
+                    Role::System => deepseek::RequestMessage::System { content },
+                });
+                acc
+            });
+
+    deepseek::Request {
+        model,
+        messages: merged_messages,
+        stream: true,
+        max_tokens: max_output_tokens,
+        temperature: if is_reasoner {
+            None
+        } else {
+            request.temperature
+        },
+        response_format: None,
+        tools: request
+            .tools
+            .into_iter()
+            .map(|tool| deepseek::ToolDefinition::Function {
+                function: deepseek::FunctionDefinition {
+                    name: tool.name,
+                    description: Some(tool.description),
+                    parameters: Some(tool.input_schema),
+                },
+            })
+            .collect(),
     }
 }
 
