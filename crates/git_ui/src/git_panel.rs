@@ -182,7 +182,6 @@ type RemoteOperations = Rc<RefCell<HashSet<u32>>>;
 pub struct GitPanel {
     remote_operation_id: u32,
     pending_remote_operations: RemoteOperations,
-    active_repository: Option<Entity<Repository>>,
     pub(crate) active_repository: Option<Entity<Repository>>,
     commit_editor: Entity<Editor>,
     conflicted_count: usize,
@@ -224,7 +223,6 @@ impl Drop for RemoteOperationGuard {
         self.pending_remote_operations.borrow_mut().remove(&self.id);
     }
 }
-
 
 pub(crate) fn commit_message_editor(
     commit_message_buffer: Entity<Buffer>,
@@ -1750,15 +1748,16 @@ impl GitPanel {
                             .gap_1()
                             .children(self.render_spinner(cx))
                             .children(self.render_sync_button(cx))
-                            .children(self.render_pull_button(cx)),
-                    .child(
-                        Button::new("diff", "+/-")
-                            .tooltip(Tooltip::for_action_title("Open diff", &Diff))
-                            .on_click(|_, _, cx| {
-                                cx.defer(|cx| {
-                                    cx.dispatch_action(&Diff);
-                                })
-                            }),
+                            .children(self.render_pull_button(cx))
+                            .child(
+                                Button::new("diff", "+/-")
+                                    .tooltip(Tooltip::for_action_title("Open diff", &Diff))
+                                    .on_click(|_, _, cx| {
+                                        cx.defer(|cx| {
+                                            cx.dispatch_action(&Diff);
+                                        })
+                                    }),
+                            ),
                     ),
             )
         } else {
@@ -2536,7 +2535,7 @@ impl GitPanel {
             })
             .tooltip(move |window, cx| {
                 if let Some((tooltip, action)) = tooltip.as_ref().zip(action.as_ref()) {
-                    Tooltip::for_action(tooltip.clone(), &*action, window, cx)
+                    Tooltip::for_action(tooltip.clone(), action, window, cx)
                 } else {
                     Tooltip::simple("Upstream matches local branch", cx)
                 }
