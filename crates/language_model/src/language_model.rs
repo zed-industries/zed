@@ -3,6 +3,7 @@ mod rate_limiter;
 mod registry;
 mod request;
 mod role;
+mod telemetry;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
@@ -11,18 +12,20 @@ use anyhow::Result;
 use futures::FutureExt;
 use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
-pub use model::*;
 use proto::Plan;
-pub use rate_limiter::*;
-pub use registry::*;
-pub use request::*;
-pub use role::*;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::fmt;
 use std::{future::Future, sync::Arc};
 use thiserror::Error;
 use ui::IconName;
+
+pub use crate::model::*;
+pub use crate::rate_limiter::*;
+pub use crate::registry::*;
+pub use crate::request::*;
+pub use crate::role::*;
+pub use crate::telemetry::*;
 
 pub const ZED_CLOUD_PROVIDER_ID: &str = "zed.dev";
 

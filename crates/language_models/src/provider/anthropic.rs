@@ -27,7 +27,7 @@ use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::{maybe, ResultExt};
 
-pub const PROVIDER_ID: &str = "anthropic";
+const PROVIDER_ID: &str = language_model::ANTHROPIC_PROVIDER_ID;
 const PROVIDER_NAME: &str = "Anthropic";
 
 #[derive(Default, Clone, Debug, PartialEq)]
