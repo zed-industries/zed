@@ -18,7 +18,7 @@ use file_icons::FileIcons;
 use git::status::GitSummary;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
-    AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
+    AnyElement, App, ArcCow, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
     DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton,
     MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
@@ -2700,7 +2700,7 @@ impl ProjectPanel {
                     else {
                         continue;
                     };
-                    let path = Arc::from(Path::new(path_name));
+                    let path = ArcCow::Borrowed(Path::new(path_name));
                     let depth = 0;
                     (depth, path)
                 } else if entry.is_file() {
@@ -2712,7 +2712,7 @@ impl ProjectPanel {
                     else {
                         continue;
                     };
-                    let path = Arc::from(Path::new(path_name));
+                    let path = ArcCow::Borrowed(Path::new(path_name));
                     let depth = entry.path.ancestors().count() - 1;
                     (depth, path)
                 } else {
@@ -2732,11 +2732,11 @@ impl ProjectPanel {
                                 .ok()
                                 .and_then(|suffix| {
                                     let full_path = Path::new(root_folded_entry.file_name()?);
-                                    Some(Arc::<Path>::from(full_path.join(suffix)))
+                                    Some(ArcCow::Owned(Arc::<Path>::from(full_path.join(suffix))))
                                 })
                         })
-                        .or_else(|| entry.path.file_name().map(Path::new).map(Arc::from))
-                        .unwrap_or_else(|| entry.path.clone());
+                        .or_else(|| entry.path.file_name().map(Path::new).map(ArcCow::Borrowed))
+                        .unwrap_or_else(|| ArcCow::Owned(entry.path.clone()));
                     let depth = path.components().count();
                     (depth, path)
                 };

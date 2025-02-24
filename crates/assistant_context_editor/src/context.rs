@@ -19,13 +19,10 @@ use gpui::{
 };
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
-    LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
-    LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolUseId, MessageContent, Role, StopReason,
-};
-use language_models::{
-    provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError},
-    report_assistant_event,
+    report_assistant_event, LanguageModel, LanguageModelCacheConfiguration,
+    LanguageModelCompletionEvent, LanguageModelImage, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelToolUseId, MaxMonthlySpendReachedError,
+    MessageContent, PaymentRequiredError, Role, StopReason,
 };
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;

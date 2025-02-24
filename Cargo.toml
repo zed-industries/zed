@@ -15,6 +15,8 @@ members = [
     "crates/audio",
     "crates/auto_update",
     "crates/auto_update_ui",
+    "crates/aws_http_client",
+    "crates/bedrock",
     "crates/breadcrumbs",
     "crates/buffer_diff",
     "crates/call",
@@ -218,6 +220,8 @@ assistant_tools = { path = "crates/assistant_tools" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 auto_update_ui = { path = "crates/auto_update_ui" }
+aws_http_client = { path = "crates/aws_http_client" }
+bedrock = { path = "crates/bedrock" }
 breadcrumbs = { path = "crates/breadcrumbs" }
 call = { path = "crates/call" }
 channel = { path = "crates/channel" }
@@ -382,6 +386,11 @@ async-trait = "0.1"
 async-tungstenite = "0.28"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
+aws-config = { version = "1.5.16", features = ["behavior-version-latest"] }
+aws-credential-types = { version = "1.2.1", features = ["hardcoded-credentials"] }
+aws-sdk-bedrockruntime = { version = "1.73.0", features = ["behavior-version-latest"] }
+aws-smithy-runtime-api = { version = "1.7.3", features = ["http-1x", "client"] }
+aws-smithy-types = { version = "1.2.13", features = ["http-body-1-x"] }
 base64 = "0.22"
 bitflags = "2.6.0"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }

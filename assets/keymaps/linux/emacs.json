@@ -48,6 +48,8 @@
       "ctrl-_": "editor::Undo", // undo
       "ctrl-/": "editor::Undo", // undo
       "ctrl-x u": "editor::Undo", // undo
+      "alt-{": "editor::MoveToStartOfParagraph", // backward-paragraph
+      "alt-}": "editor::MoveToEndOfParagraph", // forward-paragraph
       "ctrl-v": "editor::MovePageDown", // scroll-up
       "alt-v": "editor::MovePageUp", // scroll-down
       "ctrl-x [": "editor::MoveToBeginning", // beginning-of-buffer
