@@ -21,6 +21,7 @@ pub struct PickerPrompt {
 }
 
 pub fn prompt(
+    prompt: &str,
     options: Vec<SharedString>,
     workspace: WeakEntity<Workspace>,
     window: &mut Window,
@@ -29,11 +30,12 @@ pub fn prompt(
     if options.is_empty() {
         return Task::ready(Err(anyhow!("No options")));
     }
+    let prompt = prompt.to_string().into();
 
     window.spawn(cx, |mut cx| async move {
         // Modal branch picker has a longer trailoff than a popover one.
         let (tx, rx) = oneshot::channel();
-        let delegate = PickerPromptDelegate::new(options, tx, 70);
+        let delegate = PickerPromptDelegate::new(prompt, options, tx, 70);
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {
@@ -84,6 +86,7 @@ impl Render for PickerPrompt {
 }
 
 pub struct PickerPromptDelegate {
+    prompt: Arc<str>,
     matches: Vec<StringMatch>,
     all_options: Vec<SharedString>,
     selected_index: usize,
@@ -93,11 +96,13 @@ pub struct PickerPromptDelegate {
 
 impl PickerPromptDelegate {
     pub fn new(
+        prompt: Arc<str>,
         options: Vec<SharedString>,
         tx: oneshot::Sender<Result<usize>>,
         max_chars: usize,
     ) -> Self {
         Self {
+            prompt,
             all_options: options,
             matches: vec![],
             selected_index: 0,
@@ -111,7 +116,7 @@ impl PickerDelegate for PickerPromptDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select branch...".into()
+        self.prompt.clone()
     }
 
     fn match_count(&self) -> usize {
@@ -211,7 +216,7 @@ impl PickerDelegate for PickerPromptDelegate {
         let shortened_option = util::truncate_and_trailoff(&hit.string, self.max_match_length);
 
         Some(
-            ListItem::new(SharedString::from(format!("vcs-menu-{ix}")))
+            ListItem::new(SharedString::from(format!("picker-prompt-menu-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)

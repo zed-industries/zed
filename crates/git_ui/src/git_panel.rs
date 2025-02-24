@@ -1304,7 +1304,13 @@ impl GitPanel {
                     .collect();
                 let selection = cx
                     .update(|window, cx| {
-                        picker_prompt::prompt(current_remotes.clone(), workspace, window, cx)
+                        picker_prompt::prompt(
+                            "Pick which remote to push to",
+                            current_remotes.clone(),
+                            workspace,
+                            window,
+                            cx,
+                        )
                     })?
                     .await?;
 
