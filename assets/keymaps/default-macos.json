@@ -211,8 +211,8 @@
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-k h": "assistant::DeployHistory",
       "cmd-k l": "assistant::DeployPromptLibrary",
-      "cmd-t": "assistant::NewContext",
-      "cmd-n": "assistant::NewContext"
+      "cmd-t": "assistant::NewChat",
+      "cmd-n": "assistant::NewChat"
     }
   },
   {
