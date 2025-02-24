@@ -167,6 +167,17 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
         IconName::AiMistral
     }
 
+    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let model = mistral::Model::default();
+        Some(Arc::new(MistralLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        }))
+    }
+
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 

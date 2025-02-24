@@ -581,7 +581,7 @@
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-5-sonnet"
+      "model": "claude-3-5-sonnet-latest"
     }
   },
   // The settings for slash commands.
