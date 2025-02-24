@@ -323,7 +323,6 @@ function sign_app_binaries() {
             echo "Notarizing DMG with Apple"
             echo "$APPLE_NOTARIZATION_KEY" > "$notarization_key_file"
             "${xcode_bin_dir_path}/notarytool" submit --wait --key "$notarization_key_file" --key-id "$APPLE_NOTARIZATION_KEY_ID" --issuer "$APPLE_NOTARIZATION_ISSUER_ID" "${dmg_file_path}"
-            rm "$tempfile"
 
             echo "Removing temporary DMG (used only for notarization)"
             rm "${dmg_file_path}"
@@ -352,6 +351,7 @@ function sign_app_binaries() {
             /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
             "${xcode_bin_dir_path}/notarytool" submit --wait --key "$notarization_key_file" --key-id "$APPLE_NOTARIZATION_KEY_ID" --issuer "$APPLE_NOTARIZATION_ISSUER_ID" "${dmg_file_path}"
             "${xcode_bin_dir_path}/stapler" staple "${dmg_file_path}"
+            rm "$notarization_key_file"
         fi
 
         if [ "$open_result" = true ]; then
