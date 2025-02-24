@@ -11,7 +11,7 @@ use editor::{
     scroll::ScrollbarAutoHide, Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer,
     ShowScrollbar,
 };
-use git::repository::{Branch, CommitDetails, PushAction, ResetMode};
+use git::repository::{Branch, CommitDetails, PushAction, Remote, ResetMode};
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
 use git::{RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::*;
@@ -26,6 +26,7 @@ use project::{
 };
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
+use std::future::Future;
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
@@ -1152,29 +1153,82 @@ impl GitPanel {
         self.pending_commit = Some(task);
     }
 
-    // TODO: support more remotes other than `origin`
     fn push(
         &mut self,
         push_action: Option<PushAction>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(repo) = self.active_repository.clone() else {
-            return;
-        };
         let Some(push_action) = push_action else {
             return;
         };
-        let repo = repo.read(cx);
 
-        let push = match push_action {
-            PushAction::Republish => repo.push_upstream(),
-            PushAction::Publish => repo.push_upstream(),
-            PushAction::ForcePush { .. } => repo.force_push(),
-            PushAction::Push { .. } => repo.push(),
-        };
+        let options = push_action.options();
+        let remote = self.get_current_remote(cx);
+        cx.spawn(move |this, mut cx| async move {
+            let remote = remote.await?;
 
-        cx.spawn(move |_, _| push).detach();
+            this.update(&mut cx, |this, cx| {
+                let Some(repo) = this.active_repository.clone() else {
+                    return Err(anyhow::anyhow!("No active repository"));
+                };
+
+                let Some(branch) = repo.read(cx).current_branch() else {
+                    return Err(anyhow::anyhow!("No active branch"));
+                };
+
+                Ok(repo
+                    .read(cx)
+                    .push(branch.name.clone(), remote.name, options))
+            })??
+            .await??;
+
+            anyhow::Ok(())
+        })
+        .detach();
+    }
+
+    fn get_current_remote(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = Result<Remote>> {
+        // TODO for tonight:
+        // 1. Wire through the remote querying APIs in git
+        // 2. Add buttons
+        // 3. Make sure that it works
+        // 4. Prep for the demo tomorrow
+
+        // TODO:
+        // Check if we have a remote `git config --get branch.git-push.remote`
+        // If we don't have a remote, check what origins we have
+        //  -> If we have one, return it
+        // If we have multiple origins, open a prompt picker
+        let repo = self.active_repository.clone();
+        let mut cx = cx.to_async();
+
+        async move {
+            let Some(repo) = repo else {
+                return Err(anyhow::anyhow!("No active repository"));
+            };
+
+            let current_remotes = repo
+                .update(&mut cx, |repo, cx| {
+                    let Some(current_branch) = repo.current_branch() else {
+                        return Err(anyhow::anyhow!("No active branch"));
+                    };
+
+                    Ok(repo.get_remotes(current_branch.name.clone(), cx))
+                })??
+                .await?;
+
+            // TODO: Implement logic to handle multiple remotes
+            let current_remote = current_remotes
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("No active remote"))?;
+
+            Ok(current_remote)
+        }
     }
 
     fn potential_co_authors(&self, cx: &App) -> Vec<(String, String)> {
@@ -1705,7 +1759,7 @@ impl GitPanel {
         let branch = self
             .active_repository
             .as_ref()
-            .and_then(|repo| repo.read(cx).branch().map(|b| b.name.clone()))
+            .and_then(|repo| repo.read(cx).current_branch().map(|b| b.name.clone()))
             .unwrap_or_else(|| "<no branch>".into());
 
         let branch_selector = Button::new("branch-selector", branch)
@@ -1766,7 +1820,7 @@ impl GitPanel {
 
     fn render_previous_commit(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.as_ref()?;
-        let branch = active_repository.read(cx).branch()?;
+        let branch = active_repository.read(cx).current_branch()?;
         let commit = branch.most_recent_commit.as_ref()?.clone();
 
         // Previous commit -> Always show this if present

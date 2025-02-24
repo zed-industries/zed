@@ -312,8 +312,6 @@ message Envelope {
         Stage stage = 293;
         Unstage unstage = 294;
         Commit commit = 295;
-        Push push = 304;
-        ForcePush force_push = 305;  // current max
         OpenCommitMessageBuffer open_commit_message_buffer = 296;
 
         OpenUncommittedDiff open_uncommitted_diff = 297;
@@ -324,6 +322,11 @@ message Envelope {
 
         SetIndexText set_index_text = 299;
         GitCheckoutFiles git_checkout_files = 303;
+
+        Push push = 304;
+        Fetch fetch = 305;
+        GetRemotes get_remotes = 306;
+        GetRemotesResponse get_remotes_response = 307; // current max
     }
 
     reserved 87 to 88;
@@ -2779,11 +2782,33 @@ message Push {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
-    bool set_upstream = 4;
+    string remote_name = 4;
+    string branch_name = 5;
+    optional PushOptions options = 6;
+
+    enum PushOptions {
+        SET_UPSTREAM = 0;
+        FORCE = 1;
+    }
 }
 
-message ForcePush {
+message Fetch {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
+}
+
+message GetRemotes {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    optional string branch_name = 4;
+}
+
+message GetRemotesResponse {
+    repeated Remote remotes = 1;
+
+    message Remote {
+        string name = 1;
+    }
 }

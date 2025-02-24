@@ -5,7 +5,7 @@ use anyhow::{Context as _, Result};
 use client::ProjectId;
 use futures::channel::{mpsc, oneshot};
 use futures::StreamExt as _;
-use git::repository::{Branch, CommitDetails, ResetMode};
+use git::repository::{Branch, CommitDetails, PushOptions, Remote, ResetMode};
 use git::{
     repository::{GitRepository, RepoPath},
     status::{GitSummary, TrackedSummary},
@@ -74,8 +74,13 @@ pub enum Message {
     Stage(GitRepo, Vec<RepoPath>),
     Unstage(GitRepo, Vec<RepoPath>),
     SetIndexText(GitRepo, RepoPath, Option<String>),
-    Push(GitRepo, bool),
-    ForcePush(GitRepo),
+    Push {
+        repo: GitRepo,
+        branch_name: SharedString,
+        remote_name: SharedString,
+        options: Option<PushOptions>,
+    },
+    Fetch(GitRepo),
 }
 
 pub enum GitEvent {
@@ -110,7 +115,7 @@ impl GitStore {
 
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_push);
-        client.add_entity_request_handler(Self::handle_force_push);
+        client.add_entity_request_handler(Self::handle_fetch);
         client.add_entity_request_handler(Self::handle_stage);
         client.add_entity_request_handler(Self::handle_unstage);
         client.add_entity_request_handler(Self::handle_commit);
@@ -258,9 +263,9 @@ impl GitStore {
 
     async fn process_git_msg(msg: Message) -> Result<()> {
         match msg {
-            Message::ForcePush(repo) => {
+            Message::Fetch(repo) => {
                 match repo {
-                    GitRepo::Local(git_repository) => git_repository.force_push()?,
+                    GitRepo::Local(git_repository) => git_repository.fetch()?,
                     GitRepo::Remote {
                         project_id,
                         client,
@@ -268,20 +273,27 @@ impl GitStore {
                         work_directory_id,
                     } => {
                         client
-                            .request(proto::ForcePush {
+                            .request(proto::Fetch {
                                 project_id: project_id.0,
                                 worktree_id: worktree_id.to_proto(),
                                 work_directory_id: work_directory_id.to_proto(),
                             })
                             .await
-                            .context("sending force push request")?;
+                            .context("sending fetch request")?;
                     }
                 }
                 Ok(())
             }
-            Message::Push(repo, upstream) => {
+            Message::Push {
+                repo,
+                branch_name,
+                remote_name,
+                options,
+            } => {
                 match repo {
-                    GitRepo::Local(git_repository) => git_repository.push(upstream)?,
+                    GitRepo::Local(git_repository) => {
+                        git_repository.push(&branch_name, &remote_name, options)?
+                    }
                     GitRepo::Remote {
                         project_id,
                         client,
@@ -293,7 +305,15 @@ impl GitStore {
                                 project_id: project_id.0,
                                 worktree_id: worktree_id.to_proto(),
                                 work_directory_id: work_directory_id.to_proto(),
-                                set_upstream: upstream,
+                                branch_name: branch_name.to_string(),
+                                remote_name: remote_name.to_string(),
+                                options: options.map(|options| match options {
+                                    PushOptions::Force => proto::push::PushOptions::Force,
+                                    PushOptions::SetUpstream => {
+                                        proto::push::PushOptions::SetUpstream
+                                    }
+                                }
+                                    as i32),
                             })
                             .await
                             .context("sending push request")?;
@@ -462,9 +482,9 @@ impl GitStore {
         }
     }
 
-    async fn handle_force_push(
+    async fn handle_fetch(
         this: Entity<Self>,
-        envelope: TypedEnvelope<proto::ForcePush>,
+        envelope: TypedEnvelope<proto::Fetch>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
@@ -473,9 +493,7 @@ impl GitStore {
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
 
         repository_handle
-            .update(&mut cx, |repository_handle, _cx| {
-                repository_handle.force_push()
-            })?
+            .update(&mut cx, |repository_handle, _cx| repository_handle.fetch())?
             .await??;
         Ok(proto::Ack {})
     }
@@ -490,13 +508,21 @@ impl GitStore {
         let repository_handle =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
 
+        let options = envelope
+            .payload
+            .options
+            .as_ref()
+            .map(|_| match envelope.payload.options() {
+                proto::push::PushOptions::SetUpstream => git::repository::PushOptions::SetUpstream,
+                proto::push::PushOptions::Force => git::repository::PushOptions::Force,
+            });
+
+        let branch_name = envelope.payload.branch_name.into();
+        let remote_name = envelope.payload.remote_name.into();
+
         repository_handle
             .update(&mut cx, |repository_handle, _cx| {
-                if envelope.payload.set_upstream {
-                    repository_handle.push_upstream()
-                } else {
-                    repository_handle.push()
-                }
+                repository_handle.push(branch_name, remote_name, options)
             })?
             .await??;
         Ok(proto::Ack {})
@@ -737,7 +763,7 @@ impl Repository {
         (self.worktree_id, self.repository_entry.work_directory_id())
     }
 
-    pub fn branch(&self) -> Option<&Branch> {
+    pub fn current_branch(&self) -> Option<&Branch> {
         self.repository_entry.branch()
     }
 
@@ -1067,16 +1093,22 @@ impl Repository {
         })
     }
 
-    pub fn push(&self) -> oneshot::Receiver<Result<()>> {
-        self.send_message(Message::Push(self.git_repo.clone(), false))
+    pub fn fetch(&self) -> oneshot::Receiver<Result<()>> {
+        self.send_message(Message::Fetch(self.git_repo.clone()))
     }
 
-    pub fn push_upstream(&self) -> oneshot::Receiver<Result<()>> {
-        self.send_message(Message::Push(self.git_repo.clone(), true))
-    }
-
-    pub fn force_push(&self) -> oneshot::Receiver<Result<()>> {
-        self.send_message(Message::ForcePush(self.git_repo.clone()))
+    pub fn push(
+        &self,
+        branch: SharedString,
+        remote: SharedString,
+        options: Option<PushOptions>,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.send_message(Message::Push {
+            repo: self.git_repo.clone(),
+            branch_name: branch,
+            remote_name: remote,
+            options,
+        })
     }
 
     pub fn set_index_text(
@@ -1089,6 +1121,37 @@ impl Repository {
             path.clone(),
             content,
         ))
+    }
+
+    pub fn get_remotes(&self, branch_name: SharedString, cx: &App) -> Task<Result<Vec<Remote>>> {
+        match self.git_repo.clone() {
+            GitRepo::Local(git_repository) => {
+                cx.background_spawn(async move { git_repository.get_remotes(Some(&branch_name)) })
+            }
+            GitRepo::Remote {
+                project_id,
+                client,
+                worktree_id,
+                work_directory_id,
+            } => cx.background_spawn(async move {
+                let response = client
+                    .request(proto::GetRemotes {
+                        project_id: project_id.0,
+                        worktree_id: worktree_id.to_proto(),
+                        work_directory_id: work_directory_id.to_proto(),
+                        branch_name: Some(branch_name.to_string()),
+                    })
+                    .await?;
+
+                Ok(response
+                    .remotes
+                    .into_iter()
+                    .map(|remotes| git::repository::Remote {
+                        name: remotes.name.into(),
+                    })
+                    .collect())
+            }),
+        }
     }
 
     fn send_message(&self, message: Message) -> oneshot::Receiver<anyhow::Result<()>> {

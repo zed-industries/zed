@@ -393,7 +393,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::CreateContext>)
             .add_request_handler(forward_mutating_project_request::<proto::SynchronizeContexts>)
             .add_request_handler(forward_mutating_project_request::<proto::Push>)
-            .add_request_handler(forward_mutating_project_request::<proto::ForcePush>)
+            .add_request_handler(forward_mutating_project_request::<proto::Fetch>)
             .add_request_handler(forward_mutating_project_request::<proto::Stage>)
             .add_request_handler(forward_mutating_project_request::<proto::Unstage>)
             .add_request_handler(forward_mutating_project_request::<proto::Commit>)
