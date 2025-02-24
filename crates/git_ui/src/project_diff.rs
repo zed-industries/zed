@@ -386,17 +386,17 @@ impl ProjectDiff {
                 .collect::<Vec<_>>()
         };
 
-        self.multibuffer.update(cx, |multibuffer, cx| {
+        let is_excerpt_newly_added = self.multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
                 diff_hunk_ranges,
                 editor::DEFAULT_MULTIBUFFER_CONTEXT,
                 cx,
-            );
+            )
         });
 
-        if diff_buffer.file_status.is_deleted() {
+        if is_excerpt_newly_added && diff_buffer.file_status.is_deleted() {
             self.editor.update(cx, |editor, cx| {
                 editor.fold_buffer(snapshot.text.remote_id(), cx)
             });
