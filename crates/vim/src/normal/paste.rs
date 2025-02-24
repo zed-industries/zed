@@ -1,5 +1,5 @@
 use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, DisplayPoint, RowExt};
-use gpui::{impl_actions, Context, Window};
+use gpui::{impl_actions, Context, Point, Window};
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -156,13 +156,13 @@ impl Vim {
                 }
 
                 let cursor_offset = editor.selections.last::<usize>(cx).head();
-                let auto_indent_on_paste = editor.buffer().update(cx, |buffer, cx| {
-                    buffer
-                        .read(cx)
-                        .settings_at(cursor_offset, cx)
-                        .auto_indent_on_paste
-                });
-                if auto_indent_on_paste {
+                if editor
+                    .buffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .settings_at(cursor_offset, cx)
+                    .auto_indent_on_paste
+                {
                     editor.edit_with_block_indent(edits, original_start_columns, cx);
                 } else {
                     editor.edit(edits, cx);
