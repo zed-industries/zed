@@ -4835,7 +4835,7 @@ impl Editor {
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
 
-        if !self.inline_completions_enabled_in_buffer(&buffer, cursor_buffer_position, cx) {
+        if !self.edit_predictions_enabled_in_buffer(&buffer, cursor_buffer_position, cx) {
             self.discard_inline_completion(false, cx);
             return None;
         }
@@ -4938,18 +4938,18 @@ impl Editor {
         )
     }
 
-    pub fn inline_completions_enabled(&self, cx: &App) -> bool {
+    pub fn edit_predictions_enabled_at_cursor(&self, cx: &App) -> bool {
         let cursor = self.selections.newest_anchor().head();
         if let Some((buffer, cursor_position)) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)
         {
-            self.inline_completions_enabled_in_buffer(&buffer, cursor_position, cx)
+            self.edit_predictions_enabled_in_buffer(&buffer, cursor_position, cx)
         } else {
             false
         }
     }
 
-    fn inline_completions_enabled_in_buffer(
+    fn edit_predictions_enabled_in_buffer(
         &self,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
