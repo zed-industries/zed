@@ -79,7 +79,10 @@ fn main() {
                     println!("{}", env!("ZED_PKG_VERSION"))
                 }
                 ReleaseChannel::Nightly | ReleaseChannel::Dev => {
-                    println!("{}", env!("ZED_COMMIT_SHA"))
+                    println!(
+                        "{}",
+                        option_env!("ZED_COMMIT_SHA").unwrap_or(release_channel.dev_name())
+                    )
                 }
             };
             std::process::exit(0);

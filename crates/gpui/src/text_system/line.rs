@@ -107,15 +107,21 @@ impl WrappedLine {
         origin: Point<Pixels>,
         line_height: Pixels,
         align: TextAlign,
+        bounds: Option<Bounds<Pixels>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<()> {
+        let align_width = match bounds {
+            Some(bounds) => Some(bounds.size.width),
+            None => self.layout.wrap_width,
+        };
+
         paint_line(
             origin,
             &self.layout.unwrapped_layout,
             line_height,
             align,
-            self.layout.wrap_width,
+            align_width,
             &self.decoration_runs,
             &self.wrap_boundaries,
             window,
@@ -222,7 +228,7 @@ fn paint_line(
                     glyph_origin.x = aligned_origin_x(
                         origin,
                         align_width.unwrap_or(layout.width),
-                        prev_glyph_position.x,
+                        glyph.position.x,
                         &align,
                         layout,
                         wraps.peek(),
@@ -426,17 +432,7 @@ fn aligned_origin_x(
     wrap_boundary: Option<&&WrapBoundary>,
 ) -> Pixels {
     let end_of_line = if let Some(WrapBoundary { run_ix, glyph_ix }) = wrap_boundary {
-        if layout.runs[*run_ix].glyphs.len() == glyph_ix + 1 {
-            // Next glyph is in next run
-            layout
-                .runs
-                .get(run_ix + 1)
-                .and_then(|run| run.glyphs.first())
-                .map_or(layout.width, |glyph| glyph.position.x)
-        } else {
-            // Get next glyph
-            layout.runs[*run_ix].glyphs[*glyph_ix + 1].position.x
-        }
+        layout.runs[*run_ix].glyphs[*glyph_ix].position.x
     } else {
         layout.width
     };

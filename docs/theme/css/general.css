@@ -79,6 +79,12 @@ h6 code {
   display: none !important;
 }
 
+h2 {
+  padding-bottom: 1rem;
+  border-bottom: 1px solid;
+  border-color: var(--border-light);
+}
+
 h2,
 h3 {
   margin-block-start: 1.5em;

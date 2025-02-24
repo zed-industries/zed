@@ -15,6 +15,7 @@ use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use env_logger::Builder;
 use extension::ExtensionHostProxy;
+use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
@@ -34,7 +35,7 @@ use project::project_settings::ProjectSettings;
 use recent_projects::{open_ssh_project, SshSettings};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
-use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
+use settings::{watch_config_file, Settings, SettingsStore};
 use simplelog::ConfigBuilder;
 use std::{
     env,
@@ -44,7 +45,10 @@ use std::{
     process,
     sync::Arc,
 };
-use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
+use theme::{
+    ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
+    ThemeSettings,
+};
 use time::UtcOffset;
 use util::{maybe, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -52,8 +56,9 @@ use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, derive_paths_with_position, handle_cli_connection,
-    handle_keymap_file_changes, handle_settings_changed, initialize_workspace,
-    inline_completion_registry, open_paths_with_positions, OpenListener, OpenRequest,
+    handle_keymap_file_changes, handle_settings_changed, handle_settings_file_changes,
+    initialize_workspace, inline_completion_registry, open_paths_with_positions, OpenListener,
+    OpenRequest,
 };
 
 #[cfg(unix)]
@@ -487,9 +492,10 @@ fn main() {
         tab_switcher::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
-        project_panel::init(Assets, cx);
+        project_panel::init(cx);
         git_ui::git_panel::init(cx);
-        outline_panel::init(Assets, cx);
+        outline_panel::init(cx);
+        component_preview::init(cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
@@ -505,7 +511,6 @@ fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);
-        vcs_menu::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
         welcome::init(cx);
@@ -514,10 +519,10 @@ fn main() {
         zeta::init(cx);
 
         cx.observe_global::<SettingsStore>({
+            let fs = fs.clone();
             let languages = app_state.languages.clone();
             let http = app_state.client.http_client();
             let client = app_state.client.clone();
-
             move |cx| {
                 for &mut window in cx.windows().iter_mut() {
                     let background_appearance = cx.theme().window_background_appearance();
@@ -527,6 +532,9 @@ fn main() {
                         })
                         .ok();
                 }
+
+                eager_load_active_theme_and_icon_theme(fs.clone(), cx);
+
                 languages.set_theme(cx.theme().clone());
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
                 if &http.base_url() != new_host {
@@ -554,7 +562,6 @@ fn main() {
         load_user_themes_in_background(fs.clone(), cx);
         watch_themes(fs.clone(), cx);
         watch_languages(fs.clone(), app_state.languages.clone(), cx);
-        watch_file_types(fs.clone(), cx);
 
         cx.set_menus(app_menus());
         initialize_workspace(app_state.clone(), prompt_builder, cx);
@@ -723,10 +730,10 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
 async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
     if stdout_is_a_pty() {
-        if *client::ZED_DEVELOPMENT_AUTH {
-            client.authenticate_and_connect(true, cx).await?;
-        } else if client::IMPERSONATE_LOGIN.is_some() {
+        if client::IMPERSONATE_LOGIN.is_some() {
             client.authenticate_and_connect(false, cx).await?;
+        } else if client.has_credentials(cx).await {
+            client.authenticate_and_connect(true, cx).await?;
         }
     } else if client.has_credentials(cx).await {
         client.authenticate_and_connect(true, cx).await?;
@@ -1062,6 +1069,66 @@ fn load_embedded_fonts(cx: &App) {
         .unwrap();
 }
 
+/// Eagerly loads the active theme and icon theme based on the selections in the
+/// theme settings.
+///
+/// This fast path exists to load these themes as soon as possible so the user
+/// doesn't see the default themes while waiting on extensions to load.
+fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
+    let extension_store = ExtensionStore::global(cx);
+    let theme_registry = ThemeRegistry::global(cx);
+    let theme_settings = ThemeSettings::get_global(cx);
+    let appearance = cx.window_appearance().into();
+
+    if let Some(theme_selection) = theme_settings.theme_selection.as_ref() {
+        let theme_name = theme_selection.theme(appearance);
+        if matches!(theme_registry.get(theme_name), Err(ThemeNotFoundError(_))) {
+            if let Some(theme_path) = extension_store.read(cx).path_to_extension_theme(theme_name) {
+                cx.spawn({
+                    let theme_registry = theme_registry.clone();
+                    let fs = fs.clone();
+                    |cx| async move {
+                        theme_registry.load_user_theme(&theme_path, fs).await?;
+
+                        cx.update(|cx| {
+                            ThemeSettings::reload_current_theme(cx);
+                        })
+                    }
+                })
+                .detach_and_log_err(cx);
+            }
+        }
+    }
+
+    if let Some(icon_theme_selection) = theme_settings.icon_theme_selection.as_ref() {
+        let icon_theme_name = icon_theme_selection.icon_theme(appearance);
+        if matches!(
+            theme_registry.get_icon_theme(icon_theme_name),
+            Err(IconThemeNotFoundError(_))
+        ) {
+            if let Some((icon_theme_path, icons_root_path)) = extension_store
+                .read(cx)
+                .path_to_extension_icon_theme(icon_theme_name)
+            {
+                cx.spawn({
+                    let theme_registry = theme_registry.clone();
+                    let fs = fs.clone();
+                    |cx| async move {
+                        theme_registry
+                            .load_icon_theme(&icon_theme_path, &icons_root_path, fs)
+                            .await?;
+
+                        cx.update(|cx| {
+                            ThemeSettings::reload_current_icon_theme(cx);
+                        })
+                    }
+                })
+                .detach_and_log_err(cx);
+            }
+        }
+    }
+}
+
 /// Spawns a background task to load the user themes from the themes directory.
 fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     cx.spawn({
@@ -1157,35 +1224,3 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
 
 #[cfg(not(debug_assertions))]
 fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>, _cx: &mut App) {}
-
-#[cfg(debug_assertions)]
-fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut App) {
-    use std::time::Duration;
-
-    use file_icons::FileIcons;
-    use gpui::UpdateGlobal;
-
-    let path = {
-        let p = Path::new("assets").join(file_icons::FILE_TYPES_ASSET);
-        let Ok(full_path) = p.canonicalize() else {
-            return;
-        };
-        full_path
-    };
-
-    cx.spawn(|cx| async move {
-        let (mut events, _) = fs.watch(path.as_path(), Duration::from_millis(100)).await;
-        while (events.next().await).is_some() {
-            cx.update(|cx| {
-                FileIcons::update_global(cx, |file_types, _cx| {
-                    *file_types = file_icons::FileIcons::new(Assets);
-                });
-            })
-            .ok();
-        }
-    })
-    .detach()
-}
-
-#[cfg(not(debug_assertions))]
-fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut App) {}

@@ -10,15 +10,14 @@ use gpui::{
     Action, App, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, Global, WeakEntity,
 };
 use language::Point;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
 use std::{fmt::Display, ops::Range, sync::Arc};
-use ui::{Context, SharedString};
+use ui::{Context, KeyBinding, SharedString};
 use workspace::searchable::Direction;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
     Normal,
     Insert,
@@ -59,7 +58,7 @@ impl Default for Mode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Operator {
     Change,
     Delete,
@@ -82,7 +81,6 @@ pub enum Operator {
     },
     AddSurrounds {
         // Typically no need to configure this as `SendKeystrokes` can be used - see #23088.
-        #[serde(skip)]
         target: Option<SurroundsType>,
     },
     ChangeSurrounds {
@@ -111,6 +109,8 @@ pub enum Operator {
     RecordRegister,
     ReplayRegister,
     ToggleComments,
+    ReplaceWithRegister,
+    Exchange,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -218,6 +218,7 @@ impl VimGlobals {
 
         cx.observe_global::<SettingsStore>(move |cx| {
             if Vim::enabled(cx) {
+                KeyBinding::set_vim_mode(cx, true);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.show_namespace(Vim::NAMESPACE);
                 });
@@ -225,6 +226,7 @@ impl VimGlobals {
                     interceptor.set(Box::new(command_interceptor));
                 });
             } else {
+                KeyBinding::set_vim_mode(cx, false);
                 *Vim::globals(cx) = VimGlobals::default();
                 CommandPaletteInterceptor::update_global(cx, |interceptor, _| {
                     interceptor.clear();
@@ -499,6 +501,8 @@ impl Operator {
             Operator::AutoIndent => "eq",
             Operator::ShellCommand => "sh",
             Operator::Rewrap => "gq",
+            Operator::ReplaceWithRegister => "gr",
+            Operator::Exchange => "cx",
             Operator::Outdent => "<",
             Operator::Uppercase => "gU",
             Operator::Lowercase => "gu",
@@ -551,6 +555,8 @@ impl Operator {
             | Operator::ShellCommand
             | Operator::Lowercase
             | Operator::Uppercase
+            | Operator::ReplaceWithRegister
+            | Operator::Exchange
             | Operator::Object { .. }
             | Operator::ChangeSurrounds { target: None }
             | Operator::OppositeCase

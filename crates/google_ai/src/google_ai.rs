@@ -299,14 +299,21 @@ pub struct CountTokensResponse {
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, strum::EnumIter)]
+#[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Eq, strum::EnumIter)]
 pub enum Model {
     #[serde(rename = "gemini-1.5-pro")]
     Gemini15Pro,
     #[serde(rename = "gemini-1.5-flash")]
     Gemini15Flash,
-    #[serde(rename = "gemini-2.0-flash-exp")]
+    #[serde(rename = "gemini-2.0-pro-exp")]
+    Gemini20Pro,
+    #[serde(rename = "gemini-2.0-flash")]
+    #[default]
     Gemini20Flash,
+    #[serde(rename = "gemini-2.0-flash-thinking-exp")]
+    Gemini20FlashThinking,
+    #[serde(rename = "gemini-2.0-flash-lite-preview")]
+    Gemini20FlashLite,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -321,7 +328,10 @@ impl Model {
         match self {
             Model::Gemini15Pro => "gemini-1.5-pro",
             Model::Gemini15Flash => "gemini-1.5-flash",
-            Model::Gemini20Flash => "gemini-2.0-flash-exp",
+            Model::Gemini20Pro => "gemini-2.0-pro-exp",
+            Model::Gemini20Flash => "gemini-2.0-flash",
+            Model::Gemini20FlashThinking => "gemini-2.0-flash-thinking-exp",
+            Model::Gemini20FlashLite => "gemini-2.0-flash-lite-preview",
             Model::Custom { name, .. } => name,
         }
     }
@@ -330,7 +340,10 @@ impl Model {
         match self {
             Model::Gemini15Pro => "Gemini 1.5 Pro",
             Model::Gemini15Flash => "Gemini 1.5 Flash",
+            Model::Gemini20Pro => "Gemini 2.0 Pro",
             Model::Gemini20Flash => "Gemini 2.0 Flash",
+            Model::Gemini20FlashThinking => "Gemini 2.0 Flash Thinking",
+            Model::Gemini20FlashLite => "Gemini 2.0 Flash Lite",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -341,7 +354,10 @@ impl Model {
         match self {
             Model::Gemini15Pro => 2_000_000,
             Model::Gemini15Flash => 1_000_000,
+            Model::Gemini20Pro => 2_000_000,
             Model::Gemini20Flash => 1_000_000,
+            Model::Gemini20FlashThinking => 1_000_000,
+            Model::Gemini20FlashLite => 1_000_000,
             Model::Custom { max_tokens, .. } => *max_tokens,
         }
     }

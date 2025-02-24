@@ -2,8 +2,9 @@ use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
 use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EntityId, Task};
-use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
+use inline_completion::{Direction, EditPredictionProvider, InlineCompletion};
 use language::{Anchor, Buffer, BufferSnapshot};
+use project::Project;
 use std::{
     ops::{AddAssign, Range},
     path::Path,
@@ -91,12 +92,13 @@ fn completion_from_diff(
     }
 
     InlineCompletion {
+        id: None,
         edits,
         edit_preview: None,
     }
 }
 
-impl InlineCompletionProvider for SupermavenCompletionProvider {
+impl EditPredictionProvider for SupermavenCompletionProvider {
     fn name() -> &'static str {
         "supermaven"
     }
@@ -106,10 +108,6 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
     }
 
     fn show_completions_in_menu() -> bool {
-        false
-    }
-
-    fn show_completions_in_normal_mode() -> bool {
         false
     }
 
@@ -123,6 +121,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
 
     fn refresh(
         &mut self,
+        _project: Option<Entity<Project>>,
         buffer_handle: Entity<Buffer>,
         cursor_position: Anchor,
         debounce: bool,

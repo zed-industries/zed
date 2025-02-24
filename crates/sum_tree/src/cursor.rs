@@ -447,7 +447,7 @@ where
         summary.0
     }
 
-    /// Returns whether we found the item you where seeking for
+    /// Returns whether we found the item you were seeking for
     #[track_caller]
     fn seek_internal(
         &mut self,

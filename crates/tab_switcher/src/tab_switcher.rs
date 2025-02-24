@@ -25,6 +25,7 @@ use workspace::{
 const PANEL_WIDTH_REMS: f32 = 28.;
 
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct Toggle {
     #[serde(default)]
     pub select_last: bool,

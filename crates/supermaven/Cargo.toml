@@ -22,6 +22,7 @@ inline_completion.workspace = true
 language.workspace = true
 log.workspace = true
 postage.workspace = true
+project.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true

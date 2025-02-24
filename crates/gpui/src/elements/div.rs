@@ -1684,7 +1684,7 @@ impl Interactivity {
                     .ok()
                     .and_then(|mut text| text.pop())
                 {
-                    text.paint(hitbox.origin, FONT_SIZE, TextAlign::Left, window, cx)
+                    text.paint(hitbox.origin, FONT_SIZE, TextAlign::Left, None, window, cx)
                         .ok();
 
                     let text_bounds = crate::Bounds {

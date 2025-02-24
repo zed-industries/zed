@@ -70,15 +70,15 @@ impl Anchor {
                 return text_cmp;
             }
             if self.diff_base_anchor.is_some() || other.diff_base_anchor.is_some() {
-                if let Some(diff_base) = snapshot.diffs.get(&excerpt.buffer_id) {
-                    let self_anchor = self
-                        .diff_base_anchor
-                        .filter(|a| diff_base.base_text.can_resolve(a));
-                    let other_anchor = other
-                        .diff_base_anchor
-                        .filter(|a| diff_base.base_text.can_resolve(a));
+                if let Some(base_text) = snapshot
+                    .diffs
+                    .get(&excerpt.buffer_id)
+                    .and_then(|diff| diff.base_text())
+                {
+                    let self_anchor = self.diff_base_anchor.filter(|a| base_text.can_resolve(a));
+                    let other_anchor = other.diff_base_anchor.filter(|a| base_text.can_resolve(a));
                     return match (self_anchor, other_anchor) {
-                        (Some(a), Some(b)) => a.cmp(&b, &diff_base.base_text),
+                        (Some(a), Some(b)) => a.cmp(&b, base_text),
                         (Some(_), None) => match other.text_anchor.bias {
                             Bias::Left => Ordering::Greater,
                             Bias::Right => Ordering::Less,
@@ -107,9 +107,13 @@ impl Anchor {
                     excerpt_id: self.excerpt_id,
                     text_anchor: self.text_anchor.bias_left(&excerpt.buffer),
                     diff_base_anchor: self.diff_base_anchor.map(|a| {
-                        if let Some(base) = snapshot.diffs.get(&excerpt.buffer_id) {
-                            if a.buffer_id == Some(base.base_text.remote_id()) {
-                                return a.bias_left(&base.base_text);
+                        if let Some(base_text) = snapshot
+                            .diffs
+                            .get(&excerpt.buffer_id)
+                            .and_then(|diff| diff.base_text())
+                        {
+                            if a.buffer_id == Some(base_text.remote_id()) {
+                                return a.bias_left(base_text);
                             }
                         }
                         a
@@ -128,9 +132,13 @@ impl Anchor {
                     excerpt_id: self.excerpt_id,
                     text_anchor: self.text_anchor.bias_right(&excerpt.buffer),
                     diff_base_anchor: self.diff_base_anchor.map(|a| {
-                        if let Some(base) = snapshot.diffs.get(&excerpt.buffer_id) {
-                            if a.buffer_id == Some(base.base_text.remote_id()) {
-                                return a.bias_right(&base.base_text);
+                        if let Some(base_text) = snapshot
+                            .diffs
+                            .get(&excerpt.buffer_id)
+                            .and_then(|diff| diff.base_text())
+                        {
+                            if a.buffer_id == Some(base_text.remote_id()) {
+                                return a.bias_right(&base_text);
                             }
                         }
                         a
@@ -181,8 +189,9 @@ impl ToPoint for Anchor {
 }
 
 pub trait AnchorRangeExt {
-    fn cmp(&self, b: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> Ordering;
-    fn overlaps(&self, b: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool;
+    fn cmp(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> Ordering;
+    fn includes(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool;
+    fn overlaps(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool;
     fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<usize>;
     fn to_point(&self, content: &MultiBufferSnapshot) -> Range<Point>;
 }
@@ -193,6 +202,10 @@ impl AnchorRangeExt for Range<Anchor> {
             Ordering::Equal => other.end.cmp(&self.end, buffer),
             ord => ord,
         }
+    }
+
+    fn includes(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool {
+        self.start.cmp(&other.start, &buffer).is_le() && other.end.cmp(&self.end, &buffer).is_le()
     }
 
     fn overlaps(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool {

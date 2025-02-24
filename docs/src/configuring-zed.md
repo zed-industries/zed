@@ -378,11 +378,11 @@ There are two options to choose from:
 ## Edit Predictions
 
 - Description: Settings for edit predictions.
-- Setting: `inline_completions`
+- Setting: `edit_predictions`
 - Default:
 
 ```json
-  "inline_completions": {
+  "edit_predictions": {
     "disabled_globs": [
       "**/.env*",
       "**/*.pem",
@@ -398,18 +398,18 @@ There are two options to choose from:
 
 ### Disabled Globs
 
-- Description: A list of globs representing files that edit predictions should be disabled for.
+- Description: A list of globs for which edit predictions should be disabled for. This list adds to a pre-existing, sensible default set of globs. Any additional ones you add are combined with them.
 - Setting: `disabled_globs`
-- Default: `[".env"]`
+- Default: `["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]`
 
 **Options**
 
-List of `string` values
+List of `string` values.
 
 ## Edit Predictions Disabled in
 
 - Description: A list of language scopes in which edit predictions should be disabled.
-- Setting: `inline_completions_disabled_in`
+- Setting: `edit_predictions_disabled_in`
 - Default: `[]`
 
 **Options**
@@ -434,7 +434,7 @@ List of `string` values
 {
   "languages": {
     "Go": {
-      "inline_completions_disabled_in": ["comment", "string"]
+      "edit_predictions_disabled_in": ["comment", "string"]
     }
   }
 }
@@ -471,6 +471,19 @@ List of `string` values
 ```json
 "current_line_highlight": "all"
 ```
+
+## Selection Highlight
+
+- Description: Whether to highlight all occurrences of the selected text in an editor.
+- Setting: `selection_highlight`
+- Default: `true`
+
+## Selection Highlight Debounce
+
+- Description: The debounce delay before querying highlights based on the selected text.
+
+- Setting: `selection_highlight_debounce`
+- Default: `50`
 
 ## LSP Highlight Debounce
 
@@ -532,6 +545,7 @@ List of `string` values
   "cursors": true,
   "git_diff": true,
   "search_results": true,
+  "selected_text": true,
   "selected_symbol": true,
   "diagnostics": "all",
   "axes": {
@@ -605,6 +619,16 @@ List of `string` values
 
 - Description: Whether to show buffer search results in the scrollbar.
 - Setting: `search_results`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Selected Text Indicators
+
+- Description: Whether to show selected text occurrences in the scrollbar.
+- Setting: `selected_text`
 - Default: `true`
 
 **Options**
@@ -1121,7 +1145,7 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 ## File Scan Exclusions
 
 - Setting: `file_scan_exclusions`
-- Description: Configure how Add filename or directory globs that will be excluded by Zed entirely. They will be skipped during file scans, file searches and hidden from project file tree.
+- Description: Files or globs of files that will be excluded by Zed entirely. They will be skipped during file scans, file searches, and not be displayed in the project file tree. Overrides `file_scan_inclusions`.
 - Default:
 
 ```json
@@ -1140,6 +1164,16 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 
 Note, specifying `file_scan_exclusions` in settings.json will override the defaults (shown above). If you are looking to exclude additional items you will need to include all the default values in your settings.
 
+## File Scan Inclusions
+
+- Setting: `file_scan_inclusions`
+- Description: Files or globs of files that will be included by Zed, even when ignored by git. This is useful for files that are not tracked by git, but are still important to your project. Note that globs that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes precedence over these inclusions.
+- Default:
+
+```json
+"file_scan_inclusions": [".env*"],
+```
+
 ## File Types
 
 - Setting: `file_types`
@@ -1156,6 +1190,112 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "C++": ["c"],
     "TOML": ["MyLockFile"],
     "Dockerfile": ["Dockerfile*"]
+  }
+}
+```
+
+## Diagnostics
+
+- Description: Configuration for diagnostics-related features.
+- Setting: `diagnostics`
+- Default:
+
+```json
+{
+  "diagnostics": {
+    "include_warnings": true,
+    "inline": {
+      "enabled": false
+    }
+    "update_with_cursor": false,
+    "primary_only": false,
+    "use_rendered": false,
+  }
+}
+```
+
+### Inline Diagnostics
+
+- Description: Whether or not to show diagnostics information inline.
+- Setting: `inline`
+- Default:
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": false,
+      "update_debounce_ms": 150,
+      "padding": 4,
+      "min_column": 0,
+      "max_severity": null
+    }
+  }
+}
+```
+
+**Options**
+
+1. Enable inline diagnostics.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true
+    }
+  }
+}
+```
+
+2. Delay diagnostic updates until some time after the last diagnostic update.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "update_debounce_ms": 150
+    }
+  }
+}
+```
+
+3. Set padding between the end of the source line and the start of the diagnostic.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "padding": 4
+    }
+  }
+}
+```
+
+4. Horizontally align inline diagnostics at the given column.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "min_column": 80
+    }
+  }
+}
+```
+
+5. Show only warning and error diagnostics.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "max_severity": "warning"
+    }
   }
 }
 ```
@@ -1478,7 +1618,7 @@ The following settings can be overridden for each specific language:
 - [`hard_tabs`](#hard-tabs)
 - [`preferred_line_length`](#preferred-line-length)
 - [`remove_trailing_whitespace_on_save`](#remove-trailing-whitespace-on-save)
-- [`show_inline_completions`](#show-inline-completions)
+- [`show_edit_predictions`](#show-edit-predictions)
 - [`show_whitespaces`](#show-whitespaces)
 - [`soft_wrap`](#soft-wrap)
 - [`tab_size`](#tab-size)
@@ -1574,7 +1714,7 @@ Or to set a `socks5` proxy:
 ### Modal Max Width
 
 - Description: Max-width of the file finder modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`.
-- Setting: `max_modal_width`
+- Setting: `modal_max_width`
 - Default: `small`
 
 ## Preferred Line Length
@@ -1654,8 +1794,8 @@ Or to set a `socks5` proxy:
 
 ## Show Edit Predictions
 
-- Description: Whether to show edit predictions as you type or manually by triggering `editor::ShowInlineCompletion`.
-- Setting: `show_inline_completions`
+- Description: Whether to show edit predictions as you type or manually by triggering `editor::ShowEditPrediction`.
+- Setting: `show_edit_predictions`
 - Default: `true`
 
 **Options**

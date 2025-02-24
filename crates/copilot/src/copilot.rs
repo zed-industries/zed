@@ -18,7 +18,7 @@ use http_client::github::get_release_by_tag_name;
 use http_client::HttpClient;
 use language::language_settings::CopilotSettings;
 use language::{
-    language_settings::{all_language_settings, language_settings, InlineCompletionProvider},
+    language_settings::{all_language_settings, language_settings, EditPredictionProvider},
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
     ToPointUtf16,
 };
@@ -235,8 +235,7 @@ impl RegisteredBuffer {
                 let new_snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot()).ok()?;
 
                 let content_changes = cx
-                    .background_executor()
-                    .spawn({
+                    .background_spawn({
                         let new_snapshot = new_snapshot.clone();
                         async move {
                             new_snapshot
@@ -370,9 +369,9 @@ impl Copilot {
         let http = self.http.clone();
         let node_runtime = self.node_runtime.clone();
         let language_settings = all_language_settings(None, cx);
-        if language_settings.inline_completions.provider == InlineCompletionProvider::Copilot {
+        if language_settings.edit_predictions.provider == EditPredictionProvider::Copilot {
             if matches!(self.server, CopilotServer::Disabled) {
-                let env = self.build_env(&language_settings.inline_completions.copilot);
+                let env = self.build_env(&language_settings.edit_predictions.copilot);
                 let start_task = cx
                     .spawn(move |this, cx| {
                         Self::start_language_server(server_id, http, node_runtime, env, this, cx)
@@ -483,12 +482,14 @@ impl Copilot {
                 .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
                 .detach();
 
-            let initialize_params = None;
             let configuration = lsp::DidChangeConfigurationParams {
                 settings: Default::default(),
             };
             let server = cx
-                .update(|cx| server.initialize(initialize_params, configuration.into(), cx))?
+                .update(|cx| {
+                    let params = server.default_initialize_params(cx);
+                    server.initialize(params, configuration.into(), cx)
+                })?
                 .await?;
 
             let status = server
@@ -611,8 +612,7 @@ impl Copilot {
                 }
             };
 
-            cx.background_executor()
-                .spawn(task.map_err(|err| anyhow!("{:?}", err)))
+            cx.background_spawn(task.map_err(|err| anyhow!("{:?}", err)))
         } else {
             // If we're downloading, wait until download is finished
             // If we're in a stuck state, display to the user
@@ -624,7 +624,7 @@ impl Copilot {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
         if let CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) = &self.server {
             let server = server.clone();
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 server
                     .request::<request::SignOut>(request::SignOutParams {})
                     .await?;
@@ -637,7 +637,7 @@ impl Copilot {
 
     pub fn reinstall(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let language_settings = all_language_settings(None, cx);
-        let env = self.build_env(&language_settings.inline_completions.copilot);
+        let env = self.build_env(&language_settings.edit_predictions.copilot);
         let start_task = cx
             .spawn({
                 let http = self.http.clone();
@@ -656,7 +656,7 @@ impl Copilot {
 
         cx.notify();
 
-        cx.background_executor().spawn(start_task)
+        cx.background_spawn(start_task)
     }
 
     pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
@@ -838,7 +838,7 @@ impl Copilot {
                 .request::<request::NotifyAccepted>(request::NotifyAcceptedParams {
                     uuid: completion.uuid.clone(),
                 });
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             request.await?;
             Ok(())
         })
@@ -862,7 +862,7 @@ impl Copilot {
                         .map(|completion| completion.uuid.clone())
                         .collect(),
                 });
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             request.await?;
             Ok(())
         })
@@ -909,7 +909,7 @@ impl Copilot {
             .map(|file| file.path().to_path_buf())
             .unwrap_or_default();
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let (version, snapshot) = snapshot.await?;
             let result = lsp
                 .request::<R>(request::GetCompletionsParams {

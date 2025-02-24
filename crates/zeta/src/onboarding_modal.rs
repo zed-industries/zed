@@ -1,15 +1,15 @@
 use std::{sync::Arc, time::Duration};
 
 use crate::{onboarding_event, ZED_PREDICT_DATA_COLLECTION_CHOICE};
+use anyhow::Context as _;
 use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
-use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
     ease_in_out, svg, Animation, AnimationExt as _, ClickEvent, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, MouseDownEvent, Render,
 };
-use language::language_settings::{AllLanguageSettings, InlineCompletionProvider};
+use language::language_settings::{AllLanguageSettings, EditPredictionProvider};
 use settings::{update_settings_file, Settings};
 use ui::{prelude::*, Checkbox, TintColor};
 use util::ResultExt;
@@ -66,14 +66,14 @@ impl ZedPredictModal {
     }
 
     fn view_blog(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/blog/"); // TODO Add the link when live
+        cx.open_url("https://zed.dev/blog/edit-prediction");
         cx.notify();
 
         onboarding_event!("Blog Link clicked");
     }
 
     fn inline_completions_doc(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/docs/configuring-zed#inline-completions");
+        cx.open_url("https://zed.dev/docs/configuring-zed#disabled-globs");
         cx.notify();
 
         onboarding_event!("Docs Link Clicked");
@@ -83,6 +83,7 @@ impl ZedPredictModal {
         let task = self
             .user_store
             .update(cx, |this, cx| this.accept_terms_of_service(cx));
+        let fs = self.fs.clone();
 
         cx.spawn(|this, mut cx| async move {
             task.await?;
@@ -101,11 +102,25 @@ impl ZedPredictModal {
                 .await
                 .log_err();
 
+            // Make sure edit prediction provider setting is using the new key
+            let settings_path = paths::settings_file().as_path();
+            let settings_path = fs.canonicalize(settings_path).await.with_context(|| {
+                format!("Failed to canonicalize settings path {:?}", settings_path)
+            })?;
+
+            if let Some(settings) = fs.load(&settings_path).await.log_err() {
+                if let Some(new_settings) =
+                    migrator::migrate_edit_prediction_provider_settings(&settings)?
+                {
+                    fs.atomic_write(settings_path, new_settings).await?;
+                }
+            }
+
             this.update(&mut cx, |this, cx| {
                 update_settings_file::<AllLanguageSettings>(this.fs.clone(), cx, move |file, _| {
                     file.features
                         .get_or_insert(Default::default())
-                        .inline_completion_provider = Some(InlineCompletionProvider::Zed);
+                        .edit_prediction_provider = Some(EditPredictionProvider::Zed);
                 });
 
                 cx.emit(DismissEvent);
@@ -160,15 +175,25 @@ impl Focusable for ZedPredictModal {
 impl ModalView for ZedPredictModal {}
 
 impl Render for ZedPredictModal {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let window_height = window.viewport_size().height;
+        let max_height = window_height - px(200.);
+
         let base = v_flex()
-            .id("zed predict tos")
+            .id("edit-prediction-onboarding")
             .key_context("ZedPredictModal")
-            .w(px(440.))
-            .p_4()
             .relative()
+            .w(px(550.))
+            .h_full()
+            .max_h(max_height)
+            .p_4()
             .gap_2()
-            .overflow_hidden()
+            .when(self.data_collection_expanded, |element| {
+                element.overflow_y_scroll()
+            })
+            .when(!self.data_collection_expanded, |element| {
+                element.overflow_hidden()
+            })
             .elevation_3(cx)
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::cancel))
@@ -184,14 +209,14 @@ impl Render for ZedPredictModal {
                     .p_1p5()
                     .absolute()
                     .top_1()
-                    .left_1p5()
+                    .left_1()
                     .right_0()
                     .h(px(200.))
                     .child(
                         svg()
                             .path("icons/zed_predict_bg.svg")
                             .text_color(cx.theme().colors().icon_disabled)
-                            .w(px(418.))
+                            .w(px(530.))
                             .h(px(128.))
                             .overflow_hidden(),
                     ),
@@ -247,7 +272,7 @@ impl Render for ZedPredictModal {
                         v_flex()
                             .gap_2()
                             .items_center()
-                            .pr_4()
+                            .pr_2p5()
                             .child(tab(0).ml_neg_20())
                             .child(tab(1))
                             .child(tab(2).ml_20())
@@ -262,23 +287,18 @@ impl Render for ZedPredictModal {
                 )),
             ));
 
-        let blog_post_button = if cx.is_staff() {
-            Some(
-                Button::new("view-blog", "Read the Blog Post")
-                    .full_width()
-                    .icon(IconName::ArrowUpRight)
-                    .icon_size(IconSize::Indicator)
-                    .icon_color(Color::Muted)
-                    .on_click(cx.listener(Self::view_blog)),
-            )
-        } else {
-            // TODO: put back when blog post is published
-            None
-        };
+        let blog_post_button = Button::new("view-blog", "Read the Blog Post")
+            .full_width()
+            .icon(IconName::ArrowUpRight)
+            .icon_size(IconSize::Indicator)
+            .icon_color(Color::Muted)
+            .on_click(cx.listener(Self::view_blog));
 
         if self.user_store.read(cx).current_user().is_some() {
             let copy = match self.sign_in_status {
-                SignInStatus::Idle => "Get accurate and instant edit predictions at every keystroke. Before setting Zed as your edit prediction provider:",
+                SignInStatus::Idle => {
+                    "Zed can now predict your next edit on every keystroke. Powered by Zeta, our open-source, open-dataset language model."
+                }
                 SignInStatus::SignedIn => "Almost there! Ensure you:",
                 SignInStatus::Waiting => unreachable!(),
             };
@@ -295,9 +315,14 @@ impl Render for ZedPredictModal {
 
             fn info_item(label_text: impl Into<SharedString>) -> impl Element {
                 h_flex()
+                    .items_start()
                     .gap_2()
-                    .child(Icon::new(IconName::Check).size(IconSize::XSmall))
-                    .child(label_item(label_text))
+                    .child(
+                        div()
+                            .mt_1p5()
+                            .child(Icon::new(IconName::Check).size(IconSize::XSmall)),
+                    )
+                    .child(div().w_full().child(label_item(label_text)))
             }
 
             fn multiline_info_item<E1: Into<SharedString>, E2: IntoElement>(
@@ -315,7 +340,7 @@ impl Render for ZedPredictModal {
                         .child(
                             Checkbox::new("tos-checkbox", self.terms_of_service.into())
                                 .fill()
-                                .label("Read and accept the")
+                                .label("I have read and accept the")
                                 .on_click(cx.listener(move |this, state, _window, cx| {
                                     this.terms_of_service = *state == ToggleState::Selected;
                                     cx.notify();
@@ -333,12 +358,13 @@ impl Render for ZedPredictModal {
                     v_flex()
                         .child(
                             h_flex()
+                                .flex_wrap()
                                 .child(
                                     Checkbox::new(
                                         "training-data-checkbox",
                                         self.data_collection_opted_in.into(),
                                     )
-                                    .label("Optionally share training data (OSS-only).")
+                                    .label("Contribute to the open dataset when editing open source.")
                                     .fill()
                                     .on_click(cx.listener(
                                         move |this, state, _window, cx| {
@@ -375,24 +401,27 @@ impl Render for ZedPredictModal {
                                     .border_color(cx.theme().colors().border_variant)
                                     .child(
                                         div().child(
-                                            Label::new("To improve edit predictions, help fine-tune Zed's model by sharing data from the open-source projects you work on.")
+                                            Label::new("To improve edit predictions, please consider contributing to our open dataset based on your interactions within open source repositories.")
                                                 .mb_1()
                                         )
                                     )
                                     .child(info_item(
-                                        "We ask this exclusively for open-source projects.",
+                                        "We collect data exclusively from open source projects.",
                                     ))
                                     .child(info_item(
-                                        "Zed automatically detects if your project is open-source.",
+                                        "Zed automatically detects if your project is open source.",
                                     ))
-                                    .child(info_item(
-                                        "This setting is valid for all OSS projects you open in Zed.",
-                                    ))
-                                    .child(info_item("Toggle it anytime via the status bar menu."))
+                                    .child(info_item("Toggle participation at any time via the status bar menu."))
                                     .child(multiline_info_item(
-                                        "Files that can contain sensitive data, like `.env`, are",
+                                        "If turned on, this setting applies for all open source repositories",
+                                        label_item("you open in Zed.")
+                                    ))
+                                    .child(multiline_info_item(
+                                        "Files with sensitive data, like `.env`, are excluded by default",
                                         h_flex()
-                                            .child(label_item("excluded by default via the"))
+                                            .w_full()
+                                            .flex_wrap()
+                                            .child(label_item("via the"))
                                             .child(
                                                 Button::new("doc-link", "disabled_globs").on_click(
                                                     cx.listener(Self::inline_completions_doc),
@@ -409,13 +438,13 @@ impl Render for ZedPredictModal {
                         .gap_2()
                         .w_full()
                         .child(
-                            Button::new("accept-tos", "Enable Edit Predictions")
+                            Button::new("accept-tos", "Enable Edit Prediction")
                                 .disabled(!self.terms_of_service)
                                 .style(ButtonStyle::Tinted(TintColor::Accent))
                                 .full_width()
                                 .on_click(cx.listener(Self::accept_and_enable)),
                         )
-                        .children(blog_post_button),
+                        .child(blog_post_button),
                 )
         } else {
             base.child(
@@ -434,7 +463,7 @@ impl Render for ZedPredictModal {
                             .full_width()
                             .on_click(cx.listener(Self::sign_in)),
                     )
-                    .children(blog_post_button),
+                    .child(blog_post_button),
             )
         }
     }

@@ -1339,7 +1339,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                         project
                             .buffer_store()
                             .read(cx)
-                            .get_unstaged_changes(host_buffer.read(cx).remote_id(), cx)
+                            .get_unstaged_diff(host_buffer.read(cx).remote_id(), cx)
                             .unwrap()
                             .read(cx)
                             .base_text_string()
@@ -1348,7 +1348,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                         project
                             .buffer_store()
                             .read(cx)
-                            .get_unstaged_changes(guest_buffer.read(cx).remote_id(), cx)
+                            .get_unstaged_diff(guest_buffer.read(cx).remote_id(), cx)
                             .unwrap()
                             .read(cx)
                             .base_text_string()

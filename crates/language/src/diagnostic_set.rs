@@ -2,6 +2,7 @@ use crate::{range_to_lsp, Diagnostic};
 use anyhow::Result;
 use collections::HashMap;
 use lsp::LanguageServerId;
+use serde::Serialize;
 use std::{
     cmp::{Ordering, Reverse},
     iter,
@@ -25,7 +26,7 @@ pub struct DiagnosticSet {
 /// the diagnostics are stored internally as [`Anchor`]s, but can be
 /// resolved to different coordinates types like [`usize`] byte offsets or
 /// [`Point`](gpui::Point)s.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct DiagnosticEntry<T> {
     /// The range of the buffer where the diagnostic applies.
     pub range: Range<T>,
@@ -35,12 +36,26 @@ pub struct DiagnosticEntry<T> {
 
 /// A group of related diagnostics, ordered by their start position
 /// in the buffer.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct DiagnosticGroup<T> {
     /// The diagnostics.
     pub entries: Vec<DiagnosticEntry<T>>,
     /// The index into `entries` where the primary diagnostic is stored.
     pub primary_ix: usize,
+}
+
+impl DiagnosticGroup<Anchor> {
+    /// Converts the entries in this [`DiagnosticGroup`] to a different buffer coordinate type.
+    pub fn resolve<O: FromAnchor>(&self, buffer: &text::BufferSnapshot) -> DiagnosticGroup<O> {
+        DiagnosticGroup {
+            entries: self
+                .entries
+                .iter()
+                .map(|entry| entry.resolve(buffer))
+                .collect(),
+            primary_ix: self.primary_ix,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

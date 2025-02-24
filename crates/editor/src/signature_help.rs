@@ -1,17 +1,19 @@
-mod popover;
-mod state;
-
 use crate::actions::ShowSignatureHelp;
 use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp};
-use gpui::{App, Context, Window};
-use language::markdown::parse_markdown;
+use gpui::{
+    combine_highlights, App, Context, HighlightStyle, MouseButton, Size, StyledText, Task,
+    TextStyle, Window,
+};
 use language::BufferSnapshot;
 use multi_buffer::{Anchor, ToOffset};
 use settings::Settings;
 use std::ops::Range;
-
-pub use popover::SignatureHelpPopover;
-pub use state::SignatureHelpState;
+use text::Rope;
+use theme::ThemeSettings;
+use ui::{
+    div, relative, ActiveTheme, AnyElement, InteractiveElement, IntoElement, ParentElement, Pixels,
+    SharedString, StatefulInteractiveElement, Styled, StyledExt,
+};
 
 // Language-specific settings may define quotes as "brackets", so filter them out separately.
 const QUOTE_PAIRS: [(&str, &str); 3] = [("'", "'"), ("\"", "\""), ("`", "`")];
@@ -168,67 +170,149 @@ impl Editor {
         else {
             return;
         };
+        let Some(lsp_store) = self.project.as_ref().map(|p| p.read(cx).lsp_store()) else {
+            return;
+        };
+        let task = lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.signature_help(&buffer, buffer_position, cx)
+        });
+        let language = self.language_at(position, cx);
 
         self.signature_help_state
             .set_task(cx.spawn_in(window, move |editor, mut cx| async move {
-                let signature_help = editor
-                    .update(&mut cx, |editor, cx| {
-                        let language = editor.language_at(position, cx);
-                        let project = editor.project.clone()?;
-                        let (markdown, language_registry) = {
-                            project.update(cx, |project, cx| {
-                                let language_registry = project.languages().clone();
-                                (
-                                    project.signature_help(&buffer, buffer_position, cx),
-                                    language_registry,
-                                )
-                            })
-                        };
-                        Some((markdown, language_registry, language))
-                    })
-                    .ok()
-                    .flatten();
-                let signature_help_popover = if let Some((
-                    signature_help_task,
-                    language_registry,
-                    language,
-                )) = signature_help
-                {
-                    // TODO allow multiple signature helps inside the same popover
-                    if let Some(mut signature_help) = signature_help_task.await.into_iter().next() {
-                        let mut parsed_content = parse_markdown(
-                            signature_help.markdown.as_str(),
-                            Some(&language_registry),
-                            language,
-                        )
-                        .await;
-                        parsed_content
-                            .highlights
-                            .append(&mut signature_help.highlights);
-                        Some(SignatureHelpPopover { parsed_content })
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
+                let signature_help = task.await;
                 editor
                     .update(&mut cx, |editor, cx| {
-                        let previous_popover = editor.signature_help_state.popover();
-                        if previous_popover != signature_help_popover.as_ref() {
-                            if let Some(signature_help_popover) = signature_help_popover {
-                                editor
-                                    .signature_help_state
-                                    .set_popover(signature_help_popover);
-                            } else {
-                                editor
-                                    .signature_help_state
-                                    .hide(SignatureHelpHiddenBy::AutoClose);
-                            }
-                            cx.notify();
+                        let Some(mut signature_help) = signature_help.into_iter().next() else {
+                            editor
+                                .signature_help_state
+                                .hide(SignatureHelpHiddenBy::AutoClose);
+                            return;
+                        };
+
+                        if let Some(language) = language {
+                            let text = Rope::from(signature_help.label.clone());
+                            let highlights = language
+                                .highlight_text(&text, 0..signature_help.label.len())
+                                .into_iter()
+                                .flat_map(|(range, highlight_id)| {
+                                    Some((range, highlight_id.style(&cx.theme().syntax())?))
+                                });
+                            signature_help.highlights =
+                                combine_highlights(signature_help.highlights, highlights).collect()
                         }
+                        let settings = ThemeSettings::get_global(cx);
+                        let text_style = TextStyle {
+                            color: cx.theme().colors().text,
+                            font_family: settings.buffer_font.family.clone(),
+                            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                            font_size: settings.buffer_font_size(cx).into(),
+                            font_weight: settings.buffer_font.weight,
+                            line_height: relative(settings.buffer_line_height.value()),
+                            ..Default::default()
+                        };
+
+                        let signature_help_popover = SignatureHelpPopover {
+                            label: signature_help.label.into(),
+                            highlights: signature_help.highlights,
+                            style: text_style,
+                        };
+                        editor
+                            .signature_help_state
+                            .set_popover(signature_help_popover);
+                        cx.notify();
                     })
                     .ok();
             }));
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct SignatureHelpState {
+    task: Option<Task<()>>,
+    popover: Option<SignatureHelpPopover>,
+    hidden_by: Option<SignatureHelpHiddenBy>,
+    backspace_pressed: bool,
+}
+
+impl SignatureHelpState {
+    pub fn set_task(&mut self, task: Task<()>) {
+        self.task = Some(task);
+        self.hidden_by = None;
+    }
+
+    pub fn kill_task(&mut self) {
+        self.task = None;
+    }
+
+    #[cfg(test)]
+    pub fn popover(&self) -> Option<&SignatureHelpPopover> {
+        self.popover.as_ref()
+    }
+
+    pub fn popover_mut(&mut self) -> Option<&mut SignatureHelpPopover> {
+        self.popover.as_mut()
+    }
+
+    pub fn backspace_pressed(&self) -> bool {
+        self.backspace_pressed
+    }
+
+    pub fn set_backspace_pressed(&mut self, backspace_pressed: bool) {
+        self.backspace_pressed = backspace_pressed;
+    }
+
+    pub fn set_popover(&mut self, popover: SignatureHelpPopover) {
+        self.popover = Some(popover);
+        self.hidden_by = None;
+    }
+
+    pub fn hide(&mut self, hidden_by: SignatureHelpHiddenBy) {
+        if self.hidden_by.is_none() {
+            self.popover = None;
+            self.hidden_by = Some(hidden_by);
+        }
+    }
+
+    pub fn hidden_by_selection(&self) -> bool {
+        self.hidden_by == Some(SignatureHelpHiddenBy::Selection)
+    }
+
+    pub fn is_shown(&self) -> bool {
+        self.popover.is_some()
+    }
+}
+
+#[cfg(test)]
+impl SignatureHelpState {
+    pub fn task(&self) -> Option<&Task<()>> {
+        self.task.as_ref()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SignatureHelpPopover {
+    pub label: SharedString,
+    pub style: TextStyle,
+    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+}
+
+impl SignatureHelpPopover {
+    pub fn render(&mut self, max_size: Size<Pixels>, cx: &mut Context<Editor>) -> AnyElement {
+        div()
+            .id("signature_help_popover")
+            .elevation_2(cx)
+            .overflow_y_scroll()
+            .max_w(max_size.width)
+            .max_h(max_size.height)
+            .on_mouse_move(|_, _, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                div().px_4().pb_1().child(
+                    StyledText::new(self.label.clone())
+                        .with_highlights(&self.style, self.highlights.iter().cloned()),
+                ),
+            )
+            .into_any_element()
     }
 }

@@ -22,7 +22,14 @@ test-support = [
     "x11",
 ]
 runtime_shaders = []
-macos-blade = ["blade-graphics", "blade-macros", "blade-util", "bytemuck", "objc2", "objc2-metal"]
+macos-blade = [
+    "blade-graphics",
+    "blade-macros",
+    "blade-util",
+    "bytemuck",
+    "objc2",
+    "objc2-metal",
+]
 wayland = [
     "blade-graphics",
     "blade-macros",
@@ -79,7 +86,7 @@ futures.workspace = true
 gpui_macros.workspace = true
 http_client = { optional = true, workspace = true }
 image = "0.25.1"
-inventory = "0.3.19"
+inventory.workspace = true
 itertools.workspace = true
 log.workspace = true
 num_cpus = "1.13"
@@ -133,7 +140,10 @@ pathfinder_geometry = "0.5"
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 # Always used
 flume = "0.11"
-oo7 = { git = "https://github.com/zed-industries/oo7", branch = "avoid-crypto-panic" }
+oo7 = { version = "0.4.0", default-features = false, features = [
+    "async-std",
+    "native_crypto",
+] }
 
 # Used in both windowing options
 ashpd = { workspace = true, optional = true }
@@ -202,11 +212,12 @@ windows-core = "0.58"
 backtrace = "0.3"
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
-rand.workspace = true
-util = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
-unicode-segmentation.workspace = true
 lyon = { version = "1.0", features = ["extra"] }
+rand.workspace = true
+unicode-segmentation.workspace = true
+reqwest_client = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3.0"
@@ -264,3 +275,7 @@ path = "examples/uniform_list.rs"
 [[example]]
 name = "window_shadow"
 path = "examples/window_shadow.rs"
+
+[[example]]
+name = "on_window_close_quit"
+path = "examples/on_window_close_quit.rs"

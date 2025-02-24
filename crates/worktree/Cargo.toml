@@ -14,11 +14,12 @@ workspace = true
 
 [features]
 test-support = [
+    "gpui/test-support",
+    "http_client/test-support",
     "language/test-support",
     "settings/test-support",
     "text/test-support",
-    "gpui/test-support",
-    "http_client/test-support",
+    "util/test-support",
 ]
 
 [dependencies]
@@ -59,3 +60,4 @@ pretty_assertions.workspace = true
 rand.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }

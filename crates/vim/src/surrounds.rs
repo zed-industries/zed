@@ -554,11 +554,7 @@ mod test {
     use gpui::KeyBinding;
     use indoc::indoc;
 
-    use crate::{
-        state::{Mode, Operator},
-        test::VimTestContext,
-        PushOperator,
-    };
+    use crate::{state::Mode, test::VimTestContext, PushAddSurrounds};
 
     #[gpui::test]
     async fn test_add_surrounds(cx: &mut gpui::TestAppContext) {
@@ -749,7 +745,7 @@ mod test {
         cx.update(|_, cx| {
             cx.bind_keys([KeyBinding::new(
                 "shift-s",
-                PushOperator(Operator::AddSurrounds { target: None }),
+                PushAddSurrounds {},
                 Some("vim_mode == visual"),
             )])
         });

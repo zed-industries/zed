@@ -1,9 +1,9 @@
 use gpui::{prelude::*, Entity};
 use indoc::indoc;
-use inline_completion::InlineCompletionProvider;
-use language::{Language, LanguageConfig};
+use inline_completion::EditPredictionProvider;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
-use std::{num::NonZeroU32, ops::Range, sync::Arc};
+use project::Project;
+use std::ops::Range;
 use text::{Point, ToOffset};
 
 use crate::{
@@ -120,54 +120,6 @@ async fn test_inline_completion_jump_button(cx: &mut gpui::TestAppContext) {
         line 2
         line 3
         line 4
-    "});
-}
-
-#[gpui::test]
-async fn test_indentation(cx: &mut gpui::TestAppContext) {
-    init_test(cx, |settings| {
-        settings.defaults.tab_size = NonZeroU32::new(4)
-    });
-
-    let language = Arc::new(
-        Language::new(
-            LanguageConfig::default(),
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_indents_query(r#"(_ "(" ")" @end) @indent"#)
-        .unwrap(),
-    );
-
-    let mut cx = EditorTestContext::new(cx).await;
-    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
-    let provider = cx.new(|_| FakeInlineCompletionProvider::default());
-    assign_editor_completion_provider(provider.clone(), &mut cx);
-
-    cx.set_state(indoc! {"
-        const a: A = (
-        ˇ
-        );
-    "});
-
-    propose_edits(
-        &provider,
-        vec![(Point::new(1, 0)..Point::new(1, 0), "    const function()")],
-        &mut cx,
-    );
-    cx.update_editor(|editor, window, cx| editor.update_visible_inline_completion(window, cx));
-
-    assert_editor_active_edit_completion(&mut cx, |_, edits| {
-        assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].1.as_str(), "    const function()");
-    });
-
-    // When the cursor is before the suggested indentation level, accepting a
-    // completion should just indent.
-    accept_completion(&mut cx);
-    cx.assert_editor_state(indoc! {"
-        const a: A = (
-            ˇ
-        );
     "});
 }
 
@@ -314,7 +266,7 @@ fn assert_editor_active_move_completion(
 
 fn accept_completion(cx: &mut EditorTestContext) {
     cx.update_editor(|editor, window, cx| {
-        editor.accept_inline_completion(&crate::AcceptInlineCompletion, window, cx)
+        editor.accept_edit_prediction(&crate::AcceptEditPrediction, window, cx)
     })
 }
 
@@ -332,6 +284,7 @@ fn propose_edits<T: ToOffset>(
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
             provider.set_inline_completion(Some(inline_completion::InlineCompletion {
+                id: None,
                 edits: edits.collect(),
                 edit_preview: None,
             }))
@@ -344,7 +297,7 @@ fn assign_editor_completion_provider(
     cx: &mut EditorTestContext,
 ) {
     cx.update_editor(|editor, window, cx| {
-        editor.set_inline_completion_provider(Some(provider), window, cx);
+        editor.set_edit_prediction_provider(Some(provider), window, cx);
     })
 }
 
@@ -362,7 +315,7 @@ impl FakeInlineCompletionProvider {
     }
 }
 
-impl InlineCompletionProvider for FakeInlineCompletionProvider {
+impl EditPredictionProvider for FakeInlineCompletionProvider {
     fn name() -> &'static str {
         "fake-completion-provider"
     }
@@ -372,10 +325,6 @@ impl InlineCompletionProvider for FakeInlineCompletionProvider {
     }
 
     fn show_completions_in_menu() -> bool {
-        false
-    }
-
-    fn show_completions_in_normal_mode() -> bool {
         false
     }
 
@@ -394,6 +343,7 @@ impl InlineCompletionProvider for FakeInlineCompletionProvider {
 
     fn refresh(
         &mut self,
+        _project: Option<Entity<Project>>,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _debounce: bool,

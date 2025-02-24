@@ -304,8 +304,8 @@ message Envelope {
         SyncExtensionsResponse sync_extensions_response = 286;
         InstallExtension install_extension = 287;
 
-        OpenUnstagedChanges open_unstaged_changes = 288;
-        OpenUnstagedChangesResponse open_unstaged_changes_response = 289;
+        OpenUnstagedDiff open_unstaged_diff = 288;
+        OpenUnstagedDiffResponse open_unstaged_diff_response = 289;
 
         RegisterBufferWithLanguageServers register_buffer_with_language_servers = 290;
 
@@ -314,8 +314,14 @@ message Envelope {
         Commit commit = 295;
         OpenCommitMessageBuffer open_commit_message_buffer = 296;
 
-        OpenUncommittedChanges open_uncommitted_changes = 297;
-        OpenUncommittedChangesResponse open_uncommitted_changes_response = 298; // current max
+        OpenUncommittedDiff open_uncommitted_diff = 297;
+        OpenUncommittedDiffResponse open_uncommitted_diff_response = 298;
+        GitShow git_show = 300;
+        GitReset git_reset = 301;
+        GitCommitDetails git_commit_details = 302;
+
+        SetIndexText set_index_text = 299;
+        GitCheckoutFiles git_checkout_files = 303; // current max
     }
 
     reserved 87 to 88;
@@ -368,6 +374,7 @@ enum ErrorCode {
     DevServerProjectPathDoesNotExist = 16;
     RemoteUpgradeRequired = 17;
     RateLimitExceeded = 18;
+    CommitFailed = 19;
     reserved 6;
     reserved 14 to 15;
 }
@@ -783,6 +790,7 @@ message Symbol {
     PointUtf16 start = 7;
     PointUtf16 end = 8;
     bytes signature = 9;
+    uint64 language_server_id = 10;
 }
 
 message OpenBufferForSymbol {
@@ -1797,11 +1805,13 @@ message Entry {
 
 message RepositoryEntry {
     uint64 work_directory_id = 1;
-    optional string branch = 2;
+    optional string branch = 2; // deprecated
+    optional Branch branch_summary = 6;
     repeated StatusEntry updated_statuses = 3;
     repeated string removed_statuses = 4;
     repeated string current_merge_conflicts = 5;
 }
+
 
 message StatusEntry {
     string repo_path = 1;
@@ -2062,21 +2072,21 @@ message UpdateDiffBases {
     Mode mode = 5;
 }
 
-message OpenUnstagedChanges {
+message OpenUnstagedDiff {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
 }
 
-message OpenUnstagedChangesResponse {
+message OpenUnstagedDiffResponse {
     optional string staged_text = 1;
 }
 
-message OpenUncommittedChanges {
+message OpenUncommittedDiff {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
 }
 
-message OpenUncommittedChangesResponse {
+message OpenUncommittedDiffResponse {
     enum Mode {
         INDEX_MATCHES_HEAD = 0;
         INDEX_AND_HEAD = 1;
@@ -2084,6 +2094,14 @@ message OpenUncommittedChangesResponse {
     optional string staged_text = 1;
     optional string committed_text = 2;
     Mode mode = 3;
+}
+
+message SetIndexText {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string path = 4;
+    optional string text = 5;
 }
 
 message GetNotifications {
@@ -2488,8 +2506,8 @@ message RefreshLlmToken {}
 // Remote FS
 
 message AddWorktree {
-    uint64 project_id = 2;
     string path = 1;
+    uint64 project_id = 2;
     bool visible = 3;
 }
 
@@ -2604,10 +2622,26 @@ message ActiveToolchainResponse {
     optional Toolchain toolchain = 1;
 }
 
+message CommitSummary {
+    string sha = 1;
+    string subject = 2;
+    int64 commit_timestamp = 3;
+}
+
 message Branch {
     bool is_head = 1;
     string name = 2;
     optional uint64 unix_timestamp = 3;
+    optional GitUpstream upstream = 4;
+    optional CommitSummary most_recent_commit = 5;
+}
+message GitUpstream {
+    string ref_name = 1;
+    optional UpstreamTracking tracking = 2;
+}
+message UpstreamTracking {
+    uint64 ahead = 1;
+    uint64 behind = 2;
 }
 
 message GitBranches {
@@ -2624,7 +2658,43 @@ message UpdateGitBranch {
     string branch_name = 2;
     ProjectPath repository = 3;
 }
+
 message GetPanicFiles {
+}
+
+message GitShow {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string commit = 4;
+}
+
+message GitCommitDetails {
+    string sha = 1;
+    string message = 2;
+    int64 commit_timestamp = 3;
+    string committer_email = 4;
+    string committer_name = 5;
+}
+
+message GitReset {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string commit = 4;
+    ResetMode mode = 5;
+    enum ResetMode {
+        SOFT = 0;
+        MIXED = 1;
+    }
+}
+
+message GitCheckoutFiles {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string commit = 4;
+    repeated string paths = 5;
 }
 
 message GetPanicFilesResponse {

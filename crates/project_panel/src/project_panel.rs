@@ -18,8 +18,8 @@ use file_icons::FileIcons;
 use git::status::GitSummary;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
-    AnyElement, App, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent,
-    Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
+    AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
+    DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton,
     MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
     Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window,
@@ -162,12 +162,14 @@ struct EntryDetails {
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct Delete {
     #[serde(default)]
     pub skip_prompt: bool,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct Trash {
     #[serde(default)]
     pub skip_prompt: bool,
@@ -184,8 +186,6 @@ actions!(
         NewDirectory,
         NewFile,
         Copy,
-        CopyPath,
-        CopyRelativePath,
         Duplicate,
         RevealInFileManager,
         RemoveFromProject,
@@ -225,9 +225,8 @@ pub fn init_settings(cx: &mut App) {
     ProjectPanelSettings::register(cx);
 }
 
-pub fn init(assets: impl AssetSource, cx: &mut App) {
+pub fn init(cx: &mut App) {
     init_settings(cx);
-    file_icons::init(assets, cx);
 
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
@@ -545,8 +544,7 @@ impl ProjectPanel {
         mut cx: AsyncWindowContext,
     ) -> Result<Entity<Self>> {
         let serialized_panel = cx
-            .background_executor()
-            .spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
+            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
             .await
             .map_err(|e| anyhow!("Failed to load project panel: {}", e))
             .log_err()
@@ -628,7 +626,7 @@ impl ProjectPanel {
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
-        self.pending_serialization = cx.background_executor().spawn(
+        self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
@@ -728,10 +726,15 @@ impl ProjectPanel {
                                 }
                             })
                             .separator()
-                            .action("Copy Path", Box::new(CopyPath))
-                            .action("Copy Relative Path", Box::new(CopyRelativePath))
+                            .action("Copy Path", Box::new(zed_actions::workspace::CopyPath))
+                            .action(
+                                "Copy Relative Path",
+                                Box::new(zed_actions::workspace::CopyRelativePath),
+                            )
                             .separator()
-                            .action("Rename", Box::new(Rename))
+                            .when(!is_root || !cfg!(target_os = "windows"), |menu| {
+                                menu.action("Rename", Box::new(Rename))
+                            })
                             .when(!is_root & !is_remote, |menu| {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))
                             })
@@ -1346,6 +1349,10 @@ impl ProjectPanel {
             if let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) {
                 let sub_entry_id = self.unflatten_entry_id(entry_id);
                 if let Some(entry) = worktree.read(cx).entry_for_id(sub_entry_id) {
+                    #[cfg(target_os = "windows")]
+                    if Some(entry) == worktree.read(cx).root_entry() {
+                        return;
+                    }
                     self.edit_state = Some(EditState {
                         worktree_id,
                         entry_id: sub_entry_id,
@@ -1866,7 +1873,7 @@ impl ProjectPanel {
     ) {
         let selection = self.find_entry(
             self.selection.as_ref(),
-            true,
+            false,
             |entry, worktree_id| {
                 (self.selection.is_none()
                     || self.selection.is_some_and(|selection| {
@@ -1935,19 +1942,19 @@ impl ProjectPanel {
     }
 
     fn select_last(&mut self, _: &SelectLast, _: &mut Window, cx: &mut Context<Self>) {
-        let worktree = self.visible_entries.last().and_then(|(worktree_id, _, _)| {
-            self.project.read(cx).worktree_for_id(*worktree_id, cx)
-        });
-        if let Some(worktree) = worktree {
-            let worktree = worktree.read(cx);
-            let worktree_id = worktree.id();
-            if let Some(last_entry) = worktree.entries(true, 0).last() {
-                self.selection = Some(SelectedEntry {
-                    worktree_id,
-                    entry_id: last_entry.id,
-                });
-                self.autoscroll(cx);
-                cx.notify();
+        if let Some((worktree_id, visible_worktree_entries, _)) = self.visible_entries.last() {
+            let worktree = self.project.read(cx).worktree_for_id(*worktree_id, cx);
+            if let (Some(worktree), Some(entry)) = (worktree, visible_worktree_entries.last()) {
+                let worktree = worktree.read(cx);
+                if let Some(entry) = worktree.entry_for_id(entry.id) {
+                    let selection = SelectedEntry {
+                        worktree_id: *worktree_id,
+                        entry_id: entry.id,
+                    };
+                    self.selection = Some(selection);
+                    self.autoscroll(cx);
+                    cx.notify();
+                }
             }
         }
     }
@@ -2153,7 +2160,12 @@ impl ProjectPanel {
         self.paste(&Paste {}, window, cx);
     }
 
-    fn copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut Context<Self>) {
+    fn copy_path(
+        &mut self,
+        _: &zed_actions::workspace::CopyPath,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let abs_file_paths = {
             let project = self.project.read(cx);
             self.effective_entries()
@@ -2177,7 +2189,12 @@ impl ProjectPanel {
         }
     }
 
-    fn copy_relative_path(&mut self, _: &CopyRelativePath, _: &mut Window, cx: &mut Context<Self>) {
+    fn copy_relative_path(
+        &mut self,
+        _: &zed_actions::workspace::CopyRelativePath,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let file_paths = {
             let project = self.project.read(cx);
             self.effective_entries()
@@ -3986,7 +4003,7 @@ impl ProjectPanel {
                                                     .when(
                                                         index == active_index
                                                             && (is_active || is_marked),
-                                                        |this| this.underline(true),
+                                                        |this| this.underline(),
                                                     ),
                                             );
 
@@ -4625,7 +4642,7 @@ impl Render for ProjectPanel {
                 .child(
                     Button::new("open_project", "Open a project")
                         .full_width()
-                        .key_binding(KeyBinding::for_action(&workspace::Open, window))
+                        .key_binding(KeyBinding::for_action(&workspace::Open, window, cx))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.workspace
                                 .update(cx, |_, cx| {
@@ -6727,6 +6744,286 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
+        use git::status::{FileStatus, StatusCode, TrackedStatus};
+        use std::path::Path;
+
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "tree1": {
+                    ".git": {},
+                    "dir1": {
+                        "modified1.txt": "",
+                        "unmodified1.txt": "",
+                        "modified2.txt": "",
+                    },
+                    "dir2": {
+                        "modified3.txt": "",
+                        "unmodified2.txt": "",
+                    },
+                    "modified4.txt": "",
+                    "unmodified3.txt": "",
+                },
+                "tree2": {
+                    ".git": {},
+                    "dir3": {
+                        "modified5.txt": "",
+                        "unmodified4.txt": "",
+                    },
+                    "modified6.txt": "",
+                    "unmodified5.txt": "",
+                }
+            }),
+        )
+        .await;
+
+        // Mark files as git modified
+        let tree1_modified_files = [
+            "dir1/modified1.txt",
+            "dir1/modified2.txt",
+            "modified4.txt",
+            "dir2/modified3.txt",
+        ];
+
+        let tree2_modified_files = ["dir3/modified5.txt", "modified6.txt"];
+
+        let root1_dot_git = Path::new("/root/tree1/.git");
+        let root2_dot_git = Path::new("/root/tree2/.git");
+        let set_value = FileStatus::Tracked(TrackedStatus {
+            index_status: StatusCode::Modified,
+            worktree_status: StatusCode::Modified,
+        });
+
+        fs.with_git_state(&root1_dot_git, true, |git_repo_state| {
+            for file_path in tree1_modified_files {
+                git_repo_state.statuses.insert(file_path.into(), set_value);
+            }
+        });
+
+        fs.with_git_state(&root2_dot_git, true, |git_repo_state| {
+            for file_path in tree2_modified_files {
+                git_repo_state.statuses.insert(file_path.into(), set_value);
+            }
+        });
+
+        let project = Project::test(
+            fs.clone(),
+            ["/root/tree1".as_ref(), "/root/tree2".as_ref()],
+            cx,
+        )
+        .await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        // Check initial state
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v tree1",
+                "    > .git",
+                "    > dir1",
+                "    > dir2",
+                "      modified4.txt",
+                "      unmodified3.txt",
+                "v tree2",
+                "    > .git",
+                "    > dir3",
+                "      modified6.txt",
+                "      unmodified5.txt"
+            ],
+        );
+
+        // Test selecting next modified entry
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..6, cx),
+            &[
+                "v tree1",
+                "    > .git",
+                "    v dir1",
+                "          modified1.txt  <== selected",
+                "          modified2.txt",
+                "          unmodified1.txt",
+            ],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..6, cx),
+            &[
+                "v tree1",
+                "    > .git",
+                "    v dir1",
+                "          modified1.txt",
+                "          modified2.txt  <== selected",
+                "          unmodified1.txt",
+            ],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 6..9, cx),
+            &[
+                "    v dir2",
+                "          modified3.txt  <== selected",
+                "          unmodified2.txt",
+            ],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 9..11, cx),
+            &["      modified4.txt  <== selected", "      unmodified3.txt",],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 13..16, cx),
+            &[
+                "    v dir3",
+                "          modified5.txt  <== selected",
+                "          unmodified4.txt",
+            ],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 16..18, cx),
+            &["      modified6.txt  <== selected", "      unmodified5.txt",],
+        );
+
+        // Wraps around to first modified file
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..18, cx),
+            &[
+                "v tree1",
+                "    > .git",
+                "    v dir1",
+                "          modified1.txt  <== selected",
+                "          modified2.txt",
+                "          unmodified1.txt",
+                "    v dir2",
+                "          modified3.txt",
+                "          unmodified2.txt",
+                "      modified4.txt",
+                "      unmodified3.txt",
+                "v tree2",
+                "    > .git",
+                "    v dir3",
+                "          modified5.txt",
+                "          unmodified4.txt",
+                "      modified6.txt",
+                "      unmodified5.txt",
+            ],
+        );
+
+        // Wraps around again to last modified file
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 16..18, cx),
+            &["      modified6.txt  <== selected", "      unmodified5.txt",],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 13..16, cx),
+            &[
+                "    v dir3",
+                "          modified5.txt  <== selected",
+                "          unmodified4.txt",
+            ],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 9..11, cx),
+            &["      modified4.txt  <== selected", "      unmodified3.txt",],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 6..9, cx),
+            &[
+                "    v dir2",
+                "          modified3.txt  <== selected",
+                "          unmodified2.txt",
+            ],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..6, cx),
+            &[
+                "v tree1",
+                "    > .git",
+                "    v dir1",
+                "          modified1.txt",
+                "          modified2.txt  <== selected",
+                "          unmodified1.txt",
+            ],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..6, cx),
+            &[
+                "v tree1",
+                "    > .git",
+                "    v dir1",
+                "          modified1.txt  <== selected",
+                "          modified2.txt",
+                "          unmodified1.txt",
+            ],
+        );
+    }
+
+    #[gpui::test]
     async fn test_select_directory(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
@@ -6824,6 +7121,76 @@ mod tests {
                 "    > dir_4",
                 "      file_1.py",
                 "      file_2.py",
+            ]
+        );
+    }
+    #[gpui::test]
+    async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/project_root",
+            json!({
+                "dir_1": {
+                    "nested_dir": {
+                        "file_a.py": "# File contents",
+                    }
+                },
+                "file_1.py": "# File contents",
+                "file_2.py": "# File contents",
+                "zdir_2": {
+                    "nested_dir2": {
+                        "file_b.py": "# File contents",
+                    }
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    > dir_1",
+                "    > zdir_2",
+                "      file_1.py",
+                "      file_2.py",
+            ]
+        );
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_first(&SelectFirst, window, cx)
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root  <== selected",
+                "    > dir_1",
+                "    > zdir_2",
+                "      file_1.py",
+                "      file_2.py",
+            ]
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_last(&SelectLast, window, cx)
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    > dir_1",
+                "    > zdir_2",
+                "      file_1.py",
+                "      file_2.py  <== selected",
             ]
         );
     }
@@ -6935,8 +7302,8 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor().clone());
-        fs.as_fake().insert_tree("/root", json!({})).await;
-        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+        fs.as_fake().insert_tree(path!("/root"), json!({})).await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -6959,7 +7326,7 @@ mod tests {
             .unwrap();
 
         cx.executor().run_until_parked();
-        cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/new")));
+        cx.simulate_new_path_selection(|_| Some(PathBuf::from(path!("/root/new"))));
         save_task.await.unwrap();
 
         // Rename the file
@@ -6995,6 +7362,84 @@ mod tests {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &["v root", "      newer  <== selected"]
+        );
+    }
+
+    #[gpui::test]
+    #[cfg_attr(target_os = "windows", ignore)]
+    async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                "dir1": {
+                    "file1.txt": "content 1",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        toggle_expand_dir(&panel, "root1/dir1", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &["v root1", "    v dir1  <== selected", "          file1.txt",],
+            "Initial state with worktrees"
+        );
+
+        select_path(&panel, "root1", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &["v root1  <== selected", "    v dir1", "          file1.txt",],
+        );
+
+        // Rename root1 to new_root1
+        panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v [EDITOR: 'root1']  <== selected",
+                "    v dir1",
+                "          file1.txt",
+            ],
+        );
+
+        let confirm = panel.update_in(cx, |panel, window, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("new_root1", window, cx));
+            panel.confirm_edit(window, cx).unwrap()
+        });
+        confirm.await.unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v new_root1  <== selected",
+                "    v dir1",
+                "          file1.txt",
+            ],
+            "Should update worktree name"
+        );
+
+        // Ensure internal paths have been updated
+        select_path(&panel, "new_root1/dir1/file1.txt", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v new_root1",
+                "    v dir1",
+                "          file1.txt  <== selected",
+            ],
+            "Files in renamed worktree are selectable"
         );
     }
 
@@ -9107,7 +9552,7 @@ mod tests {
             theme::init(theme::LoadThemes::JustBase, cx);
             language::init(cx);
             editor::init_settings(cx);
-            crate::init((), cx);
+            crate::init(cx);
             workspace::init_settings(cx);
             client::init_settings(cx);
             Project::init_settings(cx);
@@ -9130,7 +9575,7 @@ mod tests {
             init_settings(cx);
             language::init(cx);
             editor::init(cx);
-            crate::init((), cx);
+            crate::init(cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);
 
@@ -9185,7 +9630,7 @@ mod tests {
             cx.has_pending_prompt(),
             "Should have a prompt after the deletion"
         );
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Delete");
         assert!(
             !cx.has_pending_prompt(),
             "Should have no prompts after prompt was replied to"

@@ -20,7 +20,7 @@ use futures::{
 };
 use fuzzy::CharBag;
 use git::{
-    repository::{GitRepository, RepoPath},
+    repository::{Branch, GitRepository, RepoPath},
     status::{
         FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
     },
@@ -40,7 +40,7 @@ use postage::{
     watch,
 };
 use rpc::{
-    proto::{self, split_worktree_update},
+    proto::{self, split_worktree_update, FromProto, ToProto},
     AnyProtoClient,
 };
 pub use settings::WorktreeId;
@@ -60,7 +60,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{self, AtomicU32, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
     time::{Duration, Instant},
@@ -202,7 +202,7 @@ pub struct RepositoryEntry {
     pub(crate) statuses_by_path: SumTree<StatusEntry>,
     work_directory_id: ProjectEntryId,
     pub work_directory: WorkDirectory,
-    pub(crate) branch: Option<Arc<str>>,
+    pub(crate) branch: Option<Branch>,
     pub current_merge_conflicts: TreeSet<RepoPath>,
 }
 
@@ -214,15 +214,9 @@ impl Deref for RepositoryEntry {
     }
 }
 
-impl AsRef<Path> for RepositoryEntry {
-    fn as_ref(&self) -> &Path {
-        &self.path
-    }
-}
-
 impl RepositoryEntry {
-    pub fn branch(&self) -> Option<Arc<str>> {
-        self.branch.clone()
+    pub fn branch(&self) -> Option<&Branch> {
+        self.branch.as_ref()
     }
 
     pub fn work_directory_id(&self) -> ProjectEntryId {
@@ -250,7 +244,8 @@ impl RepositoryEntry {
     pub fn initial_update(&self) -> proto::RepositoryEntry {
         proto::RepositoryEntry {
             work_directory_id: self.work_directory_id.to_proto(),
-            branch: self.branch.as_ref().map(|branch| branch.to_string()),
+            branch: self.branch.as_ref().map(|branch| branch.name.to_string()),
+            branch_summary: self.branch.as_ref().map(branch_to_proto),
             updated_statuses: self
                 .statuses_by_path
                 .iter()
@@ -290,13 +285,13 @@ impl RepositoryEntry {
                             current_new_entry = new_statuses.next();
                         }
                         Ordering::Greater => {
-                            removed_statuses.push(old_entry.repo_path.to_proto());
+                            removed_statuses.push(old_entry.repo_path.as_ref().to_proto());
                             current_old_entry = old_statuses.next();
                         }
                     }
                 }
                 (None, Some(old_entry)) => {
-                    removed_statuses.push(old_entry.repo_path.to_proto());
+                    removed_statuses.push(old_entry.repo_path.as_ref().to_proto());
                     current_old_entry = old_statuses.next();
                 }
                 (Some(new_entry), None) => {
@@ -309,15 +304,71 @@ impl RepositoryEntry {
 
         proto::RepositoryEntry {
             work_directory_id: self.work_directory_id.to_proto(),
-            branch: self.branch.as_ref().map(|branch| branch.to_string()),
+            branch: self.branch.as_ref().map(|branch| branch.name.to_string()),
+            branch_summary: self.branch.as_ref().map(branch_to_proto),
             updated_statuses,
             removed_statuses,
             current_merge_conflicts: self
                 .current_merge_conflicts
                 .iter()
-                .map(RepoPath::to_proto)
+                .map(|path| path.as_ref().to_proto())
                 .collect(),
         }
+    }
+}
+
+pub fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
+    proto::Branch {
+        is_head: branch.is_head,
+        name: branch.name.to_string(),
+        unix_timestamp: branch
+            .most_recent_commit
+            .as_ref()
+            .map(|commit| commit.commit_timestamp as u64),
+        upstream: branch.upstream.as_ref().map(|upstream| proto::GitUpstream {
+            ref_name: upstream.ref_name.to_string(),
+            tracking: upstream
+                .tracking
+                .as_ref()
+                .map(|upstream| proto::UpstreamTracking {
+                    ahead: upstream.ahead as u64,
+                    behind: upstream.behind as u64,
+                }),
+        }),
+        most_recent_commit: branch
+            .most_recent_commit
+            .as_ref()
+            .map(|commit| proto::CommitSummary {
+                sha: commit.sha.to_string(),
+                subject: commit.subject.to_string(),
+                commit_timestamp: commit.commit_timestamp,
+            }),
+    }
+}
+
+pub fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
+    git::repository::Branch {
+        is_head: proto.is_head,
+        name: proto.name.clone().into(),
+        upstream: proto
+            .upstream
+            .as_ref()
+            .map(|upstream| git::repository::Upstream {
+                ref_name: upstream.ref_name.to_string().into(),
+                tracking: upstream.tracking.as_ref().map(|tracking| {
+                    git::repository::UpstreamTracking {
+                        ahead: tracking.ahead as u32,
+                        behind: tracking.behind as u32,
+                    }
+                }),
+            }),
+        most_recent_commit: proto.most_recent_commit.as_ref().map(|commit| {
+            git::repository::CommitSummary {
+                sha: commit.sha.to_string().into(),
+                subject: commit.subject.to_string().into(),
+                commit_timestamp: commit.commit_timestamp,
+            }
+        }),
     }
 }
 
@@ -327,33 +378,53 @@ impl RepositoryEntry {
 /// But if a sub-folder of a git repository is opened, this corresponds to the
 /// project root and the .git folder is located in a parent directory.
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
-pub struct WorkDirectory {
-    path: Arc<Path>,
-
-    /// If location_in_repo is set, it means the .git folder is external
-    /// and in a parent folder of the project root.
-    /// In that case, the work_directory field will point to the
-    /// project-root and location_in_repo contains the location of the
-    /// project-root in the repository.
-    ///
-    /// Example:
-    ///
-    ///     my_root_folder/          <-- repository root
-    ///       .git
-    ///       my_sub_folder_1/
-    ///         project_root/        <-- Project root, Zed opened here
-    ///           ...
-    ///
-    /// For this setup, the attributes will have the following values:
-    ///
-    ///     work_directory: pointing to "" entry
-    ///     location_in_repo: Some("my_sub_folder_1/project_root")
-    pub(crate) location_in_repo: Option<Arc<Path>>,
+pub enum WorkDirectory {
+    InProject {
+        relative_path: Arc<Path>,
+    },
+    AboveProject {
+        absolute_path: Arc<Path>,
+        location_in_repo: Arc<Path>,
+    },
 }
 
 impl WorkDirectory {
-    pub fn path_key(&self) -> PathKey {
-        PathKey(self.path.clone())
+    #[cfg(test)]
+    fn in_project(path: &str) -> Self {
+        let path = Path::new(path);
+        Self::InProject {
+            relative_path: path.into(),
+        }
+    }
+
+    #[cfg(test)]
+    fn canonicalize(&self) -> Self {
+        match self {
+            WorkDirectory::InProject { relative_path } => WorkDirectory::InProject {
+                relative_path: relative_path.clone(),
+            },
+            WorkDirectory::AboveProject {
+                absolute_path,
+                location_in_repo,
+            } => WorkDirectory::AboveProject {
+                absolute_path: absolute_path.canonicalize().unwrap().into(),
+                location_in_repo: location_in_repo.clone(),
+            },
+        }
+    }
+
+    pub fn is_above_project(&self) -> bool {
+        match self {
+            WorkDirectory::InProject { .. } => false,
+            WorkDirectory::AboveProject { .. } => true,
+        }
+    }
+
+    fn path_key(&self) -> PathKey {
+        match self {
+            WorkDirectory::InProject { relative_path } => PathKey(relative_path.clone()),
+            WorkDirectory::AboveProject { .. } => PathKey(Path::new("").into()),
+        }
     }
 
     /// Returns true if the given path is a child of the work directory.
@@ -361,9 +432,14 @@ impl WorkDirectory {
     /// Note that the path may not be a member of this repository, if there
     /// is a repository in a directory between these two paths
     /// external .git folder in a parent folder of the project root.
+    #[track_caller]
     pub fn directory_contains(&self, path: impl AsRef<Path>) -> bool {
         let path = path.as_ref();
-        path.starts_with(&self.path)
+        debug_assert!(path.is_relative());
+        match self {
+            WorkDirectory::InProject { relative_path } => path.starts_with(relative_path),
+            WorkDirectory::AboveProject { .. } => true,
+        }
     }
 
     /// relativize returns the given project path relative to the root folder of the
@@ -372,53 +448,71 @@ impl WorkDirectory {
     /// of the project root folder, then the returned RepoPath is relative to the root
     /// of the repository and not a valid path inside the project.
     pub fn relativize(&self, path: &Path) -> Result<RepoPath> {
-        let repo_path = if let Some(location_in_repo) = &self.location_in_repo {
-            // Avoid joining a `/` to location_in_repo in the case of a single-file worktree.
-            if path == Path::new("") {
-                RepoPath(location_in_repo.clone())
-            } else {
-                location_in_repo.join(path).into()
+        // path is assumed to be relative to worktree root.
+        debug_assert!(path.is_relative());
+        match self {
+            WorkDirectory::InProject { relative_path } => Ok(path
+                .strip_prefix(relative_path)
+                .map_err(|_| {
+                    anyhow!(
+                        "could not relativize {:?} against {:?}",
+                        path,
+                        relative_path
+                    )
+                })?
+                .into()),
+            WorkDirectory::AboveProject {
+                location_in_repo, ..
+            } => {
+                // Avoid joining a `/` to location_in_repo in the case of a single-file worktree.
+                if path == Path::new("") {
+                    Ok(RepoPath(location_in_repo.clone()))
+                } else {
+                    Ok(location_in_repo.join(path).into())
+                }
             }
-        } else {
-            path.strip_prefix(&self.path)
-                .map_err(|_| anyhow!("could not relativize {:?} against {:?}", path, self.path))?
-                .into()
-        };
-        Ok(repo_path)
+        }
     }
 
     /// This is the opposite operation to `relativize` above
     pub fn unrelativize(&self, path: &RepoPath) -> Option<Arc<Path>> {
-        if let Some(location) = &self.location_in_repo {
-            // If we fail to strip the prefix, that means this status entry is
-            // external to this worktree, and we definitely won't have an entry_id
-            path.strip_prefix(location).ok().map(Into::into)
-        } else {
-            Some(self.path.join(path).into())
+        match self {
+            WorkDirectory::InProject { relative_path } => Some(relative_path.join(path).into()),
+            WorkDirectory::AboveProject {
+                location_in_repo, ..
+            } => {
+                // If we fail to strip the prefix, that means this status entry is
+                // external to this worktree, and we definitely won't have an entry_id
+                path.strip_prefix(location_in_repo).ok().map(Into::into)
+            }
+        }
+    }
+
+    pub fn display_name(&self) -> String {
+        match self {
+            WorkDirectory::InProject { relative_path } => relative_path.display().to_string(),
+            WorkDirectory::AboveProject {
+                absolute_path,
+                location_in_repo,
+            } => {
+                let num_of_dots = location_in_repo.components().count();
+
+                "../".repeat(num_of_dots)
+                    + &absolute_path
+                        .file_name()
+                        .map(|s| s.to_string_lossy())
+                        .unwrap_or_default()
+                    + "/"
+            }
         }
     }
 }
 
 impl Default for WorkDirectory {
     fn default() -> Self {
-        Self {
-            path: Arc::from(Path::new("")),
-            location_in_repo: None,
+        Self::InProject {
+            relative_path: Arc::from(Path::new("")),
         }
-    }
-}
-
-impl Deref for WorkDirectory {
-    type Target = Path;
-
-    fn deref(&self) -> &Self::Target {
-        self.as_ref()
-    }
-}
-
-impl AsRef<Path> for WorkDirectory {
-    fn as_ref(&self) -> &Path {
-        self.path.as_ref()
     }
 }
 
@@ -466,7 +560,7 @@ struct BackgroundScannerState {
     changed_paths: Vec<Arc<Path>>,
     prev_snapshot: Snapshot,
     git_hosting_provider_registry: Option<Arc<GitHostingProviderRegistry>>,
-    repository_scans: HashMap<Arc<Path>, Task<()>>,
+    repository_scans: HashMap<PathKey, Task<()>>,
 }
 
 #[derive(Debug, Clone)]
@@ -482,6 +576,7 @@ pub struct LocalRepositoryEntry {
     /// Absolute path to the .git file, if we're in a git worktree.
     pub(crate) dot_git_worktree_abs_path: Option<Arc<Path>>,
     pub current_merge_head_shas: Vec<String>,
+    pub merge_message: Option<String>,
 }
 
 impl sum_tree::Item for LocalRepositoryEntry {
@@ -489,7 +584,7 @@ impl sum_tree::Item for LocalRepositoryEntry {
 
     fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
         PathSummary {
-            max_path: self.work_directory.path.clone(),
+            max_path: self.work_directory.path_key().0,
             item_summary: Unit,
         }
     }
@@ -499,7 +594,7 @@ impl KeyedItem for LocalRepositoryEntry {
     type Key = PathKey;
 
     fn key(&self) -> Self::Key {
-        PathKey(self.work_directory.path.clone())
+        self.work_directory.path_key()
     }
 }
 
@@ -531,6 +626,7 @@ impl DerefMut for LocalSnapshot {
     }
 }
 
+#[derive(Debug)]
 enum ScanState {
     Started,
     Updated {
@@ -665,7 +761,7 @@ impl Worktree {
             let snapshot = Snapshot::new(
                 worktree.id,
                 worktree.root_name,
-                Arc::from(PathBuf::from(worktree.abs_path)),
+                Arc::<Path>::from_proto(worktree.abs_path),
             );
 
             let background_snapshot = Arc::new(Mutex::new((snapshot.clone(), Vec::new())));
@@ -695,23 +791,22 @@ impl Worktree {
 
             // Apply updates to a separate snapshot in a background task, then
             // send them to a foreground task which updates the model.
-            cx.background_executor()
-                .spawn(async move {
-                    while let Some(update) = background_updates_rx.next().await {
+            cx.background_spawn(async move {
+                while let Some(update) = background_updates_rx.next().await {
+                    {
+                        let mut lock = background_snapshot.lock();
+                        if let Err(error) = lock
+                            .0
+                            .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
                         {
-                            let mut lock = background_snapshot.lock();
-                            if let Err(error) = lock
-                                .0
-                                .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
-                            {
-                                log::error!("error applying worktree update: {}", error);
-                            }
-                            lock.1.push(update);
+                            log::error!("error applying worktree update: {}", error);
                         }
-                        snapshot_updated_tx.send(()).await.ok();
+                        lock.1.push(update);
                     }
-                })
-                .detach();
+                    snapshot_updated_tx.send(()).await.ok();
+                }
+            })
+            .detach();
 
             // On the foreground task, update to the latest snapshot and notify
             // any update observer of all updates that led to that snapshot.
@@ -814,7 +909,7 @@ impl Worktree {
             id: self.id().to_proto(),
             root_name: self.root_name().to_string(),
             visible: self.is_visible(),
-            abs_path: self.abs_path().as_os_str().to_string_lossy().into(),
+            abs_path: self.abs_path().to_proto(),
         }
     }
 
@@ -895,7 +990,7 @@ impl Worktree {
             Worktree::Local(this) => {
                 let path = Arc::from(path);
                 let snapshot = this.snapshot();
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     if let Some(repo) = snapshot.repository_for_path(&path) {
                         if let Some(repo_path) = repo.relativize(&path).log_err() {
                             if let Some(git_repo) =
@@ -919,7 +1014,7 @@ impl Worktree {
             Worktree::Local(this) => {
                 let path = Arc::from(path);
                 let snapshot = this.snapshot();
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     if let Some(repo) = snapshot.repository_for_path(&path) {
                         if let Some(repo_path) = repo.relativize(&path).log_err() {
                             if let Some(git_repo) =
@@ -972,7 +1067,7 @@ impl Worktree {
         is_directory: bool,
         cx: &Context<Worktree>,
     ) -> Task<Result<CreatedEntry>> {
-        let path = path.into();
+        let path: Arc<Path> = path.into();
         let worktree_id = self.id();
         match self {
             Worktree::Local(this) => this.create_entry(path, is_directory, cx),
@@ -981,7 +1076,7 @@ impl Worktree {
                 let request = this.client.request(proto::CreateProjectEntry {
                     worktree_id: worktree_id.to_proto(),
                     project_id,
-                    path: path.to_string_lossy().into(),
+                    path: path.as_ref().to_proto(),
                     is_directory,
                 });
                 cx.spawn(move |this, mut cx| async move {
@@ -1066,21 +1161,19 @@ impl Worktree {
         new_path: impl Into<Arc<Path>>,
         cx: &Context<Self>,
     ) -> Task<Result<Option<Entry>>> {
-        let new_path = new_path.into();
+        let new_path: Arc<Path> = new_path.into();
         match self {
             Worktree::Local(this) => {
                 this.copy_entry(entry_id, relative_worktree_source_path, new_path, cx)
             }
             Worktree::Remote(this) => {
-                let relative_worktree_source_path =
-                    relative_worktree_source_path.map(|relative_worktree_source_path| {
-                        relative_worktree_source_path.to_string_lossy().into()
-                    });
+                let relative_worktree_source_path = relative_worktree_source_path
+                    .map(|relative_worktree_source_path| relative_worktree_source_path.to_proto());
                 let response = this.client.request(proto::CopyProjectEntry {
                     project_id: this.project_id,
                     entry_id: entry_id.to_proto(),
                     relative_worktree_source_path,
-                    new_path: new_path.to_string_lossy().into(),
+                    new_path: new_path.to_proto(),
                 });
                 cx.spawn(move |this, mut cx| async move {
                     let response = response.await?;
@@ -1179,7 +1272,11 @@ impl Worktree {
         let (scan_id, entry) = this.update(&mut cx, |this, cx| {
             (
                 this.scan_id(),
-                this.create_entry(PathBuf::from(request.path), request.is_directory, cx),
+                this.create_entry(
+                    Arc::<Path>::from_proto(request.path),
+                    request.is_directory,
+                    cx,
+                ),
             )
         })?;
         Ok(proto::ProjectEntryResponse {
@@ -1253,7 +1350,7 @@ impl Worktree {
                 this.scan_id(),
                 this.rename_entry(
                     ProjectEntryId::from_proto(request.entry_id),
-                    PathBuf::from(request.new_path),
+                    Arc::<Path>::from_proto(request.new_path),
                     cx,
                 ),
             )
@@ -1273,14 +1370,15 @@ impl Worktree {
         mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let (scan_id, task) = this.update(&mut cx, |this, cx| {
-            let relative_worktree_source_path =
-                request.relative_worktree_source_path.map(PathBuf::from);
+            let relative_worktree_source_path = request
+                .relative_worktree_source_path
+                .map(PathBuf::from_proto);
             (
                 this.scan_id(),
                 this.copy_entry(
                     ProjectEntryId::from_proto(request.entry_id),
                     relative_worktree_source_path,
-                    PathBuf::from(request.new_path),
+                    PathBuf::from_proto(request.new_path),
                     cx,
                 ),
             )
@@ -1295,11 +1393,6 @@ impl Worktree {
 impl LocalWorktree {
     pub fn fs(&self) -> &Arc<dyn Fs> {
         &self.fs
-    }
-
-    pub fn contains_abs_path(&self, path: &Path) -> bool {
-        let path = SanitizedPath::from(path);
-        path.starts_with(&self.abs_path)
     }
 
     pub fn is_path_private(&self, path: &Path) -> bool {
@@ -1337,7 +1430,7 @@ impl LocalWorktree {
         let git_hosting_provider_registry = GitHostingProviderRegistry::try_global(cx);
         let settings = self.settings.clone();
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
-        let background_scanner = cx.background_executor().spawn({
+        let background_scanner = cx.background_spawn({
             let abs_path = snapshot.abs_path.as_path().to_path_buf();
             let background = cx.background_executor().clone();
             async move {
@@ -1398,16 +1491,7 @@ impl LocalWorktree {
                             drop(barrier);
                         }
                         ScanState::RootUpdated { new_path } => {
-                            if let Some(new_path) = new_path {
-                                this.snapshot.git_repositories = Default::default();
-                                this.snapshot.ignores_by_parent_abs_path = Default::default();
-                                let root_name = new_path
-                                    .as_path()
-                                    .file_name()
-                                    .map_or(String::new(), |f| f.to_string_lossy().to_string());
-                                this.snapshot.update_abs_path(new_path, root_name);
-                            }
-                            this.restart_background_scanners(cx);
+                            this.update_abs_path_and_refresh(new_path, cx);
                         }
                     }
                     cx.notify();
@@ -1583,7 +1667,7 @@ impl LocalWorktree {
         let is_private = self.is_path_private(path.as_ref());
 
         let worktree = cx.weak_entity();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let abs_path = abs_path?;
             let content = fs.load_bytes(&abs_path).await?;
 
@@ -1689,7 +1773,7 @@ impl LocalWorktree {
         let path_excluded = self.settings.is_path_excluded(&abs_path);
         let fs = self.fs.clone();
         let task_abs_path = abs_path.clone();
-        let write = cx.background_executor().spawn(async move {
+        let write = cx.background_spawn(async move {
             if is_dir {
                 fs.create_dir(&task_abs_path)
                     .await
@@ -1753,7 +1837,7 @@ impl LocalWorktree {
             return Task::ready(Err(anyhow!("invalid path {path:?}")));
         };
 
-        let write = cx.background_executor().spawn({
+        let write = cx.background_spawn({
             let fs = fs.clone();
             let abs_path = abs_path.clone();
             async move { fs.save(&abs_path, &text, line_ending).await }
@@ -1805,7 +1889,7 @@ impl LocalWorktree {
         let abs_path = self.absolutize(&entry.path);
         let fs = self.fs.clone();
 
-        let delete = cx.background_executor().spawn(async move {
+        let delete = cx.background_spawn(async move {
             if entry.is_file() {
                 if trash {
                     fs.trash_file(&abs_path?, Default::default()).await?;
@@ -1847,6 +1931,10 @@ impl LocalWorktree {
         }))
     }
 
+    /// Rename an entry.
+    ///
+    /// `new_path` is the new relative path to the worktree root.
+    /// If the root entry is renamed then `new_path` is the new root name instead.
     fn rename_entry(
         &self,
         entry_id: ProjectEntryId,
@@ -1859,13 +1947,23 @@ impl LocalWorktree {
         };
         let new_path = new_path.into();
         let abs_old_path = self.absolutize(&old_path);
-        let Ok(abs_new_path) = self.absolutize(&new_path) else {
-            return Task::ready(Err(anyhow!("absolutizing path {new_path:?}")));
+
+        let is_root_entry = self.root_entry().is_some_and(|e| e.id == entry_id);
+        let abs_new_path = if is_root_entry {
+            let Some(root_parent_path) = self.abs_path().parent() else {
+                return Task::ready(Err(anyhow!("no parent for path {:?}", self.abs_path)));
+            };
+            root_parent_path.join(&new_path)
+        } else {
+            let Ok(absolutize_path) = self.absolutize(&new_path) else {
+                return Task::ready(Err(anyhow!("absolutizing path {new_path:?}")));
+            };
+            absolutize_path
         };
         let abs_path = abs_new_path.clone();
         let fs = self.fs.clone();
         let case_sensitive = self.fs_case_sensitive;
-        let rename = cx.background_executor().spawn(async move {
+        let rename = cx.background_spawn(async move {
             let abs_old_path = abs_old_path?;
             let abs_new_path = abs_new_path;
 
@@ -1894,9 +1992,19 @@ impl LocalWorktree {
             rename.await?;
             Ok(this
                 .update(&mut cx, |this, cx| {
-                    this.as_local_mut()
-                        .unwrap()
-                        .refresh_entry(new_path.clone(), Some(old_path), cx)
+                    let local = this.as_local_mut().unwrap();
+                    if is_root_entry {
+                        // We eagerly update `abs_path` and refresh this worktree.
+                        // Otherwise, the FS watcher would do it on the `RootUpdated` event,
+                        // but with a noticeable delay, so we handle it proactively.
+                        local.update_abs_path_and_refresh(
+                            Some(SanitizedPath::from(abs_path.clone())),
+                            cx,
+                        );
+                        Task::ready(Ok(this.root_entry().cloned()))
+                    } else {
+                        local.refresh_entry(new_path.clone(), Some(old_path), cx)
+                    }
                 })?
                 .await?
                 .map(CreatedEntry::Included)
@@ -1924,7 +2032,7 @@ impl LocalWorktree {
             };
         let abs_new_path = self.absolutize(&new_path);
         let fs = self.fs.clone();
-        let copy = cx.background_executor().spawn(async move {
+        let copy = cx.background_spawn(async move {
             copy_recursive(
                 fs.as_ref(),
                 &abs_old_path?,
@@ -1976,27 +2084,26 @@ impl LocalWorktree {
             .collect::<Vec<_>>();
 
         cx.spawn(|this, cx| async move {
-            cx.background_executor()
-                .spawn(async move {
-                    for (source, target) in paths {
-                        copy_recursive(
-                            fs.as_ref(),
-                            &source,
-                            &target,
-                            fs::CopyOptions {
-                                overwrite: overwrite_existing_files,
-                                ..Default::default()
-                            },
-                        )
-                        .await
-                        .with_context(|| {
-                            anyhow!("Failed to copy file from {source:?} to {target:?}")
-                        })?;
-                    }
-                    Ok::<(), anyhow::Error>(())
-                })
-                .await
-                .log_err();
+            cx.background_spawn(async move {
+                for (source, target) in paths {
+                    copy_recursive(
+                        fs.as_ref(),
+                        &source,
+                        &target,
+                        fs::CopyOptions {
+                            overwrite: overwrite_existing_files,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .with_context(|| {
+                        anyhow!("Failed to copy file from {source:?} to {target:?}")
+                    })?;
+                }
+                Ok::<(), anyhow::Error>(())
+            })
+            .await
+            .log_err();
             let mut refresh = cx.read_entity(
                 &this.upgrade().with_context(|| "Dropped worktree")?,
                 |this, _| {
@@ -2008,13 +2115,12 @@ impl LocalWorktree {
                 },
             )??;
 
-            cx.background_executor()
-                .spawn(async move {
-                    refresh.next().await;
-                    Ok::<(), anyhow::Error>(())
-                })
-                .await
-                .log_err();
+            cx.background_spawn(async move {
+                refresh.next().await;
+                Ok::<(), anyhow::Error>(())
+            })
+            .await
+            .log_err();
 
             let this = this.upgrade().with_context(|| "Dropped worktree")?;
             cx.read_entity(&this, |this, _| {
@@ -2033,7 +2139,7 @@ impl LocalWorktree {
     ) -> Option<Task<Result<()>>> {
         let path = self.entry_for_id(entry_id)?.path.clone();
         let mut refresh = self.refresh_entries_for_paths(vec![path]);
-        Some(cx.background_executor().spawn(async move {
+        Some(cx.background_spawn(async move {
             refresh.next().await;
             Ok(())
         }))
@@ -2046,7 +2152,7 @@ impl LocalWorktree {
     ) -> Option<Task<Result<()>>> {
         let path = self.entry_for_id(entry_id).unwrap().path.clone();
         let mut rx = self.add_path_prefix_to_scan(path.clone());
-        Some(cx.background_executor().spawn(async move {
+        Some(cx.background_spawn(async move {
             rx.next().await;
             Ok(())
         }))
@@ -2120,17 +2226,15 @@ impl LocalWorktree {
             .ok();
 
         let worktree_id = cx.entity_id().as_u64();
-        let _maintain_remote_snapshot = cx.background_executor().spawn(async move {
+        let _maintain_remote_snapshot = cx.background_spawn(async move {
             let mut is_first = true;
             while let Some((snapshot, entry_changes, repo_changes)) = snapshots_rx.next().await {
-                let update;
-                if is_first {
-                    update = snapshot.build_initial_update(project_id, worktree_id);
+                let update = if is_first {
                     is_first = false;
+                    snapshot.build_initial_update(project_id, worktree_id)
                 } else {
-                    update =
-                        snapshot.build_update(project_id, worktree_id, entry_changes, repo_changes);
-                }
+                    snapshot.build_update(project_id, worktree_id, entry_changes, repo_changes)
+                };
 
                 for update in proto::split_worktree_update(update) {
                     let _ = resume_updates_rx.try_recv();
@@ -2159,6 +2263,23 @@ impl LocalWorktree {
 
     pub fn share_private_files(&mut self, cx: &Context<Worktree>) {
         self.share_private_files = true;
+        self.restart_background_scanners(cx);
+    }
+
+    fn update_abs_path_and_refresh(
+        &mut self,
+        new_path: Option<SanitizedPath>,
+        cx: &Context<Worktree>,
+    ) {
+        if let Some(new_path) = new_path {
+            self.snapshot.git_repositories = Default::default();
+            self.snapshot.ignores_by_parent_abs_path = Default::default();
+            let root_name = new_path
+                .as_path()
+                .file_name()
+                .map_or(String::new(), |f| f.to_string_lossy().to_string());
+            self.snapshot.update_abs_path(new_path, root_name);
+        }
         self.restart_background_scanners(cx);
     }
 }
@@ -2302,11 +2423,11 @@ impl RemoteWorktree {
         new_path: impl Into<Arc<Path>>,
         cx: &Context<Worktree>,
     ) -> Task<Result<CreatedEntry>> {
-        let new_path = new_path.into();
+        let new_path: Arc<Path> = new_path.into();
         let response = self.client.request(proto::RenameProjectEntry {
             project_id: self.project_id,
             entry_id: entry_id.to_proto(),
-            new_path: new_path.to_string_lossy().into(),
+            new_path: new_path.as_ref().to_proto(),
         });
         cx.spawn(move |this, mut cx| async move {
             let response = response.await?;
@@ -2388,7 +2509,7 @@ impl Snapshot {
         proto::UpdateWorktree {
             project_id,
             worktree_id,
-            abs_path: self.abs_path().to_string_lossy().into(),
+            abs_path: self.abs_path().to_proto(),
             root_name: self.root_name().to_string(),
             updated_entries,
             removed_entries: Vec::new(),
@@ -2483,13 +2604,13 @@ impl Snapshot {
         mut update: proto::UpdateWorktree,
         always_included_paths: &PathMatcher,
     ) -> Result<()> {
-        log::trace!(
+        log::debug!(
             "applying remote worktree update. {} entries updated, {} removed",
             update.updated_entries.len(),
             update.removed_entries.len()
         );
         self.update_abs_path(
-            SanitizedPath::from(PathBuf::from(update.abs_path)),
+            SanitizedPath::from(PathBuf::from_proto(update.abs_path)),
             update.root_name,
         );
 
@@ -2551,7 +2672,7 @@ impl Snapshot {
                     let edits = repository
                         .removed_statuses
                         .into_iter()
-                        .map(|path| Edit::Remove(PathKey(Path::new(&path).into())))
+                        .map(|path| Edit::Remove(PathKey(FromProto::from_proto(path))))
                         .chain(repository.updated_statuses.into_iter().filter_map(
                             |updated_status| {
                                 Some(Edit::Insert(updated_status.try_into().log_err()?))
@@ -2561,7 +2682,7 @@ impl Snapshot {
 
                     self.repositories
                         .update(&PathKey(work_dir_entry.path.clone()), &(), |repo| {
-                            repo.branch = repository.branch.map(Into::into);
+                            repo.branch = repository.branch_summary.as_ref().map(proto_to_branch);
                             repo.statuses_by_path.edit(edits, &());
                             repo.current_merge_conflicts = conflicted_paths
                         });
@@ -2577,14 +2698,13 @@ impl Snapshot {
                     self.repositories.insert_or_replace(
                         RepositoryEntry {
                             work_directory_id,
-                            work_directory: WorkDirectory {
-                                path: work_dir_entry.path.clone(),
-                                // When syncing repository entries from a peer, we don't need
-                                // the location_in_repo field, since git operations don't happen locally
-                                // anyway.
-                                location_in_repo: None,
+                            // When syncing repository entries from a peer, we don't need
+                            // the location_in_repo field, since git operations don't happen locally
+                            // anyway.
+                            work_directory: WorkDirectory::InProject {
+                                relative_path: work_dir_entry.path.clone(),
                             },
-                            branch: repository.branch.map(Into::into),
+                            branch: repository.branch_summary.as_ref().map(proto_to_branch),
                             statuses_by_path: statuses,
                             current_merge_conflicts: conflicted_paths,
                         },
@@ -2693,23 +2813,13 @@ impl Snapshot {
         &self.repositories
     }
 
-    pub fn repositories_with_abs_paths(
-        &self,
-    ) -> impl '_ + Iterator<Item = (&RepositoryEntry, PathBuf)> {
-        let base = self.abs_path();
-        self.repositories.iter().map(|repo| {
-            let path = repo.work_directory.location_in_repo.as_deref();
-            let path = path.unwrap_or(repo.work_directory.as_ref());
-            (repo, base.join(path))
-        })
-    }
-
     /// Get the repository whose work directory corresponds to the given path.
     pub(crate) fn repository(&self, work_directory: PathKey) -> Option<RepositoryEntry> {
         self.repositories.get(&work_directory, &()).cloned()
     }
 
     /// Get the repository whose work directory contains the given path.
+    #[track_caller]
     pub fn repository_for_path(&self, path: &Path) -> Option<&RepositoryEntry> {
         self.repositories
             .iter()
@@ -2719,6 +2829,7 @@ impl Snapshot {
 
     /// Given an ordered iterator of entries, returns an iterator of those entries,
     /// along with their containing git repository.
+    #[track_caller]
     pub fn entries_with_repositories<'a>(
         &'a self,
         entries: impl 'a + Iterator<Item = &'a Entry>,
@@ -2820,6 +2931,7 @@ impl Snapshot {
 
     pub fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
         let path = path.as_ref();
+        debug_assert!(path.is_relative());
         self.traverse_from_path(true, true, true, path)
             .entry()
             .and_then(|entry| {
@@ -2895,7 +3007,7 @@ impl LocalSnapshot {
         proto::UpdateWorktree {
             project_id,
             worktree_id,
-            abs_path: self.abs_path().to_string_lossy().into(),
+            abs_path: self.abs_path().to_proto(),
             root_name: self.root_name().to_string(),
             updated_entries,
             removed_entries,
@@ -3083,7 +3195,7 @@ impl LocalSnapshot {
         let work_dir_paths = self
             .repositories
             .iter()
-            .map(|repo| repo.work_directory.path.clone())
+            .map(|repo| repo.work_directory.path_key())
             .collect::<HashSet<_>>();
         assert_eq!(dotgit_paths.len(), work_dir_paths.len());
         assert_eq!(self.repositories.iter().count(), work_dir_paths.len());
@@ -3291,7 +3403,7 @@ impl BackgroundScannerState {
             .git_repositories
             .retain(|id, _| removed_ids.binary_search(id).is_err());
         self.snapshot.repositories.retain(&(), |repository| {
-            !repository.work_directory.starts_with(path)
+            !repository.work_directory.path_key().0.starts_with(path)
         });
 
         #[cfg(test)]
@@ -3329,20 +3441,26 @@ impl BackgroundScannerState {
             }
         };
 
-        self.insert_git_repository_for_path(work_dir_path, dot_git_path, None, fs, watcher)
+        self.insert_git_repository_for_path(
+            WorkDirectory::InProject {
+                relative_path: work_dir_path,
+            },
+            dot_git_path,
+            fs,
+            watcher,
+        )
     }
 
     fn insert_git_repository_for_path(
         &mut self,
-        work_dir_path: Arc<Path>,
+        work_directory: WorkDirectory,
         dot_git_path: Arc<Path>,
-        location_in_repo: Option<Arc<Path>>,
         fs: &dyn Fs,
         watcher: &dyn Watcher,
     ) -> Option<LocalRepositoryEntry> {
         let work_dir_id = self
             .snapshot
-            .entry_for_path(work_dir_path.clone())
+            .entry_for_path(work_directory.path_key().0)
             .map(|entry| entry.id)?;
 
         if self.snapshot.git_repositories.get(&work_dir_id).is_some() {
@@ -3354,27 +3472,28 @@ impl BackgroundScannerState {
         let t0 = Instant::now();
         let repository = fs.open_repo(&dot_git_abs_path)?;
 
-        let actual_repo_path = repository.dot_git_dir();
+        let repository_path = repository.path();
+        watcher.add(&repository_path).log_err()?;
 
-        let actual_dot_git_dir_abs_path = smol::block_on(find_git_dir(&actual_repo_path, fs))?;
-        watcher.add(&actual_repo_path).log_err()?;
-
-        let dot_git_worktree_abs_path = if actual_dot_git_dir_abs_path.as_ref() == dot_git_abs_path
-        {
+        let actual_dot_git_dir_abs_path = repository.main_repository_path();
+        let dot_git_worktree_abs_path = if actual_dot_git_dir_abs_path == dot_git_abs_path {
             None
         } else {
             // The two paths could be different because we opened a git worktree.
-            // When that happens, the .git path in the worktree (`dot_git_abs_path`) is a file that
-            // points to the worktree-subdirectory in the actual .git directory (`git_dir_path`)
+            // When that happens:
+            //
+            // * `dot_git_abs_path` is a file that points to the worktree-subdirectory in the actual
+            // .git directory.
+            //
+            // * `repository_path` is the worktree-subdirectory.
+            //
+            // * `actual_dot_git_dir_abs_path` is the path to the actual .git directory. In git
+            // documentation this is called the "commondir".
             watcher.add(&dot_git_abs_path).log_err()?;
             Some(Arc::from(dot_git_abs_path))
         };
 
         log::trace!("constructed libgit2 repo in {:?}", t0.elapsed());
-        let work_directory = WorkDirectory {
-            path: work_dir_path.clone(),
-            location_in_repo,
-        };
 
         if let Some(git_hosting_provider_registry) = self.git_hosting_provider_registry.clone() {
             git_hosting_providers::register_additional_providers(
@@ -3387,7 +3506,7 @@ impl BackgroundScannerState {
             RepositoryEntry {
                 work_directory_id: work_dir_id,
                 work_directory: work_directory.clone(),
-                branch: repository.branch_name().map(Into::into),
+                branch: None,
                 statuses_by_path: Default::default(),
                 current_merge_conflicts: Default::default(),
             },
@@ -3400,9 +3519,10 @@ impl BackgroundScannerState {
             git_dir_scan_id: 0,
             status_scan_id: 0,
             repo_ptr: repository.clone(),
-            dot_git_dir_abs_path: actual_dot_git_dir_abs_path,
+            dot_git_dir_abs_path: actual_dot_git_dir_abs_path.into(),
             dot_git_worktree_abs_path,
             current_merge_head_shas: Default::default(),
+            merge_message: None,
         };
 
         self.snapshot
@@ -3427,15 +3547,6 @@ async fn is_git_dir(path: &Path, fs: &dyn Fs) -> bool {
     }
     let config_metadata = fs.metadata(&path.join("config")).await;
     matches!(config_metadata, Ok(Some(_)))
-}
-
-async fn find_git_dir(path: &Path, fs: &dyn Fs) -> Option<Arc<Path>> {
-    for ancestor in path.ancestors() {
-        if is_git_dir(ancestor, fs).await {
-            return Some(Arc::from(ancestor));
-        }
-    }
-    None
 }
 
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
@@ -3580,7 +3691,7 @@ impl language::File for File {
         rpc::proto::File {
             worktree_id: self.worktree.read(cx).id().to_proto(),
             entry_id: self.entry_id.map(|id| id.to_proto()),
-            path: self.path.to_string_lossy().into(),
+            path: self.path.as_ref().to_proto(),
             mtime: self.disk_state.mtime().map(|time| time.into()),
             is_deleted: self.disk_state == DiskState::Deleted,
         }
@@ -3605,16 +3716,14 @@ impl language::LocalFile for File {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         let abs_path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
-        cx.background_executor()
-            .spawn(async move { fs.load(&abs_path?).await })
+        cx.background_spawn(async move { fs.load(&abs_path?).await })
     }
 
     fn load_bytes(&self, cx: &App) -> Task<Result<Vec<u8>>> {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         let abs_path = worktree.absolutize(&self.path);
         let fs = worktree.fs.clone();
-        cx.background_executor()
-            .spawn(async move { fs.load_bytes(&abs_path?).await })
+        cx.background_spawn(async move { fs.load_bytes(&abs_path?).await })
     }
 }
 
@@ -3661,7 +3770,7 @@ impl File {
 
         Ok(Self {
             worktree,
-            path: Path::new(&proto.path).into(),
+            path: Arc::<Path>::from_proto(proto.path),
             disk_state,
             entry_id: proto.entry_id.map(ProjectEntryId::from_proto),
             is_local: false,
@@ -3780,8 +3889,9 @@ impl StatusEntry {
                 index_status
             }),
         };
+
         proto::StatusEntry {
-            repo_path: self.repo_path.to_proto(),
+            repo_path: self.repo_path.as_ref().to_proto(),
             simple_status,
             status: Some(status_to_proto(self.status)),
         }
@@ -3792,7 +3902,7 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
     type Error = anyhow::Error;
 
     fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
-        let repo_path = RepoPath(Path::new(&value.repo_path).into());
+        let repo_path = RepoPath(Arc::<Path>::from_proto(value.repo_path));
         let status = status_from_proto(value.simple_status, value.status)?;
         Ok(Self { repo_path, status })
     }
@@ -3846,7 +3956,7 @@ impl sum_tree::Item for RepositoryEntry {
 
     fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
         PathSummary {
-            max_path: self.work_directory.path.clone(),
+            max_path: self.work_directory.path_key().0,
             item_summary: Unit,
         }
     }
@@ -3856,7 +3966,7 @@ impl sum_tree::KeyedItem for RepositoryEntry {
     type Key = PathKey;
 
     fn key(&self) -> Self::Key {
-        PathKey(self.work_directory.path.clone())
+        self.work_directory.path_key()
     }
 }
 
@@ -4052,6 +4162,11 @@ struct PathEntry {
     scan_id: usize,
 }
 
+#[derive(Debug, Default)]
+struct FsScanned {
+    status_scans: Arc<AtomicU32>,
+}
+
 impl sum_tree::Item for PathEntry {
     type Summary = PathEntrySummary;
 
@@ -4095,7 +4210,7 @@ impl<'a> sum_tree::Dimension<'a, PathEntrySummary> for ProjectEntryId {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct PathKey(Arc<Path>);
 
 impl Default for PathKey {
@@ -4142,6 +4257,7 @@ impl BackgroundScanner {
         // the git repository in an ancestor directory. Find any gitignore files
         // in ancestor directories.
         let root_abs_path = self.state.lock().snapshot.abs_path.clone();
+        let mut containing_git_repository = None;
         for (index, ancestor) in root_abs_path.as_path().ancestors().enumerate() {
             if index != 0 {
                 if let Ok(ignore) =
@@ -4171,19 +4287,23 @@ impl BackgroundScanner {
                     {
                         // We associate the external git repo with our root folder and
                         // also mark where in the git repo the root folder is located.
-                        self.state.lock().insert_git_repository_for_path(
-                            Path::new("").into(),
-                            ancestor_dot_git.into(),
-                            Some(
-                                root_abs_path
+                        let local_repository = self.state.lock().insert_git_repository_for_path(
+                            WorkDirectory::AboveProject {
+                                absolute_path: ancestor.into(),
+                                location_in_repo: root_abs_path
                                     .as_path()
                                     .strip_prefix(ancestor)
                                     .unwrap()
                                     .into(),
-                            ),
+                            },
+                            ancestor_dot_git.clone().into(),
                             self.fs.as_ref(),
                             self.watcher.as_ref(),
                         );
+
+                        if local_repository.is_some() {
+                            containing_git_repository = Some(ancestor_dot_git)
+                        }
                     };
                 }
 
@@ -4210,13 +4330,14 @@ impl BackgroundScanner {
 
         // Perform an initial scan of the directory.
         drop(scan_job_tx);
-        self.scan_dirs(true, scan_job_rx).await;
+        let scans_running = self.scan_dirs(true, scan_job_rx).await;
         {
             let mut state = self.state.lock();
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
         }
 
-        self.send_status_update(false, SmallVec::new());
+        let scanning = scans_running.status_scans.load(atomic::Ordering::Acquire) > 0;
+        self.send_status_update(scanning, SmallVec::new());
 
         // Process any any FS events that occurred while performing the initial scan.
         // For these events, update events cannot be as precise, because we didn't
@@ -4229,6 +4350,9 @@ impl BackgroundScanner {
             self.process_events(paths.into_iter().map(Into::into).collect())
                 .await;
         }
+        if let Some(abs_path) = containing_git_repository {
+            self.process_events(vec![abs_path]).await;
+        }
 
         // Continue processing events until the worktree is dropped.
         self.phase = BackgroundScannerPhase::Events;
@@ -4239,7 +4363,8 @@ impl BackgroundScanner {
                 // these before handling changes reported by the filesystem.
                 request = self.next_scan_request().fuse() => {
                     let Ok(request) = request else { break };
-                    if !self.process_scan_request(request, false).await {
+                    let scanning = scans_running.status_scans.load(atomic::Ordering::Acquire) > 0;
+                    if !self.process_scan_request(request, scanning).await {
                         return;
                     }
                 }
@@ -4261,7 +4386,8 @@ impl BackgroundScanner {
                             self.process_events(vec![abs_path]).await;
                         }
                     }
-                    self.send_status_update(false, request.done);
+                    let scanning = scans_running.status_scans.load(atomic::Ordering::Acquire) > 0;
+                    self.send_status_update(scanning, request.done);
                 }
 
                 paths = fs_events_rx.next().fuse() => {
@@ -4406,6 +4532,14 @@ impl BackgroundScanner {
                         return false;
                     };
 
+                if abs_path.0.file_name() == Some(*GITIGNORE) {
+                    for (_, repo) in snapshot.git_repositories.iter().filter(|(_, repo)| repo.directory_contains(&relative_path)) {
+                        if !dot_git_abs_paths.iter().any(|dot_git_abs_path| dot_git_abs_path == repo.dot_git_dir_abs_path.as_ref()) {
+                            dot_git_abs_paths.push(repo.dot_git_dir_abs_path.to_path_buf());
+                        }
+                    }
+                }
+
                 let parent_dir_is_loaded = relative_path.parent().map_or(true, |parent| {
                     snapshot
                         .entry_for_path(parent)
@@ -4446,10 +4580,10 @@ impl BackgroundScanner {
         .await;
 
         self.update_ignore_statuses(scan_job_tx).await;
-        self.scan_dirs(false, scan_job_rx).await;
+        let scans_running = self.scan_dirs(false, scan_job_rx).await;
 
         let status_update = if !dot_git_abs_paths.is_empty() {
-            Some(self.schedule_git_repositories_update(dot_git_abs_paths))
+            Some(self.update_git_repositories(dot_git_abs_paths))
         } else {
             None
         };
@@ -4472,7 +4606,8 @@ impl BackgroundScanner {
                     #[cfg(test)]
                     state.snapshot.check_git_invariants();
                 }
-                send_status_update_inner(phase, state, status_update_tx, false, SmallVec::new());
+                let scanning = scans_running.status_scans.load(atomic::Ordering::Acquire) > 0;
+                send_status_update_inner(phase, state, status_update_tx, scanning, SmallVec::new());
             })
             .detach();
     }
@@ -4496,8 +4631,9 @@ impl BackgroundScanner {
             }
             drop(scan_job_tx);
         }
+        let scans_running = Arc::new(AtomicU32::new(0));
         while let Ok(job) = scan_job_rx.recv().await {
-            self.scan_dir(&job).await.log_err();
+            self.scan_dir(&scans_running, &job).await.log_err();
         }
 
         !mem::take(&mut self.state.lock().paths_to_scan).is_empty()
@@ -4507,15 +4643,16 @@ impl BackgroundScanner {
         &self,
         enable_progress_updates: bool,
         scan_jobs_rx: channel::Receiver<ScanJob>,
-    ) {
+    ) -> FsScanned {
         if self
             .status_updates_tx
             .unbounded_send(ScanState::Started)
             .is_err()
         {
-            return;
+            return FsScanned::default();
         }
 
+        let scans_running = Arc::new(AtomicU32::new(1));
         let progress_update_count = AtomicUsize::new(0);
         self.executor
             .scoped(|scope| {
@@ -4560,7 +4697,7 @@ impl BackgroundScanner {
                                 // Recursively load directories from the file system.
                                 job = scan_jobs_rx.recv().fuse() => {
                                     let Ok(job) = job else { break };
-                                    if let Err(err) = self.scan_dir(&job).await {
+                                    if let Err(err) = self.scan_dir(&scans_running, &job).await {
                                         if job.path.as_ref() != Path::new("") {
                                             log::error!("error scanning directory {:?}: {}", job.abs_path, err);
                                         }
@@ -4568,10 +4705,15 @@ impl BackgroundScanner {
                                 }
                             }
                         }
-                    })
+                    });
                 }
             })
             .await;
+
+        scans_running.fetch_sub(1, atomic::Ordering::Release);
+        FsScanned {
+            status_scans: scans_running,
+        }
     }
 
     fn send_status_update(&self, scanning: bool, barrier: SmallVec<[barrier::Sender; 1]>) -> bool {
@@ -4584,7 +4726,7 @@ impl BackgroundScanner {
         )
     }
 
-    async fn scan_dir(&self, job: &ScanJob) -> Result<()> {
+    async fn scan_dir(&self, scans_running: &Arc<AtomicU32>, job: &ScanJob) -> Result<()> {
         let root_abs_path;
         let root_char_bag;
         {
@@ -4624,20 +4766,25 @@ impl BackgroundScanner {
         swap_to_front(&mut child_paths, *GITIGNORE);
         swap_to_front(&mut child_paths, *DOT_GIT);
 
+        let mut git_status_update_jobs = Vec::new();
         for child_abs_path in child_paths {
             let child_abs_path: Arc<Path> = child_abs_path.into();
             let child_name = child_abs_path.file_name().unwrap();
             let child_path: Arc<Path> = job.path.join(child_name).into();
 
             if child_name == *DOT_GIT {
-                let repo = self.state.lock().insert_git_repository(
-                    child_path.clone(),
-                    self.fs.as_ref(),
-                    self.watcher.as_ref(),
-                );
-
-                if let Some(local_repo) = repo {
-                    let _ = self.schedule_git_statuses_update(local_repo);
+                {
+                    let mut state = self.state.lock();
+                    let repo = state.insert_git_repository(
+                        child_path.clone(),
+                        self.fs.as_ref(),
+                        self.watcher.as_ref(),
+                    );
+                    if let Some(local_repo) = repo {
+                        scans_running.fetch_add(1, atomic::Ordering::Release);
+                        git_status_update_jobs
+                            .push(self.schedule_git_statuses_update(&mut state, local_repo));
+                    }
                 }
             } else if child_name == *GITIGNORE {
                 match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
@@ -4753,6 +4900,32 @@ impl BackgroundScanner {
 
             new_entries.push(child_entry);
         }
+
+        let task_state = self.state.clone();
+        let phase = self.phase;
+        let status_updates_tx = self.status_updates_tx.clone();
+        let scans_running = scans_running.clone();
+        self.executor
+            .spawn(async move {
+                if !git_status_update_jobs.is_empty() {
+                    let status_updates = join_all(git_status_update_jobs).await;
+                    let status_updated = status_updates
+                        .iter()
+                        .any(|update_result| update_result.is_ok());
+                    scans_running.fetch_sub(status_updates.len() as u32, atomic::Ordering::Release);
+                    if status_updated {
+                        let scanning = scans_running.load(atomic::Ordering::Acquire) > 0;
+                        send_status_update_inner(
+                            phase,
+                            task_state,
+                            status_updates_tx,
+                            scanning,
+                            SmallVec::new(),
+                        );
+                    }
+                }
+            })
+            .detach();
 
         let mut state = self.state.lock();
 
@@ -4985,7 +5158,7 @@ impl BackgroundScanner {
                 snapshot
                     .snapshot
                     .repositories
-                    .remove(&PathKey(repository.work_directory.path.clone()), &());
+                    .remove(&repository.work_directory.path_key(), &());
                 return Some(());
             }
         }
@@ -5143,10 +5316,10 @@ impl BackgroundScanner {
         state.snapshot.entries_by_id.edit(entries_by_id_edits, &());
     }
 
-    fn schedule_git_repositories_update(&self, dot_git_paths: Vec<PathBuf>) -> Task<()> {
+    fn update_git_repositories(&self, dot_git_paths: Vec<PathBuf>) -> Task<()> {
         log::debug!("reloading repositories: {dot_git_paths:?}");
 
-        let mut repos_to_update = Vec::new();
+        let mut status_updates = Vec::new();
         {
             let mut state = self.state.lock();
             let scan_id = state.snapshot.scan_id;
@@ -5168,8 +5341,12 @@ impl BackgroundScanner {
 
                 let local_repository = match existing_repository_entry {
                     None => {
+                        let Ok(relative) = dot_git_dir.strip_prefix(state.snapshot.abs_path())
+                        else {
+                            return Task::ready(());
+                        };
                         match state.insert_git_repository(
-                            dot_git_dir.into(),
+                            relative.into(),
                             self.fs.as_ref(),
                             self.watcher.as_ref(),
                         ) {
@@ -5181,15 +5358,6 @@ impl BackgroundScanner {
                         if local_repository.git_dir_scan_id == scan_id {
                             continue;
                         }
-                        let Some(work_dir) = state
-                            .snapshot
-                            .entry_for_id(local_repository.work_directory_id)
-                            .map(|entry| entry.path.clone())
-                        else {
-                            continue;
-                        };
-
-                        let branch = local_repository.repo_ptr.branch_name();
                         local_repository.repo_ptr.reload_index();
 
                         state.snapshot.git_repositories.update(
@@ -5199,17 +5367,13 @@ impl BackgroundScanner {
                                 entry.status_scan_id = scan_id;
                             },
                         );
-                        state.snapshot.snapshot.repositories.update(
-                            &PathKey(work_dir.clone()),
-                            &(),
-                            |entry| entry.branch = branch.map(Into::into),
-                        );
 
                         local_repository
                     }
                 };
 
-                repos_to_update.push(local_repository);
+                status_updates
+                    .push(self.schedule_git_statuses_update(&mut state, local_repository));
             }
 
             // Remove any git repositories whose .git entry no longer exists.
@@ -5240,10 +5404,6 @@ impl BackgroundScanner {
             });
         }
 
-        let mut status_updates = Vec::new();
-        for local_repository in repos_to_update {
-            status_updates.push(self.schedule_git_statuses_update(local_repository));
-        }
         self.executor.spawn(async move {
             let _updates_finished: Vec<Result<(), oneshot::Canceled>> =
                 join_all(status_updates).await;
@@ -5253,16 +5413,20 @@ impl BackgroundScanner {
     /// Update the git statuses for a given batch of entries.
     fn schedule_git_statuses_update(
         &self,
-        local_repository: LocalRepositoryEntry,
+        state: &mut BackgroundScannerState,
+        mut local_repository: LocalRepositoryEntry,
     ) -> oneshot::Receiver<()> {
-        let repository_path = local_repository.work_directory.path.clone();
-        let state = self.state.clone();
+        let repository_name = local_repository.work_directory.display_name();
+        let path_key = local_repository.work_directory.path_key();
+
+        let job_state = self.state.clone();
         let (tx, rx) = oneshot::channel();
 
-        self.state.lock().repository_scans.insert(
-            repository_path.clone(),
+        state.repository_scans.insert(
+            path_key.clone(),
             self.executor.spawn(async move {
-                log::trace!("updating git statuses for repo {repository_path:?}",);
+                update_branches(&job_state, &mut local_repository).log_err();
+                log::trace!("updating git statuses for repo {repository_name}",);
                 let t0 = Instant::now();
 
                 let Some(statuses) = local_repository
@@ -5272,23 +5436,23 @@ impl BackgroundScanner {
                 else {
                     return;
                 };
+
                 log::trace!(
-                    "computed git statuses for repo {:?} in {:?}",
-                    repository_path,
+                    "computed git statuses for repo {repository_name} in {:?}",
                     t0.elapsed()
                 );
 
                 let t0 = Instant::now();
                 let mut changed_paths = Vec::new();
-                let snapshot = state.lock().snapshot.snapshot.clone();
+                let snapshot = job_state.lock().snapshot.snapshot.clone();
 
-                let Some(mut repository) =
-                    snapshot.repository(local_repository.work_directory.path_key())
+                let Some(mut repository) = snapshot
+                    .repository(path_key)
+                    .context(
+                        "Tried to update git statuses for a repository that isn't in the snapshot",
+                    )
+                    .log_err()
                 else {
-                    log::error!(
-                        "Tried to update git statuses for a repository that isn't in the snapshot"
-                    );
-                    debug_assert!(false);
                     return;
                 };
 
@@ -5315,7 +5479,7 @@ impl BackgroundScanner {
                 }
 
                 repository.statuses_by_path = new_entries_by_path;
-                let mut state = state.lock();
+                let mut state = job_state.lock();
                 state
                     .snapshot
                     .repositories
@@ -5324,6 +5488,12 @@ impl BackgroundScanner {
                     &local_repository.work_directory_id,
                     |entry| {
                         entry.current_merge_head_shas = merge_head_shas;
+                        entry.merge_message = std::fs::read_to_string(
+                            local_repository.dot_git_dir_abs_path.join("MERGE_MSG"),
+                        )
+                        .ok()
+                        .and_then(|merge_msg| Some(merge_msg.lines().next()?.to_owned()));
+                        entry.status_scan_id += 1;
                     },
                 );
 
@@ -5335,8 +5505,7 @@ impl BackgroundScanner {
                 );
 
                 log::trace!(
-                    "applied git status updates for repo {:?} in {:?}",
-                    repository_path,
+                    "applied git status updates for repo {repository_name} in {:?}",
                     t0.elapsed(),
                 );
                 tx.send(()).ok();
@@ -5386,7 +5555,7 @@ fn send_status_update_inner(
 
     let new_snapshot = state.snapshot.clone();
     let old_snapshot = mem::replace(&mut state.prev_snapshot, new_snapshot.snapshot.clone());
-    let changes = build_change_set(phase, &old_snapshot, &new_snapshot, &state.changed_paths);
+    let changes = build_diff(phase, &old_snapshot, &new_snapshot, &state.changed_paths);
     state.changed_paths.clear();
 
     status_updates_tx
@@ -5399,7 +5568,27 @@ fn send_status_update_inner(
         .is_ok()
 }
 
-fn build_change_set(
+fn update_branches(
+    state: &Mutex<BackgroundScannerState>,
+    repository: &mut LocalRepositoryEntry,
+) -> Result<()> {
+    let branches = repository.repo().branches()?;
+    let snapshot = state.lock().snapshot.snapshot.clone();
+    let mut repository = snapshot
+        .repository(repository.work_directory.path_key())
+        .context("Missing repository")?;
+    repository.branch = branches.into_iter().find(|branch| branch.is_head);
+
+    let mut state = state.lock();
+    state
+        .snapshot
+        .repositories
+        .insert_or_replace(repository, &());
+
+    Ok(())
+}
+
+fn build_diff(
     phase: BackgroundScannerPhase,
     old_snapshot: &Snapshot,
     new_snapshot: &Snapshot,
@@ -5551,6 +5740,7 @@ impl RepoPaths {
     }
 }
 
+#[derive(Debug)]
 struct ScanJob {
     abs_path: Arc<Path>,
     path: Arc<Path>,
@@ -6156,7 +6346,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
         Self {
             id: entry.id.to_proto(),
             is_dir: entry.is_dir(),
-            path: entry.path.to_string_lossy().into(),
+            path: entry.path.as_ref().to_proto(),
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
             is_ignored: entry.is_ignored,
@@ -6166,7 +6356,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
             canonical_path: entry
                 .canonical_path
                 .as_ref()
-                .map(|path| path.to_string_lossy().to_string()),
+                .map(|path| path.as_ref().to_proto()),
         }
     }
 }
@@ -6182,20 +6372,22 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
         } else {
             EntryKind::File
         };
-        let path: Arc<Path> = PathBuf::from(entry.path).into();
+
+        let path = Arc::<Path>::from_proto(entry.path);
         let char_bag = char_bag_for_path(*root_char_bag, &path);
+        let is_always_included = always_included.is_match(path.as_ref());
         Ok(Entry {
             id: ProjectEntryId::from_proto(entry.id),
             kind,
-            path: path.clone(),
+            path,
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
             size: entry.size.unwrap_or(0),
             canonical_path: entry
                 .canonical_path
-                .map(|path_string| Box::from(Path::new(&path_string))),
+                .map(|path_string| Box::from(PathBuf::from_proto(path_string))),
             is_ignored: entry.is_ignored,
-            is_always_included: always_included.is_match(path.as_ref()),
+            is_always_included,
             is_external: entry.is_external,
             is_private: false,
             char_bag,

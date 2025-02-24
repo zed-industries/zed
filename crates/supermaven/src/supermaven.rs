@@ -31,16 +31,16 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
     let supermaven = cx.new(|_| Supermaven::Starting);
     Supermaven::set_global(supermaven.clone(), cx);
 
-    let mut provider = all_language_settings(None, cx).inline_completions.provider;
-    if provider == language::language_settings::InlineCompletionProvider::Supermaven {
+    let mut provider = all_language_settings(None, cx).edit_predictions.provider;
+    if provider == language::language_settings::EditPredictionProvider::Supermaven {
         supermaven.update(cx, |supermaven, cx| supermaven.start(client.clone(), cx));
     }
 
     cx.observe_global::<SettingsStore>(move |cx| {
-        let new_provider = all_language_settings(None, cx).inline_completions.provider;
+        let new_provider = all_language_settings(None, cx).edit_predictions.provider;
         if new_provider != provider {
             provider = new_provider;
-            if provider == language::language_settings::InlineCompletionProvider::Supermaven {
+            if provider == language::language_settings::EditPredictionProvider::Supermaven {
                 supermaven.update(cx, |supermaven, cx| supermaven.start(client.clone(), cx));
             } else {
                 supermaven.update(cx, |supermaven, _cx| supermaven.stop());

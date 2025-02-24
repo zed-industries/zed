@@ -11,8 +11,7 @@ use ui::{
     Window,
 };
 use ui::{Button, ButtonStyle};
-use workspace::Item;
-use workspace::Workspace;
+use workspace::{Item, SplitDirection, Workspace};
 
 actions!(debug, [OpenKeyContextView]);
 
@@ -20,7 +19,12 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenKeyContextView, window, cx| {
             let key_context_view = cx.new(|cx| KeyContextView::new(window, cx));
-            workspace.add_item_to_active_pane(Box::new(key_context_view), None, true, window, cx)
+            workspace.split_item(
+                SplitDirection::Right,
+                Box::new(key_context_view),
+                window,
+                cx,
+            )
         });
     })
     .detach();
@@ -212,6 +216,7 @@ impl Render for KeyContextView {
                             .key_binding(ui::KeyBinding::for_action(
                                 &zed_actions::OpenDefaultKeymap,
                                 window,
+                                cx
                             ))
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(workspace::SplitRight.boxed_clone(), cx);
@@ -221,7 +226,7 @@ impl Render for KeyContextView {
                     .child(
                         Button::new("default", "Edit your keymap")
                             .style(ButtonStyle::Filled)
-                            .key_binding(ui::KeyBinding::for_action(&zed_actions::OpenKeymap, window))
+                            .key_binding(ui::KeyBinding::for_action(&zed_actions::OpenKeymap, window, cx))
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(workspace::SplitRight.boxed_clone(), cx);
                                 window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);

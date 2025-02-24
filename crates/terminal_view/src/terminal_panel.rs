@@ -35,10 +35,11 @@ use workspace::{
     item::SerializableItem,
     move_active_item, move_item, pane,
     ui::IconName,
-    ActivateNextPane, ActivatePane, ActivatePaneInDirection, ActivatePreviousPane,
-    DraggedSelection, DraggedTab, ItemId, MoveItemToPane, MoveItemToPaneInDirection, NewTerminal,
-    Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitRight, SplitUp,
-    SwapPaneInDirection, ToggleZoom, Workspace,
+    ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
+    ActivatePaneUp, ActivatePreviousPane, DraggedSelection, DraggedTab, ItemId, MoveItemToPane,
+    MoveItemToPaneInDirection, NewTerminal, Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft,
+    SplitRight, SplitUp, SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom,
+    Workspace,
 };
 
 use anyhow::{anyhow, Context as _, Result};
@@ -138,10 +139,9 @@ impl TerminalPanel {
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
                         PopoverMenu::new("terminal-tab-bar-popover-menu")
-                            .trigger(
-                                IconButton::new("plus", IconName::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("New…")),
+                            .trigger_with_tooltip(
+                                IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
+                                Tooltip::text("New…"),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
@@ -168,10 +168,10 @@ impl TerminalPanel {
                     .children(assistant_tab_bar_button.clone())
                     .child(
                         PopoverMenu::new("terminal-pane-tab-bar-split")
-                            .trigger(
+                            .trigger_with_tooltip(
                                 IconButton::new("terminal-pane-split", IconName::Split)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Split Pane")),
+                                    .icon_size(IconSize::Small),
+                                Tooltip::text("Split Pane"),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
@@ -217,36 +217,67 @@ impl TerminalPanel {
         });
     }
 
+    fn serialization_key(workspace: &Workspace) -> Option<String> {
+        workspace
+            .database_id()
+            .map(|id| i64::from(id).to_string())
+            .or(workspace.session_id())
+            .map(|id| format!("{:?}-{:?}", TERMINAL_PANEL_KEY, id))
+    }
+
     pub async fn load(
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> Result<Entity<Self>> {
-        let serialized_panel = cx
-            .background_executor()
-            .spawn(async move { KEY_VALUE_STORE.read_kvp(TERMINAL_PANEL_KEY) })
-            .await
-            .log_err()
-            .flatten()
-            .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
-            .transpose()
-            .log_err()
-            .flatten();
+        let mut terminal_panel = None;
 
-        let terminal_panel = workspace
-            .update_in(&mut cx, |workspace, window, cx| {
-                match serialized_panel.zip(workspace.database_id()) {
-                    Some((serialized_panel, database_id)) => deserialize_terminal_panel(
-                        workspace.weak_handle(),
-                        workspace.project().clone(),
-                        database_id,
-                        serialized_panel,
-                        window,
-                        cx,
-                    ),
-                    None => Task::ready(Ok(cx.new(|cx| TerminalPanel::new(workspace, window, cx)))),
+        match workspace
+            .read_with(&mut cx, |workspace, _| {
+                workspace
+                    .database_id()
+                    .zip(TerminalPanel::serialization_key(workspace))
+            })
+            .ok()
+            .flatten()
+        {
+            Some((database_id, serialization_key)) => {
+                if let Some(serialized_panel) = cx
+                    .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
+                    .await
+                    .log_err()
+                    .flatten()
+                    .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
+                    .transpose()
+                    .log_err()
+                    .flatten()
+                {
+                    if let Ok(serialized) = workspace
+                        .update_in(&mut cx, |workspace, window, cx| {
+                            deserialize_terminal_panel(
+                                workspace.weak_handle(),
+                                workspace.project().clone(),
+                                database_id,
+                                serialized_panel,
+                                window,
+                                cx,
+                            )
+                        })?
+                        .await
+                    {
+                        terminal_panel = Some(serialized);
+                    }
                 }
+            }
+            _ => {}
+        }
+
+        let terminal_panel = if let Some(panel) = terminal_panel {
+            panel
+        } else {
+            workspace.update_in(&mut cx, |workspace, window, cx| {
+                cx.new(|cx| TerminalPanel::new(workspace, window, cx))
             })?
-            .await?;
+        };
 
         if let Some(workspace) = workspace.upgrade() {
             terminal_panel
@@ -728,6 +759,16 @@ impl TerminalPanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let height = self.height;
         let width = self.width;
+        let Some(serialization_key) = self
+            .workspace
+            .update(cx, |workspace, _| {
+                TerminalPanel::serialization_key(workspace)
+            })
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
         self.pending_serialization = cx.spawn(|terminal_panel, mut cx| async move {
             cx.background_executor()
                 .timer(Duration::from_millis(50))
@@ -742,25 +783,24 @@ impl TerminalPanel {
                     ))
                 })
                 .ok()?;
-            cx.background_executor()
-                .spawn(
-                    async move {
-                        KEY_VALUE_STORE
-                            .write_kvp(
-                                TERMINAL_PANEL_KEY.into(),
-                                serde_json::to_string(&SerializedTerminalPanel {
-                                    items,
-                                    active_item_id: None,
-                                    height,
-                                    width,
-                                })?,
-                            )
-                            .await?;
-                        anyhow::Ok(())
-                    }
-                    .log_err(),
-                )
-                .await;
+            cx.background_spawn(
+                async move {
+                    KEY_VALUE_STORE
+                        .write_kvp(
+                            serialization_key,
+                            serde_json::to_string(&SerializedTerminalPanel {
+                                items,
+                                active_item_id: None,
+                                height,
+                                width,
+                            })?,
+                        )
+                        .await?;
+                    anyhow::Ok(())
+                }
+                .log_err(),
+            )
+            .await;
             Some(())
         });
     }
@@ -889,6 +929,37 @@ impl TerminalPanel {
             is_enabled_in_workspace(workspace.read(cx), cx)
         })
     }
+
+    fn activate_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(pane) = self
+            .center
+            .find_pane_in_direction(&self.active_pane, direction, cx)
+        {
+            window.focus(&pane.focus_handle(cx));
+        } else {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.activate_pane_in_direction(direction, window, cx)
+                })
+                .ok();
+        }
+    }
+
+    fn swap_pane_in_direction(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
+        if let Some(to) = self
+            .center
+            .find_pane_in_direction(&self.active_pane, direction, cx)
+            .cloned()
+        {
+            self.center.swap(&self.active_pane, &to);
+            cx.notify();
+        }
+    }
 }
 
 fn is_enabled_in_workspace(workspace: &Workspace, cx: &App) -> bool {
@@ -949,7 +1020,9 @@ pub fn new_terminal_pane(
             false
         })));
 
-        let buffer_search_bar = cx.new(|cx| search::BufferSearchBar::new(window, cx));
+        let buffer_search_bar = cx.new(|cx| {
+            search::BufferSearchBar::new(Some(project.read(cx).languages().clone()), window, cx)
+        });
         let breadcrumbs = cx.new(|_| Breadcrumbs::new());
         pane.toolbar().update(cx, |toolbar, cx| {
             toolbar.add_item(buffer_search_bar, window, cx);
@@ -1145,24 +1218,28 @@ impl Render for TerminalPanel {
             .ok()
             .map(|div| {
                 div.on_action({
-                    cx.listener(
-                        |terminal_panel, action: &ActivatePaneInDirection, window, cx| {
-                            if let Some(pane) = terminal_panel.center.find_pane_in_direction(
-                                &terminal_panel.active_pane,
-                                action.0,
-                                cx,
-                            ) {
-                                window.focus(&pane.focus_handle(cx));
-                            } else {
-                                terminal_panel
-                                    .workspace
-                                    .update(cx, |workspace, cx| {
-                                        workspace.activate_pane_in_direction(action.0, window, cx)
-                                    })
-                                    .ok();
-                            }
-                        },
-                    )
+                    cx.listener(|terminal_panel, _: &ActivatePaneLeft, window, cx| {
+                        terminal_panel.activate_pane_in_direction(SplitDirection::Left, window, cx);
+                    })
+                })
+                .on_action({
+                    cx.listener(|terminal_panel, _: &ActivatePaneRight, window, cx| {
+                        terminal_panel.activate_pane_in_direction(
+                            SplitDirection::Right,
+                            window,
+                            cx,
+                        );
+                    })
+                })
+                .on_action({
+                    cx.listener(|terminal_panel, _: &ActivatePaneUp, window, cx| {
+                        terminal_panel.activate_pane_in_direction(SplitDirection::Up, window, cx);
+                    })
+                })
+                .on_action({
+                    cx.listener(|terminal_panel, _: &ActivatePaneDown, window, cx| {
+                        terminal_panel.activate_pane_in_direction(SplitDirection::Down, window, cx);
+                    })
                 })
                 .on_action(
                     cx.listener(|terminal_panel, _action: &ActivateNextPane, window, cx| {
@@ -1210,18 +1287,18 @@ impl Render for TerminalPanel {
                         }
                     }),
                 )
-                .on_action(
-                    cx.listener(|terminal_panel, action: &SwapPaneInDirection, _, cx| {
-                        if let Some(to) = terminal_panel
-                            .center
-                            .find_pane_in_direction(&terminal_panel.active_pane, action.0, cx)
-                            .cloned()
-                        {
-                            terminal_panel.center.swap(&terminal_panel.active_pane, &to);
-                            cx.notify();
-                        }
-                    }),
-                )
+                .on_action(cx.listener(|terminal_panel, _: &SwapPaneLeft, _, cx| {
+                    terminal_panel.swap_pane_in_direction(SplitDirection::Left, cx);
+                }))
+                .on_action(cx.listener(|terminal_panel, _: &SwapPaneRight, _, cx| {
+                    terminal_panel.swap_pane_in_direction(SplitDirection::Right, cx);
+                }))
+                .on_action(cx.listener(|terminal_panel, _: &SwapPaneUp, _, cx| {
+                    terminal_panel.swap_pane_in_direction(SplitDirection::Up, cx);
+                }))
+                .on_action(cx.listener(|terminal_panel, _: &SwapPaneDown, _, cx| {
+                    terminal_panel.swap_pane_in_direction(SplitDirection::Down, cx);
+                }))
                 .on_action(
                     cx.listener(|terminal_panel, action: &MoveItemToPane, window, cx| {
                         let Some(&target_pane) =
@@ -1316,8 +1393,10 @@ impl Panel for TerminalPanel {
             DockPosition::Left | DockPosition::Right => self.width = size,
             DockPosition::Bottom => self.height = size,
         }
-        self.serialize(cx);
         cx.notify();
+        cx.defer_in(window, |this, _, cx| {
+            this.serialize(cx);
+        })
     }
 
     fn is_zoomed(&self, _window: &Window, cx: &App) -> bool {

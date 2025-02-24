@@ -2070,18 +2070,30 @@ pub mod tests {
             )
         });
 
-        // Insert a block in the middle of a multi-line string literal
+        // Insert two blocks in the middle of a multi-line string literal.
+        // The second block has zero height.
         map.update(cx, |map, cx| {
             map.insert_blocks(
-                [BlockProperties {
-                    placement: BlockPlacement::Below(
-                        buffer_snapshot.anchor_before(Point::new(1, 0)),
-                    ),
-                    height: 1,
-                    style: BlockStyle::Sticky,
-                    render: Arc::new(|_| div().into_any()),
-                    priority: 0,
-                }],
+                [
+                    BlockProperties {
+                        placement: BlockPlacement::Below(
+                            buffer_snapshot.anchor_before(Point::new(1, 0)),
+                        ),
+                        height: 1,
+                        style: BlockStyle::Sticky,
+                        render: Arc::new(|_| div().into_any()),
+                        priority: 0,
+                    },
+                    BlockProperties {
+                        placement: BlockPlacement::Below(
+                            buffer_snapshot.anchor_before(Point::new(2, 0)),
+                        ),
+                        height: 0,
+                        style: BlockStyle::Sticky,
+                        render: Arc::new(|_| div().into_any()),
+                        priority: 0,
+                    },
+                ],
                 cx,
             )
         });
@@ -2766,6 +2778,7 @@ pub mod tests {
     fn init_test(cx: &mut App, f: impl Fn(&mut AllLanguageSettingsContent)) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
+        workspace::init_settings(cx);
         language::init(cx);
         crate::init(cx);
         Project::init_settings(cx);

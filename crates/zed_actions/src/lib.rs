@@ -12,11 +12,13 @@ use serde::{Deserialize, Serialize};
 pub fn init() {}
 
 #[derive(Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenBrowser {
     pub url: String,
 }
 
 #[derive(Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenZedUrl {
     pub url: String,
 }
@@ -36,19 +38,85 @@ actions!(
         Extensions,
         OpenLicenses,
         OpenTelemetryLog,
+    ]
+);
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct DecreaseBufferFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct IncreaseBufferFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct ResetBufferFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct DecreaseUiFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct IncreaseUiFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct ResetUiFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+impl_actions!(
+    zed,
+    [
         DecreaseBufferFontSize,
         IncreaseBufferFontSize,
         ResetBufferFontSize,
         DecreaseUiFontSize,
         IncreaseUiFontSize,
-        ResetUiFontSize
+        ResetUiFontSize,
     ]
 );
 
-pub mod branches {
-    use gpui::actions;
+pub mod workspace {
+    use gpui::action_with_deprecated_aliases;
 
-    actions!(branches, [OpenRecent]);
+    action_with_deprecated_aliases!(
+        workspace,
+        CopyPath,
+        [
+            "editor::CopyPath",
+            "outline_panel::CopyPath",
+            "project_panel::CopyPath"
+        ]
+    );
+
+    action_with_deprecated_aliases!(
+        workspace,
+        CopyRelativePath,
+        [
+            "editor::CopyRelativePath",
+            "outline_panel::CopyRelativePath",
+            "project_panel::CopyRelativePath"
+        ]
+    );
+}
+
+pub mod git {
+    use gpui::action_with_deprecated_aliases;
+
+    action_with_deprecated_aliases!(git, Branch, ["branches::OpenRecent"]);
 }
 
 pub mod command_palette {
@@ -69,6 +137,7 @@ pub mod theme_selector {
     use serde::Deserialize;
 
     #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Toggle {
         /// A list of theme names to filter the theme selector down to.
         pub themes_filter: Option<Vec<String>>,
@@ -83,6 +152,7 @@ pub mod icon_theme_selector {
     use serde::Deserialize;
 
     #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Toggle {
         /// A list of icon theme names to filter the theme selector down to.
         pub themes_filter: Option<Vec<String>>,
@@ -99,6 +169,7 @@ pub mod assistant {
     actions!(assistant, [ToggleFocus, DeployPromptLibrary]);
 
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct InlineAssist {
         pub prompt: Option<String>,
     }
@@ -107,6 +178,7 @@ pub mod assistant {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenRecent {
     #[serde(default)]
     pub create_new_window: bool,
@@ -154,6 +226,7 @@ impl Spawn {
 
 /// Rerun the last task.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Rerun {
     /// Controls whether the task context is reevaluated prior to execution of a task.
     /// If it is not, environment variables such as ZED_COLUMN, ZED_FILE are gonna be the same as in the last execution of a task

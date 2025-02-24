@@ -1,6 +1,7 @@
 //! The Zed Rust Extension API allows you write extensions for [Zed](https://zed.dev/) in Rust.
 
 pub mod http_client;
+pub mod process;
 pub mod settings;
 
 use core::fmt;
@@ -195,7 +196,7 @@ mod wit {
 
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.2.0",
+        path: "./wit/since_v0.3.0",
     });
 }
 

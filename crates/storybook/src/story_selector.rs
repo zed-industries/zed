@@ -14,8 +14,6 @@ use ui::prelude::*;
 pub enum ComponentStory {
     ApplicationMenu,
     AutoHeightEditor,
-    Avatar,
-    Button,
     CollabNotification,
     ContextMenu,
     Cursor,
@@ -25,7 +23,6 @@ pub enum ComponentStory {
     Icon,
     IconButton,
     Keybinding,
-    Label,
     List,
     ListHeader,
     ListItem,
@@ -36,7 +33,6 @@ pub enum ComponentStory {
     TabBar,
     Text,
     ToggleButton,
-    ToolStrip,
     ViewportUnits,
     WithRemSize,
     Vector,
@@ -49,8 +45,6 @@ impl ComponentStory {
                 .new(|cx| title_bar::ApplicationMenuStory::new(window, cx))
                 .into(),
             Self::AutoHeightEditor => AutoHeightEditorStory::new(window, cx).into(),
-            Self::Avatar => cx.new(|_| ui::AvatarStory).into(),
-            Self::Button => cx.new(|_| ui::ButtonStory).into(),
             Self::CollabNotification => cx
                 .new(|_| collab_ui::notifications::CollabNotificationStory)
                 .into(),
@@ -62,7 +56,6 @@ impl ComponentStory {
             Self::Icon => cx.new(|_| ui::IconStory).into(),
             Self::IconButton => cx.new(|_| ui::IconButtonStory).into(),
             Self::Keybinding => cx.new(|_| ui::KeybindingStory).into(),
-            Self::Label => cx.new(|_| ui::LabelStory).into(),
             Self::List => cx.new(|_| ui::ListStory).into(),
             Self::ListHeader => cx.new(|_| ui::ListHeaderStory).into(),
             Self::ListItem => cx.new(|_| ui::ListItemStory).into(),
@@ -73,7 +66,6 @@ impl ComponentStory {
             Self::TabBar => cx.new(|_| ui::TabBarStory).into(),
             Self::Text => TextStory::model(cx).into(),
             Self::ToggleButton => cx.new(|_| ui::ToggleButtonStory).into(),
-            Self::ToolStrip => cx.new(|_| ui::ToolStripStory).into(),
             Self::ViewportUnits => cx.new(|_| crate::stories::ViewportUnitsStory).into(),
             Self::WithRemSize => cx.new(|_| crate::stories::WithRemSizeStory).into(),
             Self::Vector => cx.new(|_| ui::VectorStory).into(),

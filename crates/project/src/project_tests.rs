@@ -1,5 +1,5 @@
 use crate::{Event, *};
-use ::git::diff::assert_hunks;
+use buffer_diff::{assert_hunks, DiffHunkSecondaryStatus, DiffHunkStatus};
 use fs::FakeFs;
 use futures::{future, StreamExt};
 use gpui::{App, SemanticVersion, UpdateGlobal};
@@ -25,7 +25,11 @@ use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
-    assert_set_eq, path, paths::PathMatcher, separator, test::TempTree, uri, TryFutureExt as _,
+    assert_set_eq, path,
+    paths::PathMatcher,
+    separator,
+    test::{marked_text_offsets, TempTree},
+    uri, TryFutureExt as _,
 };
 
 #[gpui::test]
@@ -1406,14 +1410,13 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
         })
         .await
         .unwrap();
-
     // Simulate diagnostics starting to update.
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.start_progress(progress_token).await;
 
     // Restart the server before the diagnostics finish updating.
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers([buffer], cx);
+        project.restart_language_servers_for_buffers(vec![buffer], cx);
     });
     let mut events = cx.events(&project);
 
@@ -1518,7 +1521,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     });
 
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers([buffer.clone()], cx);
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], cx);
     });
 
     // The diagnostics are cleared.
@@ -1572,10 +1575,10 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
         diagnostics: Vec::new(),
     });
     cx.executor().run_until_parked();
-
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers([buffer.clone()], cx);
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], cx);
     });
+
     let mut fake_server = fake_servers.next().await.unwrap();
     let notification = fake_server
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
@@ -1782,7 +1785,6 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     fs.insert_tree(path!("/dir"), json!({ "a.rs": text })).await;
 
     let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
     language_registry.add(rust_lang());
@@ -1801,8 +1803,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let _handle = lsp_store.update(cx, |lsp_store, cx| {
-        lsp_store.register_buffer_with_language_servers(&buffer, cx)
+    let _handle = project.update(cx, |project, cx| {
+        project.register_buffer_with_language_servers(&buffer, cx)
     });
 
     let mut fake_server = fake_servers.next().await.unwrap();
@@ -2617,7 +2619,6 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
             ),
         )))
     });
-
     let mut definitions = project
         .update(cx, |project, cx| project.definition(&buffer, 22, cx))
         .await
@@ -3381,7 +3382,7 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        path!("/dir"),
         json!({
             "a": {
                 "file1": "",
@@ -3390,7 +3391,7 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs, [Path::new("/dir")], cx).await;
+    let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
     let tree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let tree_id = tree.update(cx, |tree, _| tree.id());
 
@@ -3628,7 +3629,8 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
 async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let initial_contents = "aaa\nbbbbb\nc\n";
+    let (initial_contents, initial_offsets) =
+        marked_text_offsets("one twoˇ\nthree ˇfourˇ five\nsixˇ seven\n");
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/dir"),
@@ -3643,8 +3645,9 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let anchors = (0..3)
-        .map(|row| buffer.update(cx, |b, _| b.anchor_before(Point::new(row, 1))))
+    let anchors = initial_offsets
+        .iter()
+        .map(|offset| buffer.update(cx, |b, _| b.anchor_before(offset)))
         .collect::<Vec<_>>();
 
     // Change the file on disk, adding two new lines of text, and removing
@@ -3653,10 +3656,12 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
         assert!(!buffer.is_dirty());
         assert!(!buffer.has_conflict());
     });
-    let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
+
+    let (new_contents, new_offsets) =
+        marked_text_offsets("oneˇ\nthree ˇFOURˇ five\nsixtyˇ seven\n");
     fs.save(
         path!("/dir/the-file").as_ref(),
-        &new_contents.into(),
+        &new_contents.as_str().into(),
         LineEnding::Unix,
     )
     .await
@@ -3671,14 +3676,11 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
         assert!(!buffer.is_dirty());
         assert!(!buffer.has_conflict());
 
-        let anchor_positions = anchors
+        let anchor_offsets = anchors
             .iter()
-            .map(|anchor| anchor.to_point(&*buffer))
+            .map(|anchor| anchor.to_offset(&*buffer))
             .collect::<Vec<_>>();
-        assert_eq!(
-            anchor_positions,
-            [Point::new(1, 1), Point::new(3, 1), Point::new(3, 5)]
-        );
+        assert_eq!(anchor_offsets, new_offsets);
     });
 
     // Modify the buffer
@@ -3701,6 +3703,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     // marked as having a conflict.
     cx.executor().run_until_parked();
     buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), " ".to_string() + &new_contents);
         assert!(buffer.has_conflict());
     });
 }
@@ -5639,7 +5642,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
+async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let staged_contents = r#"
@@ -5681,26 +5684,27 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    let unstaged_changes = project
+    let unstaged_diff = project
         .update(cx, |project, cx| {
-            project.open_unstaged_changes(buffer.clone(), cx)
+            project.open_unstaged_diff(buffer.clone(), cx)
         })
         .await
         .unwrap();
 
     cx.run_until_parked();
-    unstaged_changes.update(cx, |unstaged_changes, cx| {
+    unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            unstaged_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
-            &unstaged_changes.base_text.as_ref().unwrap().text(),
+            &unstaged_diff.base_text_string().unwrap(),
             &[
-                (0..1, "", "// print goodbye\n"),
+                (0..1, "", "// print goodbye\n", DiffHunkStatus::added_none()),
                 (
                     2..3,
                     "    println!(\"hello world\");\n",
                     "    println!(\"goodbye world\");\n",
+                    DiffHunkStatus::modified_none(),
                 ),
             ],
         );
@@ -5719,19 +5723,24 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
     );
 
     cx.run_until_parked();
-    unstaged_changes.update(cx, |unstaged_changes, cx| {
+    unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            unstaged_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
-            &unstaged_changes.base_text.as_ref().unwrap().text(),
-            &[(2..3, "", "    println!(\"goodbye world\");\n")],
+            &unstaged_diff.base_text().unwrap().text(),
+            &[(
+                2..3,
+                "",
+                "    println!(\"goodbye world\");\n",
+                DiffHunkStatus::added_none(),
+            )],
         );
     });
 }
 
 #[gpui::test]
-async fn test_uncommitted_changes_for_buffer(cx: &mut gpui::TestAppContext) {
+async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let committed_contents = r#"
@@ -5776,6 +5785,9 @@ async fn test_uncommitted_changes_for_buffer(cx: &mut gpui::TestAppContext) {
     );
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let language = rust_lang();
+    language_registry.add(language.clone());
 
     let buffer = project
         .update(cx, |project, cx| {
@@ -5783,26 +5795,39 @@ async fn test_uncommitted_changes_for_buffer(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    let uncommitted_changes = project
+    let uncommitted_diff = project
         .update(cx, |project, cx| {
-            project.open_uncommitted_changes(buffer.clone(), cx)
+            project.open_uncommitted_diff(buffer.clone(), cx)
         })
         .await
         .unwrap();
 
+    uncommitted_diff.read_with(cx, |diff, _| {
+        assert_eq!(
+            diff.base_text().and_then(|base| base.language().cloned()),
+            Some(language)
+        )
+    });
+
     cx.run_until_parked();
-    uncommitted_changes.update(cx, |uncommitted_changes, cx| {
+    uncommitted_diff.update(cx, |uncommitted_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            uncommitted_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            uncommitted_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
-            &uncommitted_changes.base_text.as_ref().unwrap().text(),
+            &uncommitted_diff.base_text_string().unwrap(),
             &[
-                (0..1, "", "// print goodbye\n"),
+                (
+                    0..1,
+                    "",
+                    "// print goodbye\n",
+                    DiffHunkStatus::added(DiffHunkSecondaryStatus::HasSecondaryHunk),
+                ),
                 (
                     2..3,
                     "    println!(\"hello world\");\n",
                     "    println!(\"goodbye world\");\n",
+                    DiffHunkStatus::modified_none(),
                 ),
             ],
         );
@@ -5821,13 +5846,18 @@ async fn test_uncommitted_changes_for_buffer(cx: &mut gpui::TestAppContext) {
     );
 
     cx.run_until_parked();
-    uncommitted_changes.update(cx, |uncommitted_changes, cx| {
+    uncommitted_diff.update(cx, |uncommitted_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            uncommitted_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            uncommitted_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
-            &uncommitted_changes.base_text.as_ref().unwrap().text(),
-            &[(2..3, "", "    println!(\"goodbye world\");\n")],
+            &uncommitted_diff.base_text().unwrap().text(),
+            &[(
+                2..3,
+                "",
+                "    println!(\"goodbye world\");\n",
+                DiffHunkStatus::added_none(),
+            )],
         );
     });
 }
@@ -5874,24 +5904,25 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    let uncommitted_changes = project
+    let uncommitted_diff = project
         .update(cx, |project, cx| {
-            project.open_uncommitted_changes(buffer.clone(), cx)
+            project.open_uncommitted_diff(buffer.clone(), cx)
         })
         .await
         .unwrap();
 
     cx.run_until_parked();
-    uncommitted_changes.update(cx, |uncommitted_changes, cx| {
+    uncommitted_diff.update(cx, |uncommitted_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            uncommitted_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            uncommitted_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
-            &uncommitted_changes.base_text.as_ref().unwrap().text(),
+            &uncommitted_diff.base_text_string().unwrap(),
             &[(
                 1..2,
                 "    println!(\"hello from HEAD\");\n",
                 "    println!(\"hello from the working copy\");\n",
+                DiffHunkStatus::modified_none(),
             )],
         );
     });

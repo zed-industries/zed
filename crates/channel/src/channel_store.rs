@@ -514,8 +514,7 @@ impl ChannelStore {
                 }
             }
         };
-        cx.background_executor()
-            .spawn(async move { task.await.map_err(|error| anyhow!("{}", error)) })
+        cx.background_spawn(async move { task.await.map_err(|error| anyhow!("{}", error)) })
     }
 
     pub fn is_channel_admin(&self, channel_id: ChannelId) -> bool {
@@ -781,7 +780,7 @@ impl ChannelStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             client
                 .request(proto::RespondToChannelInvite {
                     channel_id: channel_id.0,
@@ -975,21 +974,18 @@ impl ChannelStore {
 
                                 if let Some(operations) = operations {
                                     let client = this.client.clone();
-                                    cx.background_executor()
-                                        .spawn(async move {
-                                            let operations = operations.await;
-                                            for chunk in
-                                                language::proto::split_operations(operations)
-                                            {
-                                                client
-                                                    .send(proto::UpdateChannelBuffer {
-                                                        channel_id: channel_id.0,
-                                                        operations: chunk,
-                                                    })
-                                                    .ok();
-                                            }
-                                        })
-                                        .detach();
+                                    cx.background_spawn(async move {
+                                        let operations = operations.await;
+                                        for chunk in language::proto::split_operations(operations) {
+                                            client
+                                                .send(proto::UpdateChannelBuffer {
+                                                    channel_id: channel_id.0,
+                                                    operations: chunk,
+                                                })
+                                                .ok();
+                                        }
+                                    })
+                                    .detach();
                                     return true;
                                 }
                             }

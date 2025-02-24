@@ -141,105 +141,105 @@ pub enum Motion {
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct NextWordStart {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct NextWordEnd {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct PreviousWordStart {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct PreviousWordEnd {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub(crate) struct NextSubwordStart {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub(crate) struct NextSubwordEnd {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub(crate) struct PreviousSubwordStart {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub(crate) struct PreviousSubwordEnd {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Up {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Down {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct FirstNonWhitespace {
     #[serde(default)]
     display_lines: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct EndOfLine {
     #[serde(default)]
     display_lines: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct StartOfLine {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct UnmatchedForward {
     #[serde(default)]
     char: char,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct UnmatchedBackward {
     #[serde(default)]
     char: char,
@@ -2699,49 +2699,10 @@ fn section_motion(
     };
 
     for _ in 0..times {
-        let point = map.display_point_to_point(display_point, Bias::Left);
-        let Some(excerpt) = map.buffer_snapshot.excerpt_containing(point..point) else {
-            return display_point;
-        };
-        let next_point = match (direction, is_start) {
-            (Direction::Prev, true) => {
-                let mut start = excerpt.start_anchor().to_display_point(&map);
-                if start >= display_point && start.row() > DisplayRow(0) {
-                    let Some(excerpt) = map.buffer_snapshot.excerpt_before(excerpt.id()) else {
-                        return display_point;
-                    };
-                    start = excerpt.start_anchor().to_display_point(&map);
-                }
-                start
-            }
-            (Direction::Prev, false) => {
-                let mut start = excerpt.start_anchor().to_display_point(&map);
-                if start.row() > DisplayRow(0) {
-                    *start.row_mut() -= 1;
-                }
-                map.clip_point(start, Bias::Left)
-            }
-            (Direction::Next, true) => {
-                let mut end = excerpt.end_anchor().to_display_point(&map);
-                *end.row_mut() += 1;
-                map.clip_point(end, Bias::Right)
-            }
-            (Direction::Next, false) => {
-                let mut end = excerpt.end_anchor().to_display_point(&map);
-                *end.column_mut() = 0;
-                if end <= display_point {
-                    *end.row_mut() += 1;
-                    let point_end = map.display_point_to_point(end, Bias::Right);
-                    let Some(excerpt) =
-                        map.buffer_snapshot.excerpt_containing(point_end..point_end)
-                    else {
-                        return display_point;
-                    };
-                    end = excerpt.end_anchor().to_display_point(&map);
-                    *end.column_mut() = 0;
-                }
-                end
-            }
+        let next_point = if is_start {
+            movement::start_of_excerpt(map, display_point, direction)
+        } else {
+            movement::end_of_excerpt(map, display_point, direction)
         };
         if next_point == display_point {
             break;

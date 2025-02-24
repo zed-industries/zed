@@ -4,7 +4,6 @@ use ::settings::{Settings, WorktreeId};
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use async_trait::async_trait;
 use extension::{ExtensionLanguageServerProxy, KeyValueStoreDelegate, WorktreeDelegate};
 use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
@@ -228,7 +227,6 @@ impl From<latest::lsp::SymbolKind> for lsp::SymbolKind {
     }
 }
 
-#[async_trait]
 impl HostKeyValueStore for WasmState {
     async fn insert(
         &mut self,
@@ -240,13 +238,12 @@ impl HostKeyValueStore for WasmState {
         kv_store.insert(key, value).await.to_wasmtime_result()
     }
 
-    fn drop(&mut self, _worktree: Resource<ExtensionKeyValueStore>) -> Result<()> {
+    async fn drop(&mut self, _worktree: Resource<ExtensionKeyValueStore>) -> Result<()> {
         // We only ever hand out borrows of key-value stores.
         Ok(())
     }
 }
 
-#[async_trait]
 impl HostWorktree for WasmState {
     async fn id(&mut self, delegate: Resource<Arc<dyn WorktreeDelegate>>) -> wasmtime::Result<u64> {
         latest::HostWorktree::id(self, delegate).await
@@ -282,16 +279,14 @@ impl HostWorktree for WasmState {
         latest::HostWorktree::which(self, delegate, binary_name).await
     }
 
-    fn drop(&mut self, _worktree: Resource<Worktree>) -> Result<()> {
+    async fn drop(&mut self, _worktree: Resource<Worktree>) -> Result<()> {
         // We only ever hand out borrows of worktrees.
         Ok(())
     }
 }
 
-#[async_trait]
 impl common::Host for WasmState {}
 
-#[async_trait]
 impl http_client::Host for WasmState {
     async fn fetch(
         &mut self,
@@ -328,7 +323,6 @@ impl http_client::Host for WasmState {
     }
 }
 
-#[async_trait]
 impl http_client::HostHttpResponseStream for WasmState {
     async fn next_chunk(
         &mut self,
@@ -350,7 +344,7 @@ impl http_client::HostHttpResponseStream for WasmState {
         .to_wasmtime_result()
     }
 
-    fn drop(&mut self, _resource: Resource<ExtensionHttpResponseStream>) -> Result<()> {
+    async fn drop(&mut self, _resource: Resource<ExtensionHttpResponseStream>) -> Result<()> {
         Ok(())
     }
 }
@@ -415,10 +409,8 @@ async fn convert_response(
     Ok(extension_response)
 }
 
-#[async_trait]
 impl lsp::Host for WasmState {}
 
-#[async_trait]
 impl ExtensionImports for WasmState {
     async fn get_settings(
         &mut self,

@@ -7,8 +7,8 @@ use crate::{
     notifications::NotifyResultExt,
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
-    CloseWindow, CopyPath, CopyRelativePath, NewFile, NewTerminal, OpenInTerminal, OpenTerminal,
-    OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
+    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenTerminal, OpenVisible, SplitDirection,
+    ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -40,11 +40,11 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, right_click_menu, ButtonSize, Color, DecoratedIcon, IconButton, IconButtonShape,
-    IconDecoration, IconDecorationKind, IconName, IconSize, Indicator, Label, PopoverMenu,
-    PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip,
+    prelude::*, right_click_menu, ButtonSize, Color, ContextMenu, ContextMenuEntry,
+    ContextMenuItem, DecoratedIcon, IconButton, IconButtonShape, IconDecoration,
+    IconDecorationKind, IconName, IconSize, Indicator, Label, PopoverMenu, PopoverMenuHandle, Tab,
+    TabBar, TabPosition, Tooltip,
 };
-use ui::{v_flex, ContextMenu};
 use util::{debug_panic, maybe, truncate_and_remove_front, ResultExt};
 
 /// A selected entry in e.g. project panel.
@@ -72,7 +72,7 @@ impl DraggedSelection {
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub enum SaveIntent {
     /// write all files (even if unchanged)
     /// prompt before overwriting on-disk changes
@@ -96,13 +96,15 @@ pub enum SaveIntent {
 pub struct ActivateItem(pub usize);
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CloseActiveItem {
     pub save_intent: Option<SaveIntent>,
+    #[serde(default)]
+    pub close_pinned: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CloseInactiveItems {
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
@@ -110,7 +112,7 @@ pub struct CloseInactiveItems {
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CloseAllItems {
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
@@ -118,34 +120,35 @@ pub struct CloseAllItems {
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CloseCleanItems {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CloseItemsToTheRight {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct CloseItemsToTheLeft {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct RevealInProjectPanel {
     #[serde(skip)]
     pub entry_id: Option<u64>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct DeploySearch {
     #[serde(default)]
     pub replace_enabled: bool,
@@ -438,10 +441,9 @@ impl Pane {
                     .gap(DynamicSpacing::Base04.rems(cx))
                     .child(
                         PopoverMenu::new("pane-tab-bar-popover-menu")
-                            .trigger(
-                                IconButton::new("plus", IconName::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("New...")),
+                            .trigger_with_tooltip(
+                                IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
+                                Tooltip::text("New..."),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
@@ -471,10 +473,10 @@ impl Pane {
                     )
                     .child(
                         PopoverMenu::new("pane-tab-bar-split")
-                            .trigger(
+                            .trigger_with_tooltip(
                                 IconButton::new("split", IconName::Split)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Split Pane")),
+                                    .icon_size(IconSize::Small),
+                                Tooltip::text("Split Pane"),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
@@ -1223,6 +1225,37 @@ impl Pane {
 
             return None;
         }
+        if self.is_tab_pinned(self.active_item_index) && !action.close_pinned {
+            // Activate any non-pinned tab in same pane
+            let non_pinned_tab_index = self
+                .items()
+                .enumerate()
+                .find(|(index, _item)| !self.is_tab_pinned(*index))
+                .map(|(index, _item)| index);
+            if let Some(index) = non_pinned_tab_index {
+                self.activate_item(index, false, false, window, cx);
+                return None;
+            }
+
+            // Activate any non-pinned tab in different pane
+            let current_pane = cx.entity();
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    let panes = workspace.center.panes();
+                    let pane_with_unpinned_tab = panes.iter().find(|pane| {
+                        if **pane == &current_pane {
+                            return false;
+                        }
+                        pane.read(cx).has_unpinned_tabs()
+                    });
+                    if let Some(pane) = pane_with_unpinned_tab {
+                        pane.update(cx, |pane, cx| pane.activate_unpinned_tab(window, cx));
+                    }
+                })
+                .ok();
+
+            return None;
+        };
         let active_item_id = self.items[self.active_item_index].item_id();
         Some(self.close_item_by_id(
             active_item_id,
@@ -1420,41 +1453,67 @@ impl Pane {
             .for_each(|&index| self._remove_item(index, false, false, None, window, cx));
     }
 
+    // Usually when you close an item that has unsaved changes, we prompt you to
+    // save it. That said, if you still have the buffer open in a different pane
+    // we can close this one without fear of losing data.
+    pub fn skip_save_on_close(item: &dyn ItemHandle, workspace: &Workspace, cx: &App) -> bool {
+        let mut dirty_project_item_ids = Vec::new();
+        item.for_each_project_item(cx, &mut |project_item_id, project_item| {
+            if project_item.is_dirty() {
+                dirty_project_item_ids.push(project_item_id);
+            }
+        });
+        if dirty_project_item_ids.is_empty() {
+            if item.is_singleton(cx) && item.is_dirty(cx) {
+                return false;
+            }
+            return true;
+        }
+
+        for open_item in workspace.items(cx) {
+            if open_item.item_id() == item.item_id() {
+                continue;
+            }
+            if !open_item.is_singleton(cx) {
+                continue;
+            }
+            let other_project_item_ids = open_item.project_item_model_ids(cx);
+            dirty_project_item_ids.retain(|id| !other_project_item_ids.contains(id));
+        }
+        if dirty_project_item_ids.is_empty() {
+            return true;
+        }
+
+        false
+    }
+
     pub(super) fn file_names_for_prompt(
         items: &mut dyn Iterator<Item = &Box<dyn ItemHandle>>,
-        all_dirty_items: usize,
         cx: &App,
-    ) -> (String, String) {
-        /// Quantity of item paths displayed in prompt prior to cutoff..
-        const FILE_NAMES_CUTOFF_POINT: usize = 10;
-        let mut file_names: Vec<_> = items
-            .filter_map(|item| {
-                item.project_path(cx).and_then(|project_path| {
-                    project_path
-                        .path
+    ) -> String {
+        let mut file_names = BTreeSet::default();
+        for item in items {
+            item.for_each_project_item(cx, &mut |_, project_item| {
+                if !project_item.is_dirty() {
+                    return;
+                }
+                let filename = project_item.project_path(cx).and_then(|path| {
+                    path.path
                         .file_name()
                         .and_then(|name| name.to_str().map(ToOwned::to_owned))
-                })
-            })
-            .take(FILE_NAMES_CUTOFF_POINT)
-            .collect();
-        let should_display_followup_text =
-            all_dirty_items > FILE_NAMES_CUTOFF_POINT || file_names.len() != all_dirty_items;
-        if should_display_followup_text {
-            let not_shown_files = all_dirty_items - file_names.len();
-            if not_shown_files == 1 {
-                file_names.push(".. 1 file not shown".into());
-            } else {
-                file_names.push(format!(".. {} files not shown", not_shown_files));
-            }
+                });
+                file_names.insert(filename.unwrap_or("untitled".to_string()));
+            });
         }
-        (
+        if file_names.len() > 6 {
             format!(
-                "Do you want to save changes to the following {} files?",
-                all_dirty_items
-            ),
-            file_names.join("\n"),
-        )
+                "{}\n.. and {} more",
+                file_names.iter().take(5).join("\n"),
+                file_names.len() - 5
+            )
+        } else {
+            file_names.into_iter().join("\n")
+        }
     }
 
     pub fn close_items(
@@ -1466,41 +1525,46 @@ impl Pane {
     ) -> Task<Result<()>> {
         // Find the items to close.
         let mut items_to_close = Vec::new();
-        let mut item_ids_to_close = HashSet::default();
-        let mut dirty_items = Vec::new();
         for item in &self.items {
             if should_close(item.item_id()) {
                 items_to_close.push(item.boxed_clone());
-                item_ids_to_close.insert(item.item_id());
-                if item.is_dirty(cx) {
-                    dirty_items.push(item.boxed_clone());
-                }
             }
         }
 
         let active_item_id = self.active_item().map(|item| item.item_id());
 
         items_to_close.sort_by_key(|item| {
+            let path = item.project_path(cx);
             // Put the currently active item at the end, because if the currently active item is not closed last
             // closing the currently active item will cause the focus to switch to another item
             // This will cause Zed to expand the content of the currently active item
-            active_item_id.filter(|&id| id == item.item_id()).is_some()
-              // If a buffer is open both in a singleton editor and in a multibuffer, make sure
-              // to focus the singleton buffer when prompting to save that buffer, as opposed
-              // to focusing the multibuffer, because this gives the user a more clear idea
-              // of what content they would be saving.
-              || !item.is_singleton(cx)
+            //
+            // Beyond that sort in order of project path, with untitled files and multibuffers coming last.
+            (active_item_id == Some(item.item_id()), path.is_none(), path)
         });
 
         let workspace = self.workspace.clone();
+        let Some(project) = self.project.upgrade() else {
+            return Task::ready(Ok(()));
+        };
         cx.spawn_in(window, |pane, mut cx| async move {
+            let dirty_items = workspace.update(&mut cx, |workspace, cx| {
+                items_to_close
+                    .iter()
+                    .filter(|item| {
+                        item.is_dirty(cx)
+                            && !Self::skip_save_on_close(item.as_ref(), &workspace, cx)
+                    })
+                    .map(|item| item.boxed_clone())
+                    .collect::<Vec<_>>()
+            })?;
+
             if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
                 let answer = pane.update_in(&mut cx, |_, window, cx| {
-                    let (prompt, detail) =
-                        Self::file_names_for_prompt(&mut dirty_items.iter(), dirty_items.len(), cx);
+                    let detail = Self::file_names_for_prompt(&mut dirty_items.iter(), cx);
                     window.prompt(
                         PromptLevel::Warning,
-                        &prompt,
+                        "Do you want to save changes to the following files?",
                         Some(&detail),
                         &["Save all", "Discard all", "Cancel"],
                         cx,
@@ -1509,68 +1573,33 @@ impl Pane {
                 match answer.await {
                     Ok(0) => save_intent = SaveIntent::SaveAll,
                     Ok(1) => save_intent = SaveIntent::Skip,
+                    Ok(2) => return Ok(()),
                     _ => {}
                 }
             }
-            let mut saved_project_items_ids = HashSet::default();
+
             for item_to_close in items_to_close {
-                // Find the item's current index and its set of dirty project item models. Avoid
-                // storing these in advance, in case they have changed since this task
-                // was started.
-                let mut dirty_project_item_ids = Vec::new();
-                let Some(item_ix) = pane.update(&mut cx, |pane, cx| {
-                    item_to_close.for_each_project_item(
-                        cx,
-                        &mut |project_item_id, project_item| {
-                            if project_item.is_dirty() {
-                                dirty_project_item_ids.push(project_item_id);
-                            }
-                        },
-                    );
-                    pane.index_for_item(&*item_to_close)
-                })?
-                else {
-                    continue;
-                };
-
-                // Check if this view has any project items that are not open anywhere else
-                // in the workspace, AND that the user has not already been prompted to save.
-                // If there are any such project entries, prompt the user to save this item.
-                let project = workspace.update(&mut cx, |workspace, cx| {
-                    for open_item in workspace.items(cx) {
-                        let open_item_id = open_item.item_id();
-                        if !item_ids_to_close.contains(&open_item_id) {
-                            let other_project_item_ids = open_item.project_item_model_ids(cx);
-                            dirty_project_item_ids
-                                .retain(|id| !other_project_item_ids.contains(id));
+                let mut should_save = true;
+                if save_intent == SaveIntent::Close {
+                    workspace.update(&mut cx, |workspace, cx| {
+                        if Self::skip_save_on_close(item_to_close.as_ref(), &workspace, cx) {
+                            should_save = false;
                         }
-                    }
-                    workspace.project().clone()
-                })?;
-                let should_save = dirty_project_item_ids
-                    .iter()
-                    .any(|id| saved_project_items_ids.insert(*id))
-                    // Always propose to save singleton files without any project paths: those cannot be saved via multibuffer, as require a file path selection modal.
-                    || cx
-                        .update(|_window, cx| {
-                            item_to_close.can_save(cx) && item_to_close.is_dirty(cx)
-                                && item_to_close.is_singleton(cx)
-                                && item_to_close.project_path(cx).is_none()
-                        })
-                        .unwrap_or(false);
+                    })?;
+                }
 
-                if should_save
-                    && !Self::save_item(
+                if should_save {
+                    if !Self::save_item(
                         project.clone(),
                         &pane,
-                        item_ix,
                         &*item_to_close,
                         save_intent,
                         &mut cx,
                     )
                     .await?
-                {
-                    break;
+                    {
+                        break;
+                    }
                 }
 
                 // Remove the item from the pane.
@@ -1744,7 +1773,6 @@ impl Pane {
     pub async fn save_item(
         project: Entity<Project>,
         pane: &WeakEntity<Pane>,
-        item_ix: usize,
         item: &dyn ItemHandle,
         save_intent: SaveIntent,
         cx: &mut AsyncWindowContext,
@@ -1758,19 +1786,31 @@ impl Pane {
         if save_intent == SaveIntent::Skip {
             return Ok(true);
         }
+        let Some(item_ix) = pane
+            .update(cx, |pane, _| pane.index_for_item(item))
+            .ok()
+            .flatten()
+        else {
+            return Ok(true);
+        };
 
-        let (mut has_conflict, mut is_dirty, mut can_save, is_singleton, has_deleted_file) = cx
-            .update(|_window, cx| {
-                (
-                    item.has_conflict(cx),
-                    item.is_dirty(cx),
-                    item.can_save(cx),
-                    item.is_singleton(cx),
-                    item.has_deleted_file(cx),
-                )
-            })?;
-
-        let can_save_as = is_singleton;
+        let (
+            mut has_conflict,
+            mut is_dirty,
+            mut can_save,
+            can_save_as,
+            is_singleton,
+            has_deleted_file,
+        ) = cx.update(|_window, cx| {
+            (
+                item.has_conflict(cx),
+                item.is_dirty(cx),
+                item.can_save(cx),
+                item.can_save_as(cx),
+                item.is_singleton(cx),
+                item.has_deleted_file(cx),
+            )
+        })?;
 
         // when saving a single buffer, we ignore whether or not it's dirty.
         if save_intent == SaveIntent::Save || save_intent == SaveIntent::SaveWithoutFormat {
@@ -1904,8 +1944,9 @@ impl Pane {
                     item.save(should_format, project, window, cx)
                 })?
                 .await?;
-            } else if can_save_as {
+            } else if can_save_as && is_singleton {
                 let abs_path = pane.update_in(cx, |pane, window, cx| {
+                    pane.activate_item(item_ix, true, true, window, cx);
                     pane.workspace.update(cx, |workspace, cx| {
                         workspace.prompt_for_new_path(window, cx)
                     })
@@ -2104,6 +2145,24 @@ impl Pane {
         self.pinned_tab_count != 0
     }
 
+    fn has_unpinned_tabs(&self) -> bool {
+        self.pinned_tab_count < self.items.len()
+    }
+
+    fn activate_unpinned_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.items.is_empty() {
+            return;
+        }
+        let Some(index) = self
+            .items()
+            .enumerate()
+            .find_map(|(index, _item)| (!self.is_tab_pinned(index)).then_some(index))
+        else {
+            return;
+        };
+        self.activate_item(index, true, true, window, cx);
+    }
+
     fn render_tab(
         &self,
         ix: usize,
@@ -2279,7 +2338,10 @@ impl Pane {
                             pane.unpin_tab_at(ix, window, cx);
                         }))
                 } else {
-                    end_slot_action = &CloseActiveItem { save_intent: None };
+                    end_slot_action = &CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: false,
+                    };
                     end_slot_tooltip_text = "Close Tab";
                     IconButton::new("close tab", IconName::Close)
                         .when(!always_show_close_button, |button| {
@@ -2338,6 +2400,9 @@ impl Pane {
             }
         };
 
+        let total_items = self.items.len();
+        let has_items_to_left = ix > 0;
+        let has_items_to_right = ix < total_items - 1;
         let is_pinned = self.is_tab_pinned(ix);
         let pane = cx.entity().downgrade();
         let menu_context = item.item_focus_handle(cx);
@@ -2349,60 +2414,68 @@ impl Pane {
                     menu = menu
                         .entry(
                             "Close",
-                            Some(Box::new(CloseActiveItem { save_intent: None })),
+                            Some(Box::new(CloseActiveItem {
+                                save_intent: None,
+                                close_pinned: true,
+                            })),
                             window.handler_for(&pane, move |pane, window, cx| {
                                 pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
                                     .detach_and_log_err(cx);
                             }),
                         )
-                        .entry(
-                            "Close Others",
-                            Some(Box::new(CloseInactiveItems {
-                                save_intent: None,
-                                close_pinned: false,
-                            })),
-                            window.handler_for(&pane, move |pane, window, cx| {
-                                pane.close_items(window, cx, SaveIntent::Close, |id| id != item_id)
+                        .item(ContextMenuItem::Entry(
+                            ContextMenuEntry::new("Close Others")
+                                .action(Some(Box::new(CloseInactiveItems {
+                                    save_intent: None,
+                                    close_pinned: false,
+                                })))
+                                .disabled(total_items == 1)
+                                .handler(window.handler_for(&pane, move |pane, window, cx| {
+                                    pane.close_items(window, cx, SaveIntent::Close, |id| {
+                                        id != item_id
+                                    })
                                     .detach_and_log_err(cx);
-                            }),
-                        )
+                                })),
+                        ))
                         .separator()
-                        .entry(
-                            "Close Left",
-                            Some(Box::new(CloseItemsToTheLeft {
-                                close_pinned: false,
-                            })),
-                            window.handler_for(&pane, move |pane, window, cx| {
-                                pane.close_items_to_the_left_by_id(
-                                    item_id,
-                                    &CloseItemsToTheLeft {
-                                        close_pinned: false,
-                                    },
-                                    pane.get_non_closeable_item_ids(false),
-                                    window,
-                                    cx,
-                                )
-                                .detach_and_log_err(cx);
-                            }),
-                        )
-                        .entry(
-                            "Close Right",
-                            Some(Box::new(CloseItemsToTheRight {
-                                close_pinned: false,
-                            })),
-                            window.handler_for(&pane, move |pane, window, cx| {
-                                pane.close_items_to_the_right_by_id(
-                                    item_id,
-                                    &CloseItemsToTheRight {
-                                        close_pinned: false,
-                                    },
-                                    pane.get_non_closeable_item_ids(false),
-                                    window,
-                                    cx,
-                                )
-                                .detach_and_log_err(cx);
-                            }),
-                        )
+                        .item(ContextMenuItem::Entry(
+                            ContextMenuEntry::new("Close Left")
+                                .action(Some(Box::new(CloseItemsToTheLeft {
+                                    close_pinned: false,
+                                })))
+                                .disabled(!has_items_to_left)
+                                .handler(window.handler_for(&pane, move |pane, window, cx| {
+                                    pane.close_items_to_the_left_by_id(
+                                        item_id,
+                                        &CloseItemsToTheLeft {
+                                            close_pinned: false,
+                                        },
+                                        pane.get_non_closeable_item_ids(false),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach_and_log_err(cx);
+                                })),
+                        ))
+                        .item(ContextMenuItem::Entry(
+                            ContextMenuEntry::new("Close Right")
+                                .action(Some(Box::new(CloseItemsToTheRight {
+                                    close_pinned: false,
+                                })))
+                                .disabled(!has_items_to_right)
+                                .handler(window.handler_for(&pane, move |pane, window, cx| {
+                                    pane.close_items_to_the_right_by_id(
+                                        item_id,
+                                        &CloseItemsToTheRight {
+                                            close_pinned: false,
+                                        },
+                                        pane.get_non_closeable_item_ids(false),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach_and_log_err(cx);
+                                })),
+                        ))
                         .separator()
                         .entry(
                             "Close Clean",
@@ -2479,7 +2552,7 @@ impl Pane {
                             .when_some(entry_abs_path, |menu, abs_path| {
                                 menu.entry(
                                     "Copy Path",
-                                    Some(Box::new(CopyPath)),
+                                    Some(Box::new(zed_actions::workspace::CopyPath)),
                                     window.handler_for(&pane, move |_, _, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
                                             abs_path.to_string_lossy().to_string(),
@@ -2490,7 +2563,7 @@ impl Pane {
                             .when_some(relative_path, |menu, relative_path| {
                                 menu.entry(
                                     "Copy Relative Path",
-                                    Some(Box::new(CopyRelativePath)),
+                                    Some(Box::new(zed_actions::workspace::CopyRelativePath)),
                                     window.handler_for(&pane, move |_, _, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
                                             relative_path.to_string_lossy().to_string(),
@@ -2990,14 +3063,9 @@ impl Pane {
 
         self.items
             .iter()
-            .map(|item| item.item_id())
-            .filter(|item_id| {
-                if let Some(ix) = self.index_for_item_id(*item_id) {
-                    self.is_tab_pinned(ix)
-                } else {
-                    true
-                }
-            })
+            .enumerate()
+            .filter(|(index, _item)| self.is_tab_pinned(*index))
+            .map(|(_, item)| item.item_id())
             .collect()
     }
 
@@ -3560,7 +3628,14 @@ mod tests {
 
         pane.update_in(cx, |pane, window, cx| {
             assert!(pane
-                .close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+                .close_active_item(
+                    &CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: false
+                    },
+                    window,
+                    cx
+                )
                 .is_none())
         });
     }
@@ -3901,7 +3976,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -3914,7 +3996,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -3922,7 +4011,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -3930,7 +4026,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "C*"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -3966,7 +4069,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -3979,7 +4089,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -3987,7 +4104,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -3995,7 +4119,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B*"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -4031,7 +4162,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -4044,7 +4182,14 @@ mod tests {
         assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -4057,7 +4202,14 @@ mod tests {
         assert_item_labels(&pane, ["A*", "B", "C"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -4065,7 +4217,14 @@ mod tests {
         assert_item_labels(&pane, ["B*", "C"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_active_item(&CloseActiveItem { save_intent: None }, window, cx)
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -4239,15 +4398,15 @@ mod tests {
 
         add_labeled_item(&pane, "A", true, cx).update(cx, |item, cx| {
             item.project_items
-                .push(TestProjectItem::new(1, "A.txt", cx))
+                .push(TestProjectItem::new_dirty(1, "A.txt", cx))
         });
         add_labeled_item(&pane, "B", true, cx).update(cx, |item, cx| {
             item.project_items
-                .push(TestProjectItem::new(2, "B.txt", cx))
+                .push(TestProjectItem::new_dirty(2, "B.txt", cx))
         });
         add_labeled_item(&pane, "C", true, cx).update(cx, |item, cx| {
             item.project_items
-                .push(TestProjectItem::new(3, "C.txt", cx))
+                .push(TestProjectItem::new_dirty(3, "C.txt", cx))
         });
         assert_item_labels(&pane, ["A^", "B^", "C*^"], cx);
 
@@ -4265,7 +4424,7 @@ mod tests {
             .unwrap();
 
         cx.executor().run_until_parked();
-        cx.simulate_prompt_answer(2);
+        cx.simulate_prompt_answer("Save all");
         save.await.unwrap();
         assert_item_labels(&pane, [], cx);
 
@@ -4287,9 +4446,53 @@ mod tests {
             .unwrap();
 
         cx.executor().run_until_parked();
-        cx.simulate_prompt_answer(2);
+        cx.simulate_prompt_answer("Discard all");
         save.await.unwrap();
         assert_item_labels(&pane, [], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_with_save_intent(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        let a = cx.update(|_, cx| TestProjectItem::new_dirty(1, "A.txt", cx));
+        let b = cx.update(|_, cx| TestProjectItem::new_dirty(1, "B.txt", cx));
+        let c = cx.update(|_, cx| TestProjectItem::new_dirty(1, "C.txt", cx));
+
+        add_labeled_item(&pane, "AB", true, cx).update(cx, |item, _| {
+            item.project_items.push(a.clone());
+            item.project_items.push(b.clone());
+        });
+        add_labeled_item(&pane, "C", true, cx)
+            .update(cx, |item, _| item.project_items.push(c.clone()));
+        assert_item_labels(&pane, ["AB^", "C*^"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_all_items(
+                &CloseAllItems {
+                    save_intent: Some(SaveIntent::Save),
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap();
+
+        assert_item_labels(&pane, [], cx);
+        cx.update(|_, cx| {
+            assert!(!a.read(cx).is_dirty);
+            assert!(!b.read(cx).is_dirty);
+            assert!(!c.read(cx).is_dirty);
+        });
     }
 
     #[gpui::test]
@@ -4299,7 +4502,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         let item_a = add_labeled_item(&pane, "A", false, cx);
@@ -4323,6 +4526,71 @@ mod tests {
         .await
         .unwrap();
         assert_item_labels(&pane, [], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_pinned_tab_with_non_pinned_in_same_pane(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // Non-pinned tabs in same pane
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        pane.update_in(cx, |pane, window, cx| {
+            pane.pin_tab_at(0, window, cx);
+        });
+        set_labeled_items(&pane, ["A*", "B", "C"], cx);
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            );
+        });
+        // Non-pinned tab should be active
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_close_pinned_tab_with_non_pinned_in_different_pane(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // No non-pinned tabs in same pane, non-pinned tabs in another pane
+        let pane1 = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+        let pane2 = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(pane1.clone(), SplitDirection::Right, window, cx)
+        });
+        add_labeled_item(&pane1, "A", false, cx);
+        pane1.update_in(cx, |pane, window, cx| {
+            pane.pin_tab_at(0, window, cx);
+        });
+        set_labeled_items(&pane1, ["A*"], cx);
+        add_labeled_item(&pane2, "B", false, cx);
+        set_labeled_items(&pane2, ["B"], cx);
+        pane1.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            );
+        });
+        //  Non-pinned tab of other pane should be active
+        assert_item_labels(&pane2, ["B*"], cx);
     }
 
     fn init_test(cx: &mut TestAppContext) {

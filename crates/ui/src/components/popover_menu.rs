@@ -1,10 +1,8 @@
-#![allow(missing_docs)]
-
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    anchored, deferred, div, point, prelude::FluentBuilder, px, size, AnyElement, App, Bounds,
-    Corner, DismissEvent, DispatchPhase, Element, ElementId, Entity, Focusable as _,
+    anchored, deferred, div, point, prelude::FluentBuilder, px, size, AnyElement, AnyView, App,
+    Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId, Entity, Focusable as _,
     GlobalElementId, HitboxId, InteractiveElement, IntoElement, LayoutId, Length, ManagedView,
     MouseDownEvent, ParentElement, Pixels, Point, Style, Window,
 };
@@ -178,26 +176,49 @@ impl<M: ManagedView> PopoverMenu<M> {
         self
     }
 
-    /// anchor defines which corner of the menu to anchor to the attachment point
-    /// (by default the cursor position, but see attach)
+    /// This method prevents the trigger button tooltip from being seen when the menu is open.
+    pub fn trigger_with_tooltip<T: PopoverTrigger + ButtonCommon>(
+        mut self,
+        t: T,
+        tooltip_builder: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+    ) -> Self {
+        let on_open = self.on_open.clone();
+        self.child_builder = Some(Box::new(move |menu, builder| {
+            let open = menu.borrow().is_some();
+            t.toggle_state(open)
+                .when_some(builder, |el, builder| {
+                    el.on_click(move |_, window, cx| {
+                        show_menu(&builder, &menu, on_open.clone(), window, cx)
+                    })
+                    .when(!open, |t| {
+                        t.tooltip(move |window, cx| tooltip_builder(window, cx))
+                    })
+                })
+                .into_any_element()
+        }));
+        self
+    }
+
+    /// Defines which corner of the menu to anchor to the attachment point.
+    /// By default, it uses the cursor position. Also see the `attach` method.
     pub fn anchor(mut self, anchor: Corner) -> Self {
         self.anchor = anchor;
         self
     }
 
-    /// attach defines which corner of the handle to attach the menu's anchor to
+    /// Defines which corner of the handle to attach the menu's anchor to.
     pub fn attach(mut self, attach: Corner) -> Self {
         self.attach = Some(attach);
         self
     }
 
-    /// offset offsets the position of the content by that many pixels.
+    /// Offsets the position of the content by that many pixels.
     pub fn offset(mut self, offset: Point<Pixels>) -> Self {
         self.offset = Some(offset);
         self
     }
 
-    /// attach something upon opening the menu
+    /// Attaches something upon opening the menu.
     pub fn on_open(mut self, on_open: Rc<dyn Fn(&mut Window, &mut App)>) -> Self {
         self.on_open = Some(on_open);
         self
