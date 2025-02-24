@@ -103,15 +103,12 @@ impl State {
         let serialized_creds = match binding {
             Ok(creds) => creds,
             Err(err) => {
-                return Task::ready(Err(anyhow!("Failed to serialize credentials: {}", err)));
+                return Task::ready(Err(anyhow!("Failed to serialize credentials: {err}")));
             }
         };
 
-        let write_credentials = cx.write_credentials(
-            ZED_AWS_CREDENTIALS_VAR,
-            "Bearer",
-            &(serialized_creds.clone()),
-        );
+        let write_credentials =
+            cx.write_credentials(ZED_AWS_CREDENTIALS_VAR, "Bearer", &serialized_creds);
 
         cx.spawn(|this, mut cx| async move {
             write_credentials.await?;
@@ -165,7 +162,6 @@ pub struct BedrockLanguageModelProvider {
 }
 
 impl BedrockLanguageModelProvider {
-    // This has to succeed
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         let state = cx.new(|cx| State {
             credentials: None,
@@ -299,27 +295,32 @@ impl BedrockModel {
     ) -> Result<
         BoxFuture<'static, BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
     > {
-        let Ok(Ok((aa_id, sk, region))) = cx.read_entity(&self.state, |state, _cx| {
-            if let Some(credentials) = &state.credentials {
-                Ok((
-                    credentials.access_key_id.clone(),
-                    credentials.secret_access_key.clone(),
-                    state.region.clone(),
-                ))
-            } else {
-                return Err(anyhow!("Failed to read credentials"));
-            }
-        }) else {
+        let Ok(Ok((access_key_id, secret_access_key, region))) =
+            cx.read_entity(&self.state, |state, _cx| {
+                if let Some(credentials) = &state.credentials {
+                    Ok((
+                        credentials.access_key_id.clone(),
+                        credentials.secret_access_key.clone(),
+                        state.region.clone(),
+                    ))
+                } else {
+                    return Err(anyhow!("Failed to read credentials"));
+                }
+            })
+        else {
             return Err(anyhow!("App state dropped"));
         };
 
-        // instantiate aws client here
-        // we'll throw it in the model's struct after
-        // Config::builder might be an expensive operation, figure out if it works or not
         let runtime_client = bedrock_client::Client::from_conf(
             Config::builder()
                 .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
-                .credentials_provider(Credentials::new(aa_id, sk, None, None, "Keychain"))
+                .credentials_provider(Credentials::new(
+                    access_key_id,
+                    secret_access_key,
+                    None,
+                    None,
+                    "Keychain",
+                ))
                 .region(Region::new(region.unwrap()))
                 .http_client(self.http_client.clone())
                 .build(),
