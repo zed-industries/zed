@@ -5,7 +5,6 @@ use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
 use crate::{picker_prompt, project_diff, ProjectDiff};
-use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::commit_tooltip::CommitTooltip;
 use editor::{
@@ -30,7 +29,7 @@ use settings::Settings as _;
 use std::cell::RefCell;
 use std::future::Future;
 use std::rc::Rc;
-use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration, usize};
+use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
@@ -155,8 +154,6 @@ impl GitListEntry {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct GitStatusEntry {
-    pub(crate) depth: usize,
-    pub(crate) display_name: String,
     pub(crate) repo_path: RepoPath,
     pub(crate) status: FileStatus,
     pub(crate) is_staged: Option<bool>,
@@ -190,7 +187,6 @@ pub struct GitPanel {
     current_modifiers: Modifiers,
     add_coauthors: bool,
     entries: Vec<GitListEntry>,
-    entries_by_path: collections::HashMap<RepoPath, usize>,
     focus_handle: FocusHandle,
     fs: Arc<dyn Fs>,
     hide_scrollbar_task: Option<Task<()>>,
@@ -315,7 +311,6 @@ impl GitPanel {
                 current_modifiers: window.modifiers(),
                 add_coauthors: true,
                 entries: Vec::new(),
-                entries_by_path: HashMap::default(),
                 focus_handle: cx.focus_handle(),
                 fs,
                 hide_scrollbar_task: None,
@@ -344,6 +339,80 @@ impl GitPanel {
         })
     }
 
+    pub fn entry_by_path(&self, path: &RepoPath) -> Option<usize> {
+        fn binary_search<F>(mut low: usize, mut high: usize, is_target: F) -> Option<usize>
+        where
+            F: Fn(usize) -> std::cmp::Ordering,
+        {
+            while low < high {
+                let mid = low + (high - low) / 2;
+                match is_target(mid) {
+                    std::cmp::Ordering::Equal => return Some(mid),
+                    std::cmp::Ordering::Less => low = mid + 1,
+                    std::cmp::Ordering::Greater => high = mid,
+                }
+            }
+            None
+        }
+        if self.conflicted_count > 0 {
+            let conflicted_start = 1;
+            if let Some(ix) = binary_search(
+                conflicted_start,
+                conflicted_start + self.conflicted_count,
+                |ix| {
+                    self.entries[ix]
+                        .status_entry()
+                        .unwrap()
+                        .repo_path
+                        .cmp(&path)
+                },
+            ) {
+                return Some(ix);
+            }
+        }
+        if self.tracked_count > 0 {
+            let tracked_start = if self.conflicted_count > 0 {
+                1 + self.conflicted_count
+            } else {
+                0
+            } + 1;
+            if let Some(ix) =
+                binary_search(tracked_start, tracked_start + self.tracked_count, |ix| {
+                    self.entries[ix]
+                        .status_entry()
+                        .unwrap()
+                        .repo_path
+                        .cmp(&path)
+                })
+            {
+                return Some(ix);
+            }
+        }
+        if self.new_count > 0 {
+            let untracked_start = if self.conflicted_count > 0 {
+                1 + self.conflicted_count
+            } else {
+                0
+            } + if self.tracked_count > 0 {
+                1 + self.tracked_count
+            } else {
+                0
+            } + 1;
+            if let Some(ix) =
+                binary_search(untracked_start, untracked_start + self.new_count, |ix| {
+                    self.entries[ix]
+                        .status_entry()
+                        .unwrap()
+                        .repo_path
+                        .cmp(&path)
+                })
+            {
+                return Some(ix);
+            }
+        }
+        None
+    }
+
     pub fn select_entry_by_path(
         &mut self,
         path: ProjectPath,
@@ -356,10 +425,10 @@ impl GitPanel {
         let Some(repo_path) = git_repo.read(cx).project_path_to_repo_path(&path) else {
             return;
         };
-        let Some(ix) = self.entries_by_path.get(&repo_path) else {
+        let Some(ix) = self.entry_by_path(&repo_path) else {
             return;
         };
-        self.selected_entry = Some(*ix);
+        self.selected_entry = Some(ix);
         cx.notify();
     }
 
@@ -481,31 +550,6 @@ impl GitPanel {
     ) {
         self.current_modifiers = event.modifiers;
         cx.notify();
-    }
-
-    fn calculate_depth_and_difference(
-        repo_path: &RepoPath,
-        visible_entries: &HashSet<RepoPath>,
-    ) -> (usize, usize) {
-        let ancestors = repo_path.ancestors().skip(1);
-        for ancestor in ancestors {
-            if let Some(parent_entry) = visible_entries.get(ancestor) {
-                let entry_component_count = repo_path.components().count();
-                let parent_component_count = parent_entry.components().count();
-
-                let difference = entry_component_count - parent_component_count;
-
-                let parent_depth = parent_entry
-                    .ancestors()
-                    .skip(1) // Skip the parent itself
-                    .filter(|ancestor| visible_entries.contains(*ancestor))
-                    .count();
-
-                return (parent_depth + 1, difference);
-            }
-        }
-
-        (0, 0)
     }
 
     fn scroll_to_selected_entry(&mut self, cx: &mut Context<Self>) {
@@ -1548,7 +1592,6 @@ impl GitPanel {
 
     fn update_visible_entries(&mut self, cx: &mut Context<Self>) {
         self.entries.clear();
-        self.entries_by_path.clear();
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
         let mut conflict_entries = Vec::new();
@@ -1561,13 +1604,9 @@ impl GitPanel {
 
         // First pass - collect all paths
         let repo = repo.read(cx);
-        let path_set = HashSet::from_iter(repo.status().map(|entry| entry.repo_path));
 
         // Second pass - create entries with proper depth calculation
         for entry in repo.status() {
-            let (depth, difference) =
-                Self::calculate_depth_and_difference(&entry.repo_path, &path_set);
-
             let is_conflict = repo.has_conflict(&entry.repo_path);
             let is_new = entry.status.is_created();
             let is_staged = entry.status.is_staged();
@@ -1580,28 +1619,7 @@ impl GitPanel {
                 continue;
             }
 
-            let display_name = if difference > 1 {
-                // Show partial path for deeply nested files
-                entry
-                    .repo_path
-                    .as_ref()
-                    .iter()
-                    .skip(entry.repo_path.components().count() - difference)
-                    .collect::<PathBuf>()
-                    .to_string_lossy()
-                    .into_owned()
-            } else {
-                // Just show filename
-                entry
-                    .repo_path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_default()
-            };
-
             let entry = GitStatusEntry {
-                depth,
-                display_name,
                 repo_path: entry.repo_path.clone(),
                 status: entry.status,
                 is_staged,
@@ -1615,11 +1633,6 @@ impl GitPanel {
                 changed_entries.push(entry);
             }
         }
-
-        // Sort entries by path to maintain consistent order
-        conflict_entries.sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
-        changed_entries.sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
-        new_entries.sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
 
         if conflict_entries.len() > 0 {
             self.entries.push(GitListEntry::Header(GitHeaderEntry {
@@ -1650,12 +1663,6 @@ impl GitPanel {
                 .extend(new_entries.into_iter().map(GitListEntry::GitStatusEntry));
         }
 
-        for (ix, entry) in self.entries.iter().enumerate() {
-            if let Some(status_entry) = entry.status_entry() {
-                self.entries_by_path
-                    .insert(status_entry.repo_path.clone(), ix);
-            }
-        }
         self.update_counts(repo);
 
         self.select_first_entry_if_none(cx);
@@ -2211,8 +2218,8 @@ impl GitPanel {
     ) -> Option<AnyElement> {
         let repo = self.active_repository.as_ref()?.read(cx);
         let repo_path = repo.worktree_id_path_to_repo_path(file.worktree_id(cx), file.path())?;
-        let ix = self.entries_by_path.get(&repo_path)?;
-        let entry = self.entries.get(*ix)?;
+        let ix = self.entry_by_path(&repo_path)?;
+        let entry = self.entries.get(ix)?;
 
         let is_staged = self.entry_is_staged(entry.status_entry()?);
 
