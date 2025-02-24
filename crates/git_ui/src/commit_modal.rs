@@ -152,8 +152,8 @@ impl CommitModal {
         }
     }
 
-    /// Returns the width and padding_x
-    fn width(&self, window: &mut Window, cx: &mut Context<Self>) -> (f32, f32) {
+    /// Returns container `(width, x padding, border radius)`
+    fn container_properties(&self, window: &mut Window, cx: &mut Context<Self>) -> (f32, f32, f32) {
         // TODO: Let's set the width based on your set wrap guide if possible
 
         // let settings = EditorSettings::get_global(cx);
@@ -172,6 +172,8 @@ impl CommitModal {
         // } else {
         //     80
         // };
+
+        let border_radius = 16.0;
 
         let preferred_width = 50; // (chars wide)
 
@@ -193,7 +195,7 @@ impl CommitModal {
 
         // cx.notify();
 
-        (width, padding_x)
+        (width, padding_x, border_radius)
     }
 
     fn commit_editor_element(&self, window: &mut Window, cx: &mut Context<Self>) -> EditorElement {
@@ -210,7 +212,9 @@ impl CommitModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let (width, padding_x) = self.width(window, cx);
+        let (width, padding_x, modal_border_radius) = self.container_properties(window, cx);
+
+        let border_radius = modal_border_radius - padding_x / 2.0;
 
         let editor = self.commit_editor.clone();
         let editor_focus_handle = editor.focus_handle(cx);
@@ -218,14 +222,6 @@ impl CommitModal {
         let settings = ThemeSettings::get_global(cx);
         let line_height = relative(settings.buffer_line_height.value())
             .to_pixels(settings.buffer_font_size(cx).into(), window.rem_size());
-
-        let branch = self
-            .git_panel
-            .read(cx)
-            .active_repository
-            .as_ref()
-            .and_then(|repo| repo.read(cx).branch().map(|b| b.name.clone()))
-            .unwrap_or_else(|| "<no branch>".into());
 
         let mut snapshot = self
             .commit_editor
@@ -237,6 +233,44 @@ impl CommitModal {
         let line_height = style.line_height_in_pixels(window.rem_size());
         let em_width = window.text_system().em_width(font_id, font_size);
 
+        let (branch, tooltip, commit_label, co_authors) =
+            self.git_panel.update(cx, |git_panel, cx| {
+                let branch = git_panel
+                    .active_repository
+                    .as_ref()
+                    .and_then(|repo| repo.read(cx).branch().map(|b| b.name.clone()))
+                    .unwrap_or_else(|| "<no branch>".into());
+                let tooltip = if git_panel.has_staged_changes() {
+                    "Commit staged changes"
+                } else {
+                    "Commit changes to tracked files"
+                };
+                let title = if git_panel.has_staged_changes() {
+                    "Commit"
+                } else {
+                    "Commit Tracked"
+                };
+                let co_authors = git_panel.render_co_authors(cx);
+                (branch, tooltip, title, co_authors)
+            });
+
+        let branch_selector = panel_button(branch)
+            .icon(IconName::GitBranch)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Placeholder)
+            .color(Color::Muted)
+            .icon_position(IconPosition::Start)
+            .tooltip(Tooltip::for_action_title(
+                "Switch Branch",
+                &zed_actions::git::Branch,
+            ))
+            .on_click(cx.listener(|_, _, window, cx| {
+                window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
+            }))
+            .style(ButtonStyle::Transparent);
+
+        let changes_count = self.git_panel.read(cx).total_staged_count();
+
         let close_kb_hint =
             if let Some(close_kb) = ui::KeyBinding::for_action(&menu::Cancel, window, cx) {
                 Some(
@@ -247,12 +281,19 @@ impl CommitModal {
                 None
             };
 
+        let fake_commit_kb =
+            ui::KeyBinding::new(gpui::KeyBinding::new("cmd-enter", gpui::NoAction, None), cx);
+
+        let commit_hint =
+            KeybindingHint::new(fake_commit_kb, cx.theme().colors().editor_background)
+                .suffix(commit_label);
+
         v_flex()
             .id("editor-container")
             .bg(cx.theme().colors().editor_background)
             .flex_1()
             .size_full()
-            .rounded_lg()
+            .rounded(px(border_radius))
             .overflow_hidden()
             .border_1()
             .border_color(cx.theme().colors().border_variant)
@@ -269,13 +310,26 @@ impl CommitModal {
             )
             .child(
                 h_flex()
+                    .flex_none()
+                    .w_full()
                     .items_center()
+                    .justify_between()
                     .w_full()
                     .pt_2()
                     .pb_0p5()
-                    .px_2()
-                    .gap_4()
-                    .children(close_kb_hint),
+                    .gap_1()
+                    .child(branch_selector)
+                    .child(div().flex_1())
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_end()
+                            .flex_none()
+                            .px_1()
+                            .gap_4()
+                            .children(close_kb_hint)
+                            .child(commit_hint),
+                    ),
             )
     }
 
@@ -328,22 +382,11 @@ impl CommitModal {
 
         h_flex()
             .items_center()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            // 36 + border
-            .h(px(37.0))
+            .h(px(36.0))
             .w_full()
             .justify_between()
             .px_3()
-            .child(
-                h_flex()
-                    .child(
-                        Label::new(format!("Commiting {changes_count} changes →"))
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    )
-                    .child(branch_selector),
-            )
+            .child(h_flex().child(branch_selector))
             .child(
                 h_flex().gap_1p5().children(co_authors).child(
                     Button::new("stage-button", title)
@@ -353,6 +396,10 @@ impl CommitModal {
                         })),
                 ),
             )
+    }
+
+    fn border_radius(&self) -> f32 {
+        8.0
     }
 
     fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -367,7 +414,7 @@ impl CommitModal {
 
 impl Render for CommitModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let (width, _) = self.width(window, cx);
+        let (width, _, border_radius) = self.container_properties(window, cx);
 
         v_flex()
             .id("commit-modal")
@@ -379,11 +426,11 @@ impl Render for CommitModal {
             .relative()
             .justify_between()
             .bg(cx.theme().colors().elevated_surface_background)
-            .rounded(px(16.))
+            .rounded(px(border_radius))
             .border_1()
             .border_color(cx.theme().colors().border)
             .w(px(width))
-            .h(px(420.))
+            .h(px(360.))
             .flex_1()
             .overflow_hidden()
             .child(
@@ -392,6 +439,6 @@ impl Render for CommitModal {
                     .p_2()
                     .child(self.render_commit_editor(None, window, cx)),
             )
-            .child(self.render_footer(window, cx))
+        // .child(self.render_footer(window, cx))
     }
 }
