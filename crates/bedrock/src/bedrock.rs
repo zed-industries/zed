@@ -1,15 +1,14 @@
 mod models;
 
-use std::fmt::Display;
 use std::pin::Pin;
 
 use anyhow::{anyhow, Context, Error, Result};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
-pub use aws_sdk_bedrockruntime::types::ContentBlock as BedrockInnerContent;
 pub use aws_sdk_bedrockruntime::types::{
-    SpecificToolChoice as BedrockSpecificTool, ToolChoice as BedrockToolChoice,
-    ToolInputSchema as BedrockToolInputSchema, ToolSpecification as BedrockTool,
+    ContentBlock as BedrockInnerContent, SpecificToolChoice as BedrockSpecificTool,
+    ToolChoice as BedrockToolChoice, ToolInputSchema as BedrockToolInputSchema,
+    ToolSpecification as BedrockTool,
 };
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
 pub use bedrock::types::{
@@ -17,11 +16,11 @@ pub use bedrock::types::{
     ConverseOutput as BedrockResponse, ConverseStreamOutput as BedrockStreamingResponse,
     Message as BedrockMessage, ResponseStream as BedrockResponseStream,
 };
-use futures::stream::BoxStream;
-use futures::{stream, Stream};
-pub use models::*;
+use futures::stream::{self, BoxStream, Stream};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+pub use crate::models::*;
 
 pub async fn complete(
     client: &bedrock::Client,
@@ -32,7 +31,7 @@ pub async fn complete(
         .set_messages(request.messages.into())
         .send()
         .await
-        .context("Failed to send request to Bedrock");
+        .context("failed to send request to Bedrock");
 
     match response {
         Ok(output) => output
@@ -66,12 +65,12 @@ pub async fn stream_completion(
                         match stream.recv().await {
                             Ok(Some(output)) => Some((Ok(output), stream)),
                             Ok(None) => None,
-                            Err(e) => {
+                            Err(err) => {
                                 Some((
                                     // TODO: Figure out how we can capture Throttling Exceptions
                                     Err(BedrockError::ClientError(anyhow!(
                                         "{:?}",
-                                        aws_sdk_bedrockruntime::error::DisplayErrorContext(e)
+                                        aws_sdk_bedrockruntime::error::DisplayErrorContext(err)
                                     ))),
                                     stream,
                                 ))
@@ -80,34 +79,34 @@ pub async fn stream_completion(
                     }));
                     Ok(stream)
                 }
-                Err(e) => Err(anyhow!(
+                Err(err) => Err(anyhow!(
                     "{:?}",
-                    aws_sdk_bedrockruntime::error::DisplayErrorContext(e)
+                    aws_sdk_bedrockruntime::error::DisplayErrorContext(err)
                 )),
             }
         })
         .await
-        .map_err(|e| anyhow!("Failed to spawn task: {:?}", e))?
+        .map_err(|err| anyhow!("failed to spawn task: {err:?}"))?
 }
 
 use aws_smithy_types::Document;
 use aws_smithy_types::Number as AwsNumber;
 use serde_json::{Number, Value};
 
-pub fn aws_document_to_value(doc: &Document) -> Value {
-    match doc {
+pub fn aws_document_to_value(document: &Document) -> Value {
+    match document {
         Document::Null => Value::Null,
-        Document::Bool(b) => Value::Bool(*b),
-        Document::Number(n) => match n {
-            AwsNumber::PosInt(i) => Value::Number(Number::from(*i)),
-            AwsNumber::NegInt(i) => Value::Number(Number::from(*i)),
-            AwsNumber::Float(f) => Value::Number(Number::from_f64(*f).unwrap()),
+        Document::Bool(value) => Value::Bool(*value),
+        Document::Number(value) => match *value {
+            AwsNumber::PosInt(value) => Value::Number(Number::from(value)),
+            AwsNumber::NegInt(value) => Value::Number(Number::from(value)),
+            AwsNumber::Float(value) => Value::Number(Number::from_f64(value).unwrap()),
         },
-        Document::String(s) => Value::String(s.clone()),
-        Document::Array(arr) => Value::Array(arr.iter().map(aws_document_to_value).collect()),
+        Document::String(value) => Value::String(value.clone()),
+        Document::Array(array) => Value::Array(array.iter().map(aws_document_to_value).collect()),
         Document::Object(map) => Value::Object(
             map.iter()
-                .map(|(k, v)| (k.clone(), aws_document_to_value(v)))
+                .map(|(key, value)| (key.clone(), aws_document_to_value(value)))
                 .collect(),
         ),
     }
@@ -116,23 +115,23 @@ pub fn aws_document_to_value(doc: &Document) -> Value {
 pub fn value_to_aws_document(value: &Value) -> Document {
     match value {
         Value::Null => Document::Null,
-        Value::Bool(b) => Document::Bool(*b),
-        Value::Number(n) => {
-            if let Some(i) = n.as_u64() {
-                Document::Number(AwsNumber::PosInt(i))
-            } else if let Some(i) = n.as_i64() {
-                Document::Number(AwsNumber::NegInt(i))
-            } else if let Some(f) = n.as_f64() {
-                Document::Number(AwsNumber::Float(f))
+        Value::Bool(value) => Document::Bool(*value),
+        Value::Number(value) => {
+            if let Some(value) = value.as_u64() {
+                Document::Number(AwsNumber::PosInt(value))
+            } else if let Some(value) = value.as_i64() {
+                Document::Number(AwsNumber::NegInt(value))
+            } else if let Some(value) = value.as_f64() {
+                Document::Number(AwsNumber::Float(value))
             } else {
                 Document::Null
             }
         }
-        Value::String(s) => Document::String(s.clone()),
-        Value::Array(arr) => Document::Array(arr.iter().map(value_to_aws_document).collect()),
+        Value::String(value) => Document::String(value.clone()),
+        Value::Array(array) => Document::Array(array.iter().map(value_to_aws_document).collect()),
         Value::Object(map) => Document::Object(
             map.iter()
-                .map(|(k, v)| (k.clone(), value_to_aws_document(v)))
+                .map(|(key, value)| (key.clone(), value_to_aws_document(value)))
                 .collect(),
         ),
     }
@@ -160,17 +159,10 @@ pub struct Metadata {
 
 #[derive(Error, Debug)]
 pub enum BedrockError {
+    #[error("client error: {0}")]
     ClientError(anyhow::Error),
+    #[error("extension error: {0}")]
     ExtensionError(anyhow::Error),
-    Other(anyhow::Error),
-}
-
-impl Display for BedrockError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BedrockError::ClientError(e) => write!(f, "ClientError: {}", e),
-            BedrockError::ExtensionError(e) => write!(f, "ExtensionError: {}", e),
-            BedrockError::Other(e) => write!(f, "Other: {}", e),
-        }
-    }
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
 }
