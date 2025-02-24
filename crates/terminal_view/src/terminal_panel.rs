@@ -1,3 +1,4 @@
+use project::terminals::ShellOptions;
 use std::{cmp, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
@@ -37,9 +38,9 @@ use workspace::{
     ui::IconName,
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
     ActivatePaneUp, ActivatePreviousPane, DraggedSelection, DraggedTab, ItemId, MoveItemToPane,
-    MoveItemToPaneInDirection, NewTerminal, Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft,
-    SplitRight, SplitUp, SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom,
-    Workspace,
+    MoveItemToPaneInDirection, NewLocalTerminal, NewTerminal, Pane, PaneGroup, SplitDirection,
+    SplitDown, SplitLeft, SplitRight, SplitUp, SwapPaneDown, SwapPaneLeft, SwapPaneRight,
+    SwapPaneUp, ToggleZoom, Workspace,
 };
 
 use anyhow::{anyhow, Context as _, Result};
@@ -52,7 +53,12 @@ actions!(terminal_panel, [ToggleFocus]);
 pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
-            workspace.register_action(TerminalPanel::new_terminal);
+            workspace.register_action(|workspace, _: &NewTerminal, window, cx| {
+                TerminalPanel::new_terminal(workspace, window, cx, false);
+            });
+            workspace.register_action(|workspace, _: &NewLocalTerminal, window, cx| {
+                TerminalPanel::new_terminal(workspace, window, cx, true);
+            });
             workspace.register_action(TerminalPanel::open_terminal);
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 if is_enabled_in_workspace(workspace, cx) {
@@ -432,7 +438,10 @@ impl TerminalPanel {
                 )
             })
             .unwrap_or((None, None));
-        let kind = TerminalKind::Shell(working_directory);
+        let kind = TerminalKind::Shell(ShellOptions {
+            path: working_directory,
+            run_locally: None,
+        });
         let window_handle = window.window_handle();
         let terminal = project
             .update(cx, |project, cx| {
@@ -478,7 +487,10 @@ impl TerminalPanel {
         terminal_panel
             .update(cx, |panel, cx| {
                 panel.add_terminal(
-                    TerminalKind::Shell(Some(action.working_directory.clone())),
+                    TerminalKind::Shell(ShellOptions {
+                        path: Some(action.working_directory.clone()),
+                        run_locally: None,
+                    }),
                     RevealStrategy::Always,
                     window,
                     cx,
@@ -584,15 +596,18 @@ impl TerminalPanel {
     /// Create a new Terminal in the current working directory or the user's home directory
     fn new_terminal(
         workspace: &mut Workspace,
-        _: &workspace::NewTerminal,
         window: &mut Window,
         cx: &mut Context<Workspace>,
+        run_locally: bool,
     ) {
         let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
             return;
         };
 
-        let kind = TerminalKind::Shell(default_working_directory(workspace, cx));
+        let kind = TerminalKind::Shell(ShellOptions {
+            path: default_working_directory(workspace, cx),
+            run_locally: Some(run_locally),
+        });
 
         terminal_panel
             .update(cx, |this, cx| {
@@ -1420,7 +1435,10 @@ impl Panel for TerminalPanel {
         }
         cx.defer_in(window, |this, window, cx| {
             let Ok(kind) = this.workspace.update(cx, |workspace, cx| {
-                TerminalKind::Shell(default_working_directory(workspace, cx))
+                TerminalKind::Shell(ShellOptions {
+                    path: default_working_directory(workspace, cx),
+                    run_locally: None,
+                })
             }) else {
                 return;
             };
