@@ -1059,17 +1059,15 @@ impl GitPanel {
         }
     }
 
-    /// Commit all staged changes
     fn commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
-        let editor = self.commit_editor.read(cx);
-        if editor.is_empty(cx) {
-            if !editor.focus_handle(cx).contains_focused(window, cx) {
-                editor.focus_handle(cx).focus(window);
-                return;
-            }
+        if self
+            .commit_editor
+            .focus_handle(cx)
+            .contains_focused(window, cx)
+        {
+            self.commit_changes(window, cx)
         }
-
-        self.commit_changes(window, cx)
+        cx.propagate();
     }
 
     pub(crate) fn commit_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
