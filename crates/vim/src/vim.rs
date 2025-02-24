@@ -126,6 +126,7 @@ actions!(
         SwitchToVisualBlockMode,
         SwitchToHelixNormalMode,
         ClearOperators,
+        ClearExchange,
         Tab,
         Enter,
         InnerObject,
@@ -138,6 +139,7 @@ actions!(
         ResizePaneDown,
         PushChange,
         PushDelete,
+        Exchange,
         PushYank,
         PushReplace,
         PushDeleteSurrounds,
@@ -636,6 +638,18 @@ impl Vim {
                     vim.push_operator(Operator::ReplaceWithRegister, window, cx)
                 },
             );
+
+            Vim::action(editor, cx, |vim, _: &Exchange, window, cx| {
+                if vim.mode.is_visual() {
+                    vim.exchange_visual(window, cx)
+                } else {
+                    vim.push_operator(Operator::Exchange, window, cx)
+                }
+            });
+
+            Vim::action(editor, cx, |vim, _: &ClearExchange, window, cx| {
+                vim.clear_exchange(window, cx)
+            });
 
             Vim::action(editor, cx, |vim, _: &PushToggleComments, window, cx| {
                 vim.push_operator(Operator::ToggleComments, window, cx)
@@ -1146,8 +1160,10 @@ impl Vim {
         self.stop_recording_immediately(NormalBefore.boxed_clone(), cx);
         self.store_visual_marks(window, cx);
         self.clear_operator(window, cx);
-        self.update_editor(window, cx, |_, editor, _, cx| {
-            editor.set_cursor_shape(language::CursorShape::Hollow, cx);
+        self.update_editor(window, cx, |vim, editor, _, cx| {
+            if vim.cursor_shape() == CursorShape::Block {
+                editor.set_cursor_shape(CursorShape::Hollow, cx);
+            }
         });
     }
 
