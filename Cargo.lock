@@ -1270,6 +1270,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-bedrockruntime"
+version = "1.74.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6938541d1948a543bca23303fec4cff9c36bf0e63b8fa3ae1b337bcb9d5b81af"
+dependencies = [
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-eventstream",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes 1.10.0",
+ "fastrand 2.3.0",
+ "http 0.2.12",
+ "once_cell",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-kinesis"
 version = "1.61.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1599,6 +1623,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws_http_client"
+version = "0.1.0"
+dependencies = [
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "futures 0.3.31",
+ "http_client",
+ "tokio",
+]
+
+[[package]]
 name = "axum"
 version = "0.6.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1726,6 +1761,22 @@ name = "base64ct"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
+
+[[package]]
+name = "bedrock"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "aws-sdk-bedrockruntime",
+ "aws-smithy-types",
+ "futures 0.3.31",
+ "schemars",
+ "serde",
+ "serde_json",
+ "strum",
+ "thiserror 1.0.69",
+ "tokio",
+]
 
 [[package]]
 name = "bigdecimal"
