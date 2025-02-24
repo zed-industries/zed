@@ -2,7 +2,7 @@
 
 Elixir support is available through the [Elixir extension](https://github.com/zed-industries/zed/tree/main/extensions/elixir).
 
-- Tree Sitter:
+- Tree-sitter:
   - [elixir-lang/tree-sitter-elixir](https://github.com/elixir-lang/tree-sitter-elixir)
   - [phoenixframework/tree-sitter-heex](https://github.com/phoenixframework/tree-sitter-heex)
 - Language servers:
@@ -99,4 +99,4 @@ See [ElixirLS configuration settings](https://github.com/elixir-lsp/elixir-ls#el
 
 Zed also supports HEEx templates. HEEx is a mix of [EEx](https://hexdocs.pm/eex/1.12.3/EEx.html) (Embedded Elixir) and HTML, and is used in Phoenix LiveView applications.
 
-- Tree Sitter: [phoenixframework/tree-sitter-heex](https://github.com/phoenixframework/tree-sitter-heex)
+- Tree-sitter: [phoenixframework/tree-sitter-heex](https://github.com/phoenixframework/tree-sitter-heex)

@@ -1,3 +1,4 @@
+(identifier) @variable
 (type_identifier) @type
 (primitive_type) @type.builtin
 (self) @variable.special
@@ -99,6 +100,7 @@
   "mod"
   "move"
   "pub"
+  "raw"
   "ref"
   "return"
   "static"
@@ -129,7 +131,7 @@
   (float_literal)
 ] @number
 
-(boolean_literal) @constant
+(boolean_literal) @boolean
 
 [
   (line_comment)

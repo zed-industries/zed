@@ -15,6 +15,7 @@ use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use env_logger::Builder;
 use extension::ExtensionHostProxy;
+use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
@@ -44,7 +45,10 @@ use std::{
     process,
     sync::Arc,
 };
-use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
+use theme::{
+    ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
+    ThemeSettings,
+};
 use time::UtcOffset;
 use util::{maybe, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -515,10 +519,10 @@ fn main() {
         zeta::init(cx);
 
         cx.observe_global::<SettingsStore>({
+            let fs = fs.clone();
             let languages = app_state.languages.clone();
             let http = app_state.client.http_client();
             let client = app_state.client.clone();
-
             move |cx| {
                 for &mut window in cx.windows().iter_mut() {
                     let background_appearance = cx.theme().window_background_appearance();
@@ -528,6 +532,9 @@ fn main() {
                         })
                         .ok();
                 }
+
+                eager_load_active_theme_and_icon_theme(fs.clone(), cx);
+
                 languages.set_theme(cx.theme().clone());
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
                 if &http.base_url() != new_host {
@@ -725,8 +732,8 @@ async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
     if stdout_is_a_pty() {
         if client::IMPERSONATE_LOGIN.is_some() {
             client.authenticate_and_connect(false, cx).await?;
-        } else {
-            client.authenticate_and_connect(true, cx).await?
+        } else if client.has_credentials(cx).await {
+            client.authenticate_and_connect(true, cx).await?;
         }
     } else if client.has_credentials(cx).await {
         client.authenticate_and_connect(true, cx).await?;
@@ -1060,6 +1067,66 @@ fn load_embedded_fonts(cx: &App) {
     cx.text_system()
         .add_fonts(embedded_fonts.into_inner())
         .unwrap();
+}
+
+/// Eagerly loads the active theme and icon theme based on the selections in the
+/// theme settings.
+///
+/// This fast path exists to load these themes as soon as possible so the user
+/// doesn't see the default themes while waiting on extensions to load.
+fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
+    let extension_store = ExtensionStore::global(cx);
+    let theme_registry = ThemeRegistry::global(cx);
+    let theme_settings = ThemeSettings::get_global(cx);
+    let appearance = cx.window_appearance().into();
+
+    if let Some(theme_selection) = theme_settings.theme_selection.as_ref() {
+        let theme_name = theme_selection.theme(appearance);
+        if matches!(theme_registry.get(theme_name), Err(ThemeNotFoundError(_))) {
+            if let Some(theme_path) = extension_store.read(cx).path_to_extension_theme(theme_name) {
+                cx.spawn({
+                    let theme_registry = theme_registry.clone();
+                    let fs = fs.clone();
+                    |cx| async move {
+                        theme_registry.load_user_theme(&theme_path, fs).await?;
+
+                        cx.update(|cx| {
+                            ThemeSettings::reload_current_theme(cx);
+                        })
+                    }
+                })
+                .detach_and_log_err(cx);
+            }
+        }
+    }
+
+    if let Some(icon_theme_selection) = theme_settings.icon_theme_selection.as_ref() {
+        let icon_theme_name = icon_theme_selection.icon_theme(appearance);
+        if matches!(
+            theme_registry.get_icon_theme(icon_theme_name),
+            Err(IconThemeNotFoundError(_))
+        ) {
+            if let Some((icon_theme_path, icons_root_path)) = extension_store
+                .read(cx)
+                .path_to_extension_icon_theme(icon_theme_name)
+            {
+                cx.spawn({
+                    let theme_registry = theme_registry.clone();
+                    let fs = fs.clone();
+                    |cx| async move {
+                        theme_registry
+                            .load_icon_theme(&icon_theme_path, &icons_root_path, fs)
+                            .await?;
+
+                        cx.update(|cx| {
+                            ThemeSettings::reload_current_icon_theme(cx);
+                        })
+                    }
+                })
+                .detach_and_log_err(cx);
+            }
+        }
+    }
 }
 
 /// Spawns a background task to load the user themes from the themes directory.

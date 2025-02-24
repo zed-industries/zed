@@ -173,9 +173,9 @@ pub enum ExampleLabelSide {
     Left,
     /// Right side
     Right,
-    #[default]
     /// Top side
     Top,
+    #[default]
     /// Bottom side
     Bottom,
 }
@@ -200,10 +200,10 @@ impl RenderOnce for ComponentExample {
             ExampleLabelSide::Top => base.flex_col_reverse(),
         };
 
-        base.gap_1()
+        base.gap_2()
             .p_2()
-            .text_sm()
-            .text_color(cx.theme().colors().text)
+            .text_size(px(10.))
+            .text_color(cx.theme().colors().text_muted)
             .when(self.grow, |this| this.flex_1())
             .child(self.element)
             .child(self.variant_name)
@@ -245,12 +245,13 @@ impl RenderOnce for ComponentExampleGroup {
             .text_color(cx.theme().colors().text_muted)
             .when(self.grow, |this| this.w_full().flex_1())
             .when_some(self.title, |this, title| {
-                this.gap_4().pb_5().child(
+                this.gap_4().child(
                     div()
                         .flex()
                         .items_center()
                         .gap_3()
-                        .child(div().h_px().w_4().bg(cx.theme().colors().border_variant))
+                        .pb_1()
+                        .child(div().h_px().w_4().bg(cx.theme().colors().border))
                         .child(
                             div()
                                 .flex_none()
@@ -271,7 +272,7 @@ impl RenderOnce for ComponentExampleGroup {
                     .flex()
                     .items_start()
                     .w_full()
-                    .gap_8()
+                    .gap_6()
                     .children(self.examples)
                     .into_any_element(),
             )

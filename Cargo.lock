@@ -3611,9 +3611,18 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "0.3.1"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bba74424191d99c617a172ef126d429f62fe54aba1002c4d36e49403ce4b00a2"
+checksum = "21d960ecacd0a1bf55e73144b72de745e7bf275c7952c50e36e8af0a0cb7ab1f"
+dependencies = [
+ "ctor-proc-macro",
+]
+
+[[package]]
+name = "ctor-proc-macro"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c426d2ba3e525b39c1f0a9ba41b9fe61878dee11fa4e4a76b6ab440f46c5db5d"
 
 [[package]]
 name = "ctrlc"
@@ -9262,7 +9271,7 @@ name = "perplexity"
 version = "0.1.0"
 dependencies = [
  "serde",
- "zed_extension_api 0.2.0",
+ "zed_extension_api 0.3.0",
 ]
 
 [[package]]
@@ -16821,7 +16830,7 @@ dependencies = [
 name = "zed_elixir"
 version = "0.1.4"
 dependencies = [
- "zed_extension_api 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.2.0",
 ]
 
 [[package]]
@@ -16852,6 +16861,8 @@ dependencies = [
 [[package]]
 name = "zed_extension_api"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fd16b8b30a9dc920fc1678ff852f696b5bdf5b5843bc745a128be0aac29859e"
 dependencies = [
  "serde",
  "serde_json",
@@ -16860,9 +16871,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fd16b8b30a9dc920fc1678ff852f696b5bdf5b5843bc745a128be0aac29859e"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -16948,7 +16957,7 @@ dependencies = [
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.2.0",
+ "zed_extension_api 0.3.0",
 ]
 
 [[package]]

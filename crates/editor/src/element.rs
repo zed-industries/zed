@@ -547,7 +547,7 @@ impl EditorElement {
         let mut modifiers = event.modifiers;
 
         if let Some(hovered_hunk) = hovered_hunk {
-            editor.toggle_diff_hunks_in_ranges_narrow(vec![hovered_hunk], cx);
+            editor.toggle_single_diff_hunk(hovered_hunk, cx);
             cx.notify();
             return;
         } else if gutter_hitbox.is_hovered(window) {
@@ -853,7 +853,6 @@ impl EditorElement {
         let modifiers = event.modifiers;
         let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, cx);
-        editor.mouse_cursor_hidden = false;
 
         // Don't trigger hover popover if mouse is hovering over context menu
         if text_hitbox.is_hovered(window) {
@@ -4969,10 +4968,9 @@ impl EditorElement {
                 bounds: layout.position_map.text_hitbox.bounds,
             }),
             |window| {
-                let editor = self.editor.read(cx);
-                let cursor_style = if editor.mouse_cursor_hidden {
-                    CursorStyle::None
-                } else if editor
+                let cursor_style = if self
+                    .editor
+                    .read(cx)
                     .hovered_link_state
                     .as_ref()
                     .is_some_and(|hovered_link_state| !hovered_link_state.links.is_empty())
@@ -6984,7 +6982,6 @@ impl Element for EditorElement {
                         },
                         false,
                     );
-
                     // Offset the content_bounds from the text_bounds by the gutter margin (which
                     // is roughly half a character wide) to make hit testing work more like how we want.
                     let content_origin =
