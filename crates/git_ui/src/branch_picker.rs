@@ -261,7 +261,7 @@ impl PickerDelegate for BranchListDelegate {
                     .project()
                     .read(cx)
                     .active_repository(cx)
-                    .and_then(|repo| repo.read(cx).branch())
+                    .and_then(|repo| repo.read(cx).current_branch())
                     .map(|branch| branch.name.to_string())
             })
             .ok()

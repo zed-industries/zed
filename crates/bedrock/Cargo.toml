@@ -1,8 +1,8 @@
 [package]
 name = "bedrock"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -17,12 +17,12 @@ schemars = ["dep:schemars"]
 
 [dependencies]
 anyhow.workspace = true
-aws-smithy-types = {workspace = true}
 aws-sdk-bedrockruntime = { workspace = true, features = ["behavior-version-latest"] }
+aws-smithy-types = {workspace = true}
 futures.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true
+serde_json.workspace = true
 strum.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
-serde_json = "1.0.138"

@@ -389,7 +389,7 @@ async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.5.16", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1.2.1", features = ["hardcoded-credentials"] }
 aws-sdk-bedrockruntime = { version = "1.73.0", features = ["behavior-version-latest"] }
-aws-smithy-runtime-api = { version = "1.7.3", features = ["http-1x","client"] }
+aws-smithy-runtime-api = { version = "1.7.3", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.2.13", features = ["http-body-1-x"] }
 base64 = "0.22"
 bitflags = "2.6.0"
@@ -535,7 +535,7 @@ time = { version = "0.3", features = [
 ] }
 tiny_http = "0.8"
 toml = "0.8"
-tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+tokio = { version = "1" }
 tower-http = "0.4.4"
 tree-sitter = { version = "0.25.2", features = ["wasm"] }
 tree-sitter-bash = "0.23"

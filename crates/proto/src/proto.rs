@@ -445,6 +445,11 @@ messages!(
     (GitShow, Background),
     (GitCommitDetails, Background),
     (SetIndexText, Background),
+    (Push, Background),
+    (Fetch, Background),
+    (GetRemotes, Background),
+    (GetRemotesResponse, Background),
+    (Pull, Background),
 );
 
 request_messages!(
@@ -582,6 +587,10 @@ request_messages!(
     (GitReset, Ack),
     (GitCheckoutFiles, Ack),
     (SetIndexText, Ack),
+    (Push, Ack),
+    (Fetch, Ack),
+    (GetRemotes, GetRemotesResponse),
+    (Pull, Ack),
 );
 
 entity_messages!(
@@ -678,6 +687,10 @@ entity_messages!(
     GitReset,
     GitCheckoutFiles,
     SetIndexText,
+    Push,
+    Fetch,
+    GetRemotes,
+    Pull,
 );
 
 entity_messages!(
