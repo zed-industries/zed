@@ -12,8 +12,8 @@ use bedrock::bedrock_client::types::{
 };
 use bedrock::bedrock_client::{self, Config};
 use bedrock::{
-    value_to_aws_document, BedrockError, BedrockSpecificTool, BedrockStreamingResponse,
-    BedrockTool, BedrockToolChoice, BedrockToolInputSchema, Model,
+    value_to_aws_document, BedrockError, BedrockInnerContent, BedrockMessage, BedrockSpecificTool,
+    BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolInputSchema, Model,
 };
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
@@ -28,7 +28,7 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolUse, RateLimiter, Role,
+    LanguageModelRequest, LanguageModelToolUse, MessageContent, RateLimiter, Role,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -384,7 +384,8 @@ impl LanguageModel for BedrockModel {
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
-        let request = request.into_bedrock(
+        let request = into_bedrock(
+            request,
             self.model.id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
@@ -411,7 +412,8 @@ impl LanguageModel for BedrockModel {
         schema: Value,
         _cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let mut request = request.into_bedrock(
+        let mut request = into_bedrock(
+            request,
             self.model.id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
@@ -446,6 +448,79 @@ impl LanguageModel for BedrockModel {
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
         None
+    }
+}
+
+pub fn into_bedrock(
+    request: LanguageModelRequest,
+    model: String,
+    default_temperature: f32,
+    max_output_tokens: u32,
+) -> bedrock::Request {
+    let mut new_messages: Vec<BedrockMessage> = Vec::new();
+    let mut system_message = String::new();
+
+    for message in request.messages {
+        if message.contents_empty() {
+            continue;
+        }
+
+        match message.role {
+            Role::User | Role::Assistant => {
+                let bedrock_message_content: Vec<BedrockInnerContent> = message
+                    .content
+                    .into_iter()
+                    .filter_map(|content| match content {
+                        MessageContent::Text(text) => {
+                            if !text.is_empty() {
+                                Some(BedrockInnerContent::Text(text))
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let bedrock_role = match message.role {
+                    Role::User => bedrock::BedrockRole::User,
+                    Role::Assistant => bedrock::BedrockRole::Assistant,
+                    Role::System => unreachable!("System role should never occur here"),
+                };
+                if let Some(last_message) = new_messages.last_mut() {
+                    if last_message.role == bedrock_role {
+                        last_message.content.extend(bedrock_message_content);
+                        continue;
+                    }
+                }
+                new_messages.push(
+                    BedrockMessage::builder()
+                        .role(bedrock_role)
+                        .set_content(Some(bedrock_message_content))
+                        .build()
+                        .expect("failed to build Bedrock message"),
+                );
+            }
+            Role::System => {
+                if !system_message.is_empty() {
+                    system_message.push_str("\n\n");
+                }
+                system_message.push_str(&message.string_contents());
+            }
+        }
+    }
+
+    bedrock::Request {
+        model,
+        messages: new_messages,
+        max_tokens: max_output_tokens,
+        system: Some(system_message),
+        tools: vec![],
+        tool_choice: None,
+        metadata: None,
+        stop_sequences: Vec::new(),
+        temperature: request.temperature.or(Some(default_temperature)),
+        top_k: None,
+        top_p: None,
     }
 }
 

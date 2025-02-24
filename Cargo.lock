@@ -7014,7 +7014,6 @@ dependencies = [
  "anthropic",
  "anyhow",
  "base64 0.22.1",
- "bedrock",
  "collections",
  "deepseek",
  "futures 0.3.31",

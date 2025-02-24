@@ -19,7 +19,6 @@ test-support = []
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 base64.workspace = true
-bedrock = { workspace = true, features = ["schemars"] }
 collections.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
 futures.workspace = true

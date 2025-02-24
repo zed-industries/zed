@@ -3,7 +3,6 @@ use std::io::{Cursor, Write};
 use crate::role::Role;
 use crate::LanguageModelToolUse;
 use base64::write::EncoderWriter;
-use bedrock::{BedrockInnerContent, BedrockMessage};
 use gpui::{
     point, size, App, AppContext as _, DevicePixels, Image, ObjectFit, RenderImage, Size, Task,
 };
@@ -446,79 +445,6 @@ impl LanguageModelRequest {
                     input_schema: tool.input_schema,
                 })
                 .collect(),
-            tool_choice: None,
-            metadata: None,
-            stop_sequences: Vec::new(),
-            temperature: self.temperature.or(Some(default_temperature)),
-            top_k: None,
-            top_p: None,
-        }
-    }
-
-    pub fn into_bedrock(
-        self,
-        model: String,
-        default_temperature: f32,
-        max_output_tokens: u32,
-    ) -> bedrock::Request {
-        let mut new_messages: Vec<BedrockMessage> = Vec::new();
-        let mut system_message = String::new();
-
-        for message in self.messages {
-            if message.contents_empty() {
-                continue;
-            }
-
-            match message.role {
-                Role::User | Role::Assistant => {
-                    let bedrock_message_content: Vec<BedrockInnerContent> = message
-                        .content
-                        .into_iter()
-                        .filter_map(|content| match content {
-                            MessageContent::Text(text) => {
-                                if !text.is_empty() {
-                                    Some(BedrockInnerContent::Text(text))
-                                } else {
-                                    None
-                                }
-                            }
-                            _ => None,
-                        })
-                        .collect();
-                    let bedrock_role = match message.role {
-                        Role::User => bedrock::BedrockRole::User,
-                        Role::Assistant => bedrock::BedrockRole::Assistant,
-                        Role::System => unreachable!("System role should never occur here"),
-                    };
-                    if let Some(last_message) = new_messages.last_mut() {
-                        if last_message.role == bedrock_role {
-                            last_message.content.extend(bedrock_message_content);
-                            continue;
-                        }
-                    }
-                    new_messages.push(
-                        BedrockMessage::builder()
-                            .role(bedrock_role)
-                            .set_content(Some(bedrock_message_content))
-                            .build()
-                            .expect("failed to build Bedrock message"),
-                    );
-                }
-                Role::System => {
-                    if !system_message.is_empty() {
-                        system_message.push_str("\n\n");
-                    }
-                    system_message.push_str(&message.string_contents());
-                }
-            }
-        }
-
-        bedrock::Request {
-            model,
-            messages: new_messages,
-            max_tokens: max_output_tokens,
-            system: Some(system_message),
-            tools: vec![],
             tool_choice: None,
             metadata: None,
             stop_sequences: Vec::new(),
