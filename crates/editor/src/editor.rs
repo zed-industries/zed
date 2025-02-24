@@ -9533,6 +9533,56 @@ impl Editor {
         })
     }
 
+    pub fn move_to_previous_multibuffer_header(
+        &mut self,
+        _: &MoveToStartOfExcerpt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+            cx.propagate();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.move_with(|map, selection| {
+                selection.collapse_to(
+                    movement::multibuffer_header(
+                        map,
+                        selection.head(),
+                        workspace::searchable::Direction::Prev,
+                    ),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
+    pub fn move_to_next_multibuffer_header(
+        &mut self,
+        _: &MoveToEndOfExcerpt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine { .. }) {
+            cx.propagate();
+            return;
+        }
+
+        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+            s.move_with(|map, selection| {
+                selection.collapse_to(
+                    movement::multibuffer_header(
+                        map,
+                        selection.head(),
+                        workspace::searchable::Direction::Next,
+                    ),
+                    SelectionGoal::None,
+                )
+            });
+        })
+    }
+
     pub fn select_to_end_of_paragraph(
         &mut self,
         _: &SelectToEndOfParagraph,

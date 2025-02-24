@@ -467,6 +467,31 @@ pub fn end_of_excerpt(
     }
 }
 
+pub fn multibuffer_header(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    direction: Direction,
+) -> DisplayPoint {
+    let point = map.display_point_to_point(display_point, Bias::Left);
+    // It seems likely that the better way to implement this is to reuse block logic via
+    // `map.blocks_in_range` and add support for `reversed_blocks_in_range`. I haven't evaluated in
+    // depth whether this will work.
+    //
+    // Before thinking of that, implementation plan was to:
+    //
+    // * For `Direction::Prev`, use `reversed_excerpts_at` to iterate over the excerpts in reverse
+    // order.
+    //
+    // * For `Direction::Next`, use `excerpts_at` to iterate over the excerpts.
+    //
+    // * Find boundaries by checking when `buffer_id` changes similar to the block_map logic
+    // [here](https://github.com/zed-industries/zed/blob/e5b61949148cd87e08ae38e80949bce9b4ede9f7/crates/editor/src/display_map/block_map.rs#L845).
+    //
+    // Another alternative might be to use `excerpt_before` and `excerpt_after` methods to walk the
+    // excerpts.
+    todo!();
+}
+
 /// Scans for a boundary preceding the given start point `from` until a boundary is found,
 /// indicated by the given predicate returning true.
 /// The predicate is called with the character to the left and right of the candidate boundary location.

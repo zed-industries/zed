@@ -4968,6 +4968,23 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn excerpts_at<T>(&self, position: T) -> impl Iterator<Item = MultiBufferExcerpt<'_>>
+    where
+        T: ToOffset,
+    {
+        todo!()
+    }
+
+    pub fn reversed_excerpts_at<T>(
+        &self,
+        position: T,
+    ) -> impl Iterator<Item = MultiBufferExcerpt<'_>>
+    where
+        T: ToOffset,
+    {
+        todo!()
+    }
+
     pub fn excerpt_before(&self, id: ExcerptId) -> Option<MultiBufferExcerpt<'_>> {
         let start_locator = self.excerpt_locator_for_id(id);
         let mut excerpts = self
