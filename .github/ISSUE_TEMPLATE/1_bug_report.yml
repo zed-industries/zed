@@ -31,7 +31,7 @@ body:
     attributes:
       label: Configuration Details
       description: Include any relevant configuration or related logs that might affect this issue.
-      placeholder: If applicable, share relevant parts of your settings.json or keymap.json, zed:logs, lanaguage server:logs
+      placeholder: If applicable, share relevant parts of your settings.json or keymap.json, zed:logs, language server:logs
     validations:
       required: false
 
