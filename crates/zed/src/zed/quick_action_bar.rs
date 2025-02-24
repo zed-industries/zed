@@ -338,7 +338,7 @@ impl Render for QuickActionBar {
                                     move |window, cx| {
                                         editor
                                             .update(cx, |editor, cx| {
-                                                editor.toggle_inline_completions(
+                                                editor.toggle_edit_predictions(
                                                     &editor::actions::ToggleEditPrediction,
                                                     window,
                                                     cx,

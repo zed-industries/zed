@@ -1945,7 +1945,7 @@ impl Editor {
         self.auto_replace_emoji_shortcode = auto_replace;
     }
 
-    pub fn toggle_inline_completions(
+    pub fn toggle_edit_predictions(
         &mut self,
         _: &ToggleEditPrediction,
         window: &mut Window,
@@ -1968,8 +1968,19 @@ impl Editor {
         self.show_inline_completions_override = show_edit_predictions;
 
         if let Some(false) = show_edit_predictions {
+            self.edit_prediction_settings = EditPredictionSettings::Disabled;
             self.discard_inline_completion(false, cx);
         } else {
+            let selection = self.selections.newest_anchor();
+            let cursor = selection.head();
+
+            if let Some((buffer, cursor_buffer_position)) =
+                self.buffer.read(cx).text_anchor_for_position(cursor, cx)
+            {
+                self.edit_prediction_settings =
+                    self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
+            }
+
             self.refresh_inline_completion(false, true, window, cx);
         }
     }

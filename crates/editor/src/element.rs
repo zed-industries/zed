@@ -406,7 +406,7 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_relative_line_numbers);
         register_action(editor, window, Editor::toggle_indent_guides);
         register_action(editor, window, Editor::toggle_inlay_hints);
-        register_action(editor, window, Editor::toggle_inline_completions);
+        register_action(editor, window, Editor::toggle_edit_predictions);
         register_action(editor, window, Editor::toggle_inline_diagnostics);
         register_action(editor, window, hover_popover::hover);
         register_action(editor, window, Editor::reveal_in_finder);
