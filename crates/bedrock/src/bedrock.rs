@@ -68,7 +68,7 @@ pub async fn stream_completion(
                             Ok(None) => None,
                             Err(e) => {
                                 Some((
-                                    // Figure out how we can capture Throttling Exceptions
+                                    // TODO: Figure out how we can capture Throttling Exceptions
                                     Err(BedrockError::ClientError(anyhow!(
                                         "{:?}",
                                         aws_sdk_bedrockruntime::error::DisplayErrorContext(e)
