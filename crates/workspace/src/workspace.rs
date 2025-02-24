@@ -4606,13 +4606,6 @@ impl Workspace {
         };
 
         if let Some(location) = location {
-            let breakpoint_lines = self.project.update(cx, |project, cx| {
-                project
-                    .breakpoint_store()
-                    .read(cx)
-                    .serialize_breakpoints(cx)
-            });
-
             let center_group = build_serialized_pane_group(&self.center.root, window, cx);
             let docks = build_serialized_docks(self, window, cx);
             let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
@@ -4625,7 +4618,6 @@ impl Workspace {
                 docks,
                 centered_layout: self.centered_layout,
                 session_id: self.session_id.clone(),
-                breakpoints: breakpoint_lines,
                 window_id: Some(window.window_handle().window_id().as_u64()),
             };
             return window.spawn(cx, |_| persistence::DB.save_workspace(serialized_workspace));
@@ -4680,7 +4672,7 @@ impl Workspace {
     }
 
     pub(crate) fn load_workspace(
-        mut serialized_workspace: SerializedWorkspace,
+        serialized_workspace: SerializedWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
@@ -4690,28 +4682,6 @@ impl Workspace {
 
             let mut center_group = None;
             let mut center_items = None;
-
-            // Add unopened breakpoints to project before opening any items
-            workspace.update(&mut cx, |workspace, cx| {
-                workspace.project().update(cx, |project, cx| {
-                    project.dap_store().update(cx, |dap_store, cx| {
-                        dap_store
-                            .breakpoint_store()
-                            .update(cx, |breakpoint_store, cx| {
-                                for worktree in project.worktrees(cx) {
-                                    let (worktree_id, worktree_path) = worktree
-                                        .read_with(cx, |tree, _cx| (tree.id(), tree.abs_path()));
-
-                                    if let Some(serialized_breakpoints) =
-                                        serialized_workspace.breakpoints.remove(&worktree_path)
-                                    {
-                                        todo!();
-                                    }
-                                }
-                            })
-                    });
-                })
-            })?;
 
             // Traverse the splits tree and add to things
             if let Some((group, active_pane, items)) = serialized_workspace

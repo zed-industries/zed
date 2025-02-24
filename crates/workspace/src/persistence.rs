@@ -520,15 +520,10 @@ define_connection! {
     ),
     sql!(
         CREATE TABLE breakpoints (
-            workspace_id INTEGER NOT NULL,
-            worktree_path BLOB NOT NULL,
-            relative_path BLOB NOT NULL,
+            path BLOB NOT NULL,
             breakpoint_location INTEGER NOT NULL,
             kind INTEGER NOT NULL,
-            log_message TEXT,
-            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-            ON DELETE CASCADE
-            ON UPDATE CASCADE
+            log_message TEXT
         );
     ),
     ];
@@ -597,41 +592,6 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
-        let breakpoints: Result<Vec<(PathBuf, PathBuf, Breakpoint)>> = self
-            .select_bound(sql! {
-                SELECT worktree_path, relative_path, breakpoint_location, kind, log_message
-                FROM breakpoints
-                WHERE workspace_id = ?
-            })
-            .and_then(|mut prepared_statement| (prepared_statement)(workspace_id));
-
-        let serialized_breakpoints: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> =
-            match breakpoints {
-                Ok(bp) => {
-                    if bp.is_empty() {
-                        log::error!("Breakpoints are empty after querying database for them");
-                    }
-
-                    let mut map: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
-
-                    for (worktree_path, file_path, breakpoint) in bp {
-                        map.entry(Arc::from(worktree_path.as_path()))
-                            .or_default()
-                            .push(SerializedBreakpoint {
-                                position: breakpoint.position,
-                                path: Arc::from(file_path.as_path()),
-                                kind: breakpoint.kind,
-                            });
-                    }
-
-                    map
-                }
-                Err(msg) => {
-                    log::error!("Breakpoints query failed with msg: {msg}");
-                    Default::default()
-                }
-            };
-
         let local_paths = local_paths?;
         let location = match local_paths_order {
             Some(order) => SerializedWorkspaceLocation::Local(local_paths, order),
@@ -653,7 +613,7 @@ impl WorkspaceDb {
             display,
             docks,
             session_id: None,
-            breakpoints: serialized_breakpoints,
+
             window_id,
         })
     }
@@ -711,7 +671,6 @@ impl WorkspaceDb {
             docks,
             session_id: None,
             window_id,
-            breakpoints: Default::default(),
         })
     }
 
@@ -720,43 +679,11 @@ impl WorkspaceDb {
     pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
-                // Clear out panes, pane_groups, and breakpoints
+                // Clear out panes and pane_groups
                 conn.exec_bound(sql!(
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
                 .context("Clearing old panes")?;
-
-                // Clear out breakpoints associated with this workspace
-                match conn.exec_bound(sql!(
-                    DELETE FROM breakpoints
-                    WHERE workspace_id = ?1;))?(workspace.id,) {
-                    Err(err) => {
-                        log::error!("Breakpoints failed to clear with error: {err}");
-                    }
-                    Ok(_) => {}
-                }
-
-                for (worktree_path, serialized_breakpoints) in workspace.breakpoints {
-                    for serialized_breakpoint in serialized_breakpoints {
-                        let relative_path = serialized_breakpoint.path;
-
-                        match conn.exec_bound(sql!(
-                            INSERT INTO breakpoints (workspace_id, relative_path, worktree_path, breakpoint_location, kind, log_message)
-                            VALUES (?1, ?2, ?3, ?4, ?5, ?6);))?
-                            ((
-                            workspace.id,
-                            relative_path,
-                            worktree_path.clone(),
-                            Breakpoint { position: serialized_breakpoint.position, kind: serialized_breakpoint.kind},
-                        )) {
-                            Err(err) => {
-                                log::error!("{err}");
-                                continue;
-                            }
-                            Ok(_) => {}
-                        }
-                    }
-                }
 
 
                 match workspace.location {
@@ -938,34 +865,24 @@ impl WorkspaceDb {
         }
     }
 
-    // TODO: Fix this query
-    // query! {
-    //     pub fn all_breakpoints(id: WorkspaceId) -> Result<Vec<(String, Vec<Breakpoint>)>> {
-    //         SELECT local_path, GROUP_CONCAT(breakpoint_location) as breakpoint_locations
-    //         FROM breakpoints
-    //         WHERE workspace_id = ?
-    //         GROUP BY local_path;
-    //     }
-    // }
-
     query! {
-        pub fn breakpoints_for_file(id: WorkspaceId, file_path: &Path) -> Result<Vec<Breakpoint>> {
+        pub fn breakpoints_for_file(file_path: &Path) -> Result<Vec<Breakpoint>> {
             SELECT breakpoint_location
             FROM breakpoints
-            WHERE workspace_id = ?1 AND file_path = ?2
+            WHERE  file_path = ?1
         }
     }
 
     query! {
-        pub fn clear_breakpoints(id: WorkspaceId, file_path: &Path) -> Result<()> {
+        pub fn clear_breakpoints(file_path: &Path) -> Result<()> {
             DELETE FROM breakpoints
-            WHERE workspace_id = ?1 AND file_path = ?2
+            WHERE file_path = ?2
         }
     }
 
     query! {
-        pub fn insert_breakpoint(id: WorkspaceId, file_path: &Path, breakpoint_location: Breakpoint) -> Result<()> {
-            INSERT INTO breakpoints (workspace_id, file_path, breakpoint_location) VALUES (?1, ?2, ?3)
+        pub fn insert_breakpoint(file_path: &Path, breakpoint_location: Breakpoint) -> Result<()> {
+            INSERT INTO breakpoints (file_path, breakpoint_location) VALUES (?1, ?2)
         }
     }
 
