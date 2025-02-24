@@ -191,6 +191,7 @@ impl CommitModal {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
             }))
             .style(ButtonStyle::Transparent);
+
         h_flex()
             .w_full()
             .justify_between()
