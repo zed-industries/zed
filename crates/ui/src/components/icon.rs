@@ -125,6 +125,7 @@ impl IconSize {
 pub enum IconName {
     Ai,
     AiAnthropic,
+    AiBedrock,
     AiAnthropicHosted,
     AiDeepSeek,
     AiGoogle,

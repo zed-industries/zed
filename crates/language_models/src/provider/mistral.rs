@@ -334,7 +334,11 @@ impl LanguageModel for MistralLanguageModel {
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
-        let request = request.into_mistral(self.model.id().to_string(), self.max_output_tokens());
+        let request = into_mistral(
+            request,
+            self.model.id().to_string(),
+            self.max_output_tokens(),
+        );
         let stream = self.stream_completion(request, cx);
 
         async move {
@@ -369,7 +373,7 @@ impl LanguageModel for MistralLanguageModel {
         schema: serde_json::Value,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let mut request = request.into_mistral(self.model.id().into(), self.max_output_tokens());
+        let mut request = into_mistral(request, self.model.id().into(), self.max_output_tokens());
         request.tools = vec![mistral::ToolDefinition::Function {
             function: mistral::FunctionDefinition {
                 name: tool_name.clone(),
@@ -408,6 +412,52 @@ impl LanguageModel for MistralLanguageModel {
                 Ok(tool_args_stream)
             })
             .boxed()
+    }
+}
+
+pub fn into_mistral(
+    request: LanguageModelRequest,
+    model: String,
+    max_output_tokens: Option<u32>,
+) -> mistral::Request {
+    let len = request.messages.len();
+    let merged_messages =
+        request
+            .messages
+            .into_iter()
+            .fold(Vec::with_capacity(len), |mut acc, msg| {
+                let role = msg.role;
+                let content = msg.string_contents();
+
+                acc.push(match role {
+                    Role::User => mistral::RequestMessage::User { content },
+                    Role::Assistant => mistral::RequestMessage::Assistant {
+                        content: Some(content),
+                        tool_calls: Vec::new(),
+                    },
+                    Role::System => mistral::RequestMessage::System { content },
+                });
+                acc
+            });
+
+    mistral::Request {
+        model,
+        messages: merged_messages,
+        stream: true,
+        max_tokens: max_output_tokens,
+        temperature: request.temperature,
+        response_format: None,
+        tools: request
+            .tools
+            .into_iter()
+            .map(|tool| mistral::ToolDefinition::Function {
+                function: mistral::FunctionDefinition {
+                    name: tool.name,
+                    description: Some(tool.description),
+                    parameters: Some(tool.input_schema),
+                },
+            })
+            .collect(),
     }
 }
 

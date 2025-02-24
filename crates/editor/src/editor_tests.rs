@@ -15337,11 +15337,12 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
     });
 
     editor.update_in(cx, |editor, window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
         editor.tasks.insert(
             (buffer.read(cx).remote_id(), 3),
             RunnableTasks {
                 templates: vec![],
-                offset: MultiBufferOffset(43),
+                offset: snapshot.anchor_before(43),
                 column: 0,
                 extra_variables: HashMap::default(),
                 context_range: BufferOffset(43)..BufferOffset(85),
@@ -15351,7 +15352,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
             (buffer.read(cx).remote_id(), 8),
             RunnableTasks {
                 templates: vec![],
-                offset: MultiBufferOffset(86),
+                offset: snapshot.anchor_before(86),
                 column: 0,
                 extra_variables: HashMap::default(),
                 context_range: BufferOffset(86)..BufferOffset(191),

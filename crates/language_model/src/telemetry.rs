@@ -8,7 +8,7 @@ use std::sync::Arc;
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use util::ResultExt;
 
-use crate::provider::anthropic::PROVIDER_ID as ANTHROPIC_PROVIDER_ID;
+pub const ANTHROPIC_PROVIDER_ID: &str = "anthropic";
 
 pub fn report_assistant_event(
     event: AssistantEvent,

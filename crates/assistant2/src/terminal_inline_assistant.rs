@@ -13,9 +13,9 @@ use fs::Fs;
 use gpui::{App, Entity, Focusable, Global, Subscription, UpdateGlobal, WeakEntity};
 use language::Buffer;
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    report_assistant_event, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
 };
-use language_models::report_assistant_event;
 use prompt_library::PromptBuilder;
 use std::sync::Arc;
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};

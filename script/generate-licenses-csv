@@ -18,8 +18,8 @@ echo "Generating cargo licenses"
 cargo about generate \
     --fail \
     -c script/licenses/zed-licenses.toml \
-    script/licenses/template.csv.hbs \
+    "$TEMPLATE_FILE" \
     | awk 'NR==1{print;next} NF{print | "sort"}' \
-    > $OUTPUT_FILE
+    > "$OUTPUT_FILE"
 
 echo "generate-licenses-csv completed. See $OUTPUT_FILE"

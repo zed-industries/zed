@@ -19,17 +19,14 @@ test-support = []
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 base64.workspace = true
+client.workspace = true
 collections.workspace = true
-deepseek = { workspace = true, features = ["schemars"] }
 futures.workspace = true
 google_ai = { workspace = true, features = ["schemars"] }
 gpui.workspace = true
 http_client.workspace = true
 image.workspace = true
-lmstudio = { workspace = true, features = ["schemars"] }
 log.workspace = true
-mistral = { workspace = true, features = ["schemars"] }
-ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 parking_lot.workspace = true
 proto.workspace = true
@@ -38,6 +35,7 @@ serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
 strum.workspace = true
+telemetry_events.workspace = true
 thiserror.workspace = true
 ui.workspace = true
 util.workspace = true

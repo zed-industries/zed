@@ -157,7 +157,8 @@
       "cmd->": "assistant::QuoteSelection",
       "cmd-<": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol",
-      "alt-enter": "editor::OpenSelectionsInMultibuffer"
+      "alt-enter": "editor::OpenSelectionsInMultibuffer",
+      "cmd-g": "git::Commit"
     }
   },
   {
@@ -743,14 +744,6 @@
     }
   },
   {
-    "context": "GitCommit > Editor",
-    "use_key_equivalents": true,
-    "bindings": {
-      "enter": "editor::Newline",
-      "cmd-enter": "git::Commit"
-    }
-  },
-  {
     "context": "GitPanel > Editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -759,6 +752,14 @@
       "tab": "git_panel::FocusChanges",
       "shift-tab": "git_panel::FocusChanges",
       "alt-up": "git_panel::FocusChanges"
+    }
+  },
+  {
+    "context": "GitCommit > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "editor::Newline",
+      "cmd-enter": "git::Commit"
     }
   },
   {

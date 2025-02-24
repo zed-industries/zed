@@ -318,7 +318,7 @@ impl LanguageModel for OpenAiLanguageModel {
         'static,
         Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
     > {
-        let request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
+        let request = into_open_ai(request, self.model.id().into(), self.max_output_tokens());
         let completions = self.stream_completion(request, cx);
         async move {
             Ok(open_ai::extract_text_from_events(completions.await?)
@@ -336,7 +336,7 @@ impl LanguageModel for OpenAiLanguageModel {
         schema: serde_json::Value,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let mut request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
+        let mut request = into_open_ai(request, self.model.id().into(), self.max_output_tokens());
         request.tool_choice = Some(ToolChoice::Other(ToolDefinition::Function {
             function: FunctionDefinition {
                 name: tool_name.clone(),
@@ -363,6 +363,39 @@ impl LanguageModel for OpenAiLanguageModel {
                 )
             })
             .boxed()
+    }
+}
+
+pub fn into_open_ai(
+    request: LanguageModelRequest,
+    model: String,
+    max_output_tokens: Option<u32>,
+) -> open_ai::Request {
+    let stream = !model.starts_with("o1-");
+    open_ai::Request {
+        model,
+        messages: request
+            .messages
+            .into_iter()
+            .map(|msg| match msg.role {
+                Role::User => open_ai::RequestMessage::User {
+                    content: msg.string_contents(),
+                },
+                Role::Assistant => open_ai::RequestMessage::Assistant {
+                    content: Some(msg.string_contents()),
+                    tool_calls: Vec::new(),
+                },
+                Role::System => open_ai::RequestMessage::System {
+                    content: msg.string_contents(),
+                },
+            })
+            .collect(),
+        stream,
+        stop: request.stop,
+        temperature: request.temperature.unwrap_or(1.0),
+        max_tokens: max_output_tokens,
+        tools: Vec::new(),
+        tool_choice: None,
     }
 }
 

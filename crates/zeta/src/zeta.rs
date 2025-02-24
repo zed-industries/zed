@@ -31,7 +31,7 @@ use input_excerpt::excerpt_for_cursor_position;
 use language::{
     text_diff, Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToOffset, ToPoint,
 };
-use language_models::LlmApiToken;
+use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use postage::watch;
 use project::Project;
 use release_channel::AppVersion;
@@ -244,7 +244,7 @@ impl Zeta {
         user_store: Entity<UserStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let refresh_llm_token_listener = language_models::RefreshLlmTokenListener::global(cx);
+        let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
 
         let data_collection_choice = Self::load_data_collection_choices();
         let data_collection_choice = cx.new(|_| data_collection_choice);
@@ -1649,7 +1649,6 @@ mod tests {
     use http_client::FakeHttpClient;
     use indoc::indoc;
     use language::Point;
-    use language_models::RefreshLlmTokenListener;
     use rpc::proto;
     use settings::SettingsStore;
 

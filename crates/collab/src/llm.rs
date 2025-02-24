@@ -256,6 +256,7 @@ async fn perform_completion(
             // so that users can use the new version, without having to update Zed.
             request.model = match model.as_str() {
                 "claude-3-5-sonnet" => anthropic::Model::Claude3_5Sonnet.id().to_string(),
+                "claude-3-7-sonnet" => anthropic::Model::Claude3_7Sonnet.id().to_string(),
                 "claude-3-opus" => anthropic::Model::Claude3Opus.id().to_string(),
                 "claude-3-haiku" => anthropic::Model::Claude3Haiku.id().to_string(),
                 "claude-3-sonnet" => anthropic::Model::Claude3Sonnet.id().to_string(),

@@ -8,13 +8,13 @@ fn elevated<E: Styled>(this: E, cx: &App, index: ElevationIndex) -> E {
         .rounded_lg()
         .border_1()
         .border_color(cx.theme().colors().border_variant)
-        .shadow(index.shadow())
+        .shadow(index.shadow(cx))
 }
 
 fn elevated_borderless<E: Styled>(this: E, cx: &mut App, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)
         .rounded_lg()
-        .shadow(index.shadow())
+        .shadow(index.shadow(cx))
 }
 
 /// Extends [`gpui::Styled`] with Zed-specific styling methods.
