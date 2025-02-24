@@ -194,6 +194,16 @@ impl TaskStore {
         })
     }
 
+    pub fn local_project_environment(&self) -> Option<Entity<ProjectEnvironment>> {
+        match self {
+            TaskStore::Functional(state) => match &state.mode {
+                StoreMode::Local { environment, .. } => Some(environment.clone()),
+                StoreMode::Remote { .. } => None,
+            },
+            TaskStore::Noop => None,
+        }
+    }
+
     pub fn task_context_for_location(
         &self,
         captured_variables: TaskVariables,

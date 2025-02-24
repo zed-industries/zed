@@ -74,7 +74,7 @@ impl ProjectEnvironment {
     /// If it wasn't opened from the CLI, and a worktree is given, then a shell is spawned in
     /// the worktree's path, to get environment variables as if the user has `cd`'d into
     /// the worktrees path.
-    pub(crate) fn get_environment(
+    pub fn get_environment(
         &mut self,
         worktree_id: Option<WorktreeId>,
         worktree_abs_path: Option<Arc<Path>>,
