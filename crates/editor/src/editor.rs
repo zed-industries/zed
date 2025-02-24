@@ -15340,27 +15340,39 @@ impl Editor {
                 let selections = self.selections.all::<usize>(cx);
                 let multi_buffer = self.buffer.read(cx);
                 for selection in selections {
-                    for (buffer, mut range, _) in multi_buffer
+                    for (snapshot, range, _, anchor) in multi_buffer
                         .snapshot(cx)
-                        .range_to_buffer_ranges(selection.range())
+                        .range_to_buffer_ranges_with_deleted_hunks(selection.range())
                     {
-                        // When editing branch buffers, jump to the corresponding location
-                        // in their base buffer.
-                        let mut buffer_handle = multi_buffer.buffer(buffer.remote_id()).unwrap();
-                        let buffer = buffer_handle.read(cx);
-                        if let Some(base_buffer) = buffer.base_buffer() {
-                            range = buffer.range_to_version(range, &base_buffer.read(cx).version());
-                            buffer_handle = base_buffer;
+                        if let Some(anchor) = anchor {
+                            // selection is in a deleted hunk
+                            let Some(buffer_id) = anchor.buffer_id else {
+                                continue;
+                            };
+                            let Some(buffer_handle) = multi_buffer.buffer(buffer_id) else {
+                                continue;
+                            };
+                            let offset = text::ToOffset::to_offset(
+                                &anchor.text_anchor,
+                                &buffer_handle.read(cx).snapshot(),
+                            );
+                            let range = offset..offset;
+                            new_selections_by_buffer
+                                .entry(buffer_handle)
+                                .or_insert((Vec::new(), None))
+                                .0
+                                .push(range)
+                        } else {
+                            let Some(buffer_handle) = multi_buffer.buffer(snapshot.remote_id())
+                            else {
+                                continue;
+                            };
+                            new_selections_by_buffer
+                                .entry(buffer_handle)
+                                .or_insert((Vec::new(), None))
+                                .0
+                                .push(range)
                         }
-
-                        if selection.reversed {
-                            mem::swap(&mut range.start, &mut range.end);
-                        }
-                        new_selections_by_buffer
-                            .entry(buffer_handle)
-                            .or_insert((Vec::new(), None))
-                            .0
-                            .push(range)
                     }
                 }
             }
