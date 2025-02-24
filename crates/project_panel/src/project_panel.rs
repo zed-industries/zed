@@ -302,6 +302,9 @@ impl ProjectPanel {
                         this.reveal_entry(project.clone(), *entry_id, true, cx);
                     }
                 }
+                project::Event::ActiveEntryChanged(None) => {
+                    this.marked_entries.clear();
+                }
                 project::Event::RevealInProjectPanel(entry_id) => {
                     this.reveal_entry(project.clone(), *entry_id, false, cx);
                     cx.emit(PanelEvent::Activate);
@@ -4233,16 +4236,11 @@ impl ProjectPanel {
             let worktree_id = worktree.id();
             self.expand_entry(worktree_id, entry_id, cx);
             self.update_visible_entries(Some((worktree_id, entry_id)), cx);
-
-            if self.marked_entries.len() == 1
-                && self
-                    .marked_entries
-                    .first()
-                    .filter(|entry| entry.entry_id == entry_id)
-                    .is_none()
-            {
-                self.marked_entries.clear();
-            }
+            self.marked_entries.clear();
+            self.marked_entries.insert(SelectedEntry {
+                worktree_id,
+                entry_id,
+            });
             self.autoscroll(cx);
             cx.notify();
         }
