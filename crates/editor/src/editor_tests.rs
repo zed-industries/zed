@@ -16179,6 +16179,100 @@ async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
     "});
 }
 
+mod autoclose_tags {
+    use super::*;
+    use language::LanguageConfig;
+
+    macro_rules! check {
+        ($name:ident, $initial:literal + $input:literal => $expected:expr) => {
+            #[gpui::test]
+            async fn $name(cx: &mut TestAppContext) {
+                init_test(cx, |_| {});
+
+                let mut cx = EditorTestContext::new(cx).await;
+                cx.update_buffer(|buffer, cx| {
+                    buffer.set_language(
+                        Some(Arc::new(
+                            Language::new(
+                                LanguageConfig {
+                                    ..Default::default()
+                                },
+                                Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+                            )
+                            .with_edit_behavior_provider(Some(Arc::new(ExampleJSXCompletion))),
+                        )),
+                        cx,
+                    )
+                });
+                cx.set_state($initial);
+                cx.run_until_parked();
+
+                cx.update_editor(|editor, window, cx| {
+                    editor.handle_input($input, window, cx);
+                });
+                cx.run_until_parked();
+                cx.assert_editor_state($expected);
+            }
+        };
+    }
+
+    struct ExampleJSXCompletion;
+
+    impl language::EditBehaviorProvider for ExampleJSXCompletion {
+        type AutoEditState = ();
+
+        fn should_auto_edit(
+            &self,
+            buffer: &BufferSnapshot,
+            edited_ranges: &[std::ops::Range<usize>],
+        ) -> Option<Self::AutoEditState> {
+            dbg!(edited_ranges
+                .iter()
+                .map(|range| (
+                    range,
+                    buffer.text_for_range(range.clone()).collect::<String>()
+                ))
+                .collect::<Vec<_>>());
+            None
+        }
+
+        fn auto_edit(
+            &self,
+            buffer: BufferSnapshot,
+            ranges: &[std::ops::Range<usize>],
+            state: Self::AutoEditState,
+        ) -> Result<Vec<(std::ops::Range<usize>, String)>> {
+            Ok(vec![])
+        }
+    }
+
+    #[gpui::test]
+    async fn example(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| {
+            buffer.set_language(
+                Some(Arc::new(
+                    Language::new(
+                        LanguageConfig {
+                            ..Default::default()
+                        },
+                        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+                    )
+                    .with_edit_behavior_provider(Some(Arc::new(ExampleJSXCompletion))),
+                )),
+                cx,
+            )
+        });
+    }
+
+    check!(
+        basic,
+        "<divˇ" + ">" => "<div>ˇ</div>"
+    );
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(DisplayRow(row as u32), column as u32);
     point..point
