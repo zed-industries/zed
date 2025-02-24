@@ -24,7 +24,10 @@ use gpui::{
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, RateLimiter, Role
+    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolUse, RateLimiter, Role,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -134,7 +137,11 @@ impl State {
                         .update(|cx| cx.read_credentials(ZED_AWS_CREDENTIALS))?
                         .await?
                         .ok_or_else(|| AuthenticateError::CredentialsNotFound)?;
-                    (String::from_utf8(credentials).map_err(|e| AuthenticateError::from(anyhow::Error::from(e)))?, false)
+                    (
+                        String::from_utf8(credentials)
+                            .map_err(|e| AuthenticateError::from(anyhow::Error::from(e)))?,
+                        false,
+                    )
                 };
 
             let res = this.update(&mut cx, |this, cx| {
@@ -191,6 +198,18 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         IconName::AiBedrock
     }
 
+    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let model = bedrock::Model::default();
+        Some(Arc::new(BedrockModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            http_client: self.http_client.clone(),
+            handler: self.handler.clone(),
+            state: self.state.clone(),
+            request_limiter: RateLimiter::new(4),
+        }))
+    }
+
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
@@ -225,7 +244,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                     id: LanguageModelId::from(model.id().to_string()),
                     model,
                     http_client: self.http_client.clone(),
-                    handler: self.handler.clone(), // internally reference counted, can be freely cloned
+                    handler: self.handler.clone(),
                     state: self.state.clone(),
                     request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
@@ -311,7 +330,7 @@ impl BedrockModel {
                 futures::stream::once(async move { Err(BedrockError::ClientError(e)) }).boxed()
             })
         }
-            .boxed())
+        .boxed())
     }
 }
 
@@ -488,10 +507,10 @@ pub async fn extract_tool_args_from_events(
             let mut tool_use_index = None;
             while let Some(event) = events.next().await {
                 if let BedrockStreamingResponse::ContentBlockStart(ContentBlockStartEvent {
-                                                                       content_block_index,
-                                                                       start,
-                                                                       ..
-                                                                   }) = event?
+                    content_block_index,
+                    start,
+                    ..
+                }) = event?
                 {
                     match start {
                         None => {
@@ -654,7 +673,7 @@ pub fn map_to_language_model_completion_events(
             }
         },
     )
-        .filter_map(|event| async move { event })
+    .filter_map(|event| async move { event })
 }
 
 struct ConfigurationView {
@@ -673,7 +692,7 @@ impl ConfigurationView {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
-            .detach();
+        .detach();
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
@@ -689,7 +708,7 @@ impl ConfigurationView {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
-                    .log_err();
+                .log_err();
             }
         }));
 
@@ -756,7 +775,7 @@ impl ConfigurationView {
                 })?
                 .await
         })
-            .detach_and_log_err(cx);
+        .detach_and_log_err(cx);
     }
 
     fn reset_credentials(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -773,7 +792,7 @@ impl ConfigurationView {
                 .update(&mut cx, |state, cx| state.reset_credentials(cx))?
                 .await
         })
-            .detach_and_log_err(cx);
+        .detach_and_log_err(cx);
     }
 
     fn make_text_style(&self, cx: &Context<Self>) -> TextStyle {
