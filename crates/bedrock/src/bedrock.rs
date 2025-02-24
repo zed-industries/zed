@@ -10,6 +10,7 @@ pub use aws_sdk_bedrockruntime::types::{
     ToolChoice as BedrockToolChoice, ToolInputSchema as BedrockToolInputSchema,
     ToolSpecification as BedrockTool,
 };
+use aws_smithy_types::{Document, Number as AwsNumber};
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
 pub use bedrock::types::{
     ContentBlock as BedrockRequestContent, ConversationRole as BedrockRole,
@@ -18,6 +19,7 @@ pub use bedrock::types::{
 };
 use futures::stream::{self, BoxStream, Stream};
 use serde::{Deserialize, Serialize};
+use serde_json::{Number, Value};
 use thiserror::Error;
 
 pub use crate::models::*;
@@ -88,10 +90,6 @@ pub async fn stream_completion(
         .await
         .map_err(|err| anyhow!("failed to spawn task: {err:?}"))?
 }
-
-use aws_smithy_types::Document;
-use aws_smithy_types::Number as AwsNumber;
-use serde_json::{Number, Value};
 
 pub fn aws_document_to_value(document: &Document) -> Value {
     match document {
