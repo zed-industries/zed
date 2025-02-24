@@ -242,35 +242,6 @@ pub struct LanguageModelRequest {
 }
 
 impl LanguageModelRequest {
-    pub fn into_open_ai(self, model: String, max_output_tokens: Option<u32>) -> open_ai::Request {
-        let stream = !model.starts_with("o1-");
-        open_ai::Request {
-            model,
-            messages: self
-                .messages
-                .into_iter()
-                .map(|msg| match msg.role {
-                    Role::User => open_ai::RequestMessage::User {
-                        content: msg.string_contents(),
-                    },
-                    Role::Assistant => open_ai::RequestMessage::Assistant {
-                        content: Some(msg.string_contents()),
-                        tool_calls: Vec::new(),
-                    },
-                    Role::System => open_ai::RequestMessage::System {
-                        content: msg.string_contents(),
-                    },
-                })
-                .collect(),
-            stream,
-            stop: self.stop,
-            temperature: self.temperature.unwrap_or(1.0),
-            max_tokens: max_output_tokens,
-            tools: Vec::new(),
-            tool_choice: None,
-        }
-    }
-
     pub fn into_mistral(self, model: String, max_output_tokens: Option<u32>) -> mistral::Request {
         let len = self.messages.len();
         let merged_messages =
