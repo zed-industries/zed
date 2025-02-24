@@ -67,11 +67,11 @@ pub struct AvailableModel {
     pub default_temperature: Option<f32>,
 }
 
-// Different because we don't want to overwrite their AWS credentials
-const ZED_BEDROCK_AAID: &str = "ZED_ACCESS_KEY_ID";
-const ZED_BEDROCK_SK: &str = "ZED_SECRET_ACCESS_KEY";
-const ZED_BEDROCK_REGION: &str = "ZED_AWS_REGION";
-const ZED_AWS_CREDENTIALS: &str = "ZED_AWS_CREDENTIALS";
+// These environment variables all use a `ZED_` prefix because we don't want to overwrite the user's AWS credentials.
+const ZED_BEDROCK_ACCESS_KEY_ID_VAR: &str = "ZED_ACCESS_KEY_ID";
+const ZED_BEDROCK_SECRET_ACCESS_KEY_VAR: &str = "ZED_SECRET_ACCESS_KEY";
+const ZED_BEDROCK_REGION_VAR: &str = "ZED_AWS_REGION";
+const ZED_AWS_CREDENTIALS_VAR: &str = "ZED_AWS_CREDENTIALS";
 
 pub struct State {
     credentials: Option<BedrockCredentials>,
@@ -82,7 +82,7 @@ pub struct State {
 
 impl State {
     fn reset_credentials(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let delete_credentials = cx.delete_credentials(ZED_AWS_CREDENTIALS);
+        let delete_credentials = cx.delete_credentials(ZED_AWS_CREDENTIALS_VAR);
 
         cx.spawn(|this, mut cx| async move {
             delete_credentials.await.ok();
@@ -107,8 +107,11 @@ impl State {
             }
         };
 
-        let write_credentials =
-            cx.write_credentials(ZED_AWS_CREDENTIALS, "Bearer", &(serialized_creds.clone()));
+        let write_credentials = cx.write_credentials(
+            ZED_AWS_CREDENTIALS_VAR,
+            "Bearer",
+            &(serialized_creds.clone()),
+        );
 
         cx.spawn(|this, mut cx| async move {
             write_credentials.await?;
@@ -130,11 +133,11 @@ impl State {
 
         cx.spawn(|this, mut cx| async move {
             let (credentials, from_env) =
-                if let Ok(credentials) = std::env::var(ZED_AWS_CREDENTIALS) {
+                if let Ok(credentials) = std::env::var(ZED_AWS_CREDENTIALS_VAR) {
                     (credentials, true)
                 } else {
                     let (_, credentials) = cx
-                        .update(|cx| cx.read_credentials(ZED_AWS_CREDENTIALS))?
+                        .update(|cx| cx.read_credentials(ZED_AWS_CREDENTIALS_VAR))?
                         .await?
                         .ok_or_else(|| AuthenticateError::CredentialsNotFound)?;
                     (
@@ -899,7 +902,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        format!("You can also assign the {ZED_BEDROCK_AAID}, {ZED_BEDROCK_SK} and {ZED_BEDROCK_REGION} environment variable and restart Zed."),
+                        format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR} and {ZED_BEDROCK_REGION_VAR} environment variable and restart Zed."),
                     )
                         .size(LabelSize::Small),
                 )
@@ -913,7 +916,7 @@ impl Render for ConfigurationView {
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(Label::new(if env_var_set {
-                            format!("Access Key ID is set in {ZED_BEDROCK_AAID}, Secret Key is set in {ZED_BEDROCK_SK}, Region is set in {ZED_BEDROCK_REGION} environment variables.")
+                            format!("Access Key ID is set in {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, Secret Key is set in {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, Region is set in {ZED_BEDROCK_REGION_VAR} environment variables.")
                         } else {
                             "Credentials configured.".to_string()
                         })),
@@ -925,7 +928,7 @@ impl Render for ConfigurationView {
                         .icon_position(IconPosition::Start)
                         .disabled(env_var_set)
                         .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_AAID}, {ZED_BEDROCK_SK}, and {ZED_BEDROCK_REGION} environment variables.")))
+                            this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables.")))
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx))),
                 )
