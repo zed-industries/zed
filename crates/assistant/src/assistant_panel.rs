@@ -978,7 +978,7 @@ impl AssistantPanel {
                             .active_provider()
                             .map_or(true, |p| p.id() != provider.id())
                         {
-                            if let Some(model) = provider.provided_models(cx).first().cloned() {
+                            if let Some(model) = provider.default_model(cx) {
                                 update_settings_file::<AssistantSettings>(
                                     this.fs.clone(),
                                     cx,
