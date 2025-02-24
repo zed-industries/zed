@@ -501,7 +501,7 @@ impl LanguageModelRequest {
                             .role(bedrock_role)
                             .set_content(Some(bedrock_message_content))
                             .build()
-                            .unwrap(), // unsafe unwrap, but it should be fine
+                            .expect("failed to build Bedrock message"),
                     );
                 }
                 Role::System => {
