@@ -1,5 +1,5 @@
 use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, DisplayPoint, RowExt};
-use gpui::{impl_actions, Context, Point, Window};
+use gpui::{impl_actions, Context, Window};
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -289,6 +289,10 @@ mod test {
     };
     use gpui::ClipboardItem;
     use indoc::indoc;
+    use language::{
+        language_settings::{AllLanguageSettings, LanguageSettingsContent},
+        LanguageName,
+    };
     use settings::SettingsStore;
 
     #[gpui::test]
@@ -624,6 +628,67 @@ mod test {
                     a(){}
                 class A {
                     a(){}
+                }
+            "},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_paste_auto_indent(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+            mod some_module {
+                ˇfn main() {
+                }
+            }
+            "},
+            Mode::Normal,
+        );
+        // default auto indentation
+        cx.simulate_keystrokes("y y p");
+        cx.assert_state(
+            indoc! {"
+                mod some_module {
+                    fn main() {
+                        ˇfn main() {
+                    }
+                }
+                "},
+            Mode::Normal,
+        );
+        // back to previous state
+        cx.simulate_keystrokes("u u");
+        cx.assert_state(
+            indoc! {"
+                mod some_module {
+                    ˇfn main() {
+                    }
+                }
+                "},
+            Mode::Normal,
+        );
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+                settings.languages.insert(
+                    LanguageName::new("Rust"),
+                    LanguageSettingsContent {
+                        auto_indent_on_paste: Some(false),
+                        ..Default::default()
+                    },
+                );
+            });
+        });
+        // auto indentation turned off
+        cx.simulate_keystrokes("y y p");
+        cx.assert_state(
+            indoc! {"
+                mod some_module {
+                    fn main() {
+                    ˇfn main() {
+                    }
                 }
                 "},
             Mode::Normal,
