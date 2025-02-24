@@ -265,7 +265,7 @@ struct ItemColors {
     default: Hsla,
     hover: Hsla,
     drag_over: Hsla,
-    marked_active: Hsla,
+    marked: Hsla,
     focused: Hsla,
 }
 
@@ -274,10 +274,10 @@ fn get_item_color(cx: &App) -> ItemColors {
 
     ItemColors {
         default: colors.panel_background,
-        hover: colors.ghost_element_hover,
-        drag_over: colors.drop_target_background,
-        marked_active: colors.element_selected,
+        hover: colors.element_hover,
+        marked: colors.element_selected,
         focused: colors.panel_focused_border,
+        drag_over: colors.drop_target_background,
     }
 }
 
@@ -3546,14 +3546,14 @@ impl ProjectPanel {
             marked_selections: selections,
         };
 
-        let bg_color = if is_marked || is_active {
-            item_colors.marked_active
+        let bg_color = if is_marked {
+            item_colors.marked
         } else {
             item_colors.default
         };
 
         let bg_hover_color = if self.mouse_down || is_marked || is_active {
-            item_colors.marked_active
+            item_colors.marked
         } else if !is_active {
             item_colors.hover
         } else {
