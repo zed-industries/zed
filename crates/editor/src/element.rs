@@ -2546,14 +2546,15 @@ impl EditorElement {
             Block::FoldedBuffer {
                 first_excerpt,
                 prev_excerpt,
-                show_excerpt_controls,
+                excerpt_controls_before,
                 height,
+                ..
             } => {
                 let selected = selected_buffer_ids.contains(&first_excerpt.buffer_id);
                 let mut result = v_flex().id(block_id).w_full();
 
                 if let Some(prev_excerpt) = prev_excerpt {
-                    if *show_excerpt_controls {
+                    if *excerpt_controls_before {
                         result = result.child(self.render_expand_excerpt_control(
                             block_id,
                             ExpandExcerptDirection::Down,
@@ -2581,7 +2582,8 @@ impl EditorElement {
             Block::ExcerptBoundary {
                 prev_excerpt,
                 next_excerpt,
-                show_excerpt_controls,
+                excerpt_controls_before,
+                excerpt_controls_after,
                 height,
                 starts_new_buffer,
             } => {
@@ -2589,7 +2591,7 @@ impl EditorElement {
                 let mut result = v_flex().id(block_id).w_full();
 
                 if let Some(prev_excerpt) = prev_excerpt {
-                    if *show_excerpt_controls {
+                    if *excerpt_controls_before {
                         result = result.child(self.render_expand_excerpt_control(
                             block_id,
                             ExpandExcerptDirection::Down,
@@ -2622,7 +2624,7 @@ impl EditorElement {
                                 .child(div().h(FILE_HEADER_HEIGHT as f32 * window.line_height()));
                         }
 
-                        if *show_excerpt_controls {
+                        if *excerpt_controls_after {
                             result = result.child(self.render_expand_excerpt_control(
                                 block_id,
                                 ExpandExcerptDirection::Up,
@@ -2633,7 +2635,7 @@ impl EditorElement {
                             ));
                         }
                     } else {
-                        if *show_excerpt_controls {
+                        if *excerpt_controls_after {
                             result = result.child(
                                 h_flex()
                                     .relative()
@@ -3161,11 +3163,7 @@ impl EditorElement {
     #[allow(clippy::too_many_arguments)]
     fn layout_sticky_buffer_header(
         &self,
-        StickyHeaderExcerpt {
-            excerpt,
-            next_excerpt_controls_present,
-            next_buffer_row,
-        }: StickyHeaderExcerpt<'_>,
+        StickyHeaderExcerpt { excerpt, max_row }: StickyHeaderExcerpt<'_>,
         scroll_position: f32,
         line_height: Pixels,
         snapshot: &EditorSnapshot,
@@ -3207,16 +3205,9 @@ impl EditorElement {
 
         let mut origin = hitbox.origin;
 
-        if let Some(next_buffer_row) = next_buffer_row {
+        if let Some(max_row) = max_row {
             // Push up the sticky header when the excerpt is getting close to the top of the viewport
-
-            let mut max_row = next_buffer_row - FILE_HEADER_HEIGHT * 2;
-
-            if next_excerpt_controls_present {
-                max_row -= MULTI_BUFFER_EXCERPT_HEADER_HEIGHT;
-            }
-
-            let offset = scroll_position - max_row as f32;
+            let offset = scroll_position - (max_row - FILE_HEADER_HEIGHT) as f32;
 
             if offset > 0.0 {
                 origin.y -= Pixels(offset) * line_height;
@@ -8668,7 +8659,7 @@ mod tests {
         init_test(cx, |_| {});
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
+            Editor::new(EditorMode::Full, buffer, None, window, cx)
         });
 
         let editor = window.root(cx).unwrap();
@@ -8768,7 +8759,7 @@ mod tests {
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
+            Editor::new(EditorMode::Full, buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
@@ -8835,26 +8826,25 @@ mod tests {
         // multi-buffer support
         // in DisplayPoint coordinates, this is what we're dealing with:
         //  0: [[file
-        //  1:   header
-        //  2:   section]]
-        //  3: aaaaaa
-        //  4: bbbbbb
-        //  5: cccccc
-        //  6:
-        //  7: [[footer]]
-        //  8: [[header]]
-        //  9: ffffff
-        // 10: gggggg
-        // 11: hhhhhh
-        // 12:
-        // 13: [[footer]]
-        // 14: [[file
-        // 15:   header
-        // 16:   section]]
-        // 17: bbbbbb
-        // 18: cccccc
-        // 19: dddddd
-        // 20: [[footer]]
+        //  1:   header]]
+        //  2: aaaaaa
+        //  3: bbbbbb
+        //  4: cccccc
+        //  5:
+        //  6: [[footer]]
+        //  7: [[header]]
+        //  8: ffffff
+        //  9: gggggg
+        // 10: hhhhhh
+        // 11:
+        // 12: [[footer]]
+        // 13: [[file
+        // 14:   header
+        // 15:   section]]
+        // 16: bbbbbb
+        // 17: cccccc
+        // 18: dddddd
+        // 19: [[footer]]
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_multi(
                 [
@@ -8872,7 +8862,7 @@ mod tests {
                 ],
                 cx,
             );
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
+            Editor::new(EditorMode::Full, buffer, None, window, cx)
         });
         let editor = window.root(cx).unwrap();
         let style = cx.update(|_, cx| editor.read(cx).style().unwrap().clone());
@@ -8880,8 +8870,8 @@ mod tests {
             editor.cursor_shape = CursorShape::Block;
             editor.change_selections(None, window, cx, |s| {
                 s.select_display_ranges([
-                    DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(7), 0),
-                    DisplayPoint::new(DisplayRow(10), 0)..DisplayPoint::new(DisplayRow(13), 0),
+                    DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(6), 0),
+                    DisplayPoint::new(DisplayRow(10), 0)..DisplayPoint::new(DisplayRow(12), 0),
                 ]);
             });
         });
@@ -8899,21 +8889,21 @@ mod tests {
         // and doesn't allow selection to bleed through
         assert_eq!(
             local_selections[0].range,
-            DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(7), 0)
+            DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(6), 0)
         );
         assert_eq!(
             local_selections[0].head,
-            DisplayPoint::new(DisplayRow(6), 0)
+            DisplayPoint::new(DisplayRow(5), 0)
         );
         // moves cursor on buffer boundary back two lines
         // and doesn't allow selection to bleed through
         assert_eq!(
             local_selections[1].range,
-            DisplayPoint::new(DisplayRow(10), 0)..DisplayPoint::new(DisplayRow(13), 0)
+            DisplayPoint::new(DisplayRow(10), 0)..DisplayPoint::new(DisplayRow(12), 0)
         );
         assert_eq!(
             local_selections[1].head,
-            DisplayPoint::new(DisplayRow(12), 0)
+            DisplayPoint::new(DisplayRow(11), 0)
         );
     }
 
@@ -8923,7 +8913,7 @@ mod tests {
 
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple("", cx);
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
+            Editor::new(EditorMode::Full, buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
@@ -9149,7 +9139,7 @@ mod tests {
         );
         let window = cx.add_window(|window, cx| {
             let buffer = MultiBuffer::build_simple(input_text, cx);
-            Editor::new(editor_mode, buffer, None, true, window, cx)
+            Editor::new(editor_mode, buffer, None, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();

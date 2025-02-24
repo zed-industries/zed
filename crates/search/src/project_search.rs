@@ -740,8 +740,7 @@ impl ProjectSearchView {
             editor
         });
         let results_editor = cx.new(|cx| {
-            let mut editor =
-                Editor::for_multibuffer(excerpts, Some(project.clone()), true, window, cx);
+            let mut editor = Editor::for_multibuffer(excerpts, Some(project.clone()), window, cx);
             editor.set_searchable(false);
             editor.set_in_project_search(true);
             editor

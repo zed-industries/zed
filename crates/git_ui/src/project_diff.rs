@@ -120,13 +120,8 @@ impl ProjectDiff {
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
 
         let editor = cx.new(|cx| {
-            let mut diff_display_editor = Editor::for_multibuffer(
-                multibuffer.clone(),
-                Some(project.clone()),
-                true,
-                window,
-                cx,
-            );
+            let mut diff_display_editor =
+                Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
             diff_display_editor.set_distinguish_unstaged_diff_hunks();
             diff_display_editor.set_expand_all_diff_hunks(cx);
             diff_display_editor.register_addon(GitPanelAddon {

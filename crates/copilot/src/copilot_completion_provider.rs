@@ -730,8 +730,8 @@ mod tests {
             );
             multibuffer
         });
-        let editor = cx
-            .add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, true, window, cx));
+        let editor =
+            cx.add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, window, cx));
         editor
             .update(cx, |editor, window, cx| {
                 use gpui::Focusable;
@@ -982,8 +982,8 @@ mod tests {
             );
             multibuffer
         });
-        let editor = cx
-            .add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, true, window, cx));
+        let editor =
+            cx.add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, window, cx));
         editor
             .update(cx, |editor, window, cx| {
                 use gpui::Focusable;
