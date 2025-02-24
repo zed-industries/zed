@@ -401,9 +401,6 @@ impl Vim {
                     });
                 });
             });
-            if matches!(current_mode, Mode::VisualLine | Mode::VisualBlock) {
-                self.switch_mode(current_mode, true, window, cx);
-            }
         }
     }
 
@@ -1264,44 +1261,29 @@ mod test {
 
     #[gpui::test]
     async fn test_visual_object(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
+        let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.set_state("hello (in [parˇens] o)", Mode::Normal);
-        cx.simulate_keystrokes("ctrl-v l");
-        cx.simulate_keystrokes("a ]");
-        cx.assert_state("hello (in «[parens]ˇ» o)", Mode::VisualBlock);
-        cx.simulate_keystrokes("i (");
-        cx.assert_state("hello («in [parens] oˇ»)", Mode::VisualBlock);
+        cx.set_shared_state("hello (in [parˇens] o)").await;
+        cx.simulate_shared_keystrokes("ctrl-v l").await;
+        cx.simulate_shared_keystrokes("a ]").await;
+        cx.shared_state()
+            .await
+            .assert_eq("hello (in «[parens]ˇ» o)");
+        cx.simulate_shared_keystrokes("i (").await;
+        cx.shared_state()
+            .await
+            .assert_eq("hello («in [parens] oˇ»)");
 
-        cx.set_state("hello in a wˇord again.", Mode::Normal);
-        cx.simulate_keystrokes("ctrl-v l i w");
-        cx.assert_state("hello in a w«ordˇ» again.", Mode::VisualBlock);
-        cx.simulate_keystrokes("o a s");
-        cx.assert_state("«ˇhello in a word» again.", Mode::VisualBlock);
-
-        cx.set_state(
-            indoc! {
-                "func empty(a string) bool {
-                   if a == \"\" {
-                      return true
-                   }
-                   ˇreturn false
-                }"
-            },
-            Mode::Normal,
-        );
-        cx.simulate_keystrokes("shift-v a {");
-        cx.assert_state(
-            indoc! {
-                "func empty(a string) bool «{
-                   if a == \"\" {
-                      return true
-                   }
-                   return false
-                }ˇ»"
-            },
-            Mode::VisualLine,
-        );
+        cx.set_shared_state("hello in a wˇord again.").await;
+        cx.simulate_shared_keystrokes("ctrl-v l i w").await;
+        cx.shared_state()
+            .await
+            .assert_eq("hello in a w«ordˇ» again.");
+        assert_eq!(cx.mode(), Mode::VisualBlock);
+        cx.simulate_shared_keystrokes("o a s").await;
+        cx.shared_state()
+            .await
+            .assert_eq("«ˇhello in a word» again.");
     }
 
     #[gpui::test]
