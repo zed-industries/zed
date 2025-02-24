@@ -12979,7 +12979,12 @@ impl Editor {
             .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
             .detach_and_log_err(cx);
 
-        let _ = repo.read(cx).set_index_text(&path, new_index_text);
+        cx.background_spawn(
+            repo.read(cx)
+                .set_index_text(&path, new_index_text)
+                .log_err(),
+        )
+        .detach();
     }
 
     pub fn expand_selected_diff_hunks(&mut self, cx: &mut Context<Self>) {
