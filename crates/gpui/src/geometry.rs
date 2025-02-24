@@ -11,6 +11,7 @@ use std::{
     fmt,
     hash::Hash,
     ops::{Add, Div, Mul, MulAssign, Neg, Sub},
+    rc::Rc,
 };
 
 use crate::{App, DisplayId};
@@ -3004,15 +3005,69 @@ impl Default for AbsoluteLength {
 /// This enum represents lengths that have a specific value, as opposed to lengths that are automatically
 /// determined by the context. It includes absolute lengths in pixels or rems, and relative lengths as a
 /// fraction of the parent's size.
-#[derive(Clone, Copy, Neg, PartialEq)]
+#[derive(Clone, Neg, PartialEq)]
 pub enum DefiniteLength {
     /// An absolute length specified in pixels or rems.
     Absolute(AbsoluteLength),
     /// A relative length specified as a fraction of the parent's size, between 0 and 1.
     Fraction(f32),
+    /// An equation, similar to CSS' calc() function.
+    Equation(Rc<LengthEquation>),
+}
+
+#[derive(Clone, PartialEq, Debug)]
+enum LengthEquation {
+    Neg(DefiniteLength),
+    Unit(DefiniteLength),
+    Add(DefiniteLength, DefiniteLength),
+    Sub(DefiniteLength, DefiniteLength),
+    Mul(DefiniteLength, DefiniteLength),
+    Div(DefiniteLength, DefiniteLength),
+}
+
+impl Neg for LengthEquation {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        LengthEquation::Neg(DefiniteLength::Equation(Rc::new(self)))
+    }
+}
+
+impl LengthEquation {
+    fn to_pixels(&self, base_size: AbsoluteLength, rem_size: Pixels) -> Pixels {
+        match self {
+            LengthEquation::Add(a, b) => {
+                a.to_pixels(base_size, rem_size) + b.to_pixels(base_size, rem_size)
+            }
+            LengthEquation::Sub(a, b) => {
+                a.to_pixels(base_size, rem_size) - b.to_pixels(base_size, rem_size)
+            }
+            LengthEquation::Mul(a, b) => {
+                a.to_pixels(base_size, rem_size) * b.to_pixels(base_size, rem_size)
+            }
+            LengthEquation::Div(a, b) => {
+                px(a.to_pixels(base_size, rem_size) / b.to_pixels(base_size, rem_size))
+            }
+            LengthEquation::Unit(a) => a.to_pixels(base_size, rem_size),
+            LengthEquation::Neg(definite_length) => -definite_length.to_pixels(base_size, rem_size),
+        }
+    }
+
+    fn is_zero(&self) -> bool {
+        match self {
+            LengthEquation::Add(a, b) => a.is_zero() && b.is_zero(),
+            LengthEquation::Sub(a, b) => a.is_zero() && b.is_zero(),
+            LengthEquation::Mul(a, b) => a.is_zero() || b.is_zero(),
+            LengthEquation::Div(a, b) => a.is_zero() || b.is_zero(),
+            LengthEquation::Unit(a) => a.is_zero(),
+            LengthEquation::Neg(definite_length) => definite_length.is_zero(),
+        }
+    }
 }
 
 impl DefiniteLength {
+    fn parse(euqation: &str) -> Option<Self> {}
+
     /// Converts the `DefiniteLength` to `Pixels` based on a given `base_size` and `rem_size`.
     ///
     /// If the `DefiniteLength` is an absolute length, it will be directly converted to `Pixels`.
@@ -3048,6 +3103,9 @@ impl DefiniteLength {
                 AbsoluteLength::Pixels(px) => px * *fraction,
                 AbsoluteLength::Rems(rems) => rems * rem_size * *fraction,
             },
+            DefiniteLength::Equation(length_equation) => {
+                length_equation.to_pixels(base_size, rem_size)
+            }
         }
     }
 }
@@ -3057,6 +3115,7 @@ impl Debug for DefiniteLength {
         match self {
             DefiniteLength::Absolute(length) => Debug::fmt(length, f),
             DefiniteLength::Fraction(fract) => write!(f, "{}%", (fract * 100.0) as i32),
+            DefiniteLength::Equation(length_equation) => Debug::fmt(length_equation, f),
         }
     }
 }
@@ -3086,7 +3145,7 @@ impl Default for DefiniteLength {
 }
 
 /// A length that can be defined in pixels, rems, percent of parent, or auto.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum Length {
     /// A definite length specified either in pixels, rems, or as a fraction of the parent's size.
     Definite(DefiniteLength),
@@ -3346,6 +3405,7 @@ impl IsZero for DefiniteLength {
         match self {
             DefiniteLength::Absolute(length) => length.is_zero(),
             DefiniteLength::Fraction(fraction) => *fraction == 0.,
+            DefiniteLength::Equation(length_equation) => length_equation.is_zero(),
         }
     }
 }
