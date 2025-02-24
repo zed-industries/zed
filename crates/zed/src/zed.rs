@@ -4214,6 +4214,7 @@ mod tests {
 
             app_state.languages.add(markdown_language());
 
+            gpui_tokio::init(cx);
             vim_mode_setting::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             audio::init((), cx);

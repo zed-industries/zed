@@ -7054,6 +7054,10 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "aws-config",
+ "aws-credential-types",
+ "aws_http_client",
+ "bedrock",
  "client",
  "collections",
  "copilot",
@@ -7065,6 +7069,7 @@ dependencies = [
  "futures 0.3.31",
  "google_ai",
  "gpui",
+ "gpui_tokio",
  "http_client",
  "language_model",
  "lmstudio",
@@ -7082,6 +7087,7 @@ dependencies = [
  "strum",
  "theme",
  "tiktoken-rs",
+ "tokio",
  "ui",
  "util",
 ]
