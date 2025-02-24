@@ -1,16 +1,16 @@
 use super::stack_frame_list::{StackFrameId, StackFrameList, StackFrameListEvent};
 use anyhow::{anyhow, Result};
-use dap::{proto_conversions::ProtoConversion, Scope, ScopePresentationHint};
+use collections::IndexMap;
+use dap::{ScopePresentationHint};
 use editor::{actions::SelectAll, Editor, EditorEvent};
 use gpui::{
     actions, anchored, deferred, list, AnyElement, ClipboardItem, Context, DismissEvent, Entity,
     FocusHandle, Focusable, Hsla, ListOffset, ListState, MouseDownEvent, Point, Subscription, Task,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::debugger::session::{self, Session, Variable, VariableListContainer};
+use project::debugger::session::{self, Scope, Session, Variable, VariableListContainer};
 use rpc::proto::{
     self, DebuggerScopeVariableIndex, DebuggerVariableContainer, VariableListScopes,
-    VariableListVariables,
 };
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -22,11 +22,12 @@ use util::{debug_panic, ResultExt};
 
 actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VariableContainer {
-    pub container_reference: u64,
-    pub variable: Variable,
-    pub depth: usize,
+struct Variable {
+    dap: dap::Variable,
+    depth: usize,
+    // If none, the children are collapsed
+    is_expanded: bool,
+    children: Option<Vec<Variable>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,136 +48,27 @@ pub enum OpenEntry {
     Variable {
         scope_name: String,
         name: String,
-        depth: u8,
+        depth: usize,
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum VariableListEntry {
-    Scope(Scope),
-    SetVariableEditor {
-        depth: u8,
-        state: SetVariableState,
-    },
-    Variable {
-        depth: u8,
-        scope: Arc<Scope>,
-        variable: Arc<dap::Variable>,
-        has_children: bool,
-        container_reference: u64,
-    },
+
+struct ScopeState {
+    variables: Vec<Variable>,
+    is_expanded: bool,
 }
 
-#[derive(Debug)]
-pub struct ScopeVariableIndex {
-    fetched_ids: HashSet<u64>,
-    variables: SumTree<VariableContainer>,
-}
 
-#[derive(Clone, Debug, Default)]
-pub struct ScopeVariableSummary {
-    count: usize,
-    max_depth: usize,
-    container_reference: u64,
-}
 
-impl Item for VariableContainer {
-    type Summary = ScopeVariableSummary;
 
-    fn summary(&self, _cx: &()) -> Self::Summary {
-        ScopeVariableSummary {
-            count: 1,
-            max_depth: self.depth,
-            container_reference: self.container_reference,
-        }
-    }
-}
-
-impl<'a> Dimension<'a, ScopeVariableSummary> for usize {
-    fn zero(_cx: &()) -> Self {
-        0
-    }
-
-    fn add_summary(&mut self, summary: &'a ScopeVariableSummary, _cx: &()) {
-        *self += summary.count;
-    }
-}
-
-impl Summary for ScopeVariableSummary {
-    type Context = ();
-
-    fn zero(_: &Self::Context) -> Self {
-        Self::default()
-    }
-
-    fn add_summary(&mut self, other: &Self, _: &Self::Context) {
-        self.count += other.count;
-        self.max_depth = self.max_depth.max(other.max_depth);
-        self.container_reference = self.container_reference.max(other.container_reference);
-    }
-}
-
-impl ScopeVariableIndex {
-    pub fn new() -> Self {
-        Self {
-            variables: SumTree::default(),
-            fetched_ids: HashSet::default(),
-        }
-    }
-
-    pub fn fetched(&self, container_reference: &u64) -> bool {
-        self.fetched_ids.contains(container_reference)
-    }
-
-    /// All the variables should have the same depth and the same container reference
-    pub fn add_variables(&mut self, container_reference: u64, variables: Vec<VariableContainer>) {
-        // We want to avoid adding the same variables dued to collab clients sending add variables updates
-        if !self.fetched_ids.insert(container_reference) {
-            return;
-        }
-
-        let mut new_variables = SumTree::new(&());
-        let mut cursor = self.variables.cursor::<usize>(&());
-        let mut found_insertion_point = false;
-
-        cursor.seek(&0, editor::Bias::Left, &());
-        while let Some(variable) = cursor.item() {
-            if variable.variable.dap.variables_reference == container_reference {
-                found_insertion_point = true;
-
-                let start = *cursor.start();
-                new_variables.push(variable.clone(), &());
-                new_variables.append(cursor.slice(&start, editor::Bias::Left, &()), &());
-                new_variables.extend(variables.iter().cloned(), &());
-
-                cursor.next(&());
-                new_variables.append(cursor.suffix(&()), &());
-
-                break;
-            }
-            new_variables.push(variable.clone(), &());
-            cursor.next(&());
-        }
-        drop(cursor);
-
-        if !found_insertion_point {
-            new_variables.extend(variables.iter().cloned(), &());
-        }
-
-        self.variables = new_variables;
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.variables.is_empty()
-    }
-
-    pub fn variables(&self) -> Vec<VariableContainer> {
-        self.variables.iter().cloned().collect()
-    }
-}
 
 type ScopeId = u64;
 
+enum VariableListEntry {
+    Scope(ScopeId),
+    Variable(Variable),
+}
+type IsToggled = bool;
 pub struct VariableList {
     list: ListState,
     focus_handle: FocusHandle,
@@ -185,14 +77,12 @@ pub struct VariableList {
     _subscriptions: Vec<Subscription>,
     set_variable_editor: Entity<Editor>,
     selection: Option<VariableListEntry>,
-    stack_frame_list: Entity<StackFrameList>,
-    scopes: HashMap<StackFrameId, Vec<Scope>>,
+    scopes: HashMap<StackFrameId, IndexMap<u64, ScopeState>>,
     set_variable_state: Option<SetVariableState>,
     fetch_variables_task: Option<Task<Result<()>>>,
-    entries: HashMap<StackFrameId, Vec<VariableListEntry>>,
-    variables: BTreeMap<(StackFrameId, ScopeId), ScopeVariableIndex>,
     open_context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
 }
+
 
 impl VariableList {
     pub fn new(
@@ -237,16 +127,65 @@ impl VariableList {
             focus_handle,
             _subscriptions,
             selection: None,
-            stack_frame_list,
             set_variable_editor,
             open_context_menu: None,
             set_variable_state: None,
             fetch_variables_task: None,
             scopes: Default::default(),
-            entries: Default::default(),
-            variables: Default::default(),
             open_entries: Default::default(),
         }
+    }
+
+    pub fn variable_list(
+        &mut self,
+        stack_frame_id: u64,
+        cx: &mut Context<Self>,
+    ) -> Vec<VariableListContainer> {
+        self.scopes( stack_frame_id, cx)
+            .iter()
+            .cloned()
+            .flat_map(|scope| {
+
+            })
+            .collect()
+    }
+
+
+    fn scopes_to_variable_list(&mut self, stack_frame_id: &StackFrameId, cx: &mut Context<Self>) -> Vec<VariableListEntry> {
+        let mut ret = vec![];
+
+        let Some(scopes) = self.scopes.get_mut(stack_frame_id) else {
+            return ret;
+        };
+        for (scope, scope_state) in scopes {
+
+            if scope_state.is_expanded && scope_state.variables.is_empty() {
+                scope_state.variables = self.session.update(cx, |this, cx| {
+                    this.variables(
+                        scope.dap.variables_reference,
+                        cx,
+                        )});
+            }
+
+            let mut stack = vec![scope.dap.variables_reference];
+            let head = VariableListContainer::Scope(scope);
+            let mut variables = vec![head];
+
+            while let Some(reference) = stack.pop() {
+                if let Some(children) = self.variables.get(&reference) {
+                    for variable in children {
+                        if variable.toggled_state == ToggledState::Toggled {
+                            stack.push(variable.dap.variables_reference);
+                        }
+
+                        variables.push(VariableListContainer::Variable(variable.clone()));
+                    }
+                }
+            }
+
+            variables
+        }
+        ret
     }
 
     fn handle_stack_frame_list_events(
@@ -307,13 +246,6 @@ impl VariableList {
         &self.scopes
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn variables(&self) -> Vec<VariableContainer> {
-        self.variables
-            .iter()
-            .flat_map(|((_, _), scope_index)| scope_index.variables())
-            .collect()
-    }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn entries(&self) -> &HashMap<StackFrameId, Vec<VariableListEntry>> {
@@ -630,19 +562,19 @@ impl VariableList {
         };
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(selection) = &self.selection {
-            let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
-            if let Some(entries) = self.entries.get(&stack_frame_id) {
-                if let Some(ix) = entries.iter().position(|entry| entry == selection) {
-                    self.selection = entries.get(ix.saturating_sub(1)).cloned();
-                    cx.notify();
-                }
-            }
-        } else {
-            self.select_first(&SelectFirst, window, cx);
-        }
-    }
+    // fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
+    //     if let Some(selection) = &self.selection {
+    //         let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
+    //         if let Some(entries) = self.entries.get(&stack_frame_id) {
+    //             if let Some(ix) = entries.iter().position(|entry| entry == selection) {
+    //                 self.selection = entries.get(ix.saturating_sub(1)).cloned();
+    //                 cx.notify();
+    //             }
+    //         }
+    //     } else {
+    //         self.select_first(&SelectFirst, window, cx);
+    //     }
+    // }
 
     fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(selection) = &self.selection {
@@ -830,7 +762,7 @@ impl VariableList {
     #[allow(clippy::too_many_arguments)]
     fn render_variable(
         &self,
-        variable: &session::Variable,
+        variable: &Variable,
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -839,7 +771,7 @@ impl VariableList {
             name: variable.dap.name.clone(),
             scope_name: "Local".into(),
         };
-        let disclosed = variable.toggled_state != session::ToggledState::Leaf;
+        let disclosed = variable.is_expanded;
 
         let colors = get_entry_color(cx);
         let bg_hover_color = if !is_selected {
@@ -890,13 +822,15 @@ impl VariableList {
                 .always_show_disclosure_icon(true)
                 .toggle(disclosed)
                 .when(
-                    variable.toggled_state != session::ToggledState::Leaf,
+                    variable.dap.variables_reference > 0,
                     |list_item| {
                         list_item.on_toggle(cx.listener({
-                            // let scope = scope.clone();
-                            // let variable = variable.clone();
+                            let variable = variable.clone();
                             move |this, _, _window, cx| {
-                                // this.toggle_variable(&scope, &variable, depth, cx)
+                                this.session.update(cx, |session, cx| {
+                                    session.variables(thread_id, stack_frame_id, variables_reference, cx)
+                                })
+                                this.toggle_variable(&scope, &variable, depth, cx)
                             }
                         }))
                     },
@@ -944,7 +878,8 @@ impl VariableList {
             name: scope.dap.name.clone(),
         };
 
-        let disclosed = scope.is_toggled;
+        // todo(debugger) set this based on the scope being toggled or not
+        let disclosed = true;
 
         let colors = get_entry_color(cx);
         let bg_hover_color = if !is_selected {

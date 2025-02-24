@@ -2697,10 +2697,6 @@ message VariableListVariables {
     DebuggerScopeVariableIndex variables = 3;
 }
 
-message DebuggerVariableList {
-    repeated VariableListScopes scopes = 1;
-    repeated VariableListVariables variables = 2;
-}
 
 enum VariablesArgumentsFilter {
     Indexed = 0;
@@ -2714,13 +2710,11 @@ message ValueFormat {
 message VariablesRequest {
     uint64 project_id = 1;
     uint64 client_id = 2;
-    uint64 thread_id = 3;
-    uint64 stack_frame_id = 4;
-    uint64 variables_reference = 5;
-    optional VariablesArgumentsFilter filter = 6;
-    optional uint64 start = 7;
-    optional uint64 count = 8;
-    optional ValueFormat format = 9;
+    uint64 variables_reference = 3;
+    optional VariablesArgumentsFilter filter = 4;
+    optional uint64 start = 5;
+    optional uint64 count = 6;
+    optional ValueFormat format = 7;
 }
 
 
@@ -3011,7 +3005,7 @@ message UpdateDebugAdapter {
     oneof variant {
         DebuggerThreadState thread_state = 5;
         DebuggerStackFrameList stack_frame_list = 6;
-        DebuggerVariableList variable_list = 7;
+
         DebuggerModuleList modules = 8;
         DapOutputEvent output_event = 9;
     }
