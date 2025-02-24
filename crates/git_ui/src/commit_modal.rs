@@ -14,13 +14,15 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{prelude::*, KeybindingHint, Tooltip};
 
-use editor::{Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer};
+use editor::{Direction, Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer};
 use gpui::*;
 use project::git::Repository;
 use project::{Fs, Project};
 use std::sync::Arc;
 use workspace::dock::{Dock, DockPosition, PanelHandle};
 use workspace::{ModalView, Workspace};
+
+// actions!(commit_modal, [NextSuggestion, PrevSuggestion]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
@@ -36,6 +38,8 @@ pub struct CommitModal {
     git_panel: Entity<GitPanel>,
     commit_editor: Entity<Editor>,
     restore_dock: RestoreDock,
+    current_suggestion: Option<usize>,
+    suggested_messages: Vec<SharedString>,
 }
 
 impl Focusable for CommitModal {
@@ -149,6 +153,8 @@ impl CommitModal {
             git_panel,
             commit_editor,
             restore_dock,
+            current_suggestion: None,
+            suggested_messages: vec![],
         }
     }
 
@@ -197,6 +203,51 @@ impl CommitModal {
 
         (width, padding_x, border_radius)
     }
+
+    // fn cycle_suggested_messages(&mut self, direction: Direction, cx: &mut Context<Self>) {
+    //     let new_index = match direction {
+    //         Direction::Next => {
+    //             (self.current_suggestion.unwrap_or(0) + 1).rem_euclid(self.suggested_messages.len())
+    //         }
+    //         Direction::Prev => {
+    //             (self.current_suggestion.unwrap_or(0) + self.suggested_messages.len() - 1)
+    //                 .rem_euclid(self.suggested_messages.len())
+    //         }
+    //     };
+    //     self.current_suggestion = Some(new_index);
+
+    //     cx.notify();
+    // }
+
+    // fn next_suggestion(&mut self, _: &NextSuggestion, window: &mut Window, cx: &mut Context<Self>) {
+    //     self.current_suggestion = Some(1);
+    //     self.apply_suggestion(window, cx);
+    // }
+
+    // fn prev_suggestion(&mut self, _: &PrevSuggestion, window: &mut Window, cx: &mut Context<Self>) {
+    //     self.current_suggestion = Some(0);
+    //     self.apply_suggestion(window, cx);
+    // }
+
+    // fn set_commit_message(&mut self, message: &str, window: &mut Window, cx: &mut Context<Self>) {
+    //     self.commit_editor.update(cx, |editor, cx| {
+    //         editor.set_text(message.to_string(), window, cx)
+    //     });
+    //     self.current_suggestion = Some(0);
+    //     cx.notify();
+    // }
+
+    // fn apply_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    //     let suggested_messages = self.suggested_messages.clone();
+
+    //     if let Some(suggestion) = self.current_suggestion {
+    //         let suggested_message = &suggested_messages[suggestion];
+
+    //         self.set_commit_message(suggested_message, window, cx);
+    //     }
+
+    //     cx.notify();
+    // }
 
     fn commit_editor_element(&self, window: &mut Window, cx: &mut Context<Self>) -> EditorElement {
         let mut editor = self.commit_editor.clone();
@@ -288,6 +339,21 @@ impl CommitModal {
             KeybindingHint::new(fake_commit_kb, cx.theme().colors().editor_background)
                 .suffix(commit_label);
 
+        let focus_handle = self.focus_handle(cx);
+
+        // let next_suggestion_kb =
+        //     ui::KeyBinding::for_action_in(&NextSuggestion, &focus_handle.clone(), window, cx);
+        // let next_suggestion_hint = next_suggestion_kb.map(|kb| {
+        //     KeybindingHint::new(kb, cx.theme().colors().editor_background).suffix("Next Suggestion")
+        // });
+
+        // let prev_suggestion_kb =
+        //     ui::KeyBinding::for_action_in(&PrevSuggestion, &focus_handle.clone(), window, cx);
+        // let prev_suggestion_hint = prev_suggestion_kb.map(|kb| {
+        //     KeybindingHint::new(kb, cx.theme().colors().editor_background)
+        //         .suffix("Previous Suggestion")
+        // });
+
         v_flex()
             .id("editor-container")
             .bg(cx.theme().colors().editor_background)
@@ -310,6 +376,7 @@ impl CommitModal {
             )
             .child(
                 h_flex()
+                    .group("commit_editor_footer")
                     .flex_none()
                     .w_full()
                     .items_center()
@@ -318,16 +385,19 @@ impl CommitModal {
                     .pt_2()
                     .pb_0p5()
                     .gap_1()
-                    .child(branch_selector)
+                    .child(h_flex().gap_1().child(branch_selector).children(co_authors))
                     .child(div().flex_1())
                     .child(
                         h_flex()
+                            .opacity(0.7)
+                            .group_hover("commit_editor_footer", |this| this.opacity(1.0))
                             .items_center()
                             .justify_end()
                             .flex_none()
                             .px_1()
                             .gap_4()
                             .children(close_kb_hint)
+                            // .children(next_suggestion_hint)
                             .child(commit_hint),
                     ),
             )
@@ -423,6 +493,8 @@ impl Render for CommitModal {
             .overflow_hidden()
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::commit))
+            // .on_action(cx.listener(Self::next_suggestion))
+            // .on_action(cx.listener(Self::prev_suggestion))
             .relative()
             .justify_between()
             .bg(cx.theme().colors().elevated_surface_background)
