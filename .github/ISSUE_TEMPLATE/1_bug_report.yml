@@ -2,15 +2,18 @@ name: Bug Report
 description: |
   Something is broken in Zed (exclude crashing).
 type: "Bug"
+labels: ["triage"]
 body:
   - type: textarea
     attributes:
       label: Summary
-      description: Describe the bug with a one line summary, and provide detailed reproduction steps
+      description: Include all steps necessary to reproduce from a clean Zed installation.
       value: |
         <!-- Please insert a one line summary of the issue below -->
 
-        <!-- Include all steps necessary to reproduce from a clean Zed installation. Be verbose -->
+        <!-- Include all steps necessary to reproduce from a clean Zed installation. -->
+        <!-- Be verbose: we rather get a minimal code snippet than an image, or a link to a repository to reproduce the issue -->
+
         Steps to trigger the problem:
         1.
         2.
@@ -22,6 +25,27 @@ body:
 
     validations:
       required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Configuration Details
+      description: Include any relevant configuration or related logs that might affect this issue.
+      placeholder: If applicable, share relevant parts of your settings.json or keymap.json, zed:logs, lanaguage server:logs
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here.
+      placeholder: |
+        - Does it happen consistently or intermittently?
+        - Does it happen with specific file types or projects?
+        - Any other relevant details, do you have a workaround, does turning a specific setting off make the issue disappear?
+    validations:
+      required: false
 
   - type: textarea
     id: environment
