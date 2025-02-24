@@ -593,8 +593,7 @@ impl Frame {
     }
 }
 
-// Holds the state for a specific window.
-#[doc(hidden)]
+/// Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
