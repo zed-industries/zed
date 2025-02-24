@@ -7023,7 +7023,6 @@ dependencies = [
  "image",
  "lmstudio",
  "log",
- "mistral",
  "ollama",
  "open_ai",
  "parking_lot",
