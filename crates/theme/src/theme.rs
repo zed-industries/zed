@@ -330,14 +330,6 @@ impl Theme {
     }
 }
 
-/// Compounds a color with an alpha value.
-/// TODO: Replace this with a method on Hsla.
-pub fn color_alpha(color: Hsla, alpha: f32) -> Hsla {
-    let mut color = color;
-    color.a = alpha;
-    color
-}
-
 /// Asynchronously reads the user theme from the specified path.
 pub async fn read_user_theme(theme_path: &Path, fs: Arc<dyn Fs>) -> Result<ThemeFamilyContent> {
     let reader = fs.open_sync(theme_path).await?;
