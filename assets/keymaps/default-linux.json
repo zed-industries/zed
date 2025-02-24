@@ -722,7 +722,8 @@
       "tab": "git_panel::FocusEditor",
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
-      "ctrl-enter": "git::Commit"
+      "ctrl-enter": "git::Commit",
+      "alt-enter": "menu::SecondaryConfirm"
     }
   },
   {
