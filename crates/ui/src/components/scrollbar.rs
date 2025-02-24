@@ -14,6 +14,14 @@ pub struct Scrollbar {
     kind: ScrollbarAxis,
 }
 
+#[derive(Default, Debug, Clone, Copy)]
+enum ThumbState {
+    #[default]
+    Inactive,
+    Hover,
+    Active,
+}
+
 impl ScrollableHandle for UniformListScrollHandle {
     fn content_size(&self) -> Option<ContentSize> {
         Some(ContentSize {
@@ -136,6 +144,7 @@ pub struct ScrollbarState {
     drag: Rc<Cell<Option<Pixels>>>,
     parent_id: Option<EntityId>,
     scroll_handle: Arc<dyn ScrollableHandle>,
+    state: Rc<Cell<ThumbState>>,
 }
 
 impl ScrollbarState {
@@ -144,6 +153,7 @@ impl ScrollbarState {
             drag: Default::default(),
             parent_id: None,
             scroll_handle: Arc::new(scroll),
+            state: Default::default(),
         }
     }
 
@@ -159,6 +169,28 @@ impl ScrollbarState {
 
     pub fn is_dragging(&self) -> bool {
         self.drag.get().is_some()
+    }
+
+    fn set_drag(&self, drag: Option<Pixels>) {
+        self.drag.set(drag);
+        self.scroll_handle.drag_started();
+        self.set_thumb_active();
+    }
+
+    fn set_thumb_active(&self) {
+        self.set_thumb_state(ThumbState::Active);
+    }
+
+    fn set_thumb_hovered(&self, hovered: bool) {
+        self.set_thumb_state(if hovered {
+            ThumbState::Hover
+        } else {
+            ThumbState::Inactive
+        });
+    }
+
+    fn set_thumb_state(&self, state: ThumbState) {
+        self.state.set(state);
     }
 
     fn thumb_range(&self, axis: ScrollbarAxis) -> Option<Range<f32>> {
@@ -262,9 +294,13 @@ impl Element for Scrollbar {
     ) {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let colors = cx.theme().colors();
-            let thumb_background = colors
-                .surface_background
-                .blend(colors.scrollbar_thumb_background);
+            let thumb_base_color = match self.state.state.get() {
+                // TODO: Use the active scrollbar thumb color once available in themes.
+                ThumbState::Active | ThumbState::Hover => colors.scrollbar_thumb_hover_background,
+                ThumbState::Inactive => colors.scrollbar_thumb_background,
+            };
+
+            let thumb_background = colors.surface_background.blend(thumb_base_color);
             let is_vertical = self.kind == ScrollbarAxis::Vertical;
             let extra_padding = px(5.0);
             let padded_bounds = if is_vertical {
@@ -331,11 +367,9 @@ impl Element for Scrollbar {
                         return;
                     }
 
-                    scroll.drag_started();
-
                     if thumb_bounds.contains(&event.position) {
                         let offset = event.position.along(axis) - thumb_bounds.origin.along(axis);
-                        state.drag.set(Some(offset));
+                        state.set_drag(Some(offset));
                     } else if let Some(ContentSize {
                         size: item_size, ..
                     }) = scroll.content_size()
@@ -384,6 +418,7 @@ impl Element for Scrollbar {
             let axis = self.kind;
             window.on_mouse_event(move |event: &MouseMoveEvent, _, window, cx| {
                 if let Some(drag_state) = state.drag.get().filter(|_| event.dragging()) {
+                    state.set_thumb_active();
                     if let Some(ContentSize {
                         size: item_size, ..
                     }) = scroll.content_size()
@@ -420,14 +455,17 @@ impl Element for Scrollbar {
                         }
                     }
                 } else {
+                    state.set_thumb_hovered(thumb_bounds.contains(&event.position));
                     state.drag.set(None);
                 }
             });
             let state = self.state.clone();
             let scroll = self.state.scroll_handle.clone();
-            window.on_mouse_event(move |_event: &MouseUpEvent, phase, _, cx| {
+            window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
                 if phase.bubble() {
-                    state.drag.take();
+                    if state.drag.take().is_some() {
+                        state.set_thumb_hovered(thumb_bounds.contains(&event.position));
+                    }
                     scroll.drag_ended();
                     if let Some(id) = state.parent_id {
                         cx.notify(id);
