@@ -16181,9 +16181,9 @@ async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
 
 mod autoclose_tags {
     use super::*;
-    use language::LanguageConfig;
     use languages::language;
     use std::sync::Arc;
+    use text::Anchor;
 
     macro_rules! check {
         ($name:ident, $initial:literal + $input:literal => $expected:expr) => {
@@ -16203,20 +16203,22 @@ mod autoclose_tags {
 
                     buffer.set_language(Some(Arc::new(language)), cx)
                 });
-                let default_state = r#"
-                    function Component() {
-                        return {}
-                    }
-                    "#
-                .unindent();
-                cx.set_state(&default_state.replace("{}", $initial));
+                // let default_state = r#"
+                //     function Component() {
+                //         return {}
+                //     }
+                //     "#
+                // .unindent();
+                // cx.set_state(&default_state.replace("{}", $initial));
+                cx.set_state($initial);
                 cx.run_until_parked();
 
                 cx.update_editor(|editor, window, cx| {
                     editor.handle_input($input, window, cx);
                 });
                 cx.run_until_parked();
-                cx.assert_editor_state(&default_state.replace("{}", $expected));
+                // cx.assert_editor_state(&default_state.replace("{}", $expected));
+                cx.assert_editor_state($expected);
             }
         };
     }
@@ -16302,8 +16304,32 @@ mod autoclose_tags {
             buffer: BufferSnapshot,
             ranges: &[std::ops::Range<usize>],
             state: Self::AutoEditState,
-        ) -> Result<Vec<(std::ops::Range<usize>, String)>> {
-            Ok(vec![])
+        ) -> Result<Vec<(std::ops::Range<Anchor>, String)>> {
+            let mut edits = Vec::with_capacity(state.len());
+            for auto_edit in state {
+                let edited_range = ranges[auto_edit.edit_index].clone();
+                let Some(layer) = buffer.syntax_ancestor(edited_range.clone()) else {
+                    continue;
+                };
+                let Some(open_tag) = layer.descendant_for_byte_range(
+                    auto_edit.open_tag_range.start,
+                    auto_edit.open_tag_range.end,
+                ) else {
+                    continue;
+                };
+                assert!(open_tag.grammar_name() == "jsx_opening_element");
+                let tag_name_range = open_tag
+                    .child_by_field_name("name")
+                    .map_or(0..0, |node| node.byte_range());
+
+                let tag_name = buffer.text_for_range(tag_name_range).collect::<String>();
+                dbg!(&tag_name);
+                let edit_anchor = buffer.anchor_after(edited_range.end);
+                let edit_range = edit_anchor..edit_anchor;
+                edits.push((edit_range, format!("</{}>", tag_name)));
+            }
+            return Ok(edits);
+            // Ok(vec![])
         }
     }
 

@@ -1,6 +1,7 @@
 use crate::BufferSnapshot;
 use anyhow::Result;
 use std::ops::Range;
+use text::Anchor;
 
 pub trait EditBehaviorImplementation: Send + Sync {
     fn boxed_should_auto_edit(
@@ -13,7 +14,7 @@ pub trait EditBehaviorImplementation: Send + Sync {
         buffer: BufferSnapshot,
         ranges: &[Range<usize>],
         state: Box<dyn std::any::Any + Send>,
-    ) -> Result<Vec<(Range<usize>, String)>>;
+    ) -> Result<Vec<(Range<Anchor>, String)>>;
 }
 
 impl<T> EditBehaviorImplementation for T
@@ -36,7 +37,7 @@ where
         buffer: BufferSnapshot,
         ranges: &[Range<usize>],
         state: Box<dyn std::any::Any + Send>,
-    ) -> Result<Vec<(Range<usize>, String)>> {
+    ) -> Result<Vec<(Range<Anchor>, String)>> {
         let state = *state
             .downcast::<T::AutoEditState>()
             .expect("Invalid state type");
@@ -72,5 +73,5 @@ pub trait EditBehaviorProvider: Send + Sync {
         buffer: BufferSnapshot,
         ranges: &[Range<usize>],
         state: Self::AutoEditState,
-    ) -> Result<Vec<(Range<usize>, String)>>;
+    ) -> Result<Vec<(Range<Anchor>, String)>>;
 }

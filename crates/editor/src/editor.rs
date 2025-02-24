@@ -3228,7 +3228,19 @@ impl Editor {
                     edit_behavior_provider.boxed_auto_edit(buffer_snapshot, &edited_ranges, edit_behavior_state)
                 }).await;
 
-                dbg!(edits);
+                dbg!(&edits);
+                if let Ok(edits) = edits {
+                    let selection = this.read_with(&cx, |this, cx| {
+                        this.selections.newest_anchor().clone()
+                        // this.selections.disjoint_anchors().iter().filter(|selection| selection.head().buffer_id == selection.tail().buffer_id && selection.head().buffer_id == Some(buffer_id)).cloned().collect::<Vec<_>>()
+                    }).unwrap();
+                    dbg!(selection);
+                    buffer.update(&mut cx, |buffer, cx| {
+                        // todo! autoindent mode
+                        buffer.edit(edits, None, cx);
+                    });
+                }
+
                 // let Ok(edits) = edits else {
                 //     dbg!(edits);
                 //     return Ok(());
