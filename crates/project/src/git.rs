@@ -119,6 +119,7 @@ impl GitStore {
     }
 
     pub fn init(client: &AnyProtoClient) {
+        client.add_entity_request_handler(Self::handle_get_remotes);
         client.add_entity_request_handler(Self::handle_push);
         client.add_entity_request_handler(Self::handle_pull);
         client.add_entity_request_handler(Self::handle_fetch);
@@ -681,6 +682,34 @@ impl GitStore {
         Ok(proto::Ack {})
     }
 
+    async fn handle_get_remotes(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetRemotes>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GetRemotesResponse> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        let branch_name = envelope.payload.branch_name;
+
+        let remotes = repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.get_remotes(branch_name, cx)
+            })?
+            .await?;
+
+        Ok(proto::GetRemotesResponse {
+            remotes: remotes
+                .into_iter()
+                .map(|remotes| proto::get_remotes_response::Remote {
+                    name: remotes.name.to_string(),
+                })
+                .collect::<Vec<_>>(),
+        })
+    }
+
     async fn handle_show(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitShow>,
@@ -1192,10 +1221,12 @@ impl Repository {
         ))
     }
 
-    pub fn get_remotes(&self, branch_name: SharedString, cx: &App) -> Task<Result<Vec<Remote>>> {
+    pub fn get_remotes(&self, branch_name: Option<String>, cx: &App) -> Task<Result<Vec<Remote>>> {
         match self.git_repo.clone() {
             GitRepo::Local(git_repository) => {
-                cx.background_spawn(async move { git_repository.get_remotes(Some(&branch_name)) })
+                cx.background_spawn(
+                    async move { git_repository.get_remotes(branch_name.as_deref()) },
+                )
             }
             GitRepo::Remote {
                 project_id,
@@ -1208,7 +1239,7 @@ impl Repository {
                         project_id: project_id.0,
                         worktree_id: worktree_id.to_proto(),
                         work_directory_id: work_directory_id.to_proto(),
-                        branch_name: Some(branch_name.to_string()),
+                        branch_name,
                     })
                     .await?;
 

@@ -1289,7 +1289,7 @@ impl GitPanel {
                         return Err(anyhow::anyhow!("No active branch"));
                     };
 
-                    Ok(repo.get_remotes(current_branch.name.clone(), cx))
+                    Ok(repo.get_remotes(Some(current_branch.name.to_string()), cx))
                 })??
                 .await?;
 
