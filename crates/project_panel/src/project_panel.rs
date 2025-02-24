@@ -3552,12 +3552,10 @@ impl ProjectPanel {
             item_colors.default
         };
 
-        let bg_hover_color = if self.mouse_down || is_marked || is_active {
+        let bg_hover_color = if is_marked {
             item_colors.marked
-        } else if !is_active {
-            item_colors.hover
         } else {
-            item_colors.default
+            item_colors.hover
         };
 
         let border_color =
