@@ -1,3 +1,4 @@
+(identifier) @variable
 (type_identifier) @type
 (primitive_type) @type.builtin
 (self) @variable.special

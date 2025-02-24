@@ -73,7 +73,7 @@ use futures::{
 };
 use fuzzy::StringMatchCandidate;
 
-use ::git::Restore;
+use ::git::{status::FileStatus, Restore};
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
@@ -729,8 +729,6 @@ pub struct Editor {
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
     serialize_selections: Task<()>,
-    mouse_cursor_hidden: bool,
-    hide_mouse_while_typing: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1454,10 +1452,6 @@ impl Editor {
             serialize_selections: Task::ready(()),
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
-            mouse_cursor_hidden: false,
-            hide_mouse_while_typing: EditorSettings::get_global(cx)
-                .hide_mouse_while_typing
-                .unwrap_or(true),
         };
         this.tasks_update_task = Some(this.refresh_runnables(window, cx));
         this._subscriptions.extend(project_subscriptions);
@@ -2794,8 +2788,6 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
-
-        self.mouse_cursor_hidden = self.hide_mouse_while_typing;
 
         let selections = self.selections.all_adjusted(cx);
         let mut bracket_inserted = false;
@@ -12750,7 +12742,7 @@ impl Editor {
 
     pub fn expand_all_diff_hunks(
         &mut self,
-        _: &ExpandAllHunkDiffs,
+        _: &ExpandAllDiffHunks,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -12859,6 +12851,38 @@ impl Editor {
 
         if !self.buffer().read(cx).is_singleton() {
             if let Some((excerpt_id, buffer, range)) = self.active_excerpt(cx) {
+                if buffer.read(cx).is_empty() {
+                    let buffer = buffer.read(cx);
+                    let Some(file) = buffer.file() else {
+                        return;
+                    };
+                    let project_path = project::ProjectPath {
+                        worktree_id: file.worktree_id(cx),
+                        path: file.path().clone(),
+                    };
+                    let Some(project) = self.project.as_ref() else {
+                        return;
+                    };
+                    let project = project.read(cx);
+
+                    let Some(repo) = project.git_store().read(cx).active_repository() else {
+                        return;
+                    };
+
+                    repo.update(cx, |repo, cx| {
+                        let Some(repo_path) = repo.project_path_to_repo_path(&project_path) else {
+                            return;
+                        };
+                        let Some(status) = repo.repository_entry.status_for_path(&repo_path) else {
+                            return;
+                        };
+                        if stage && status.status == FileStatus::Untracked {
+                            repo.stage_entries(vec![repo_path], cx)
+                                .detach_and_log_err(cx);
+                            return;
+                        }
+                    })
+                }
                 ranges = vec![multi_buffer::Anchor::range_in_buffer(
                     excerpt_id,
                     buffer.read(cx).remote_id(),
@@ -12894,7 +12918,7 @@ impl Editor {
             log::debug!("no buffer for id");
             return;
         };
-        let buffer = buffer.read(cx).snapshot();
+        let buffer_snapshot = buffer.read(cx).snapshot();
         let Some((repo, path)) = project
             .read(cx)
             .repository_and_path_for_buffer_id(buffer_id, cx)
@@ -12927,7 +12951,7 @@ impl Editor {
                     hunk.buffer_range.clone(),
                 ))
             }),
-            &buffer,
+            &buffer_snapshot,
         );
 
         let Some(index_base) = secondary_diff
@@ -12945,8 +12969,9 @@ impl Editor {
             index_buffer.snapshot().as_rope().to_string()
         });
         let new_index_text = if new_index_text.is_empty()
+            && !stage
             && (diff.is_single_insertion
-                || buffer
+                || buffer_snapshot
                     .file()
                     .map_or(false, |file| file.disk_state() == DiskState::New))
         {
@@ -12955,6 +12980,10 @@ impl Editor {
         } else {
             Some(new_index_text)
         };
+        let buffer_store = project.read(cx).buffer_store().clone();
+        buffer_store
+            .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
+            .detach_and_log_err(cx);
 
         let _ = repo.read(cx).set_index_text(&path, new_index_text);
     }
@@ -12990,14 +13019,13 @@ impl Editor {
         })
     }
 
-    fn toggle_diff_hunks_in_ranges_narrow(
-        &mut self,
-        ranges: Vec<Range<Anchor>>,
-        cx: &mut Context<'_, Editor>,
-    ) {
+    fn toggle_single_diff_hunk(&mut self, range: Range<Anchor>, cx: &mut Context<Self>) {
         self.buffer.update(cx, |buffer, cx| {
-            let expand = !buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx);
-            buffer.expand_or_collapse_diff_hunks_narrow(ranges, expand, cx);
+            let snapshot = buffer.snapshot(cx);
+            let excerpt_id = range.end.excerpt_id;
+            let point_range = range.to_point(&snapshot);
+            let expand = !buffer.single_hunk_is_expanded(range, cx);
+            buffer.expand_or_collapse_diff_hunks_inner([(point_range, excerpt_id)], expand, cx);
         })
     }
 
@@ -14612,11 +14640,6 @@ impl Editor {
             self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
             self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
             self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
-            self.hide_mouse_while_typing = editor_settings.hide_mouse_while_typing.unwrap_or(true);
-
-            if !self.hide_mouse_while_typing {
-                self.mouse_cursor_hidden = false;
-            }
         }
 
         if old_cursor_shape != self.cursor_shape {

@@ -1921,17 +1921,20 @@ impl LocalLspStore {
                     version: 0,
                     snapshot: initial_snapshot.clone(),
                 };
-                self.buffer_snapshots
+                let previous_snapshots = self
+                    .buffer_snapshots
                     .entry(buffer_id)
                     .or_default()
                     .insert(server.server_id(), vec![snapshot]);
 
-                server.register_buffer(
-                    uri.clone(),
-                    adapter.language_id(&language.name()),
-                    0,
-                    initial_snapshot.text(),
-                );
+                if previous_snapshots.is_none() {
+                    server.register_buffer(
+                        uri.clone(),
+                        adapter.language_id(&language.name()),
+                        0,
+                        initial_snapshot.text(),
+                    );
+                }
             }
         }
     }
