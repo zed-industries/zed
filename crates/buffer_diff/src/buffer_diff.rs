@@ -176,46 +176,6 @@ impl BufferDiffSnapshot {
         }
     }
 
-    fn buffer_range_to_unchanged_diff_base_range(
-        &self,
-        buffer_range: Range<Anchor>,
-        buffer: &text::BufferSnapshot,
-    ) -> Option<Range<usize>> {
-        let mut hunks = self.inner.hunks.iter();
-        let mut start = 0;
-        let mut pos = buffer.anchor_before(0);
-        while let Some(hunk) = hunks.next() {
-            assert!(buffer_range.start.cmp(&pos, buffer).is_ge());
-            assert!(hunk.buffer_range.start.cmp(&pos, buffer).is_ge());
-            if hunk
-                .buffer_range
-                .start
-                .cmp(&buffer_range.end, buffer)
-                .is_ge()
-            {
-                // target buffer range is contained in the unchanged stretch leading up to this next hunk,
-                // so do a final adjustment based on that
-                break;
-            }
-
-            // if the target buffer range intersects this hunk at all, no dice
-            if buffer_range
-                .start
-                .cmp(&hunk.buffer_range.end, buffer)
-                .is_lt()
-            {
-                return None;
-            }
-
-            start += hunk.buffer_range.start.to_offset(buffer) - pos.to_offset(buffer);
-            start += hunk.diff_base_byte_range.end - hunk.diff_base_byte_range.start;
-            pos = hunk.buffer_range.end;
-        }
-        start += buffer_range.start.to_offset(buffer) - pos.to_offset(buffer);
-        let end = start + buffer_range.end.to_offset(buffer) - buffer_range.start.to_offset(buffer);
-        Some(start..end)
-    }
-
     pub fn secondary_edits_for_stage_or_unstage(
         &self,
         stage: bool,
@@ -243,69 +203,58 @@ impl BufferDiffSnapshot {
         let mut prev_secondary_hunk_buffer_offset = 0;
         let mut prev_secondary_hunk_base_text_offset = 0;
         for (buffer_range, diff_base_byte_range) in hunks {
+            let skipped_hunks = secondary_cursor.slice(&buffer_range.start, Bias::Left, buffer);
+
+            if let Some(secondary_hunk) = skipped_hunks.last() {
+                prev_secondary_hunk_base_text_offset = secondary_hunk.diff_base_byte_range.end;
+                prev_secondary_hunk_buffer_offset =
+                    secondary_hunk.buffer_range.end.to_offset(buffer);
+            }
+
             let mut buffer_offset_range = buffer_range.to_offset(buffer);
-            let (index_byte_range, replacement_text) = if stage {
+            let start_overshoot = buffer_offset_range.start - prev_secondary_hunk_buffer_offset;
+            let mut secondary_base_text_start =
+                prev_secondary_hunk_base_text_offset + start_overshoot;
+
+            while let Some(secondary_hunk) = secondary_cursor.item().filter(|item| {
+                item.buffer_range
+                    .start
+                    .cmp(&buffer_range.end, buffer)
+                    .is_le()
+            }) {
+                let secondary_hunk_offset_range = secondary_hunk.buffer_range.to_offset(buffer);
+                prev_secondary_hunk_base_text_offset = secondary_hunk.diff_base_byte_range.end;
+                prev_secondary_hunk_buffer_offset = secondary_hunk_offset_range.end;
+
+                secondary_base_text_start =
+                    secondary_base_text_start.min(secondary_hunk.diff_base_byte_range.start);
+                buffer_offset_range.start = buffer_offset_range
+                    .start
+                    .min(secondary_hunk_offset_range.start);
+
+                secondary_cursor.next(buffer);
+            }
+
+            let end_overshoot = buffer_offset_range
+                .end
+                .saturating_sub(prev_secondary_hunk_buffer_offset);
+            let secondary_base_text_end = prev_secondary_hunk_base_text_offset + end_overshoot;
+
+            let secondary_base_text_range = secondary_base_text_start..secondary_base_text_end;
+            buffer_offset_range.end = buffer_offset_range
+                .end
+                .max(prev_secondary_hunk_buffer_offset);
+
+            let replacement_text = if stage {
                 log::debug!("staging");
-                let skipped_hunks = secondary_cursor.slice(&buffer_range.start, Bias::Left, buffer);
-
-                if let Some(secondary_hunk) = skipped_hunks.last() {
-                    prev_secondary_hunk_base_text_offset = secondary_hunk.diff_base_byte_range.end;
-                    prev_secondary_hunk_buffer_offset =
-                        secondary_hunk.buffer_range.end.to_offset(buffer);
-                }
-
-                let start_overshoot = buffer_offset_range.start - prev_secondary_hunk_buffer_offset;
-                let mut secondary_base_text_start =
-                    prev_secondary_hunk_base_text_offset + start_overshoot;
-
-                while let Some(secondary_hunk) = secondary_cursor.item().filter(|item| {
-                    item.buffer_range
-                        .start
-                        .cmp(&buffer_range.end, buffer)
-                        .is_le()
-                }) {
-                    let secondary_hunk_offset_range = secondary_hunk.buffer_range.to_offset(buffer);
-                    prev_secondary_hunk_base_text_offset = secondary_hunk.diff_base_byte_range.end;
-                    prev_secondary_hunk_buffer_offset = secondary_hunk_offset_range.end;
-
-                    secondary_base_text_start =
-                        secondary_base_text_start.min(secondary_hunk.diff_base_byte_range.start);
-                    buffer_offset_range.start = buffer_offset_range
-                        .start
-                        .min(secondary_hunk_offset_range.start);
-
-                    secondary_cursor.next(buffer);
-                }
-
-                let end_overshoot = buffer_offset_range
-                    .end
-                    .saturating_sub(prev_secondary_hunk_buffer_offset);
-                let secondary_base_text_end = prev_secondary_hunk_base_text_offset + end_overshoot;
-
-                let secondary_base_text_range = secondary_base_text_start..secondary_base_text_end;
-                buffer_offset_range.end = buffer_offset_range
-                    .end
-                    .max(prev_secondary_hunk_buffer_offset);
-
-                (
-                    secondary_base_text_range,
-                    buffer.text_for_range(buffer_offset_range).collect(),
-                )
+                buffer.text_for_range(buffer_offset_range).collect()
             } else {
                 log::debug!("unstaging");
-                let mut replacement_text = String::new();
-                let Some(index_byte_range) = secondary_diff
-                    .buffer_range_to_unchanged_diff_base_range(buffer_range.clone(), &buffer)
-                else {
-                    log::debug!("not an unstageable hunk");
-                    continue;
-                };
-                for chunk in head_base.chunks_in_range(diff_base_byte_range.clone()) {
-                    replacement_text.push_str(chunk);
-                }
-                (index_byte_range, replacement_text)
+                head_base
+                    .chunks_in_range(diff_base_byte_range.clone())
+                    .collect()
             };
-            edits.push((index_byte_range, replacement_text));
+            edits.push((secondary_base_text_range, replacement_text));
         }
         log::debug!("edits: {edits:?}");
         edits
