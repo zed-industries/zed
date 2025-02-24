@@ -59,3 +59,19 @@ To see all available settings, open the Command Palette with {#kb command_palett
 To open your custom keymap to add your key bindings, use the {#kb zed::OpenKeymap} keybinding.
 
 To access the default key binding set, open the Command Palette with {#kb command_palette::Toggle} and search for "zed: open default keymap". See [Key Bindings](./key-bindings.md) for more info.
+
+## Forking the Repository
+
+To contribute to Zed, it is important to fork the repository first. Follow these steps to fork the repository on GitHub:
+
+1. Navigate to the [Zed repository](https://github.com/zed-industries/zed) on GitHub.
+2. Click the "Fork" button in the upper right corner of the repository page.
+3. Choose your GitHub account as the destination for the fork.
+
+Forking the repository allows you to make changes to your own copy of the repository. Once you have made your changes, you can submit a pull request to propose your changes to the main repository.
+
+Forking the repository has several benefits:
+
+- **Personal Use**: You can customize the repository to suit your personal needs without affecting the main repository.
+- **Contributions**: Forking is essential for contributing to the project. It allows you to make changes and submit them for review.
+- **Experimentation**: You can experiment with new features or changes in your fork without impacting the main project.

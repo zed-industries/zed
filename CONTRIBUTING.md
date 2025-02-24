@@ -13,6 +13,16 @@ If you're looking for ideas about what to work on, check out:
 
 For adding themes or support for a new language to Zed, check out our [docs on developing extensions](https://zed.dev/docs/extensions/developing-extensions).
 
+## Forking the Repository
+
+To contribute to Zed, it is important to fork the repository first. Follow these steps to fork the repository on GitHub:
+
+1. Navigate to the [Zed repository](https://github.com/zed-industries/zed) on GitHub.
+2. Click the "Fork" button in the upper right corner of the repository page.
+3. Choose your GitHub account as the destination for the fork.
+
+Forking the repository allows you to make changes to your own copy of the repository. Once you have made your changes, you can submit a pull request to propose your changes to the main repository.
+
 ## Proposing changes
 
 The best way to propose a change is to [start a discussion on our GitHub repository](https://github.com/zed-industries/zed/discussions).
