@@ -12779,7 +12779,7 @@ impl Editor {
         snapshot: &MultiBufferSnapshot,
     ) -> bool {
         let mut hunks = self.diff_hunks_in_ranges(ranges, &snapshot);
-        hunks.any(|hunk| hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk)
+        hunks.any(|hunk| hunk.secondary_status != DiffHunkSecondaryStatus::None)
     }
 
     pub fn toggle_staged_selected_diff_hunks(
@@ -12939,11 +12939,7 @@ impl Editor {
                 {
                     return None;
                 }
-                Some((
-                    hunk.diff_base_byte_range.clone(),
-                    hunk.secondary_diff_base_byte_range.clone(),
-                    hunk.buffer_range.clone(),
-                ))
+                Some((hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone()))
             }),
             &buffer_snapshot,
         );
