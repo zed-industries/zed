@@ -1182,11 +1182,11 @@ impl GitPanel {
                 .to_string_lossy();
 
             if entry.status.is_deleted() {
-                Some(format!("Delete {}", file_name).into())
+                Some(format!("Delete {}", file_name))
             } else if entry.status.is_created() {
-                Some(format!("Create {}", file_name).into())
+                Some(format!("Create {}", file_name))
             } else if entry.status.is_modified() {
-                Some(format!("Update {}", file_name).into())
+                Some(format!("Update {}", file_name))
             } else {
                 None
             }
