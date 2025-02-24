@@ -2265,13 +2265,13 @@ mod test {
             (
                 "c i q",
                 "This is a \"simple 'qˇuote'\" example.",
-                "This is a \"ˇ\" example.", // Not supported by tree sitter queries for now
+                "This is a \"ˇ\" example.", // Not supported by Tree-sitter queries for now
                 Mode::Insert,
             ),
             (
                 "c a q",
                 "This is a \"simple 'qˇuote'\" example.",
-                "This is a ˇ example.", // Not supported by tree sitter queries for now
+                "This is a ˇ example.", // Not supported by Tree-sitter queries for now
                 Mode::Insert,
             ),
             (

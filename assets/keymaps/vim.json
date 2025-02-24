@@ -437,6 +437,7 @@
     "context": "vim_operator == c",
     "bindings": {
       "c": "vim::CurrentLine",
+      "x": "vim::Exchange",
       "d": "editor::Rename", // zed specific
       "s": ["vim::PushChangeSurrounds", {}]
     }
@@ -521,6 +522,19 @@
     "context": "vim_operator == gc",
     "bindings": {
       "c": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == gr",
+    "bindings": {
+      "r": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == cx",
+    "bindings": {
+      "x": "vim::CurrentLine",
+      "c": "vim::ClearExchange"
     }
   },
   {

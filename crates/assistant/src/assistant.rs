@@ -33,7 +33,7 @@ actions!(
     [
         InsertActivePrompt,
         DeployHistory,
-        NewContext,
+        NewChat,
         CycleNextInlineAssist,
         CyclePreviousInlineAssist
     ]

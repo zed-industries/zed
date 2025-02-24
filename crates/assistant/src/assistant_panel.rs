@@ -1,6 +1,6 @@
 use crate::assistant_configuration::{ConfigurationView, ConfigurationViewEvent};
 use crate::{
-    terminal_inline_assistant::TerminalInlineAssistant, DeployHistory, InlineAssistant, NewContext,
+    terminal_inline_assistant::TerminalInlineAssistant, DeployHistory, InlineAssistant, NewChat,
 };
 use anyhow::{anyhow, Result};
 use assistant_context_editor::{
@@ -129,7 +129,7 @@ impl AssistantPanel {
                 workspace.project().clone(),
                 Default::default(),
                 None,
-                NewContext.boxed_clone(),
+                NewChat.boxed_clone(),
                 window,
                 cx,
             );
@@ -228,12 +228,12 @@ impl AssistantPanel {
                         IconButton::new("new-chat", IconName::Plus)
                             .icon_size(IconSize::Small)
                             .on_click(cx.listener(|_, _, window, cx| {
-                                window.dispatch_action(NewContext.boxed_clone(), cx)
+                                window.dispatch_action(NewChat.boxed_clone(), cx)
                             }))
                             .tooltip(move |window, cx| {
                                 Tooltip::for_action_in(
                                     "New Chat",
-                                    &NewContext,
+                                    &NewChat,
                                     &focus_handle,
                                     window,
                                     cx,
@@ -256,7 +256,7 @@ impl AssistantPanel {
                                 let focus_handle = _pane.focus_handle(cx);
                                 Some(ContextMenu::build(window, cx, move |menu, _, _| {
                                     menu.context(focus_handle.clone())
-                                        .action("New Chat", Box::new(NewContext))
+                                        .action("New Chat", Box::new(NewChat))
                                         .action("History", Box::new(DeployHistory))
                                         .action("Prompt Library", Box::new(DeployPromptLibrary))
                                         .action("Configure", Box::new(ShowConfiguration))
@@ -760,7 +760,7 @@ impl AssistantPanel {
 
     pub fn create_new_context(
         workspace: &mut Workspace,
-        _: &NewContext,
+        _: &NewChat,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -978,7 +978,7 @@ impl AssistantPanel {
                             .active_provider()
                             .map_or(true, |p| p.id() != provider.id())
                         {
-                            if let Some(model) = provider.provided_models(cx).first().cloned() {
+                            if let Some(model) = provider.default_model(cx) {
                                 update_settings_file::<AssistantSettings>(
                                     this.fs.clone(),
                                     cx,
@@ -1206,7 +1206,7 @@ impl Render for AssistantPanel {
         v_flex()
             .key_context("AssistantPanel")
             .size_full()
-            .on_action(cx.listener(|this, _: &NewContext, window, cx| {
+            .on_action(cx.listener(|this, _: &NewChat, window, cx| {
                 this.new_context(window, cx);
             }))
             .on_action(cx.listener(|this, _: &ShowConfiguration, window, cx| {

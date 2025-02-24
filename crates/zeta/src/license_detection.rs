@@ -1,7 +1,14 @@
 use regex::Regex;
 
 /// The most common license locations, with US and UK English spelling.
-pub const LICENSE_FILES_TO_CHECK: &[&str] = &["LICENSE", "LICENCE", "LICENSE.txt", "LICENCE.txt"];
+pub const LICENSE_FILES_TO_CHECK: &[&str] = &[
+    "LICENSE",
+    "LICENCE",
+    "LICENSE.txt",
+    "LICENCE.txt",
+    "LICENSE.md",
+    "LICENCE.md",
+];
 
 pub fn is_license_eligible_for_data_collection(license: &str) -> bool {
     // TODO: Include more licenses later (namely, Apache)

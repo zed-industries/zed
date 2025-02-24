@@ -155,7 +155,18 @@ impl Vim {
                     original_start_columns.extend(original_start_column);
                 }
 
-                editor.edit_with_block_indent(edits, original_start_columns, cx);
+                let cursor_offset = editor.selections.last::<usize>(cx).head();
+                if editor
+                    .buffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .settings_at(cursor_offset, cx)
+                    .auto_indent_on_paste
+                {
+                    editor.edit_with_block_indent(edits, original_start_columns, cx);
+                } else {
+                    editor.edit(edits, cx);
+                }
 
                 // in line_mode vim will insert the new text on the next (or previous if before) line
                 // and put the cursor on the first non-blank character of the first inserted line (or at the end if the first line is blank).
@@ -278,6 +289,10 @@ mod test {
     };
     use gpui::ClipboardItem;
     use indoc::indoc;
+    use language::{
+        language_settings::{AllLanguageSettings, LanguageSettingsContent},
+        LanguageName,
+    };
     use settings::SettingsStore;
 
     #[gpui::test]
@@ -613,6 +628,67 @@ mod test {
                     a(){}
                 class A {
                     a(){}
+                }
+            "},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_paste_auto_indent(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+            mod some_module {
+                ˇfn main() {
+                }
+            }
+            "},
+            Mode::Normal,
+        );
+        // default auto indentation
+        cx.simulate_keystrokes("y y p");
+        cx.assert_state(
+            indoc! {"
+                mod some_module {
+                    fn main() {
+                        ˇfn main() {
+                    }
+                }
+                "},
+            Mode::Normal,
+        );
+        // back to previous state
+        cx.simulate_keystrokes("u u");
+        cx.assert_state(
+            indoc! {"
+                mod some_module {
+                    ˇfn main() {
+                    }
+                }
+                "},
+            Mode::Normal,
+        );
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+                settings.languages.insert(
+                    LanguageName::new("Rust"),
+                    LanguageSettingsContent {
+                        auto_indent_on_paste: Some(false),
+                        ..Default::default()
+                    },
+                );
+            });
+        });
+        // auto indentation turned off
+        cx.simulate_keystrokes("y y p");
+        cx.assert_state(
+            indoc! {"
+                mod some_module {
+                    fn main() {
+                    ˇfn main() {
+                    }
                 }
                 "},
             Mode::Normal,

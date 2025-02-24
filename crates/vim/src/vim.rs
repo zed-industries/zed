@@ -126,6 +126,7 @@ actions!(
         SwitchToVisualBlockMode,
         SwitchToHelixNormalMode,
         ClearOperators,
+        ClearExchange,
         Tab,
         Enter,
         InnerObject,
@@ -138,6 +139,7 @@ actions!(
         ResizePaneDown,
         PushChange,
         PushDelete,
+        Exchange,
         PushYank,
         PushReplace,
         PushDeleteSurrounds,
@@ -636,6 +638,18 @@ impl Vim {
                     vim.push_operator(Operator::ReplaceWithRegister, window, cx)
                 },
             );
+
+            Vim::action(editor, cx, |vim, _: &Exchange, window, cx| {
+                if vim.mode.is_visual() {
+                    vim.exchange_visual(window, cx)
+                } else {
+                    vim.push_operator(Operator::Exchange, window, cx)
+                }
+            });
+
+            Vim::action(editor, cx, |vim, _: &ClearExchange, window, cx| {
+                vim.clear_exchange(window, cx)
+            });
 
             Vim::action(editor, cx, |vim, _: &PushToggleComments, window, cx| {
                 vim.push_operator(Operator::ToggleComments, window, cx)

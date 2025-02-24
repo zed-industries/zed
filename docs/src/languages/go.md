@@ -2,7 +2,7 @@
 
 Go support is available natively in Zed.
 
-- Tree Sitter: [tree-sitter/tree-sitter-go](https://github.com/tree-sitter/tree-sitter-go)
+- Tree-sitter: [tree-sitter/tree-sitter-go](https://github.com/tree-sitter/tree-sitter-go)
 - Language Server: [golang/tools/tree/master/gopls](https://github.com/golang/tools/tree/master/gopls)
 
 ## Setup
@@ -74,16 +74,16 @@ See [gopls inlayHints documentation](https://github.com/golang/tools/blob/master
 
 ## Go Mod
 
-- Tree Sitter: [camdencheek/tree-sitter-go-mod](https://github.com/camdencheek/tree-sitter-go-mod)
+- Tree-sitter: [camdencheek/tree-sitter-go-mod](https://github.com/camdencheek/tree-sitter-go-mod)
 - Language Server: N/A
 
 ## Go Sum
 
-- Tree Sitter: [amaanq/tree-sitter-go-sum](https://github.com/amaanq/tree-sitter-go-sum)
+- Tree-sitter: [amaanq/tree-sitter-go-sum](https://github.com/amaanq/tree-sitter-go-sum)
 - Language Server: N/A
 
 ## Go Work
 
-- Tree Sitter:
+- Tree-sitter:
   [tree-sitter-go-work](https://github.com/d1y/tree-sitter-go-work)
 - Language Server: N/A

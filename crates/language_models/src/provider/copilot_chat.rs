@@ -89,6 +89,14 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         IconName::Copilot
     }
 
+    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let model = CopilotChatModel::default();
+        Some(Arc::new(CopilotChatLanguageModel {
+            model,
+            request_limiter: RateLimiter::new(4),
+        }) as Arc<dyn LanguageModel>)
+    }
+
     fn provided_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         CopilotChatModel::iter()
             .map(|model| {
