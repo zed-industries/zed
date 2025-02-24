@@ -11,7 +11,7 @@ use editor::{
 };
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
-use git::{Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll};
+use git::{status::FileStatus, Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll};
 use gpui::{
     actions, Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity,
     EventEmitter, FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
@@ -51,6 +51,7 @@ struct DiffBuffer {
     path_key: PathKey,
     buffer: Entity<Buffer>,
     diff: Entity<BufferDiff>,
+    file_status: FileStatus,
 }
 
 const CONFLICT_NAMESPACE: &'static str = "0";
@@ -352,6 +353,7 @@ impl ProjectDiff {
                         path_key,
                         buffer,
                         diff: changes,
+                        file_status: entry.status,
                     })
                 }));
             }
@@ -393,6 +395,13 @@ impl ProjectDiff {
                 cx,
             );
         });
+
+        if diff_buffer.file_status.is_deleted() {
+            self.editor.update(cx, |editor, cx| {
+                editor.fold_buffer(snapshot.text.remote_id(), cx)
+            });
+        }
+
         if self.multibuffer.read(cx).is_empty()
             && self
                 .editor
