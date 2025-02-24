@@ -486,22 +486,22 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Sets the decoration of the text to have a line through it.
-    /// [Docs](https://tailwindcss.com/docs/text-decoration#setting-the-text-decoration)
-    fn line_through(mut self) -> Self {
+    /// Sets the text decoration to underline.
+    /// [Docs](https://tailwindcss.com/docs/text-decoration-line#underling-text)
+    fn underline(mut self) -> Self {
         let style = self.text_style().get_or_insert_with(Default::default);
-        style.strikethrough = Some(StrikethroughStyle {
+        style.underline = Some(UnderlineStyle {
             thickness: px(1.),
             ..Default::default()
         });
         self
     }
 
-    /// Sets the text decoration to underline.
-    /// [Docs](https://tailwindcss.com/docs/text-decoration-line#underling-text)
-    fn underline(mut self) -> Self {
+    /// Sets the decoration of the text to have a line through it.
+    /// [Docs](https://tailwindcss.com/docs/text-decoration#setting-the-text-decoration)
+    fn line_through(mut self) -> Self {
         let style = self.text_style().get_or_insert_with(Default::default);
-        style.underline = Some(UnderlineStyle {
+        style.strikethrough = Some(StrikethroughStyle {
             thickness: px(1.),
             ..Default::default()
         });
