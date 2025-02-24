@@ -20,6 +20,131 @@ use sum_tree::MapSeekTarget;
 use util::command::new_std_command;
 use util::ResultExt;
 
+// GIT MERGE-BASE:
+// git merge-base main HEAD -> Most recent commit from main
+// git merge-base @{u} HEAD -> Most recent commit from upstream
+//
+// We can detect what branch is 'main' via `git symbolic-ref refs/remotes/origin/HEAD` (producing: refs/remotes/origin/main)
+// -> This then requires finding which branch has this set as the upstream.
+// -> If all that works, we can reliably determine a branch for checking uncommit.
+// If the above process doesn't work, we can fall back on checking if there's a master or main OR init.defaultBranch at all.
+// -> If there is one, we use that.
+// If both of the above fail, we simply don't do that check.
+//
+// To determine what remote to use for 'main detection' above, we just check every configured remote
+// and then when doing the "most recent commit from main" check, we use all of the branches that we found
+// as 'mains', and show that in the prompt
+//
+// What if git-merge-base is slow?
+// Let's build a git log debug view, so that we can collect timing information on all git commands
+// This will probably be useful for debugging monorepos in various ways.
+//
+// Treat this like LSP commands, only shown and stored if you have a git log debug view open
+//
+// GIT FETCH
+// Need a sync button for running git fetch. VSCode uses `git fetch --all`,,,, so it can help you manage all the git things
+// (and a tree view)
+//  but we should probably just use `git fetch`, as we don't need a tree view
+//
+// GIT PUSH:
+// To figure out which origin to set, just get a list of all origins and ask in a picker prompt, then use '--set-upstream'
+// OR if there is just one origin, use that
+// git push --set-upstream origin git-push
+// (just like VSCode)
+//
+// GIT PULL:
+// VSCode just uses:
+// git pull --tags origin fix-pop-over-2
+//           ^ I wonder why they do this.... probably just so they can always have the latest tags
+//
+// This can cause a confusing scenario when you know a remote branch with the same name exists
+// (and you can even see it in the history view in vscode), but somehow you haven't setup the upstream properly yet.
+// Perhaps we enable git pull, but prompt you in this case that we're going to do this thing. IDK.
+// ^ above is probably too niche to care about
+//
+// Merge / Rebase issue:
+// I'd like there to be contextual buttons for this as well. Maybe "pull" if you're behind, and "rebase" if you're ahead and behind
+// - Check a zed project setting for "default pull behavior" (default: rebase), then check for 'git config pull.rebase'
+//   If either of those set to merge, change the button to 'merge'
+// ALTERNATIVELY: just always delegate to git pull, and if it fails prompt the user to select "merge or rebase"
+// I kind of like making people think about always doing a rebase though. Feels nicely opinionated.
+// I think telling the user what git is going to do is difficult, branches can be individually set to manage this at the git level,
+// and git can be locally or globally configured on what to do in this scenario. Adding another layer of Zed querying or settings seems 😮‍💨
+// I think the alternative plan is more straightforward.
+// ALTERNATIVELY again: If get allows a general "what will pull do on this branch" query that resolves all these settings, maybe we show the merge / rebase buttons
+//  if configured then fallback to prompting
+//
+// GIT CONFLICTS:
+// Create a simple 'git conflicts' tree sitter language that we add, that supports all files
+// It adds a special 'git conflicts' query that we can use to run editor APIs off of
+// This query is only accessible from native zed languages (e.g. extensions can't override this)
+// This allows us to:
+// - Highlight conflicts in the editor and provide UI for resolving them
+// - Open conflicts in one big excerpt in the project diff
+// TODO: Can the syntax map handle this situation? Or does it need a single root language? Or can we
+//       carve out a one-off for this situation?
+// Why use tree-sitter at all? Fast, incremental parsing that we already know how to use efficiently.
+//
+// LOG VIEW:
+// Basically, a way of looking at the output of 'git log'. It's what opens up if you click on the most recent commit.
+// Should be pretty easy and nice. Model it after github desktop.
+// - Each item should allow you to open a read-only multibuffer diff of the commit.
+//  - Let's not worry about large commits for now. Same issue as with our project search
+// - Maybe a button "checkout this commit detached"
+//   If adding this button, make sure that creating a branch correctly handles the detached state.
+//   Git will probably do it for us. But you never know.
+//
+// STAGING VIEW:
+// essentially the same as `git: Diff` except:
+// 0. `git: Staging`
+// 1. No integration with the existing git panel
+//  - MAYBE: You can have a setting which controls which of these diffs the panel tracks
+// 2. Staging and unstaging are seperated one after the other
+// 3. Items re-sort (basically a copy of the sublime merge experience)
+//
+// PANEL:
+//  - Sinced everything is very stable with these checkboxes, we can restore the tree view in the combined diff panel.
+//  - Maybe we have a switcher here for flat vs. tree view
+//  - This does not apply to the staging mode for this panel.
+//
+// KEYBINDINGS / PANEL UX:
+// - Need to add more contextual keystrokes for all the various commands.
+// - TODO: Figure out how to make it feel good to manuever the panel via the keyboard...
+//  - The diff view is pretty reliable for keyboard navigation. I like what conrad has built
+//  - TODO: Make sure everything he's been adding gets merged even if it's broken when doing this big upgrade I have planned.
+// Issues:
+//  - Very little context as to what's been changed and how. If I'm looking at the panel I need those line numbers
+//    to contextualize where I want to double check
+//   - Git performance might be a blocker for line numbers, again let's add that debug view and see how it goes.
+// - How to get down to the commit panel in a way that feels good?
+// - How to show who the collaborators are automatically? - switch to avatars instead of this weird blue button
+// - Once in the commit panel, I need a prompt to finish the commit,
+//  - and another to close this all out and get back to editing.
+// - Essentially, there's a top to bottom flow implied by the panel, but no consistent keyboard driven way to follow (or escape) the flow.
+//
+// ^ I think if we can get all this, we'll have a nice and featureful feeling git experience in Zed. Right now it feels too narrow
+//   to me.
+//
+// SPLIT VIEW:
+//  - Out of scope.
+// HISTORY TREE VIEW:
+//  - Out of scope
+// STASH
+//  - Out of scope
+//
+// Goals for this weekend:
+// - Fetch (remote syncing)
+// - Push
+// - Pull (settings integration?)
+// - keybindings
+// Stretch goals:
+// - git conflicts
+// -  cli log debug view
+// - line numbers
+// - merge-base
+// - git log view
+// - Staging diff and staging panel
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Branch {
     pub is_head: bool,
