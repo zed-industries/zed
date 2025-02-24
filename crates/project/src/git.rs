@@ -1086,7 +1086,7 @@ impl Repository {
         })
     }
 
-    pub fn fetch(&self) -> oneshot::Receiver<Result<()>> {
+    pub fn fetch(&self) -> oneshot::Receiver<Result<Option<String>>> {
         self.send_job(|git_repo| async move {
             match git_repo {
                 GitRepo::Local(git_repository) => git_repository.fetch(),
@@ -1105,7 +1105,7 @@ impl Repository {
                         .await
                         .context("sending fetch request")?;
 
-                    Ok(())
+                    Ok(None)
                 }
             }
         })
@@ -1116,7 +1116,7 @@ impl Repository {
         branch: SharedString,
         remote: SharedString,
         options: Option<PushOptions>,
-    ) -> oneshot::Receiver<Result<()>> {
+    ) -> oneshot::Receiver<Result<Option<String>>> {
         self.send_job(move |git_repo| async move {
             match git_repo {
                 GitRepo::Local(git_repository) => git_repository.push(&branch, &remote, options),
@@ -1141,7 +1141,7 @@ impl Repository {
                         .await
                         .context("sending push request")?;
 
-                    Ok(())
+                    Ok(None)
                 }
             }
         })
@@ -1151,7 +1151,7 @@ impl Repository {
         &self,
         branch: SharedString,
         remote: SharedString,
-    ) -> oneshot::Receiver<Result<()>> {
+    ) -> oneshot::Receiver<Result<Option<String>>> {
         self.send_job(|git_repo| async move {
             match git_repo {
                 GitRepo::Local(git_repository) => git_repository.pull(&branch, &remote),
@@ -1173,7 +1173,7 @@ impl Repository {
                         .context("sending pull request")?;
 
                     // TODO: wire through remote
-                    Ok(())
+                    Ok(None)
                 }
             }
         })

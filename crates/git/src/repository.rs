@@ -185,10 +185,10 @@ pub trait GitRepository: Send + Sync {
         branch_name: &str,
         upstream_name: &str,
         options: Option<PushOptions>,
-    ) -> Result<()>;
-    fn pull(&self, branch_name: &str, upstream_name: &str) -> Result<()>;
+    ) -> Result<Option<String>>;
+    fn pull(&self, branch_name: &str, upstream_name: &str) -> Result<Option<String>>;
     fn get_remotes(&self, branch_name: Option<&str>) -> Result<Vec<Remote>>;
-    fn fetch(&self) -> Result<()>;
+    fn fetch(&self) -> Result<Option<String>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -611,7 +611,7 @@ impl GitRepository for RealGitRepository {
         branch_name: &str,
         remote_name: &str,
         options: Option<PushOptions>,
-    ) -> Result<()> {
+    ) -> Result<Option<String>> {
         let working_directory = self.working_directory()?;
 
         let output = new_std_command(&self.git_binary_path)
@@ -631,11 +631,11 @@ impl GitRepository for RealGitRepository {
                 String::from_utf8_lossy(&output.stderr)
             ));
         } else {
-            Ok(())
+            Ok(get_remote_output(&output.stdout))
         }
     }
 
-    fn pull(&self, branch_name: &str, remote_name: &str) -> Result<()> {
+    fn pull(&self, branch_name: &str, remote_name: &str) -> Result<Option<String>> {
         let working_directory = self.working_directory()?;
 
         let output = new_std_command(&self.git_binary_path)
@@ -651,11 +651,11 @@ impl GitRepository for RealGitRepository {
                 String::from_utf8_lossy(&output.stderr)
             ));
         } else {
-            return Ok(());
+            return Ok(get_remote_output(&output.stdout));
         }
     }
 
-    fn fetch(&self) -> Result<()> {
+    fn fetch(&self) -> Result<Option<String>> {
         let working_directory = self.working_directory()?;
 
         let output = new_std_command(&self.git_binary_path)
@@ -669,7 +669,7 @@ impl GitRepository for RealGitRepository {
                 String::from_utf8_lossy(&output.stderr)
             ));
         } else {
-            return Ok(());
+            return Ok(get_remote_output(&output.stdout));
         }
     }
 
@@ -713,6 +713,20 @@ impl GitRepository for RealGitRepository {
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
+    }
+}
+
+fn get_remote_output(output: &[u8]) -> Option<String> {
+    let remote_output = String::from_utf8_lossy(output);
+    let remote_output = remote_output
+        .lines()
+        .filter_map(|line| line.strip_prefix("remote:"))
+        .map(|line| line.trim())
+        .collect::<Vec<_>>();
+    if remote_output.is_empty() {
+        return None;
+    } else {
+        return Some(remote_output.join("\n"));
     }
 }
 
@@ -899,15 +913,20 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn push(&self, _branch: &str, _remote: &str, _options: Option<PushOptions>) -> Result<()> {
+    fn push(
+        &self,
+        _branch: &str,
+        _remote: &str,
+        _options: Option<PushOptions>,
+    ) -> Result<Option<String>> {
         unimplemented!()
     }
 
-    fn pull(&self, _branch: &str, _remote: &str) -> Result<()> {
+    fn pull(&self, _branch: &str, _remote: &str) -> Result<Option<String>> {
         unimplemented!()
     }
 
-    fn fetch(&self) -> Result<()> {
+    fn fetch(&self) -> Result<Option<String>> {
         unimplemented!()
     }
 
