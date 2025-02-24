@@ -80,6 +80,11 @@ pub enum Message {
         remote_name: SharedString,
         options: Option<PushOptions>,
     },
+    Pull {
+        repo: GitRepo,
+        branch_name: SharedString,
+        remote_name: SharedString,
+    },
     Fetch(GitRepo),
 }
 
@@ -115,6 +120,7 @@ impl GitStore {
 
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_push);
+        client.add_entity_request_handler(Self::handle_pull);
         client.add_entity_request_handler(Self::handle_fetch);
         client.add_entity_request_handler(Self::handle_stage);
         client.add_entity_request_handler(Self::handle_unstage);
@@ -280,6 +286,36 @@ impl GitStore {
                             })
                             .await
                             .context("sending fetch request")?;
+                    }
+                }
+                Ok(())
+            }
+
+            Message::Pull {
+                repo,
+                branch_name,
+                remote_name,
+            } => {
+                match repo {
+                    GitRepo::Local(git_repository) => {
+                        git_repository.pull(&branch_name, &remote_name)?
+                    }
+                    GitRepo::Remote {
+                        project_id,
+                        client,
+                        worktree_id,
+                        work_directory_id,
+                    } => {
+                        client
+                            .request(proto::Pull {
+                                project_id: project_id.0,
+                                worktree_id: worktree_id.to_proto(),
+                                work_directory_id: work_directory_id.to_proto(),
+                                branch_name: branch_name.to_string(),
+                                remote_name: remote_name.to_string(),
+                            })
+                            .await
+                            .context("sending pull request")?;
                     }
                 }
                 Ok(())
@@ -523,6 +559,27 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _cx| {
                 repository_handle.push(branch_name, remote_name, options)
+            })?
+            .await??;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_pull(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Pull>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        let branch_name = envelope.payload.branch_name.into();
+        let remote_name = envelope.payload.remote_name.into();
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _cx| {
+                repository_handle.pull(branch_name, remote_name)
             })?
             .await??;
         Ok(proto::Ack {})
@@ -1108,6 +1165,18 @@ impl Repository {
             branch_name: branch,
             remote_name: remote,
             options,
+        })
+    }
+
+    pub fn pull(
+        &self,
+        branch: SharedString,
+        remote: SharedString,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.send_message(Message::Pull {
+            repo: self.git_repo.clone(),
+            branch_name: branch,
+            remote_name: remote,
         })
     }
 

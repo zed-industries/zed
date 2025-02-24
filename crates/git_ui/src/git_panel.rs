@@ -11,9 +11,9 @@ use editor::{
     scroll::ScrollbarAutoHide, Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer,
     ShowScrollbar,
 };
-use git::repository::{Branch, CommitDetails, PushAction, Remote, ResetMode};
+use git::repository::{Branch, CommitDetails, PushOptions, Remote, ResetMode, UpstreamTracking};
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
-use git::{RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
+use git::{Push, RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::*;
 use itertools::Itertools;
 use language::{Buffer, File};
@@ -1153,17 +1153,39 @@ impl GitPanel {
         self.pending_commit = Some(task);
     }
 
-    fn push(
-        &mut self,
-        push_action: Option<PushAction>,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(push_action) = push_action else {
+    fn fetch(&mut self, _: &git::Fetch, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repo) = self.active_repository.clone() else {
             return;
         };
+        let fetch = repo.read(cx).fetch();
+        cx.spawn(|_, _| fetch).detach_and_log_err(cx);
+    }
 
-        let options = push_action.options();
+    fn pull(&mut self, _: &git::Pull, _window: &mut Window, cx: &mut Context<Self>) {
+        let remote = self.get_current_remote(cx);
+        cx.spawn(move |this, mut cx| async move {
+            let remote = remote.await?;
+
+            this.update(&mut cx, |this, cx| {
+                let Some(repo) = this.active_repository.clone() else {
+                    return Err(anyhow::anyhow!("No active repository"));
+                };
+
+                let Some(branch) = repo.read(cx).current_branch() else {
+                    return Err(anyhow::anyhow!("No active branch"));
+                };
+
+                Ok(repo.read(cx).pull(branch.name.clone(), remote.name))
+            })??
+            .await??;
+
+            anyhow::Ok(())
+        })
+        .detach();
+    }
+
+    fn push(&mut self, action: &git::Push, _window: &mut Window, cx: &mut Context<Self>) {
+        let options = action.options;
         let remote = self.get_current_remote(cx);
         cx.spawn(move |this, mut cx| async move {
             let remote = remote.await?;
@@ -1664,11 +1686,67 @@ impl GitPanel {
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(self.render_repository_selector(cx)),
+                    .child(self.render_repository_selector(cx))
+                    .child(div().flex_grow()) // spacer
+                    .children(self.render_sync_button(cx))
+                    .children(self.render_pull_button(cx)),
             )
         } else {
             None
         }
+    }
+
+    pub fn render_sync_button(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let active_repository = self.project.read(cx).active_repository(cx);
+        active_repository.as_ref().map(|_| {
+            panel_filled_button("Sync")
+                .icon(IconName::ArrowCircle)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .icon_position(IconPosition::Start)
+                .tooltip(Tooltip::for_action_title("git fetch", &git::Fetch))
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.fetch(&git::Fetch, window, cx)),
+                )
+                .into_any_element()
+        })
+    }
+
+    pub fn render_pull_button(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let active_repository = self.project.read(cx).active_repository(cx);
+        active_repository
+            .as_ref()
+            .and_then(|repo| repo.read(cx).current_branch())
+            .and_then(|branch| {
+                branch.upstream.as_ref().map(|upstream| {
+                    let status = &upstream.tracking;
+                    let disabled = status.is_gone();
+
+                    panel_filled_button(match status {
+                        git::repository::UpstreamTracking::Tracked(status) if status.ahead > 0 => {
+                            format!("Pull ({})", status.ahead)
+                        }
+                        _ => "Pull".to_string(),
+                    })
+                    .icon(IconName::ArrowDown)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .icon_position(IconPosition::Start)
+                    .disabled(status.is_gone())
+                    .tooltip(move |window, cx| {
+                        if disabled {
+                            Tooltip::simple("Upstream is gone", cx)
+                        } else {
+                            // TODO: Add <origin> and <branch> argument substitutions to this
+                            Tooltip::for_action("git pull", &git::Pull, window, cx)
+                        }
+                    })
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.pull(&git::Pull, window, cx)),
+                    )
+                    .into_any_element()
+                })
+            })
     }
 
     pub fn render_repository_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2294,31 +2372,48 @@ impl GitPanel {
     }
 
     fn render_push_button(&self, branch: &Branch, cx: &Context<Self>) -> AnyElement {
-        // TODO: think about the GitAction based interface
-        // so that we can enforce a near 1:1 mapping between UI buttons and CLI commands
-        let action = branch.push_action();
-
         let mut disabled = false;
 
-        let button: SharedString = match action {
-            Some(PushAction::Republish) => "Republish".into(),
-            Some(PushAction::Publish) => "Publish".into(),
-            Some(PushAction::ForcePush { ahead, behind }) => {
-                format!("Force Push (-{} -> +{})", ahead, behind).into()
+        // TODO: Add <origin> and <branch> argument substitutions to this
+        let button: SharedString;
+        let tooltip: Option<SharedString>;
+        let action: Option<Push>;
+        if let Some(upstream) = &branch.upstream {
+            match upstream.tracking {
+                UpstreamTracking::Gone => {
+                    button = "Republish".into();
+                    tooltip = Some("git push --set-upstream".into());
+                    action = Some(git::Push {
+                        options: Some(PushOptions::SetUpstream),
+                    });
+                }
+                UpstreamTracking::Tracked(tracking) => {
+                    if tracking.behind > 0 {
+                        button =
+                            format!("Force Push (-{} -> +{})", tracking.ahead, tracking.behind)
+                                .into();
+                        tooltip = Some("git push --force-with-lease".into());
+                        action = Some(git::Push {
+                            options: Some(PushOptions::Force),
+                        });
+                    } else if tracking.ahead > 0 {
+                        button = format!("Push ({})", tracking.ahead).into();
+                        tooltip = Some("git push".into());
+                        action = Some(git::Push { options: None });
+                    } else {
+                        disabled = true;
+                        button = "Push".into();
+                        tooltip = None;
+                        action = None;
+                    }
+                }
             }
-            Some(PushAction::Push { ahead }) => format!("Push (+{})", ahead).into(),
-            None => {
-                disabled = true;
-                "Push".into()
-            }
-        };
-
-        let tooltip: SharedString = match action {
-            Some(PushAction::Republish) => "git push --set-upstream".into(),
-            Some(PushAction::Publish) => "git push --set-upstream".into(),
-            Some(PushAction::ForcePush { .. }) => "git push --force-with-lease".into(),
-            Some(PushAction::Push { .. }) => "git push".into(),
-            None => "Upstream matches local branch".into(),
+        } else {
+            button = "Publish".into();
+            tooltip = Some("git push --set-upstream".into());
+            action = Some(git::Push {
+                options: Some(PushOptions::SetUpstream),
+            });
         };
 
         panel_filled_button(button)
@@ -2327,8 +2422,18 @@ impl GitPanel {
             .icon_color(Color::Muted)
             .icon_position(IconPosition::Start)
             .disabled(disabled)
-            .tooltip(Tooltip::for_action_title(tooltip, &git::Push))
-            .on_click(cx.listener(move |this, _, window, cx| this.push(action, window, cx)))
+            .when_some(action, |this, action| {
+                this.on_click(
+                    cx.listener(move |this, _, window, cx| this.push(&action, window, cx)),
+                )
+            })
+            .tooltip(move |window, cx| {
+                if let Some((tooltip, action)) = tooltip.as_ref().zip(action.as_ref()) {
+                    Tooltip::for_action(tooltip.clone(), &*action, window, cx)
+                } else {
+                    Tooltip::simple("Upstream matches local branch", cx)
+                }
+            })
             .into_any_element()
     }
 
@@ -2381,6 +2486,9 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::unstage_all))
             .on_action(cx.listener(Self::discard_tracked_changes))
             .on_action(cx.listener(Self::clean_all))
+            .on_action(cx.listener(Self::fetch))
+            .on_action(cx.listener(Self::pull))
+            .on_action(cx.listener(Self::push))
             .when(has_write_access && has_co_authors, |git_panel| {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })

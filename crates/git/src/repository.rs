@@ -7,6 +7,8 @@ use git2::BranchType;
 use gpui::SharedString;
 use parking_lot::Mutex;
 use rope::Rope;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use std::borrow::Borrow;
 use std::io::Write as _;
 use std::process::Stdio;
@@ -28,48 +30,11 @@ pub struct Branch {
     pub most_recent_commit: Option<CommitSummary>,
 }
 
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum PushAction {
-    Republish,
-    Publish,
-    ForcePush { ahead: u32, behind: u32 },
-    Push { ahead: u32 },
-}
-
-impl PushAction {
-    pub fn options(&self) -> Option<PushOptions> {
-        match self {
-            PushAction::Republish => Some(PushOptions::SetUpstream),
-            PushAction::Publish => Some(PushOptions::SetUpstream),
-            PushAction::ForcePush { .. } => Some(PushOptions::Force),
-            PushAction::Push { .. } => None,
-        }
-    }
-}
-
 impl Branch {
-    pub fn push_action(&self) -> Option<PushAction> {
-        if let Some(upstream) = &self.upstream {
-            match upstream.tracking {
-                UpstreamTracking::Gone => Some(PushAction::Republish),
-                UpstreamTracking::Tracked(tracking) => {
-                    if tracking.behind > 0 {
-                        Some(PushAction::ForcePush {
-                            ahead: tracking.ahead,
-                            behind: tracking.behind,
-                        })
-                    } else if tracking.ahead > 0 {
-                        Some(PushAction::Push {
-                            ahead: tracking.ahead,
-                        })
-                    } else {
-                        None
-                    }
-                }
-            }
-        } else {
-            Some(PushAction::Publish)
-        }
+    pub fn tracking_status(&self) -> Option<UpstreamTrackingStatus> {
+        self.upstream
+            .as_ref()
+            .and_then(|upstream| upstream.tracking.status())
     }
 
     pub fn priority_key(&self) -> (bool, Option<i64>) {
@@ -88,7 +53,7 @@ pub struct Upstream {
     pub tracking: UpstreamTracking,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum UpstreamTracking {
     /// Remote ref not present in local repository.
     Gone,
@@ -97,6 +62,10 @@ pub enum UpstreamTracking {
 }
 
 impl UpstreamTracking {
+    pub fn is_gone(&self) -> bool {
+        matches!(self, UpstreamTracking::Gone)
+    }
+
     pub fn status(&self) -> Option<UpstreamTrackingStatus> {
         match self {
             UpstreamTracking::Gone => None,
@@ -210,11 +179,12 @@ pub trait GitRepository: Send + Sync {
         upstream_name: &str,
         options: Option<PushOptions>,
     ) -> Result<()>;
+    fn pull(&self, branch_name: &str, upstream_name: &str) -> Result<()>;
     fn get_remotes(&self, branch_name: Option<&str>) -> Result<Vec<Remote>>;
     fn fetch(&self) -> Result<()>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
 pub enum PushOptions {
     SetUpstream,
     Force,
@@ -653,6 +623,27 @@ impl GitRepository for RealGitRepository {
         Ok(())
     }
 
+    fn pull(&self, branch_name: &str, remote_name: &str) -> Result<()> {
+        let working_directory = self.working_directory()?;
+
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["pull", "--quiet"])
+            .arg(remote_name)
+            .arg(branch_name)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to pull:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        // TODO: Get remote response out of this and show it to the user
+        Ok(())
+    }
+
     fn fetch(&self) -> Result<()> {
         let working_directory = self.working_directory()?;
 
@@ -706,9 +697,12 @@ impl GitRepository for RealGitRepository {
                 .collect();
 
             return Ok(remote_names);
+        } else {
+            return Err(anyhow!(
+                "Failed to get remotes:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
-
-        Err(anyhow!("Failed to get remotes"))
     }
 }
 
@@ -896,6 +890,10 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn push(&self, _branch: &str, _remote: &str, _options: Option<PushOptions>) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn pull(&self, _branch: &str, _remote: &str) -> Result<()> {
         unimplemented!()
     }
 

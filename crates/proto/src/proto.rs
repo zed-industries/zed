@@ -449,6 +449,7 @@ messages!(
     (Fetch, Background),
     (GetRemotes, Background),
     (GetRemotesResponse, Background),
+    (Pull, Background),
 );
 
 request_messages!(
@@ -589,6 +590,7 @@ request_messages!(
     (Push, Ack),
     (Fetch, Ack),
     (GetRemotes, GetRemotesResponse),
+    (Pull, Ack),
 );
 
 entity_messages!(
@@ -688,6 +690,7 @@ entity_messages!(
     Push,
     Fetch,
     GetRemotes,
+    Pull,
 );
 
 entity_messages!(
