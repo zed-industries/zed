@@ -3021,11 +3021,23 @@ impl Editor {
         drop(snapshot);
 
         self.transact(window, cx, |this, window, cx| {
-            let edit_ranges = edits
-                .iter()
-                .map(|(range, _)| range)
-                .cloned()
-                .collect::<Vec<_>>();
+            let mut buffer_edits_subscriptions_map =
+                HashMap::<BufferId, text::Subscription>::default();
+
+            // todo! don't do this unless we have to / be smarter about only doing it for
+            // buffers / ranges where edit behavior impls will run
+            for (edit_range, _) in &edits {
+                let edit_range_buffer = this
+                    .buffer()
+                    .read(cx)
+                    .excerpt_containing(edit_range.end, cx)
+                    .map(|e| e.1);
+                if let Some(buffer) = edit_range_buffer {
+                    let (buffer_id, subscription) =
+                        buffer.update(cx, |buffer, _| (buffer.remote_id(), buffer.subscribe()));
+                    buffer_edits_subscriptions_map.insert(buffer_id, subscription);
+                }
+            }
 
             this.buffer.update(cx, |buffer, cx| {
                 buffer.edit(edits, this.autoindent_mode.clone(), cx);
@@ -3114,49 +3126,49 @@ impl Editor {
             this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
             linked_editing_ranges::refresh_linked_ranges(this, window, cx);
             this.refresh_inline_completion(true, false, window, cx);
-            this.handle_auto_edit_behavior(edit_ranges, cx);
+            this.handle_auto_edit_behavior(buffer_edits_subscriptions_map, cx);
         });
     }
 
     fn handle_auto_edit_behavior(
         &mut self,
-        edit_ranges: Vec<Range<Point>>,
+        buffer_edits_subscriptions_map: HashMap<BufferId, text::Subscription>,
         cx: &mut Context<Self>,
     ) {
+        // dbg!(&buffer_edits_subscriptions_map);
         let buf = self.buffer.read(cx).snapshot(cx);
 
         let mut buffer_edit_ranges_map = HashMap::<
             (BufferId, Arc<language::Language>),
-            (BufferSnapshot, Vec<Range<usize>>),
+            (BufferSnapshot, text::Patch<usize>),
         >::default();
 
-        {
-            for edit_range in edit_ranges {
-                let Some(excerpt) = buf.excerpt_containing(edit_range) else {
-                    // None if spans multiple excerpts - which we want to ignore
-                    continue;
-                };
-                let snapshot = excerpt.buffer();
-                let edit_range_buffer = excerpt.buffer_range();
-                let Some(language) = dbg!(snapshot.language_at(edit_range_buffer.end)) else {
+        for (buffer_id, subscription) in buffer_edits_subscriptions_map {
+            let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
+                continue;
+            };
+            let snapshot = buffer.read(cx).snapshot();
+            for edit in subscription.consume() {
+                // todo! determine whether we need to ensure language is set by the time we're here
+                let Some(language) = dbg!(snapshot.language_at(edit.new.end)) else {
                     continue;
                 };
                 if dbg!(language.edit_behavior_provider().is_none()) {
                     continue;
                 }
+
                 // todo! if !langauge.is_edit_behavior_enabled() { continue; }
-                match buffer_edit_ranges_map.entry((excerpt.buffer_id(), language.clone())) {
-                    std::collections::hash_map::Entry::Occupied(mut entry) => {
-                        entry.get_mut().1.push(edit_range_buffer);
-                    }
-                    std::collections::hash_map::Entry::Vacant(entry) => {
-                        entry.insert((snapshot.clone(), vec![edit_range_buffer]));
-                    }
-                }
+                buffer_edit_ranges_map
+                    .entry((snapshot.remote_id(), language.clone()))
+                    .or_insert((snapshot.clone(), text::Patch::default()))
+                    .1
+                    .push(edit);
             }
         }
 
         for ((buffer_id, language), (buffer_snapshot, edited_ranges)) in buffer_edit_ranges_map {
+            let edited_ranges: Vec<Range<usize>> =
+                edited_ranges.into_iter().map(|edit| edit.new).collect();
             let mut excerpt_buffer_parse_status_rx = self
                 .buffer
                 .read(cx)
