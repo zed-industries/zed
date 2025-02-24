@@ -21,7 +21,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
-use feature_flags::{FeatureFlagAppExt, FeatureFlagViewExt, GitUiFeatureFlag};
+use feature_flags::{Debugger, FeatureFlagAppExt, FeatureFlagViewExt, GitUiFeatureFlag};
 use futures::{channel::mpsc, select_biased, StreamExt};
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
@@ -411,8 +411,6 @@ fn initialize_panels(
             cx.clone(),
         );
 
-        let debug_panel = DebugPanel::load(workspace_handle.clone(), cx.clone());
-
         let (
             project_panel,
             outline_panel,
@@ -420,7 +418,6 @@ fn initialize_panels(
             channels_panel,
             chat_panel,
             notification_panel,
-            debug_panel,
         ) = futures::try_join!(
             project_panel,
             outline_panel,
@@ -428,20 +425,28 @@ fn initialize_panels(
             channels_panel,
             chat_panel,
             notification_panel,
-            debug_panel,
         )?;
 
         workspace_handle.update_in(&mut cx, |workspace, window, cx| {
             workspace.add_panel(project_panel, window, cx);
             workspace.add_panel(outline_panel, window, cx);
             workspace.add_panel(terminal_panel, window, cx);
-            workspace.add_panel(debug_panel, window, cx);
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
             cx.when_flag_enabled::<GitUiFeatureFlag>(window, |workspace, window, cx| {
                 let git_panel = git_ui::git_panel::GitPanel::new(workspace, window, cx);
                 workspace.add_panel(git_panel, window, cx);
+            });
+            cx.when_flag_enabled::<Debugger>(window, |_, window, cx| {
+                cx.spawn_in(window, |workspace, mut cx| async move {
+                    let debug_panel = DebugPanel::load(workspace.clone(), cx.clone()).await?;
+                    workspace.update_in(&mut cx, |workspace, window, cx| {
+                        workspace.add_panel(debug_panel, window, cx);
+                    })?;
+                    Result::<_, anyhow::Error>::Ok(())
+                })
+                .detach()
             });
         })?;
 
