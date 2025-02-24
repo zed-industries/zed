@@ -9,6 +9,7 @@ mod telemetry;
 pub mod fake_provider;
 
 use anyhow::Result;
+use client::Client;
 use futures::FutureExt;
 use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
@@ -29,8 +30,9 @@ pub use crate::telemetry::*;
 
 pub const ZED_CLOUD_PROVIDER_ID: &str = "zed.dev";
 
-pub fn init(cx: &mut App) {
+pub fn init(client: Arc<Client>, cx: &mut App) {
     registry::init(cx);
+    RefreshLlmTokenListener::register(client.clone(), cx);
 }
 
 /// The availability of a [`LanguageModel`].

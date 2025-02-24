@@ -10,10 +10,7 @@ use futures::{
     future::BoxFuture, stream::BoxStream, AsyncBufReadExt, FutureExt, Stream, StreamExt,
     TryStreamExt as _,
 };
-use gpui::{
-    AnyElement, AnyView, App, AsyncApp, Context, Entity, EventEmitter, Global, ReadGlobal,
-    Subscription, Task,
-};
+use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
     AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
@@ -22,24 +19,19 @@ use language_model::{
     ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
-    LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider,
+    LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken,
+    MaxMonthlySpendReachedError, PaymentRequiredError, RefreshLlmTokenListener,
 };
-use proto::TypedEnvelope;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::value::RawValue;
 use settings::{Settings, SettingsStore};
-use smol::{
-    io::{AsyncReadExt, BufReader},
-    lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard},
-};
-use std::fmt;
+use smol::io::{AsyncReadExt, BufReader};
 use std::{
     future,
     sync::{Arc, LazyLock},
 };
 use strum::IntoEnumIterator;
-use thiserror::Error;
 use ui::{prelude::*, TintColor};
 
 use crate::provider::anthropic::{
@@ -99,44 +91,6 @@ pub struct AvailableModel {
     /// Any extra beta headers to provide when using the model.
     #[serde(default)]
     pub extra_beta_headers: Vec<String>,
-}
-
-struct GlobalRefreshLlmTokenListener(Entity<RefreshLlmTokenListener>);
-
-impl Global for GlobalRefreshLlmTokenListener {}
-
-pub struct RefreshLlmTokenEvent;
-
-pub struct RefreshLlmTokenListener {
-    _llm_token_subscription: client::Subscription,
-}
-
-impl EventEmitter<RefreshLlmTokenEvent> for RefreshLlmTokenListener {}
-
-impl RefreshLlmTokenListener {
-    pub fn register(client: Arc<Client>, cx: &mut App) {
-        let listener = cx.new(|cx| RefreshLlmTokenListener::new(client, cx));
-        cx.set_global(GlobalRefreshLlmTokenListener(listener));
-    }
-
-    pub fn global(cx: &App) -> Entity<Self> {
-        GlobalRefreshLlmTokenListener::global(cx).0.clone()
-    }
-
-    fn new(client: Arc<Client>, cx: &mut Context<Self>) -> Self {
-        Self {
-            _llm_token_subscription: client
-                .add_message_handler(cx.weak_entity(), Self::handle_refresh_llm_token),
-        }
-    }
-
-    async fn handle_refresh_llm_token(
-        this: Entity<Self>,
-        _: TypedEnvelope<proto::RefreshLlmToken>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |_this, cx| cx.emit(RefreshLlmTokenEvent))
-    }
 }
 
 pub struct CloudLanguageModelProvider {
@@ -473,33 +427,6 @@ pub struct CloudLanguageModel {
     llm_api_token: LlmApiToken,
     client: Arc<Client>,
     request_limiter: RateLimiter,
-}
-
-#[derive(Clone, Default)]
-pub struct LlmApiToken(Arc<RwLock<Option<String>>>);
-
-#[derive(Error, Debug)]
-pub struct PaymentRequiredError;
-
-impl fmt::Display for PaymentRequiredError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Payment required to use this language model. Please upgrade your account."
-        )
-    }
-}
-
-#[derive(Error, Debug)]
-pub struct MaxMonthlySpendReachedError;
-
-impl fmt::Display for MaxMonthlySpendReachedError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Maximum spending limit reached for this month. For more usage, increase your spending limit."
-        )
-    }
 }
 
 impl CloudLanguageModel {
@@ -845,30 +772,6 @@ fn response_lines<T: DeserializeOwned>(
             }
         },
     )
-}
-
-impl LlmApiToken {
-    pub async fn acquire(&self, client: &Arc<Client>) -> Result<String> {
-        let lock = self.0.upgradable_read().await;
-        if let Some(token) = lock.as_ref() {
-            Ok(token.to_string())
-        } else {
-            Self::fetch(RwLockUpgradableReadGuard::upgrade(lock).await, client).await
-        }
-    }
-
-    pub async fn refresh(&self, client: &Arc<Client>) -> Result<String> {
-        Self::fetch(self.0.write().await, client).await
-    }
-
-    async fn fetch<'a>(
-        mut lock: RwLockWriteGuard<'a, Option<String>>,
-        client: &Arc<Client>,
-    ) -> Result<String> {
-        let response = client.request(proto::GetLlmToken {}).await?;
-        *lock = Some(response.token.clone());
-        Ok(response.token.clone())
-    }
 }
 
 struct ConfigurationView {

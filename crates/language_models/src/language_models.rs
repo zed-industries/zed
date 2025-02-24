@@ -11,8 +11,6 @@ mod settings;
 
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
-pub use crate::provider::cloud::LlmApiToken;
-pub use crate::provider::cloud::RefreshLlmTokenListener;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
 use crate::provider::google::GoogleLanguageModelProvider;
 use crate::provider::lmstudio::LmStudioLanguageModelProvider;
@@ -36,8 +34,6 @@ fn register_language_model_providers(
     cx: &mut Context<LanguageModelRegistry>,
 ) {
     use feature_flags::FeatureFlagAppExt;
-
-    RefreshLlmTokenListener::register(client.clone(), cx);
 
     registry.register_provider(
         AnthropicLanguageModelProvider::new(client.http_client(), cx),
