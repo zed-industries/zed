@@ -34,10 +34,7 @@ pub enum Model {
     Claude3_5Sonnet,
     #[serde(rename = "claude-3-5-haiku", alias = "claude-3-5-haiku-latest")]
     Claude3_7Sonnet,
-    #[serde(
-        rename = "claude-3-7-sonnet-20250219",
-        alias = "claude-3-7-sonnet-latest"
-    )]
+    #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
     Claude3_5Haiku,
     #[serde(rename = "claude-3-opus", alias = "claude-3-opus-latest")]
     Claude3Opus,
