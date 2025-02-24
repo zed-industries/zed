@@ -432,7 +432,15 @@ impl MarksState {
                     // Should: recalculate marks for this buffer, and if they've changed update SQLite
                 }
                 BufferEvent::FileHandleChanged => {
-                    // I am not sure how to see what the name was previously in order to remove those marks
+                    let Some(_path) = buffer.read(cx).file().map(|file| file.path().clone()) else {
+                        return;
+                    };
+
+                    let _buffer_id = buffer.read(cx).remote_id();
+
+                    // if this buffer changes file handle to an existing file handle in the marks then it should overwrite that marks collection
+
+                    // find any anchors match the buffer ID if they do then change the path/buffer_id that maps to them.
                 }
                 _ => {}
             }
