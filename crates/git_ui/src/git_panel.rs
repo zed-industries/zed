@@ -26,7 +26,9 @@ use project::{
 };
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
+use std::cell::RefCell;
 use std::future::Future;
+use std::rc::Rc;
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
@@ -34,7 +36,7 @@ use ui::{
     prelude::*, ButtonLike, Checkbox, ContextMenu, Divider, DividerColor, ElevationIndex, ListItem,
     ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
 };
-use util::{maybe, ResultExt, TryFutureExt};
+use util::{maybe, post_inc, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotificationId},
@@ -174,7 +176,11 @@ struct PendingOperation {
     op_id: usize,
 }
 
+type RemoteOperations = Rc<RefCell<HashSet<u32>>>;
+
 pub struct GitPanel {
+    remote_operation_id: u32,
+    pending_remote_operations: RemoteOperations,
     active_repository: Option<Entity<Repository>>,
     commit_editor: Entity<Editor>,
     conflicted_count: usize,
@@ -203,6 +209,17 @@ pub struct GitPanel {
     width: Option<Pixels>,
     workspace: WeakEntity<Workspace>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+}
+
+struct RemoteOperationGuard {
+    id: u32,
+    pending_remote_operations: RemoteOperations,
+}
+
+impl Drop for RemoteOperationGuard {
+    fn drop(&mut self) {
+        self.pending_remote_operations.borrow_mut().remove(&self.id);
+    }
 }
 
 fn commit_message_editor(
@@ -282,6 +299,8 @@ impl GitPanel {
                 cx.new(|cx| RepositorySelector::new(project.clone(), window, cx));
 
             let mut git_panel = Self {
+                pending_remote_operations: Default::default(),
+                remote_operation_id: 0,
                 active_repository,
                 commit_editor,
                 conflicted_count: 0,
@@ -334,6 +353,16 @@ impl GitPanel {
         };
         self.selected_entry = Some(*ix);
         cx.notify();
+    }
+
+    fn start_remote_operation(&mut self) -> RemoteOperationGuard {
+        let id = post_inc(&mut self.remote_operation_id);
+        self.pending_remote_operations.borrow_mut().insert(id);
+
+        RemoteOperationGuard {
+            id,
+            pending_remote_operations: self.pending_remote_operations.clone(),
+        }
     }
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
@@ -1157,11 +1186,18 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
+        let guard = self.start_remote_operation();
         let fetch = repo.read(cx).fetch();
-        cx.spawn(|_, _| fetch).detach_and_log_err(cx);
+        cx.spawn(|_, _| async move {
+            fetch.await??;
+            drop(guard);
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn pull(&mut self, _: &git::Pull, _window: &mut Window, cx: &mut Context<Self>) {
+        let guard = self.start_remote_operation();
         let remote = self.get_current_remote(cx);
         cx.spawn(move |this, mut cx| async move {
             let remote = remote.await?;
@@ -1179,12 +1215,14 @@ impl GitPanel {
             })??
             .await??;
 
+            drop(guard);
             anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 
     fn push(&mut self, action: &git::Push, _window: &mut Window, cx: &mut Context<Self>) {
+        let guard = self.start_remote_operation();
         let options = action.options;
         let remote = self.get_current_remote(cx);
         cx.spawn(move |this, mut cx| async move {
@@ -1205,26 +1243,16 @@ impl GitPanel {
             })??
             .await??;
 
+            drop(guard);
             anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 
     fn get_current_remote(
         &mut self,
         cx: &mut Context<Self>,
     ) -> impl Future<Output = Result<Remote>> {
-        // TODO for tonight:
-        // 1. Wire through the remote querying APIs in git
-        // 2. Add buttons
-        // 3. Make sure that it works
-        // 4. Prep for the demo tomorrow
-
-        // TODO:
-        // Check if we have a remote `git config --get branch.git-push.remote`
-        // If we don't have a remote, check what origins we have
-        //  -> If we have one, return it
-        // If we have multiple origins, open a prompt picker
         let repo = self.active_repository.clone();
         let mut cx = cx.to_async();
 
@@ -1688,12 +1716,32 @@ impl GitPanel {
                     )
                     .child(self.render_repository_selector(cx))
                     .child(div().flex_grow()) // spacer
-                    .children(self.render_sync_button(cx))
-                    .children(self.render_pull_button(cx)),
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_1()
+                            .children(self.render_spinner(cx))
+                            .children(self.render_sync_button(cx))
+                            .children(self.render_pull_button(cx)),
+                    ),
             )
         } else {
             None
         }
+    }
+
+    pub fn render_spinner(&self, _cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        (!self.pending_remote_operations.borrow().is_empty()).then(|| {
+            Icon::new(IconName::ArrowCircle)
+                .size(IconSize::XSmall)
+                .color(Color::Info)
+                .with_animation(
+                    "arrow-circle",
+                    Animation::new(Duration::from_secs(2)).repeat(),
+                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                )
+                .into_any_element()
+        })
     }
 
     pub fn render_sync_button(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -1720,11 +1768,12 @@ impl GitPanel {
             .and_then(|branch| {
                 branch.upstream.as_ref().map(|upstream| {
                     let status = &upstream.tracking;
+
                     let disabled = status.is_gone();
 
                     panel_filled_button(match status {
-                        git::repository::UpstreamTracking::Tracked(status) if status.ahead > 0 => {
-                            format!("Pull ({})", status.ahead)
+                        git::repository::UpstreamTracking::Tracked(status) if status.behind > 0 => {
+                            format!("Pull ({})", status.behind)
                         }
                         _ => "Pull".to_string(),
                     })
@@ -2390,7 +2439,7 @@ impl GitPanel {
                 UpstreamTracking::Tracked(tracking) => {
                     if tracking.behind > 0 {
                         button =
-                            format!("Force Push (-{} -> +{})", tracking.ahead, tracking.behind)
+                            format!("Force Push (-{} -> +{})", tracking.behind, tracking.ahead)
                                 .into();
                         tooltip = Some("git push --force-with-lease".into());
                         action = Some(git::Push {

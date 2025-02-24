@@ -97,6 +97,7 @@ pub struct CommitDetails {
     pub committer_name: SharedString,
 }
 
+#[derive(Debug)]
 pub struct Remote {
     pub name: SharedString,
 }
@@ -677,7 +678,7 @@ impl GitRepository for RealGitRepository {
                 let remote_name = String::from_utf8_lossy(&output.stdout);
 
                 return Ok(vec![Remote {
-                    name: remote_name.to_string().into(),
+                    name: remote_name.trim().to_string().into(),
                 }]);
             }
         }
@@ -692,7 +693,7 @@ impl GitRepository for RealGitRepository {
                 .split('\n')
                 .filter(|name| !name.is_empty())
                 .map(|name| Remote {
-                    name: name.to_string().into(),
+                    name: name.trim().to_string().into(),
                 })
                 .collect();
 
