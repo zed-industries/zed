@@ -4,7 +4,7 @@ use crate::repository_selector::RepositorySelectorPopoverMenu;
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
-use crate::{project_diff, ProjectDiff};
+use crate::{picker_prompt, project_diff, ProjectDiff};
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::commit_tooltip::CommitTooltip;
@@ -1216,9 +1216,9 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
-    fn pull(&mut self, _: &git::Pull, _window: &mut Window, cx: &mut Context<Self>) {
+    fn pull(&mut self, _: &git::Pull, window: &mut Window, cx: &mut Context<Self>) {
         let guard = self.start_remote_operation();
-        let remote = self.get_current_remote(cx);
+        let remote = self.get_current_remote(window, cx);
         cx.spawn(move |this, mut cx| async move {
             let remote = remote.await?;
 
@@ -1241,10 +1241,10 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
-    fn push(&mut self, action: &git::Push, _window: &mut Window, cx: &mut Context<Self>) {
+    fn push(&mut self, action: &git::Push, window: &mut Window, cx: &mut Context<Self>) {
         let guard = self.start_remote_operation();
         let options = action.options;
-        let remote = self.get_current_remote(cx);
+        let remote = self.get_current_remote(window, cx);
         cx.spawn(move |this, mut cx| async move {
             let remote = remote.await?;
 
@@ -1271,17 +1271,19 @@ impl GitPanel {
 
     fn get_current_remote(
         &mut self,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl Future<Output = Result<Remote>> {
         let repo = self.active_repository.clone();
-        let mut cx = cx.to_async();
+        let workspace = self.workspace.clone();
+        let mut cx = window.to_async(cx);
 
         async move {
             let Some(repo) = repo else {
                 return Err(anyhow::anyhow!("No active repository"));
             };
 
-            let current_remotes = repo
+            let mut current_remotes: Vec<Remote> = repo
                 .update(&mut cx, |repo, cx| {
                     let Some(current_branch) = repo.current_branch() else {
                         return Err(anyhow::anyhow!("No active branch"));
@@ -1291,13 +1293,25 @@ impl GitPanel {
                 })??
                 .await?;
 
-            // TODO: Implement logic to handle multiple remotes
-            let current_remote = current_remotes
-                .into_iter()
-                .next()
-                .ok_or_else(|| anyhow::anyhow!("No active remote"))?;
+            if current_remotes.len() == 0 {
+                return Err(anyhow::anyhow!("No active remote"));
+            } else if current_remotes.len() == 1 {
+                return Ok(current_remotes.pop().unwrap());
+            } else {
+                let current_remotes: Vec<_> = current_remotes
+                    .into_iter()
+                    .map(|remotes| remotes.name)
+                    .collect();
+                let selection = cx
+                    .update(|window, cx| {
+                        picker_prompt::prompt(current_remotes.clone(), workspace, window, cx)
+                    })?
+                    .await?;
 
-            Ok(current_remote)
+                return Ok(Remote {
+                    name: current_remotes[selection].clone(),
+                });
+            }
         }
     }
 

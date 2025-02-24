@@ -97,7 +97,7 @@ pub struct CommitDetails {
     pub committer_name: SharedString,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Remote {
     pub name: SharedString,
 }
