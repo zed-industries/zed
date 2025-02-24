@@ -67,6 +67,7 @@ impl CloudModel {
                 }
                 anthropic::Model::Claude3Opus
                 | anthropic::Model::Claude3Sonnet
+                | anthropic::Model::Claude3_7Sonnet
                 | anthropic::Model::Claude3Haiku
                 | anthropic::Model::Claude3_5Haiku
                 | anthropic::Model::Custom { .. } => {
