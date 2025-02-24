@@ -177,6 +177,7 @@ struct PendingOperation {
 pub struct GitPanel {
     pub(crate) active_repository: Option<Entity<Repository>>,
     commit_editor: Entity<Editor>,
+    suggested_commit_message: Option<String>,
     conflicted_count: usize,
     conflicted_staged_count: usize,
     current_modifiers: Modifiers,
@@ -288,6 +289,7 @@ impl GitPanel {
             let mut git_panel = Self {
                 active_repository,
                 commit_editor,
+                suggested_commit_message: None,
                 conflicted_count: 0,
                 conflicted_staged_count: 0,
                 current_modifiers: window.modifiers(),
@@ -1155,6 +1157,57 @@ impl GitPanel {
         self.pending_commit = Some(task);
     }
 
+    /// Suggests a commit message based on the changed files and their statuses
+    pub fn suggest_commit_message(&self) -> Option<String> {
+        let entries = self
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                if let GitListEntry::GitStatusEntry(status_entry) = entry {
+                    Some(status_entry)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<&GitStatusEntry>>();
+
+        if entries.is_empty() {
+            None
+        } else if entries.len() == 1 {
+            let entry = &entries[0];
+            let file_name = entry
+                .repo_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
+
+            if entry.status.is_deleted() {
+                Some(format!("Delete {}", file_name).into())
+            } else if entry.status.is_created() {
+                Some(format!("Create {}", file_name).into())
+            } else if entry.status.is_modified() {
+                Some(format!("Update {}", file_name).into())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn update_editor_placeholder(&mut self, cx: &mut Context<Self>) {
+        let suggested_commit_message = self.suggest_commit_message();
+        self.suggested_commit_message = suggested_commit_message.clone();
+
+        if let Some(suggested_commit_message) = suggested_commit_message {
+            self.commit_editor.update(cx, |editor, cx| {
+                editor.set_placeholder_text(Arc::from(suggested_commit_message), cx)
+            });
+        }
+
+        cx.notify();
+    }
+
     fn potential_co_authors(&self, cx: &App) -> Vec<(String, String)> {
         let mut new_co_authors = Vec::new();
         let project = self.project.read(cx);
@@ -1280,6 +1333,7 @@ impl GitPanel {
                             git_panel.clear_pending();
                         }
                         git_panel.update_visible_entries(cx);
+                        git_panel.update_editor_placeholder(cx);
                     })
                     .ok();
             }
