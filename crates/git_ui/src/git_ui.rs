@@ -9,6 +9,7 @@ pub mod branch_picker;
 mod commit_modal;
 pub mod git_panel;
 mod git_panel_settings;
+pub mod picker_prompt;
 pub mod project_diff;
 pub mod repository_selector;
 

@@ -1,7 +1,7 @@
 use crate::{
     self as gpui, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle, DefiniteLength,
     Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla, JustifyContent, Length,
-    SharedString, StrikethroughStyle, StyleRefinement, TextOverflow, WhiteSpace,
+    SharedString, StrikethroughStyle, StyleRefinement, TextOverflow, UnderlineStyle, WhiteSpace,
 };
 use crate::{TextAlign, TextStyleRefinement};
 pub use gpui_macros::{
@@ -483,6 +483,17 @@ pub trait Styled: Sized {
         self.text_style()
             .get_or_insert_with(Default::default)
             .font_style = Some(FontStyle::Normal);
+        self
+    }
+
+    /// Sets the text decoration to underline.
+    /// [Docs](https://tailwindcss.com/docs/text-decoration-line#underling-text)
+    fn underline(mut self) -> Self {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        style.underline = Some(UnderlineStyle {
+            thickness: px(1.),
+            ..Default::default()
+        });
         self
     }
 

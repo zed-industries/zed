@@ -159,7 +159,12 @@ impl CommitModal {
             let branch = git_panel
                 .active_repository
                 .as_ref()
-                .and_then(|repo| repo.read(cx).branch().map(|b| b.name.clone()))
+                .and_then(|repo| {
+                    repo.read(cx)
+                        .repository_entry
+                        .branch()
+                        .map(|b| b.name.clone())
+                })
                 .unwrap_or_else(|| "<no branch>".into());
             let tooltip = if git_panel.has_staged_changes() {
                 "Commit staged changes"
@@ -191,6 +196,7 @@ impl CommitModal {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
             }))
             .style(ButtonStyle::Transparent);
+
         h_flex()
             .w_full()
             .justify_between()
