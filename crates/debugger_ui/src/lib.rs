@@ -17,12 +17,12 @@ pub fn init(cx: &mut App) {
     DebuggerSettings::register(cx);
     workspace::FollowableViewRegistry::register::<DebugSession>(cx);
 
-    cx.observe_new(|workspace: &mut Workspace, window, cx| {
+    cx.observe_new(|_: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
         };
 
-        cx.when_flag_enabled::<Debugger>(window, |workspace, _, cx| {
+        cx.when_flag_enabled::<Debugger>(window, |workspace, _, _| {
             workspace
                 .register_action(|workspace, _: &ToggleFocus, window, cx| {
                     workspace.toggle_panel_focus::<DebugPanel>(window, cx);
