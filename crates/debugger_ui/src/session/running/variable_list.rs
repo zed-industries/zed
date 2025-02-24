@@ -1,13 +1,13 @@
 use super::stack_frame_list::{StackFrameId, StackFrameList, StackFrameListEvent};
 use anyhow::{anyhow, Result};
-use dap::{proto_conversions::ProtoConversion, Scope, ScopePresentationHint, Variable};
+use dap::{proto_conversions::ProtoConversion, Scope, ScopePresentationHint};
 use editor::{actions::SelectAll, Editor, EditorEvent};
 use gpui::{
     actions, anchored, deferred, list, AnyElement, ClipboardItem, Context, DismissEvent, Entity,
     FocusHandle, Focusable, Hsla, ListOffset, ListState, MouseDownEvent, Point, Subscription, Task,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::debugger::session::{self, Session};
+use project::debugger::session::{self, Session, Variable, VariableListContainer};
 use rpc::proto::{
     self, DebuggerScopeVariableIndex, DebuggerVariableContainer, VariableListScopes,
     VariableListVariables,
@@ -29,29 +29,6 @@ pub struct VariableContainer {
     pub depth: usize,
 }
 
-impl ProtoConversion for VariableContainer {
-    type ProtoType = DebuggerVariableContainer;
-    type Output = Result<Self>;
-
-    fn to_proto(&self) -> Self::ProtoType {
-        DebuggerVariableContainer {
-            container_reference: self.container_reference,
-            depth: self.depth as u64,
-            variable: Some(self.variable.to_proto()),
-        }
-    }
-
-    fn from_proto(payload: Self::ProtoType) -> Self::Output {
-        Ok(Self {
-            container_reference: payload.container_reference,
-            variable: payload.variable.map(Variable::from_proto).ok_or(anyhow!(
-                "DebuggerVariableContainer proto message didn't contain DapVariable variable field"
-            ))?,
-            depth: payload.depth as usize,
-        })
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetVariableState {
     name: String,
@@ -62,66 +39,6 @@ pub struct SetVariableState {
     parent_variables_reference: u64,
 }
 
-impl SetVariableState {
-    fn _from_proto(payload: proto::DebuggerSetVariableState) -> Option<Self> {
-        let scope = payload.scope.map(|scope| {
-            let proto_hint = scope
-                .presentation_hint
-                .unwrap_or(proto::DapScopePresentationHint::ScopeUnknown.into());
-
-            let presentation_hint = match proto::DapScopePresentationHint::from_i32(proto_hint) {
-                Some(proto::DapScopePresentationHint::Arguments) => {
-                    Some(ScopePresentationHint::Arguments)
-                }
-                Some(proto::DapScopePresentationHint::Locals) => {
-                    Some(ScopePresentationHint::Locals)
-                }
-                Some(proto::DapScopePresentationHint::Registers) => {
-                    Some(ScopePresentationHint::Registers)
-                }
-                Some(proto::DapScopePresentationHint::ReturnValue) => {
-                    Some(ScopePresentationHint::ReturnValue)
-                }
-                _ => Some(ScopePresentationHint::Unknown),
-            };
-
-            Scope {
-                name: scope.name,
-                presentation_hint,
-                variables_reference: scope.variables_reference,
-                named_variables: scope.named_variables,
-                indexed_variables: scope.indexed_variables,
-                expensive: scope.expensive,
-                source: None,
-                line: scope.line,
-                column: scope.column,
-                end_line: scope.end_line,
-                end_column: scope.end_column,
-            }
-        })?;
-
-        Some(SetVariableState {
-            name: payload.name,
-            scope,
-            value: payload.value,
-            stack_frame_id: payload.stack_frame_id,
-            evaluate_name: payload.evaluate_name.clone(),
-            parent_variables_reference: payload.parent_variables_reference,
-        })
-    }
-
-    fn _to_proto(&self) -> proto::DebuggerSetVariableState {
-        proto::DebuggerSetVariableState {
-            name: self.name.clone(),
-            scope: Some(self.scope.to_proto()),
-            value: self.value.clone(),
-            stack_frame_id: self.stack_frame_id,
-            evaluate_name: self.evaluate_name.clone(),
-            parent_variables_reference: self.parent_variables_reference,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum OpenEntry {
     Scope {
@@ -130,59 +47,21 @@ pub enum OpenEntry {
     Variable {
         scope_name: String,
         name: String,
-        depth: usize,
+        depth: u8,
     },
-}
-
-impl OpenEntry {
-    pub(crate) fn _from_proto(open_entry: &proto::VariableListOpenEntry) -> Option<Self> {
-        match open_entry.entry.as_ref()? {
-            proto::variable_list_open_entry::Entry::Scope(state) => Some(Self::Scope {
-                name: state.name.clone(),
-            }),
-            proto::variable_list_open_entry::Entry::Variable(state) => Some(Self::Variable {
-                name: state.name.clone(),
-                depth: state.depth as usize,
-                scope_name: state.scope_name.clone(),
-            }),
-        }
-    }
-
-    pub(crate) fn _to_proto(&self) -> proto::VariableListOpenEntry {
-        let entry = match self {
-            OpenEntry::Scope { name } => {
-                proto::variable_list_open_entry::Entry::Scope(proto::DebuggerOpenEntryScope {
-                    name: name.clone(),
-                })
-            }
-            OpenEntry::Variable {
-                name,
-                depth,
-                scope_name,
-            } => {
-                proto::variable_list_open_entry::Entry::Variable(proto::DebuggerOpenEntryVariable {
-                    name: name.clone(),
-                    depth: *depth as u64,
-                    scope_name: scope_name.clone(),
-                })
-            }
-        };
-
-        proto::VariableListOpenEntry { entry: Some(entry) }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VariableListEntry {
     Scope(Scope),
     SetVariableEditor {
-        depth: usize,
+        depth: u8,
         state: SetVariableState,
     },
     Variable {
-        depth: usize,
+        depth: u8,
         scope: Arc<Scope>,
-        variable: Arc<Variable>,
+        variable: Arc<dap::Variable>,
         has_children: bool,
         container_reference: u64,
     },
@@ -262,7 +141,7 @@ impl ScopeVariableIndex {
 
         cursor.seek(&0, editor::Bias::Left, &());
         while let Some(variable) = cursor.item() {
-            if variable.variable.variables_reference == container_reference {
+            if variable.variable.dap.variables_reference == container_reference {
                 found_insertion_point = true;
 
                 let start = *cursor.start();
@@ -489,7 +368,9 @@ impl VariableList {
         let entry = &entries[ix];
         match entry {
             session::VariableListContainer::Scope(scope) => self.render_scope(scope, false, cx), // todo(debugger) pass a valid value for is selected
-            _ => div().into_any_element(),
+            session::VariableListContainer::Variable(variable) => {
+                self.render_variable(variable, false, cx)
+            }
         }
     }
 
@@ -508,17 +389,17 @@ impl VariableList {
         };
 
         let entry_id = OpenEntry::Variable {
-            depth,
-            name: variable.name.clone(),
+            depth: 1u8,
+            name: variable.dap.name.clone(),
             scope_name: scope.name.clone(),
         };
 
-        let has_children = variable.variables_reference > 0;
+        let has_children = variable.dap.variables_reference > 0;
         let disclosed = has_children.then(|| self.open_entries.binary_search(&entry_id).is_ok());
 
         // if we already opened the variable/we already fetched it
         // we can just toggle it because we already have the nested variable
-        if disclosed.unwrap_or(true) || variable_index.fetched(&variable.variables_reference) {
+        if disclosed.unwrap_or(true) || variable_index.fetched(&variable.dap.variables_reference) {
             return self.toggle_entry(&entry_id, cx);
         }
 
@@ -538,7 +419,7 @@ impl VariableList {
             "Toggling variables isn't supported yet (dued to refactor)"
         )));
 
-        let container_reference = variable.variables_reference;
+        let container_reference = variable.dap.variables_reference;
         let entry_id = entry_id.clone();
 
         self.fetch_variables_task = Some(cx.spawn(|this, mut cx| async move {
@@ -575,148 +456,6 @@ impl VariableList {
                 self.open_entries.insert(ix, entry_id.clone());
             }
         };
-
-        self.build_entries(false, cx);
-    }
-
-    pub fn build_entries(&mut self, open_first_scope: bool, cx: &mut Context<Self>) {
-        let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
-
-        let Some(scopes) = self.scopes.get(&stack_frame_id) else {
-            return;
-        };
-
-        let mut entries: Vec<VariableListEntry> = Vec::default();
-        for scope in scopes {
-            let Some(index) = self
-                .variables
-                .get(&(stack_frame_id, scope.variables_reference))
-            else {
-                continue;
-            };
-
-            if index.is_empty() {
-                continue;
-            }
-
-            let scope_open_entry_id = OpenEntry::Scope {
-                name: scope.name.clone(),
-            };
-
-            if open_first_scope
-                && entries.is_empty()
-                && self
-                    .open_entries
-                    .binary_search(&scope_open_entry_id)
-                    .is_err()
-            {
-                self.open_entries.push(scope_open_entry_id.clone());
-            }
-            entries.push(VariableListEntry::Scope(scope.clone()));
-
-            if self
-                .open_entries
-                .binary_search(&scope_open_entry_id)
-                .is_err()
-            {
-                continue;
-            }
-
-            let mut depth_check: Option<usize> = None;
-
-            for variable_container in index.variables().iter() {
-                let depth = variable_container.depth;
-                let variable = &variable_container.variable;
-                let container_reference = variable_container.container_reference;
-
-                if depth_check.is_some_and(|d| depth > d) {
-                    continue;
-                }
-
-                if depth_check.is_some_and(|d| d >= depth) {
-                    depth_check = None;
-                }
-
-                if self
-                    .open_entries
-                    .binary_search(&OpenEntry::Variable {
-                        depth,
-                        name: variable.name.clone(),
-                        scope_name: scope.name.clone(),
-                    })
-                    .is_err()
-                {
-                    if depth_check.is_none() || depth_check.is_some_and(|d| d > depth) {
-                        depth_check = Some(depth);
-                    }
-                }
-
-                if let Some(state) = self.set_variable_state.as_ref() {
-                    if state.parent_variables_reference == container_reference
-                        && state.scope.variables_reference == scope.variables_reference
-                        && state.name == variable.name
-                    {
-                        entries.push(VariableListEntry::SetVariableEditor {
-                            depth,
-                            state: state.clone(),
-                        });
-                    }
-                }
-
-                entries.push(VariableListEntry::Variable {
-                    depth,
-                    scope: Arc::new(scope.clone()),
-                    variable: Arc::new(variable.clone()),
-                    has_children: variable.variables_reference > 0,
-                    container_reference,
-                });
-            }
-        }
-
-        let old_entries = self.entries.get(&stack_frame_id).cloned();
-        let old_scroll_top = self.list.logical_scroll_top();
-
-        let len = entries.len();
-        self.entries.insert(stack_frame_id, entries.clone());
-        self.list.reset(len);
-
-        if let Some(old_entries) = old_entries.as_ref() {
-            if let Some(old_top_entry) = old_entries.get(old_scroll_top.item_ix) {
-                let new_scroll_top = old_entries
-                    .iter()
-                    .position(|entry| entry == old_top_entry)
-                    .map(|item_ix| ListOffset {
-                        item_ix,
-                        offset_in_item: old_scroll_top.offset_in_item,
-                    })
-                    .or_else(|| {
-                        let entry_after_old_top = old_entries.get(old_scroll_top.item_ix + 1)?;
-                        let item_ix = entries
-                            .iter()
-                            .position(|entry| entry == entry_after_old_top)?;
-                        Some(ListOffset {
-                            item_ix,
-                            offset_in_item: Pixels::ZERO,
-                        })
-                    })
-                    .or_else(|| {
-                        let entry_before_old_top =
-                            old_entries.get(old_scroll_top.item_ix.saturating_sub(1))?;
-                        let item_ix = entries
-                            .iter()
-                            .position(|entry| entry == entry_before_old_top)?;
-                        Some(ListOffset {
-                            item_ix,
-                            offset_in_item: Pixels::ZERO,
-                        })
-                    });
-
-                self.list
-                    .scroll_to(new_scroll_top.unwrap_or(old_scroll_top));
-            }
-        }
-
-        cx.notify();
     }
 
     fn fetch_nested_variables(
@@ -749,16 +488,16 @@ impl VariableList {
 
         let context_menu = ContextMenu::build(window, cx, |menu, window, _cx| {
             menu.entry("Copy name", None, {
-                let variable_name = variable.name.clone();
+                let variable_name = variable.dap.name.clone();
                 move |_window, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(variable_name.clone()))
                 }
             })
             .entry("Copy value", None, {
                 let source = scope.source.clone();
-                let variable_value = variable.value.clone();
-                let variable_name = variable.name.clone();
-                let evaluate_name = variable.evaluate_name.clone();
+                let variable_value = variable.dap.value.clone();
+                let variable_name = variable.dap.name.clone();
+                let evaluate_name = variable.dap.evaluate_name.clone();
 
                 window.handler_for(&this.clone(), move |this, _window, cx| {
                     if support_clipboard_context {
@@ -779,7 +518,7 @@ impl VariableList {
                 })
             })
             .when_some(
-                variable.memory_reference.clone(),
+                variable.dap.memory_reference.clone(),
                 |menu, memory_reference| {
                     menu.entry(
                         "Copy memory reference",
@@ -802,20 +541,20 @@ impl VariableList {
                     window.handler_for(&this, move |this, window, cx| {
                         this.set_variable_state = Some(SetVariableState {
                             parent_variables_reference,
-                            name: variable.name.clone(),
+                            name: variable.dap.name.clone(),
                             scope: scope.clone(),
-                            evaluate_name: variable.evaluate_name.clone(),
-                            value: variable.value.clone(),
+                            evaluate_name: variable.dap.evaluate_name.clone(),
+                            value: variable.dap.value.clone(),
                             stack_frame_id: this.stack_frame_list.read(cx).current_stack_frame_id(),
                         });
 
                         this.set_variable_editor.update(cx, |editor, cx| {
-                            editor.set_text(variable.value.clone(), window, cx);
+                            editor.set_text(variable.dap.value.clone(), window, cx);
                             editor.select_all(&SelectAll, window, cx);
                             window.focus(&editor.focus_handle(cx))
                         });
 
-                        this.build_entries(false, cx);
+                        // this.build_entries(false, cx);
                     }),
                 )
             })
@@ -843,8 +582,6 @@ impl VariableList {
         if self.set_variable_state.take().is_none() {
             return;
         };
-
-        self.build_entries(false, cx);
     }
 
     fn set_variable_value(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -927,40 +664,40 @@ impl VariableList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(selection) = &self.selection {
-            match selection {
-                VariableListEntry::Scope(scope) => {
-                    let entry_id = &OpenEntry::Scope {
-                        name: scope.name.clone(),
-                    };
+        // if let Some(selection) = &self.selection {
+        //     match selection {
+        //         VariableListEntry::Scope(scope) => {
+        //             let entry_id = &OpenEntry::Scope {
+        //                 name: scope.name.clone(),
+        //             };
 
-                    if self.open_entries.binary_search(entry_id).is_err() {
-                        self.select_prev(&SelectPrev, window, cx);
-                    } else {
-                        self.toggle_entry(entry_id, cx);
-                    }
-                }
-                VariableListEntry::Variable {
-                    depth,
-                    variable,
-                    scope,
-                    ..
-                } => {
-                    let entry_id = &OpenEntry::Variable {
-                        depth: *depth,
-                        name: variable.name.clone(),
-                        scope_name: scope.name.clone(),
-                    };
+        //             if self.open_entries.binary_search(entry_id).is_err() {
+        //                 self.select_prev(&SelectPrev, window, cx);
+        //             } else {
+        //                 self.toggle_entry(entry_id, cx);
+        //             }
+        //         }
+        //         VariableListEntry::Variable {
+        //             depth,
+        //             variable,
+        //             scope,
+        //             ..
+        //         } => {
+        //             let entry_id = &OpenEntry::Variable {
+        //                 depth: *depth,
+        //                 name: variable.name.clone(),
+        //                 scope_name: scope.name.clone(),
+        //             };
 
-                    if self.open_entries.binary_search(entry_id).is_err() {
-                        self.select_prev(&SelectPrev, window, cx);
-                    } else {
-                        self.toggle_variable(&scope.clone(), &variable.clone(), *depth, cx);
-                    }
-                }
-                VariableListEntry::SetVariableEditor { .. } => {}
-            }
-        }
+        //             if self.open_entries.binary_search(entry_id).is_err() {
+        //                 self.select_prev(&SelectPrev, window, cx);
+        //             } else {
+        //                 // todo
+        //             }
+        //         }
+        //         VariableListEntry::SetVariableEditor { .. } => {}
+        //     }
+        // }
     }
 
     fn expand_selected_entry(
@@ -969,40 +706,41 @@ impl VariableList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(selection) = &self.selection {
-            match selection {
-                VariableListEntry::Scope(scope) => {
-                    let entry_id = &OpenEntry::Scope {
-                        name: scope.name.clone(),
-                    };
+        // todo(debugger) Implement expand_selected_entry
+        // if let Some(selection) = &self.selection {
+        //     match selection {
+        //         VariableListEntry::Scope(scope) => {
+        //             let entry_id = &OpenEntry::Scope {
+        //                 name: scope.name.clone(),
+        //             };
 
-                    if self.open_entries.binary_search(entry_id).is_ok() {
-                        self.select_next(&SelectNext, window, cx);
-                    } else {
-                        self.toggle_entry(entry_id, cx);
-                    }
-                }
-                VariableListEntry::Variable {
-                    depth,
-                    variable,
-                    scope,
-                    ..
-                } => {
-                    let entry_id = &OpenEntry::Variable {
-                        depth: *depth,
-                        name: variable.name.clone(),
-                        scope_name: scope.name.clone(),
-                    };
+        //             if self.open_entries.binary_search(entry_id).is_ok() {
+        //                 self.select_next(&SelectNext, window, cx);
+        //             } else {
+        //                 self.toggle_entry(entry_id, cx);
+        //             }
+        //         }
+        //         VariableListEntry::Variable {
+        //             depth,
+        //             variable,
+        //             scope,
+        //             ..
+        //         } => {
+        //             let entry_id = &OpenEntry::Variable {
+        //                 depth: *depth,
+        //                 name: variable.dap.name.clone(),
+        //                 scope_name: scope.name.clone(),
+        //             };
 
-                    if self.open_entries.binary_search(entry_id).is_ok() {
-                        self.select_next(&SelectNext, window, cx);
-                    } else {
-                        self.toggle_variable(&scope.clone(), &variable.clone(), *depth, cx);
-                    }
-                }
-                VariableListEntry::SetVariableEditor { .. } => {}
-            }
-        }
+        //             if self.open_entries.binary_search(entry_id).is_ok() {
+        //                 self.select_next(&SelectNext, window, cx);
+        //             } else {
+        //                 // self.toggle_variable(&scope.clone(), &variable.clone(), *depth, cx);
+        //             }
+        //         }
+        //         VariableListEntry::SetVariableEditor { .. } => {}
+        //     }
+        // }
     }
 
     fn render_set_variable_editor(
@@ -1092,20 +830,16 @@ impl VariableList {
     #[allow(clippy::too_many_arguments)]
     fn render_variable(
         &self,
-        container_reference: u64,
-        variable: &Arc<Variable>,
-        scope: &Arc<Scope>,
-        depth: usize,
-        has_children: bool,
+        variable: &session::Variable,
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let entry_id = OpenEntry::Variable {
-            depth,
-            name: variable.name.clone(),
-            scope_name: scope.name.clone(),
+            depth: variable.depth,
+            name: variable.dap.name.clone(),
+            scope_name: "Local".into(),
         };
-        let disclosed = has_children.then(|| self.open_entries.binary_search(&entry_id).is_ok());
+        let disclosed = variable.toggled_state != session::ToggledState::Leaf;
 
         let colors = get_entry_color(cx);
         let bg_hover_color = if !is_selected {
@@ -1121,8 +855,8 @@ impl VariableList {
 
         div()
             .id(SharedString::from(format!(
-                "variable-{}-{}-{}",
-                scope.variables_reference, variable.name, depth
+                "variable-{}-{}",
+                variable.dap.name, variable.depth
             )))
             .group("variable_list_entry")
             .border_1()
@@ -1132,62 +866,66 @@ impl VariableList {
             .size_full()
             .hover(|style| style.bg(bg_hover_color))
             .on_click(cx.listener({
-                let scope = scope.clone();
-                let variable = variable.clone();
+                // let scope = scope.clone();
+                // let variable = variable.clone();
                 move |this, _, _window, cx| {
-                    this.selection = Some(VariableListEntry::Variable {
-                        depth,
-                        has_children,
-                        container_reference,
-                        scope: scope.clone(),
-                        variable: variable.clone(),
-                    });
-                    cx.notify();
+                    // this.selection = Some(VariableListEntry::Variable {
+                    //     depth,
+                    //     has_children,
+                    //     container_reference,
+                    //     scope: scope.clone(),
+                    //     variable: variable.clone(),
+                    // });
+                    // cx.notify();
                 }
             }))
             .child(
                 ListItem::new(SharedString::from(format!(
-                    "variable-item-{}-{}-{}",
-                    scope.variables_reference, variable.name, depth
+                    "variable-item-{}-{}",
+                    variable.dap.name, variable.depth
                 )))
                 .selectable(false)
-                .indent_level(depth + 1)
+                .indent_level(variable.depth as usize)
                 .indent_step_size(px(20.))
                 .always_show_disclosure_icon(true)
                 .toggle(disclosed)
-                .when(has_children, |list_item| {
-                    list_item.on_toggle(cx.listener({
-                        let scope = scope.clone();
-                        let variable = variable.clone();
-                        move |this, _, _window, cx| {
-                            this.toggle_variable(&scope, &variable, depth, cx)
-                        }
-                    }))
-                })
+                .when(
+                    variable.toggled_state != session::ToggledState::Leaf,
+                    |list_item| {
+                        list_item.on_toggle(cx.listener({
+                            // let scope = scope.clone();
+                            // let variable = variable.clone();
+                            move |this, _, _window, cx| {
+                                // this.toggle_variable(&scope, &variable, depth, cx)
+                            }
+                        }))
+                    },
+                )
                 .on_secondary_mouse_down(cx.listener({
-                    let scope = scope.clone();
-                    let variable = variable.clone();
+                    // let scope = scope.clone();
+                    // let variable = variable.clone();
                     move |this, event: &MouseDownEvent, window, cx| {
-                        this.deploy_variable_context_menu(
-                            container_reference,
-                            &scope,
-                            &variable,
-                            event.position,
-                            window,
-                            cx,
-                        )
+                        // todo(debugger): Get this working
+                        // this.deploy_variable_context_menu(
+                        //     container_reference,
+                        //     &scope,
+                        //     &variable,
+                        //     event.position,
+                        //     window,
+                        //     cx,
+                        // )
                     }
                 }))
                 .child(
                     h_flex()
                         .gap_1()
                         .text_ui_sm(cx)
-                        .child(variable.name.clone())
+                        .child(variable.dap.name.clone())
                         .child(
                             div()
                                 .text_ui_xs(cx)
                                 .text_color(cx.theme().colors().text_muted)
-                                .child(variable.value.replace("\n", " ").clone()),
+                                .child(variable.dap.value.replace("\n", " ").clone()),
                         ),
                 ),
             )
@@ -1286,8 +1024,8 @@ impl Render for VariableList {
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::select_next))
-            .on_action(cx.listener(Self::expand_selected_entry))
-            .on_action(cx.listener(Self::collapse_selected_entry))
+            // .on_action(cx.listener(Self::expand_selected_entry))
+            // .on_action(cx.listener(Self::collapse_selected_entry))
             .on_action(
                 cx.listener(|this, _: &editor::actions::Cancel, _window, cx| {
                     this.cancel_set_variable_value(cx)
@@ -1397,202 +1135,114 @@ mod tests {
     /// We correctly insert the variables right after the variable you clicked on
     #[test]
     fn test_add_sub_variables_to_index() {
-        let mut index = ScopeVariableIndex::new();
+        unimplemented!("This test hasn't been refactored yet")
+        // let mut index = ScopeVariableIndex::new();
 
-        assert_eq!(index.variables(), vec![]);
+        // assert_eq!(index.variables(), vec![]);
 
-        let variable1 = VariableContainer {
-            variable: Variable {
-                name: "First variable".into(),
-                value: "First variable".into(),
-                type_: None,
-                presentation_hint: None,
-                evaluate_name: None,
-                variables_reference: 0,
-                named_variables: None,
-                indexed_variables: None,
-                memory_reference: None,
-            },
-            depth: 1,
-            container_reference: 1,
-        };
+        // let variable1 = VariableContainer {
+        //     variable: Variable {
+        //         name: "First variable".into(),
+        //         value: "First variable".into(),
+        //         type_: None,
+        //         presentation_hint: None,
+        //         evaluate_name: None,
+        //         variables_reference: 0,
+        //         named_variables: None,
+        //         indexed_variables: None,
+        //         memory_reference: None,
+        //     },
+        //     depth: 1,
+        //     container_reference: 1,
+        // };
 
-        let variable2 = VariableContainer {
-            variable: Variable {
-                name: "Second variable with child".into(),
-                value: "Second variable with child".into(),
-                type_: None,
-                presentation_hint: None,
-                evaluate_name: None,
-                variables_reference: 2,
-                named_variables: None,
-                indexed_variables: None,
-                memory_reference: None,
-            },
-            depth: 1,
-            container_reference: 1,
-        };
+        // let variable2 = VariableContainer {
+        //     variable: Variable {
+        //         name: "Second variable with child".into(),
+        //         value: "Second variable with child".into(),
+        //         type_: None,
+        //         presentation_hint: None,
+        //         evaluate_name: None,
+        //         variables_reference: 2,
+        //         named_variables: None,
+        //         indexed_variables: None,
+        //         memory_reference: None,
+        //     },
+        //     depth: 1,
+        //     container_reference: 1,
+        // };
 
-        let variable3 = VariableContainer {
-            variable: Variable {
-                name: "Third variable".into(),
-                value: "Third variable".into(),
-                type_: None,
-                presentation_hint: None,
-                evaluate_name: None,
-                variables_reference: 0,
-                named_variables: None,
-                indexed_variables: None,
-                memory_reference: None,
-            },
-            depth: 1,
-            container_reference: 1,
-        };
+        // let variable3 = VariableContainer {
+        //     variable: Variable {
+        //         name: "Third variable".into(),
+        //         value: "Third variable".into(),
+        //         type_: None,
+        //         presentation_hint: None,
+        //         evaluate_name: None,
+        //         variables_reference: 0,
+        //         named_variables: None,
+        //         indexed_variables: None,
+        //         memory_reference: None,
+        //     },
+        //     depth: 1,
+        //     container_reference: 1,
+        // };
 
-        index.add_variables(
-            1,
-            vec![variable1.clone(), variable2.clone(), variable3.clone()],
-        );
+        // index.add_variables(
+        //     1,
+        //     vec![variable1.clone(), variable2.clone(), variable3.clone()],
+        // );
 
-        assert_eq!(
-            vec![variable1.clone(), variable2.clone(), variable3.clone()],
-            index.variables(),
-        );
-        assert_eq!(HashSet::from([1]), index.fetched_ids);
+        // assert_eq!(
+        //     vec![variable1.clone(), variable2.clone(), variable3.clone()],
+        //     index.variables(),
+        // );
+        // assert_eq!(HashSet::from([1]), index.fetched_ids);
 
-        let variable4 = VariableContainer {
-            variable: Variable {
-                name: "Fourth variable".into(),
-                value: "Fourth variable".into(),
-                type_: None,
-                presentation_hint: None,
-                evaluate_name: None,
-                variables_reference: 0,
-                named_variables: None,
-                indexed_variables: None,
-                memory_reference: None,
-            },
-            depth: 1,
-            container_reference: 1,
-        };
+        // let variable4 = VariableContainer {
+        //     variable: Variable {
+        //         name: "Fourth variable".into(),
+        //         value: "Fourth variable".into(),
+        //         type_: None,
+        //         presentation_hint: None,
+        //         evaluate_name: None,
+        //         variables_reference: 0,
+        //         named_variables: None,
+        //         indexed_variables: None,
+        //         memory_reference: None,
+        //     },
+        //     depth: 1,
+        //     container_reference: 1,
+        // };
 
-        let variable5 = VariableContainer {
-            variable: Variable {
-                name: "Five variable".into(),
-                value: "Five variable".into(),
-                type_: None,
-                presentation_hint: None,
-                evaluate_name: None,
-                variables_reference: 0,
-                named_variables: None,
-                indexed_variables: None,
-                memory_reference: None,
-            },
-            depth: 1,
-            container_reference: 1,
-        };
+        // let variable5 = VariableContainer {
+        //     variable: Variable {
+        //         name: "Five variable".into(),
+        //         value: "Five variable".into(),
+        //         type_: None,
+        //         presentation_hint: None,
+        //         evaluate_name: None,
+        //         variables_reference: 0,
+        //         named_variables: None,
+        //         indexed_variables: None,
+        //         memory_reference: None,
+        //     },
+        //     depth: 1,
+        //     container_reference: 1,
+        // };
 
-        index.add_variables(2, vec![variable4.clone(), variable5.clone()]);
+        // index.add_variables(2, vec![variable4.clone(), variable5.clone()]);
 
-        assert_eq!(
-            vec![
-                variable1.clone(),
-                variable2.clone(),
-                variable4.clone(),
-                variable5.clone(),
-                variable3.clone(),
-            ],
-            index.variables(),
-        );
-        assert_eq!(index.fetched_ids, HashSet::from([1, 2]));
-    }
-
-    #[test]
-    fn test_can_serialize_to_and_from_proto() {
-        let mut index = ScopeVariableIndex::new();
-
-        let variable1 = VariableContainer {
-            variable: Variable {
-                name: "First variable".into(),
-                value: "First variable".into(),
-                type_: None,
-                presentation_hint: None,
-                evaluate_name: None,
-                variables_reference: 2,
-                named_variables: None,
-                indexed_variables: None,
-                memory_reference: None,
-            },
-            depth: 1,
-            container_reference: 1,
-        };
-
-        let variable2 = VariableContainer {
-            variable: Variable {
-                name: "Second variable with child".into(),
-                value: "Second variable with child".into(),
-                type_: None,
-                presentation_hint: None,
-                evaluate_name: None,
-                variables_reference: 0,
-                named_variables: None,
-                indexed_variables: None,
-                memory_reference: None,
-            },
-            depth: 1,
-            container_reference: 1,
-        };
-
-        index.add_variables(1, vec![variable1.clone(), variable2.clone()]);
-
-        let variable3 = VariableContainer {
-            variable: Variable {
-                name: "Third variable".into(),
-                value: "Third variable".into(),
-                type_: None,
-                presentation_hint: None,
-                evaluate_name: None,
-                variables_reference: 0,
-                named_variables: None,
-                indexed_variables: None,
-                memory_reference: None,
-            },
-            depth: 1,
-            container_reference: 1,
-        };
-
-        let variable4 = VariableContainer {
-            variable: Variable {
-                name: "Four variable".into(),
-                value: "Four variable".into(),
-                type_: None,
-                presentation_hint: None,
-                evaluate_name: None,
-                variables_reference: 0,
-                named_variables: None,
-                indexed_variables: None,
-                memory_reference: None,
-            },
-            depth: 1,
-            container_reference: 1,
-        };
-
-        index.add_variables(2, vec![variable3.clone(), variable4.clone()]);
-
-        assert_eq!(
-            vec![
-                variable1.clone(),
-                variable3.clone(),
-                variable4.clone(),
-                variable2.clone(),
-            ],
-            index.variables(),
-        );
-        assert_eq!(HashSet::from([1, 2]), index.fetched_ids);
-
-        let from_proto = ScopeVariableIndex::from_proto(index.to_proto());
-
-        assert_eq!(index.variables(), from_proto.variables());
-        assert_eq!(index.fetched_ids, from_proto.fetched_ids);
+        // assert_eq!(
+        //     vec![
+        //         variable1.clone(),
+        //         variable2.clone(),
+        //         variable4.clone(),
+        //         variable5.clone(),
+        //         variable3.clone(),
+        //     ],
+        //     index.variables(),
+        // );
+        // assert_eq!(index.fetched_ids, HashSet::from([1, 2]));
     }
 }

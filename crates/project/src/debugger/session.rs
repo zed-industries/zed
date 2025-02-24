@@ -54,30 +54,30 @@ pub enum VariableListContainer {
     Variable(Variable),
 }
 
-#[derive(Clone, Debug)]
-enum ToggledState {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ToggledState {
     Toggled,
     UnToggled,
     Leaf,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Variable {
-    dap: dap::Variable,
-    children: Vec<Variable>,
-    is_toggled: ToggledState,
+    pub dap: dap::Variable,
+    pub toggled_state: ToggledState,
+    pub depth: u8,
 }
 
 impl From<dap::Variable> for Variable {
     fn from(dap: dap::Variable) -> Self {
         Self {
-            children: vec![],
-            is_toggled: if dap.variables_reference == 0 {
+            toggled_state: if dap.variables_reference == 0 {
                 ToggledState::Leaf
             } else {
                 ToggledState::UnToggled
             },
             dap,
+            depth: 2,
         }
     }
 }
@@ -424,6 +424,8 @@ impl ThreadStates {
     }
 }
 
+type VariableId = u64;
+
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
 pub struct Session {
     mode: Mode,
@@ -438,6 +440,7 @@ pub struct Session {
     output: Vec<dap::OutputEvent>,
     threads: IndexMap<ThreadId, Thread>,
     requests: HashMap<RequestSlot, Shared<Task<Option<()>>>>,
+    variables: HashMap<VariableId, Vec<Variable>>,
     thread_states: ThreadStates,
     is_session_terminated: bool,
     _background_tasks: Vec<Task<()>>,
@@ -566,6 +569,7 @@ impl Session {
                     mode: Mode::Local(mode),
                     id: session_id,
                     breakpoint_store: breakpoints,
+                    variables: Default::default(),
                     config,
                     capabilities,
                     thread_states: ThreadStates::default(),
@@ -599,6 +603,7 @@ impl Session {
             capabilities: Capabilities::default(),
             breakpoint_store,
             ignore_breakpoints,
+            variables: Default::default(),
             thread_states: ThreadStates::default(),
             last_processed_output: 0,
             output: Vec::default(),
@@ -1257,10 +1262,10 @@ impl Session {
             move |this, variables, cx| {
                 if let Some(scope) = this.find_scope(thread_id, stack_frame_id, variables_reference)
                 {
-                    // This is only valid if scope.variable[x].ref_id == variables_reference
-                    // otherwise we have to search the tree for the right index to add variables too
-                    // todo(debugger): Fix this ^
-                    scope.variables = variables.iter().cloned().map(From::from).collect();
+                    this.variables.insert(
+                        variables_reference,
+                        variables.iter().cloned().map(From::from).collect(),
+                    );
                     cx.notify();
                 }
             },
@@ -1366,7 +1371,7 @@ impl Session {
         self.scopes(selected_thread_id, stack_frame_id, cx)
             .iter()
             .cloned()
-            .map(|scope| {
+            .flat_map(|scope| {
                 if scope.is_toggled {
                     self.variables(
                         selected_thread_id,
@@ -1376,7 +1381,23 @@ impl Session {
                     );
                 }
 
-                VariableListContainer::Scope(scope)
+                let mut stack = vec![scope.dap.variables_reference];
+                let head = VariableListContainer::Scope(scope);
+                let mut variables = vec![head];
+
+                while let Some(reference) = stack.pop() {
+                    if let Some(children) = self.variables.get(&reference) {
+                        for variable in children {
+                            if variable.toggled_state == ToggledState::Toggled {
+                                stack.push(variable.dap.variables_reference);
+                            }
+
+                            variables.push(VariableListContainer::Variable(variable.clone()));
+                        }
+                    }
+                }
+
+                variables
             })
             .collect()
     }
