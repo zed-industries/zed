@@ -298,6 +298,7 @@ impl EditorTestContext {
         self.cx.run_until_parked();
     }
 
+    #[track_caller]
     pub fn assert_index_text(&mut self, expected: Option<&str>) {
         let fs = self.update_editor(|editor, _, cx| {
             editor.project.as_ref().unwrap().read(cx).fs().as_fake()
