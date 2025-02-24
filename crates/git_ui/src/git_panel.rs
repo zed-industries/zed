@@ -2022,11 +2022,6 @@ impl GitPanel {
         let branch = active_repository.read(cx).current_branch()?;
         let commit = branch.most_recent_commit.as_ref()?.clone();
 
-        // Previous commit -> Always show this if present
-        // Uncommit -> Puts the last commit message back in the box, prompt for confirmation if text in box,
-        //              always shown
-        // Push -> Always show, but disabled if identical
-
         let this = cx.entity();
         Some(
             h_flex()
