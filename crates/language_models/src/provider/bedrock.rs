@@ -2,7 +2,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::Region;
 use aws_credential_types::Credentials;
@@ -16,6 +16,7 @@ use bedrock::{
     BedrockTool, BedrockToolChoice, BedrockToolInputSchema, Model,
 };
 use collections::{BTreeMap, HashMap};
+use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
 use gpui::{
@@ -82,10 +83,12 @@ pub struct State {
 
 impl State {
     fn reset_credentials(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let delete_credentials = cx.delete_credentials(ZED_AWS_CREDENTIALS_VAR);
-
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
         cx.spawn(|this, mut cx| async move {
-            delete_credentials.await.ok();
+            credentials_provider
+                .delete_credentials(ZED_AWS_CREDENTIALS_VAR, &cx)
+                .await
+                .log_err();
             this.update(&mut cx, |this, cx| {
                 this.credentials = None;
                 this.credentials_from_env = false;
@@ -99,19 +102,16 @@ impl State {
         credentials: BedrockCredentials,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let binding = serde_json::to_vec(&credentials);
-        let serialized_creds = match binding {
-            Ok(creds) => creds,
-            Err(err) => {
-                return Task::ready(Err(anyhow!("Failed to serialize credentials: {err}")));
-            }
-        };
-
-        let write_credentials =
-            cx.write_credentials(ZED_AWS_CREDENTIALS_VAR, "Bearer", &serialized_creds);
-
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
         cx.spawn(|this, mut cx| async move {
-            write_credentials.await?;
+            credentials_provider
+                .write_credentials(
+                    ZED_AWS_CREDENTIALS_VAR,
+                    "Bearer",
+                    &serde_json::to_vec(&credentials)?,
+                    &cx,
+                )
+                .await?;
             this.update(&mut cx, |this, cx| {
                 this.credentials = Some(credentials);
                 cx.notify();
@@ -128,29 +128,33 @@ impl State {
             return Task::ready(Ok(()));
         }
 
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
         cx.spawn(|this, mut cx| async move {
             let (credentials, from_env) =
                 if let Ok(credentials) = std::env::var(ZED_AWS_CREDENTIALS_VAR) {
                     (credentials, true)
                 } else {
-                    let (_, credentials) = cx
-                        .update(|cx| cx.read_credentials(ZED_AWS_CREDENTIALS_VAR))?
+                    let (_, credentials) = credentials_provider
+                        .read_credentials(ZED_AWS_CREDENTIALS_VAR, &cx)
                         .await?
                         .ok_or_else(|| AuthenticateError::CredentialsNotFound)?;
                     (
                         String::from_utf8(credentials)
-                            .map_err(|e| AuthenticateError::from(anyhow::Error::from(e)))?,
+                            .context("invalid {PROVIDER_NAME} credentials")?,
                         false,
                     )
                 };
 
-            let res = this.update(&mut cx, |this, cx| {
-                let credentials: BedrockCredentials = serde_json::from_str(&credentials).unwrap();
+            let credentials: BedrockCredentials =
+                serde_json::from_str(&credentials).context("failed to parse credentials")?;
+
+            this.update(&mut cx, |this, cx| {
                 this.credentials = Some(credentials);
                 this.credentials_from_env = from_env;
                 cx.notify();
-            });
-            res.map_err(|_err| AuthenticateError::Other(anyhow!("Failed to parse credentials")))
+            })?;
+
+            Ok(())
         })
     }
 }
