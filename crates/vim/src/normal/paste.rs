@@ -155,7 +155,18 @@ impl Vim {
                     original_start_columns.extend(original_start_column);
                 }
 
-                editor.edit_with_block_indent(edits, original_start_columns, cx);
+                let cursor_offset = editor.selections.last::<usize>(cx).head();
+                let auto_indent_on_paste = editor.buffer().update(cx, |buffer, cx| {
+                    buffer
+                        .read(cx)
+                        .settings_at(cursor_offset, cx)
+                        .auto_indent_on_paste
+                });
+                if auto_indent_on_paste {
+                    editor.edit_with_block_indent(edits, original_start_columns, cx);
+                } else {
+                    editor.edit(edits, cx);
+                }
 
                 // in line_mode vim will insert the new text on the next (or previous if before) line
                 // and put the cursor on the first non-blank character of the first inserted line (or at the end if the first line is blank).
