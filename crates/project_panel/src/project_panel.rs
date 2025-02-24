@@ -265,7 +265,7 @@ struct ItemColors {
     default: Hsla,
     hover: Hsla,
     drag_over: Hsla,
-    marked_active: Hsla,
+    marked: Hsla,
     focused: Hsla,
 }
 
@@ -274,10 +274,10 @@ fn get_item_color(cx: &App) -> ItemColors {
 
     ItemColors {
         default: colors.panel_background,
-        hover: colors.ghost_element_hover,
-        drag_over: colors.drop_target_background,
-        marked_active: colors.element_selected,
+        hover: colors.element_hover,
+        marked: colors.element_selected,
         focused: colors.panel_focused_border,
+        drag_over: colors.drop_target_background,
     }
 }
 
@@ -301,6 +301,9 @@ impl ProjectPanel {
                     if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
                         this.reveal_entry(project.clone(), *entry_id, true, cx);
                     }
+                }
+                project::Event::ActiveEntryChanged(None) => {
+                    this.marked_entries.clear();
                 }
                 project::Event::RevealInProjectPanel(entry_id) => {
                     this.reveal_entry(project.clone(), *entry_id, false, cx);
@@ -3546,18 +3549,16 @@ impl ProjectPanel {
             marked_selections: selections,
         };
 
-        let bg_color = if is_marked || is_active {
-            item_colors.marked_active
+        let bg_color = if is_marked {
+            item_colors.marked
         } else {
             item_colors.default
         };
 
-        let bg_hover_color = if self.mouse_down || is_marked || is_active {
-            item_colors.marked_active
-        } else if !is_active {
-            item_colors.hover
+        let bg_hover_color = if is_marked {
+            item_colors.marked
         } else {
-            item_colors.default
+            item_colors.hover
         };
 
         let border_color =
@@ -4235,16 +4236,11 @@ impl ProjectPanel {
             let worktree_id = worktree.id();
             self.expand_entry(worktree_id, entry_id, cx);
             self.update_visible_entries(Some((worktree_id, entry_id)), cx);
-
-            if self.marked_entries.len() == 1
-                && self
-                    .marked_entries
-                    .first()
-                    .filter(|entry| entry.entry_id == entry_id)
-                    .is_none()
-            {
-                self.marked_entries.clear();
-            }
+            self.marked_entries.clear();
+            self.marked_entries.insert(SelectedEntry {
+                worktree_id,
+                entry_id,
+            });
             self.autoscroll(cx);
             cx.notify();
         }
@@ -7333,7 +7329,7 @@ mod tests {
         select_path(&panel, "root/new", cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
-            &["v root", "      new  <== selected"]
+            &["v root", "      new  <== selected  <== marked"]
         );
         panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
         panel.update_in(cx, |panel, window, cx| {
@@ -7767,7 +7763,7 @@ mod tests {
                 "    > .git",
                 "    v dir_1",
                 "        > gitignored_dir",
-                "          file_1.py  <== selected",
+                "          file_1.py  <== selected  <== marked",
                 "          file_2.py",
                 "          file_3.py",
                 "    > dir_2",
@@ -7793,7 +7789,7 @@ mod tests {
                 "          file_2.py",
                 "          file_3.py",
                 "    v dir_2",
-                "          file_1.py  <== selected",
+                "          file_1.py  <== selected  <== marked",
                 "          file_2.py",
                 "          file_3.py",
                 "      .gitignore",
@@ -7820,7 +7816,7 @@ mod tests {
                 "          file_2.py",
                 "          file_3.py",
                 "    v dir_2",
-                "          file_1.py  <== selected",
+                "          file_1.py  <== selected  <== marked",
                 "          file_2.py",
                 "          file_3.py",
                 "      .gitignore",
@@ -7841,7 +7837,7 @@ mod tests {
                 "    > .git",
                 "    v dir_1",
                 "        v gitignored_dir",
-                "              file_a.py  <== selected",
+                "              file_a.py  <== selected  <== marked",
                 "              file_b.py",
                 "              file_c.py",
                 "          file_1.py",
@@ -7996,7 +7992,7 @@ mod tests {
                 "    > .git",
                 "    v dir_1",
                 "        > gitignored_dir",
-                "          file_1.py  <== selected",
+                "          file_1.py  <== selected  <== marked",
                 "          file_2.py",
                 "          file_3.py",
                 "    > dir_2",
@@ -8022,7 +8018,7 @@ mod tests {
                 "          file_2.py",
                 "          file_3.py",
                 "    v dir_2",
-                "          file_1.py  <== selected",
+                "          file_1.py  <== selected  <== marked",
                 "          file_2.py",
                 "          file_3.py",
                 "      .gitignore",
@@ -8043,7 +8039,7 @@ mod tests {
                 "    > .git",
                 "    v dir_1",
                 "        v gitignored_dir",
-                "              file_a.py  <== selected",
+                "              file_a.py  <== selected  <== marked",
                 "              file_b.py",
                 "              file_c.py",
                 "          file_1.py",
