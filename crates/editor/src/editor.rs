@@ -695,7 +695,6 @@ pub struct Editor {
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
     git_blame_inline_tooltip: Option<WeakEntity<crate::commit_tooltip::CommitTooltip>>,
-    distinguish_unstaged_diff_hunks: bool,
     git_blame_inline_enabled: bool,
     serialize_dirty_buffers: bool,
     show_selection_menu: Option<bool>,
@@ -1408,7 +1407,6 @@ impl Editor {
             custom_context_menu: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
-            distinguish_unstaged_diff_hunks: false,
             show_selection_menu: None,
             show_git_blame_inline_delay_task: None,
             git_blame_inline_tooltip: None,
@@ -12736,10 +12734,6 @@ impl Editor {
         });
     }
 
-    pub fn set_distinguish_unstaged_diff_hunks(&mut self) {
-        self.distinguish_unstaged_diff_hunks = true;
-    }
-
     pub fn expand_all_diff_hunks(
         &mut self,
         _: &ExpandAllDiffHunks,
@@ -12985,7 +12979,12 @@ impl Editor {
             .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
             .detach_and_log_err(cx);
 
-        let _ = repo.read(cx).set_index_text(&path, new_index_text);
+        cx.background_spawn(
+            repo.read(cx)
+                .set_index_text(&path, new_index_text)
+                .log_err(),
+        )
+        .detach();
     }
 
     pub fn expand_selected_diff_hunks(&mut self, cx: &mut Context<Self>) {
