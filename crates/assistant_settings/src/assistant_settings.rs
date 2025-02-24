@@ -358,8 +358,8 @@ pub struct LanguageModelSelection {
 fn providers_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
     schemars::schema::SchemaObject {
         enum_values: Some(vec![
-            "bedrock".into(),
             "anthropic".into(),
+            "bedrock".into(),
             "google".into(),
             "lmstudio".into(),
             "ollama".into(),
