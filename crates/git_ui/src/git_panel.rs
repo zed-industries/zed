@@ -1682,9 +1682,6 @@ impl GitPanel {
         let panel_editor_style = panel_editor_style(true, window, cx);
         let enable_coauthors = self.render_co_authors(cx);
 
-        let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
-
-        let focus_handle_1 = self.focus_handle(cx).clone();
         let tooltip = if self.has_staged_changes() {
             "Commit staged changes"
         } else {
@@ -1695,11 +1692,11 @@ impl GitPanel {
         } else {
             "Commit All"
         };
+        let editor_focus_handle = self.commit_editor.focus_handle(cx);
 
         let commit_button = panel_filled_button(title)
             .tooltip(move |window, cx| {
-                let focus_handle = focus_handle_1.clone();
-                Tooltip::for_action_in(tooltip, &Commit, &focus_handle, window, cx)
+                Tooltip::for_action_in(tooltip, &Commit, &editor_focus_handle, window, cx)
             })
             .disabled(!can_commit)
             .on_click({
@@ -1743,8 +1740,8 @@ impl GitPanel {
             .border_color(cx.theme().colors().border)
             .bg(cx.theme().colors().editor_background)
             .cursor_text()
-            .on_click(cx.listener(move |_, _: &ClickEvent, window, _cx| {
-                window.focus(&editor_focus_handle);
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                window.focus(&this.commit_editor.focus_handle(cx));
             }))
             .when(!self.modal_open, |el| {
                 el.child(EditorElement::new(&self.commit_editor, panel_editor_style))
