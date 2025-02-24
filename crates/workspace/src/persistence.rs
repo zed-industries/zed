@@ -146,7 +146,7 @@ impl Column for SerializedWindowBounds {
 
 #[derive(Debug)]
 pub struct Breakpoint {
-    pub position: NonZeroU32,
+    pub position: u32,
     pub kind: BreakpointKind,
 }
 
@@ -209,7 +209,7 @@ impl sqlez::bindable::Bind for Breakpoint {
         statement: &sqlez::statement::Statement,
         start_index: i32,
     ) -> anyhow::Result<i32> {
-        let next_index = statement.bind(&self.position.get(), start_index)?;
+        let next_index = statement.bind(&self.position, start_index)?;
         statement.bind(
             &BreakpointKindWrapper(Cow::Borrowed(&self.kind)),
             next_index,
@@ -223,8 +223,6 @@ impl Column for Breakpoint {
             .column_int(start_index)
             .with_context(|| format!("Failed to read BreakPoint at index {start_index}"))?
             as u32;
-        let position =
-            NonZeroU32::new(position).ok_or_else(|| anyhow!("Position must be non-zero"))?;
         let (kind, next_index) = BreakpointKindWrapper::column(statement, start_index + 1)?;
 
         Ok((
@@ -250,8 +248,6 @@ impl Column for Breakpoints {
                         .column_int(index)
                         .with_context(|| format!("Failed to read BreakPoint at index {index}"))?
                         as u32;
-                    let position = NonZeroU32::new(position)
-                        .ok_or_else(|| anyhow!("Position must be non-zero"))?;
                     let (kind, next_index) = BreakpointKindWrapper::column(statement, index + 1)?;
 
                     breakpoints.push(Breakpoint {

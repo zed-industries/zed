@@ -2082,16 +2082,7 @@ impl EditorElement {
                         return None;
                     }
 
-                    let backup_position = snapshot
-                        .display_point_to_breakpoint_anchor(DisplayPoint::new(*point, 0))
-                        .text_anchor;
-
-                    let button = editor.render_breakpoint(
-                        bp.position.unwrap_or(backup_position),
-                        *point,
-                        &bp.kind,
-                        cx,
-                    );
+                    let button = editor.render_breakpoint(bp.position, *point, &bp.kind, cx);
 
                     let button = prepaint_gutter_button(
                         button,
@@ -7287,20 +7278,11 @@ impl Element for EditorElement {
                             .or_insert_with(|| {
                                 let position = snapshot
                                     .display_point_to_breakpoint_anchor(gutter_breakpoint_point);
-                                let mut breakpoint = Breakpoint {
-                                    position: Some(position.text_anchor),
-                                    cached_position: NonZeroU32::new(u32::MAX).unwrap(),
+                                let breakpoint = Breakpoint {
+                                    position: position.text_anchor,
+
                                     kind: BreakpointKind::Standard,
                                 };
-                                let buffer = snapshot
-                                    .buffer_snapshot
-                                    .buffer_for_excerpt(position.excerpt_id);
-                                if let Some(buffer) = buffer {
-                                    breakpoint.cached_position = NonZeroU32::new(
-                                        breakpoint.point_for_buffer(buffer).row + 1,
-                                    )
-                                    .unwrap();
-                                }
 
                                 breakpoint
                             });

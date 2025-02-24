@@ -9,7 +9,7 @@ use super::{
     session::{self, Session},
 };
 use crate::{debugger, ProjectEnvironment, ProjectPath};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
@@ -209,9 +209,7 @@ impl EventEmitter<DapStoreEvent> for DapStore {}
 
 impl DapStore {
     pub fn init(client: &AnyProtoClient) {
-        client.add_entity_message_handler(Self::handle_remove_active_debug_line);
         client.add_entity_message_handler(Self::handle_shutdown_debug_client);
-        client.add_entity_message_handler(Self::handle_set_active_debug_line);
         client.add_entity_message_handler(Self::handle_set_debug_client_capabilities);
         client.add_entity_message_handler(Self::handle_update_debug_adapter);
         client.add_entity_message_handler(Self::handle_update_thread_status);
@@ -436,26 +434,6 @@ impl DapStore {
         self.active_debug_line = Some((session_id, project_path.clone(), row));
         cx.emit(DapStoreEvent::ActiveDebugLineChanged);
         cx.notify();
-    }
-
-    pub fn remove_active_debug_line_for_client(
-        &mut self,
-        session_id: &SessionId,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(active_line) = &self.active_debug_line {
-            if active_line.0 == *session_id {
-                self.active_debug_line.take();
-                cx.emit(DapStoreEvent::ActiveDebugLineChanged);
-                cx.notify();
-
-                if let Some((client, project_id)) = self.downstream_client.clone() {
-                    client
-                        .send(::client::proto::RemoveActiveDebugLine { project_id })
-                        .log_err();
-                }
-            }
-        }
     }
 
     pub fn breakpoint_store(&self) -> &Entity<BreakpointStore> {
@@ -821,43 +799,6 @@ impl DapStore {
             });
 
             cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
-            cx.notify();
-        })
-    }
-
-    async fn handle_set_active_debug_line(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::SetActiveDebugLine>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        let project_path = ProjectPath::from_proto(
-            envelope
-                .payload
-                .project_path
-                .context("Invalid Breakpoint call")?,
-        );
-
-        this.update(&mut cx, |store, cx| {
-            store.active_debug_line = Some((
-                SessionId::from_proto(envelope.payload.session_id),
-                project_path,
-                envelope.payload.row,
-            ));
-
-            cx.emit(DapStoreEvent::ActiveDebugLineChanged);
-            cx.notify();
-        })
-    }
-
-    async fn handle_remove_active_debug_line(
-        this: Entity<Self>,
-        _: TypedEnvelope<proto::RemoveActiveDebugLine>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |store, cx| {
-            store.active_debug_line.take();
-
-            cx.emit(DapStoreEvent::ActiveDebugLineChanged);
             cx.notify();
         })
     }

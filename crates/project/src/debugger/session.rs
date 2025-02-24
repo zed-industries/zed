@@ -297,18 +297,13 @@ impl LocalMode {
                 let mut breakpoint_tasks = Vec::new();
 
                 for (path, breakpoints) in breakpoints {
-                    breakpoint_tasks.push(
-                        that.request(
-                            dap_command::SetBreakpoints {
-                                source: client_source(&path),
-                                breakpoints: breakpoints
-                                    .iter()
-                                    .map(|breakpoint| breakpoint.to_source_breakpoint())
-                                    .collect(),
-                            },
-                            cx.background_executor().clone(),
-                        ),
-                    );
+                    breakpoint_tasks.push(that.request(
+                        dap_command::SetBreakpoints {
+                            source: client_source(&path),
+                            breakpoints: todo!(),
+                        },
+                        cx.background_executor().clone(),
+                    ));
                 }
                 let _ = futures::future::join_all(breakpoint_tasks).await;
 
@@ -878,10 +873,10 @@ impl Session {
                 "Can't set ignore breakpoint to state it's already at"
             )));
         }
-
-        // todo(debugger): We need to propagate this change to downstream sessions and send a message to upstream sessions
-
         self.ignore_breakpoints = ignore;
+        // todo(debugger): We need to propagate this change to downstream sessions and send a message to upstream sessions
+        todo!();
+        /*
         let mut tasks: Vec<Task<()>> = Vec::new();
 
         for (abs_path, serialized_breakpoints) in self
@@ -912,7 +907,7 @@ impl Session {
         cx.background_executor().spawn(async move {
             join_all(tasks).await;
             Ok(())
-        })
+        })*/
     }
 
     pub fn breakpoints_enabled(&self) -> bool {

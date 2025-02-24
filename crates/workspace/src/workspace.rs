@@ -4705,10 +4705,7 @@ impl Workspace {
                                     if let Some(serialized_breakpoints) =
                                         serialized_workspace.breakpoints.remove(&worktree_path)
                                     {
-                                        breakpoint_store.deserialize_breakpoints(
-                                            worktree_id,
-                                            serialized_breakpoints,
-                                        );
+                                        todo!();
                                     }
                                 }
                             })
