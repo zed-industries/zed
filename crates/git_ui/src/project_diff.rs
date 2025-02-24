@@ -11,7 +11,7 @@ use editor::{
 };
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
-use git::{Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll};
+use git::{status::FileStatus, Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll};
 use gpui::{
     actions, Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity,
     EventEmitter, FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
@@ -51,6 +51,7 @@ struct DiffBuffer {
     path_key: PathKey,
     buffer: Entity<Buffer>,
     diff: Entity<BufferDiff>,
+    file_status: FileStatus,
 }
 
 const CONFLICT_NAMESPACE: &'static str = "0";
@@ -351,6 +352,7 @@ impl ProjectDiff {
                         path_key,
                         buffer,
                         diff: changes,
+                        file_status: entry.status,
                     })
                 }));
             }
@@ -383,15 +385,22 @@ impl ProjectDiff {
                 .collect::<Vec<_>>()
         };
 
-        self.multibuffer.update(cx, |multibuffer, cx| {
+        let is_excerpt_newly_added = self.multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
                 diff_hunk_ranges,
                 editor::DEFAULT_MULTIBUFFER_CONTEXT,
                 cx,
-            );
+            )
         });
+
+        if is_excerpt_newly_added && diff_buffer.file_status.is_deleted() {
+            self.editor.update(cx, |editor, cx| {
+                editor.fold_buffer(snapshot.text.remote_id(), cx)
+            });
+        }
+
         if self.multibuffer.read(cx).is_empty()
             && self
                 .editor
