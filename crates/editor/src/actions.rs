@@ -213,12 +213,20 @@ pub enum UuidVersion {
     V7,
 }
 
+/// Copy selected text.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Default, JsonSchema)]
+pub struct Copy {
+    /// For multiline selections, strips common leading indents based on the first line's indentation.
+    pub strip_leading_indents: bool,
+}
+
 impl_actions!(
     editor,
     [
         ComposeCompletion,
         ConfirmCodeAction,
         ConfirmCompletion,
+        Copy,
         DeleteToBeginningOfLine,
         DeleteToNextWordEnd,
         DeleteToPreviousWordStart,
@@ -274,7 +282,6 @@ actions!(
         ConvertToTitleCase,
         ConvertToUpperCamelCase,
         ConvertToUpperCase,
-        Copy,
         CopyFileLocation,
         CopyHighlightJson,
         CopyFileName,

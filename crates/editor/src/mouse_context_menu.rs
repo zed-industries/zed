@@ -187,7 +187,7 @@ pub fn deploy_context_menu(
                 )
                 .separator()
                 .action("Cut", Box::new(Cut))
-                .action("Copy", Box::new(Copy))
+                .action("Copy", Box::new(Copy::default()))
                 .action("Paste", Box::new(Paste))
                 .separator()
                 .map(|builder| {
