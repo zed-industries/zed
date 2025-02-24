@@ -1832,15 +1832,17 @@ impl GitPanel {
                             .children(self.render_spinner(cx))
                             .children(self.render_sync_button(cx))
                             .children(self.render_pull_button(cx))
-                            .child(
-                                Button::new("diff", "+/-")
+                            .children(if self.entries.len() > 0 {
+                                vec![Button::new("diff", "+/-")
                                     .tooltip(Tooltip::for_action_title("Open diff", &Diff))
                                     .on_click(|_, _, cx| {
                                         cx.defer(|cx| {
                                             cx.dispatch_action(&Diff);
                                         })
-                                    }),
-                            ),
+                                    })]
+                            } else {
+                                vec![]
+                            }),
                     ),
             )
         } else {
@@ -2690,12 +2692,12 @@ impl Render for GitPanel {
                     .map(|this| {
                         if has_entries {
                             this.child(self.render_entries(has_write_access, window, cx))
+                                .child(self.render_commit_editor(window, cx))
                         } else {
                             this.child(self.render_empty_state(cx).into_any_element())
                         }
                     })
                     .children(self.render_previous_commit(cx))
-                    .child(self.render_commit_editor(window, cx))
                     .into_any_element(),
             )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
