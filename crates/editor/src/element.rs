@@ -50,7 +50,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
-    RowInfo, ToOffset,
+    RowInfo,
 };
 use project::project_settings::{self, GitGutterSetting, ProjectSettings};
 use settings::Settings;
@@ -2062,21 +2062,27 @@ impl EditorElement {
                     None
                 };
 
-            let offset_range_start = snapshot
-                .display_point_to_anchor(DisplayPoint::new(range.start, 0), Bias::Left)
-                .to_offset(&snapshot.buffer_snapshot);
-            let offset_range_end = snapshot
-                .display_point_to_anchor(DisplayPoint::new(range.end, 0), Bias::Right)
-                .to_offset(&snapshot.buffer_snapshot);
+            let offset_range_start =
+                snapshot.display_point_to_anchor(DisplayPoint::new(range.start, 0), Bias::Left);
+            let offset_range_end =
+                snapshot.display_point_to_anchor(DisplayPoint::new(range.end, 0), Bias::Right);
 
             editor
                 .tasks
                 .iter()
                 .filter_map(|(_, tasks)| {
-                    if tasks.offset.0 < offset_range_start || tasks.offset.0 >= offset_range_end {
+                    if tasks
+                        .offset
+                        .cmp(&offset_range_start, &snapshot.buffer_snapshot)
+                        .is_lt()
+                        || tasks
+                            .offset
+                            .cmp(&offset_range_end, &snapshot.buffer_snapshot)
+                            .is_gt()
+                    {
                         return None;
                     }
-                    let multibuffer_point = tasks.offset.0.to_point(&snapshot.buffer_snapshot);
+                    let multibuffer_point = tasks.offset.to_point(&snapshot.buffer_snapshot);
                     let multibuffer_row = MultiBufferRow(multibuffer_point.row);
                     let buffer_folded = snapshot
                         .buffer_snapshot
