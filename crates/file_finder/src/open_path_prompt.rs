@@ -136,7 +136,7 @@ impl PickerDelegate for OpenPathDelegate {
         {
             None
         } else {
-            Some(lister.list_directory_with_info(dir.clone(), cx))
+            Some(lister.list_directory(dir.clone(), cx))
         };
         self.cancel_flag.store(true, atomic::Ordering::Relaxed);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
@@ -152,13 +152,16 @@ impl PickerDelegate for OpenPathDelegate {
                 this.update(&mut cx, |this, _| {
                     this.delegate.directory_state = Some(match paths {
                         Ok(mut paths) => {
-                            paths.sort_by(|a, b| compare_paths((&a.0, true), (&b.0, true)));
+                            paths.sort_by(|a, b| compare_paths((&a.path, true), (&b.path, true)));
                             let match_candidates = paths
                                 .iter()
                                 .enumerate()
-                                .map(|(ix, (path, is_dir))| CandidateInfo {
-                                    path: StringMatchCandidate::new(ix, &path.to_string_lossy()),
-                                    is_dir: *is_dir,
+                                .map(|(ix, item)| CandidateInfo {
+                                    path: StringMatchCandidate::new(
+                                        ix,
+                                        &item.path.to_string_lossy(),
+                                    ),
+                                    is_dir: item.is_dir,
                                 })
                                 .collect::<Vec<_>>();
 
