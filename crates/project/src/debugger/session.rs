@@ -49,11 +49,6 @@ impl ThreadId {
     pub const MAX: ThreadId = ThreadId(u64::MAX);
 }
 
-pub enum VariableListContainer {
-    Scope(Scope),
-    Variable(Variable),
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToggledState {
     Toggled,
@@ -64,38 +59,22 @@ pub enum ToggledState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Variable {
     pub dap: dap::Variable,
-    pub toggled_state: ToggledState,
-    pub depth: u8,
 }
 
 impl From<dap::Variable> for Variable {
     fn from(dap: dap::Variable) -> Self {
-        Self {
-            toggled_state: if dap.variables_reference == 0 {
-                ToggledState::Leaf
-            } else {
-                ToggledState::UnToggled
-            },
-            dap,
-            depth: 2,
-        }
+        Self { dap }
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Scope {
     pub dap: dap::Scope,
-    pub variables: Vec<Variable>,
-    pub is_toggled: bool,
 }
 
 impl From<dap::Scope> for Scope {
     fn from(scope: dap::Scope) -> Self {
-        Self {
-            dap: scope,
-            variables: vec![],
-            is_toggled: true,
-        }
+        Self { dap: scope }
     }
 }
 
@@ -423,7 +402,7 @@ impl ThreadStates {
     }
 }
 
-type VariableId = u64;
+type VariablesReference = u64;
 
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
 pub struct Session {
@@ -439,7 +418,7 @@ pub struct Session {
     output: Vec<dap::OutputEvent>,
     threads: IndexMap<ThreadId, Thread>,
     requests: HashMap<RequestSlot, Shared<Task<Option<()>>>>,
-    variables: HashMap<VariableId, Vec<Variable>>,
+    variables: HashMap<VariablesReference, Vec<Variable>>,
     thread_states: ThreadStates,
     is_session_terminated: bool,
     _background_tasks: Vec<Task<()>>,
@@ -1241,14 +1220,10 @@ impl Session {
     #[allow(clippy::too_many_arguments)]
     pub fn variables(
         &mut self,
-        thread_id: ThreadId,
-        stack_frame_id: u64,
-        variables_reference: u64,
+        variables_reference: VariablesReference,
         cx: &mut Context<Self>,
     ) -> Vec<Variable> {
         let command = VariablesCommand {
-            stack_frame_id,
-            thread_id: thread_id.0,
             variables_reference,
             filter: None,
             start: None,
@@ -1259,20 +1234,18 @@ impl Session {
         self.fetch(
             command,
             move |this, variables, cx| {
-                if let Some(scope) = this.find_scope(thread_id, stack_frame_id, variables_reference)
-                {
-                    this.variables.insert(
-                        variables_reference,
-                        variables.iter().cloned().map(From::from).collect(),
-                    );
-                    cx.notify();
-                }
+                this.variables.insert(
+                    variables_reference,
+                    variables.iter().cloned().map(From::from).collect(),
+                );
+                cx.notify();
             },
             cx,
         );
 
-        self.find_scope(thread_id, stack_frame_id, variables_reference)
-            .map(|scope| scope.variables.clone())
+        self.variables
+            .get(&variables_reference)
+            .cloned()
             .unwrap_or_default()
     }
 
@@ -1359,45 +1332,5 @@ impl Session {
             )
             .detach();
         }
-    }
-
-    pub fn variable_list(
-        &mut self,
-        selected_thread_id: ThreadId,
-        stack_frame_id: u64,
-        cx: &mut Context<Self>,
-    ) -> Vec<VariableListContainer> {
-        self.scopes(selected_thread_id, stack_frame_id, cx)
-            .iter()
-            .cloned()
-            .flat_map(|scope| {
-                if scope.is_toggled {
-                    self.variables(
-                        selected_thread_id,
-                        stack_frame_id,
-                        scope.dap.variables_reference,
-                        cx,
-                    );
-                }
-
-                let mut stack = vec![scope.dap.variables_reference];
-                let head = VariableListContainer::Scope(scope);
-                let mut variables = vec![head];
-
-                while let Some(reference) = stack.pop() {
-                    if let Some(children) = self.variables.get(&reference) {
-                        for variable in children {
-                            if variable.toggled_state == ToggledState::Toggled {
-                                stack.push(variable.dap.variables_reference);
-                            }
-
-                            variables.push(VariableListContainer::Variable(variable.clone()));
-                        }
-                    }
-                }
-
-                variables
-            })
-            .collect()
     }
 }
