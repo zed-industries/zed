@@ -1006,6 +1006,7 @@ impl Window {
         subscription
     }
 
+    /// Replaces the root entity of the window with a new one.
     pub fn replace_root<E>(
         &mut self,
         cx: &mut App,
@@ -1020,6 +1021,7 @@ impl Window {
         view
     }
 
+    /// Returns the root entity of the window, if it has one.
     pub fn root<E>(&self) -> Option<Option<Entity<E>>>
     where
         E: 'static + Render,
