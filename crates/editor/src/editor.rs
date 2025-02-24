@@ -73,7 +73,7 @@ use futures::{
 };
 use fuzzy::StringMatchCandidate;
 
-use ::git::Restore;
+use ::git::{status::FileStatus, Restore};
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
@@ -12851,6 +12851,38 @@ impl Editor {
 
         if !self.buffer().read(cx).is_singleton() {
             if let Some((excerpt_id, buffer, range)) = self.active_excerpt(cx) {
+                if buffer.read(cx).is_empty() {
+                    let buffer = buffer.read(cx);
+                    let Some(file) = buffer.file() else {
+                        return;
+                    };
+                    let project_path = project::ProjectPath {
+                        worktree_id: file.worktree_id(cx),
+                        path: file.path().clone(),
+                    };
+                    let Some(project) = self.project.as_ref() else {
+                        return;
+                    };
+                    let project = project.read(cx);
+
+                    let Some(repo) = project.git_store().read(cx).active_repository() else {
+                        return;
+                    };
+
+                    repo.update(cx, |repo, cx| {
+                        let Some(repo_path) = repo.project_path_to_repo_path(&project_path) else {
+                            return;
+                        };
+                        let Some(status) = repo.repository_entry.status_for_path(&repo_path) else {
+                            return;
+                        };
+                        if stage && status.status == FileStatus::Untracked {
+                            repo.stage_entries(vec![repo_path], cx)
+                                .detach_and_log_err(cx);
+                            return;
+                        }
+                    })
+                }
                 ranges = vec![multi_buffer::Anchor::range_in_buffer(
                     excerpt_id,
                     buffer.read(cx).remote_id(),
@@ -12886,7 +12918,7 @@ impl Editor {
             log::debug!("no buffer for id");
             return;
         };
-        let buffer = buffer.read(cx).snapshot();
+        let buffer_snapshot = buffer.read(cx).snapshot();
         let Some((repo, path)) = project
             .read(cx)
             .repository_and_path_for_buffer_id(buffer_id, cx)
@@ -12919,7 +12951,7 @@ impl Editor {
                     hunk.buffer_range.clone(),
                 ))
             }),
-            &buffer,
+            &buffer_snapshot,
         );
 
         let Some(index_base) = secondary_diff
@@ -12937,8 +12969,9 @@ impl Editor {
             index_buffer.snapshot().as_rope().to_string()
         });
         let new_index_text = if new_index_text.is_empty()
+            && !stage
             && (diff.is_single_insertion
-                || buffer
+                || buffer_snapshot
                     .file()
                     .map_or(false, |file| file.disk_state() == DiskState::New))
         {
@@ -12947,6 +12980,10 @@ impl Editor {
         } else {
             Some(new_index_text)
         };
+        let buffer_store = project.read(cx).buffer_store().clone();
+        buffer_store
+            .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
+            .detach_and_log_err(cx);
 
         let _ = repo.read(cx).set_index_text(&path, new_index_text);
     }

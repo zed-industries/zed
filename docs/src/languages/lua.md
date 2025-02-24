@@ -2,7 +2,7 @@
 
 Lua support is available through the [Lua extension](https://github.com/zed-industries/zed/tree/main/extensions/lua).
 
-- Tree Sitter: [tree-sitter-grammars/tree-sitter-lua](https://github.com/tree-sitter-grammars/tree-sitter-lua)
+- Tree-sitter: [tree-sitter-grammars/tree-sitter-lua](https://github.com/tree-sitter-grammars/tree-sitter-lua)
 - Language server: [LuaLS/lua-language-server](https://github.com/LuaLS/lua-language-server)
 
 ## luarc.json
