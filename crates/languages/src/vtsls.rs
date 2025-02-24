@@ -253,7 +253,10 @@ impl LspAdapter for VtslsLspAdapter {
                         "entriesLimit": 5000,
                     }
                 },
-               "autoUseWorkspaceTsdk": true
+               "autoUseWorkspaceTsdk": true,
+               "tsserver": {
+                   "maxTsServerMemory": 8092
+               },
             }
         });
 
