@@ -512,7 +512,7 @@ mod tests {
                 AssistantSettings::get_global(cx).default_model,
                 LanguageModelSelection {
                     provider: "zed.dev".into(),
-                    model: "claude-3-5-sonnet".into(),
+                    model: "claude-3-5-sonnet-latest".into(),
                 }
             );
         });

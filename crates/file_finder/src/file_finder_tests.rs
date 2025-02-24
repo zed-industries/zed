@@ -16,6 +16,164 @@ fn init_logger() {
     }
 }
 
+#[test]
+fn test_path_elision() {
+    #[track_caller]
+    fn check(path: &str, budget: usize, matches: impl IntoIterator<Item = usize>, expected: &str) {
+        let mut path = path.to_owned();
+        let slice = PathComponentSlice::new(&path);
+        let matches = Vec::from_iter(matches);
+        if let Some(range) = slice.elision_range(budget - 1, &matches) {
+            path.replace_range(range, "…");
+        }
+        assert_eq!(path, expected);
+    }
+
+    // Simple cases, mostly to check that different path shapes are handled gracefully.
+    check("p/a/b/c/d/", 6, [], "p/…/d/");
+    check("p/a/b/c/d/", 1, [2, 4, 6], "p/a/b/c/d/");
+    check("p/a/b/c/d/", 10, [2, 6], "p/a/…/c/d/");
+    check("p/a/b/c/d/", 8, [6], "p/…/c/d/");
+
+    check("p/a/b/c/d", 5, [], "p/…/d");
+    check("p/a/b/c/d", 9, [2, 4, 6], "p/a/b/c/d");
+    check("p/a/b/c/d", 9, [2, 6], "p/a/…/c/d");
+    check("p/a/b/c/d", 7, [6], "p/…/c/d");
+
+    check("/p/a/b/c/d/", 7, [], "/p/…/d/");
+    check("/p/a/b/c/d/", 11, [3, 5, 7], "/p/a/b/c/d/");
+    check("/p/a/b/c/d/", 11, [3, 7], "/p/a/…/c/d/");
+    check("/p/a/b/c/d/", 9, [7], "/p/…/c/d/");
+
+    // If the budget can't be met, no elision is done.
+    check(
+        "project/dir/child/grandchild",
+        5,
+        [],
+        "project/dir/child/grandchild",
+    );
+
+    // The longest unmatched segment is picked for elision.
+    check(
+        "project/one/two/X/three/sub",
+        21,
+        [16],
+        "project/…/X/three/sub",
+    );
+
+    // Elision stops when the budget is met, even though there are more components in the chosen segment.
+    // It proceeds from the end of the unmatched segment that is closer to the midpoint of the path.
+    check(
+        "project/one/two/three/X/sub",
+        21,
+        [22],
+        "project/…/three/X/sub",
+    )
+}
+
+#[test]
+fn test_custom_project_search_ordering_in_file_finder() {
+    let mut file_finder_sorted_output = vec![
+        ProjectPanelOrdMatch(PathMatch {
+            score: 0.5,
+            positions: Vec::new(),
+            worktree_id: 0,
+            path: Arc::from(Path::new("b0.5")),
+            path_prefix: Arc::default(),
+            distance_to_relative_ancestor: 0,
+            is_dir: false,
+        }),
+        ProjectPanelOrdMatch(PathMatch {
+            score: 1.0,
+            positions: Vec::new(),
+            worktree_id: 0,
+            path: Arc::from(Path::new("c1.0")),
+            path_prefix: Arc::default(),
+            distance_to_relative_ancestor: 0,
+            is_dir: false,
+        }),
+        ProjectPanelOrdMatch(PathMatch {
+            score: 1.0,
+            positions: Vec::new(),
+            worktree_id: 0,
+            path: Arc::from(Path::new("a1.0")),
+            path_prefix: Arc::default(),
+            distance_to_relative_ancestor: 0,
+            is_dir: false,
+        }),
+        ProjectPanelOrdMatch(PathMatch {
+            score: 0.5,
+            positions: Vec::new(),
+            worktree_id: 0,
+            path: Arc::from(Path::new("a0.5")),
+            path_prefix: Arc::default(),
+            distance_to_relative_ancestor: 0,
+            is_dir: false,
+        }),
+        ProjectPanelOrdMatch(PathMatch {
+            score: 1.0,
+            positions: Vec::new(),
+            worktree_id: 0,
+            path: Arc::from(Path::new("b1.0")),
+            path_prefix: Arc::default(),
+            distance_to_relative_ancestor: 0,
+            is_dir: false,
+        }),
+    ];
+    file_finder_sorted_output.sort_by(|a, b| b.cmp(a));
+
+    assert_eq!(
+        file_finder_sorted_output,
+        vec![
+            ProjectPanelOrdMatch(PathMatch {
+                score: 1.0,
+                positions: Vec::new(),
+                worktree_id: 0,
+                path: Arc::from(Path::new("a1.0")),
+                path_prefix: Arc::default(),
+                distance_to_relative_ancestor: 0,
+                is_dir: false,
+            }),
+            ProjectPanelOrdMatch(PathMatch {
+                score: 1.0,
+                positions: Vec::new(),
+                worktree_id: 0,
+                path: Arc::from(Path::new("b1.0")),
+                path_prefix: Arc::default(),
+                distance_to_relative_ancestor: 0,
+                is_dir: false,
+            }),
+            ProjectPanelOrdMatch(PathMatch {
+                score: 1.0,
+                positions: Vec::new(),
+                worktree_id: 0,
+                path: Arc::from(Path::new("c1.0")),
+                path_prefix: Arc::default(),
+                distance_to_relative_ancestor: 0,
+                is_dir: false,
+            }),
+            ProjectPanelOrdMatch(PathMatch {
+                score: 0.5,
+                positions: Vec::new(),
+                worktree_id: 0,
+                path: Arc::from(Path::new("a0.5")),
+                path_prefix: Arc::default(),
+                distance_to_relative_ancestor: 0,
+                is_dir: false,
+            }),
+            ProjectPanelOrdMatch(PathMatch {
+                score: 0.5,
+                positions: Vec::new(),
+                worktree_id: 0,
+                path: Arc::from(Path::new("b0.5")),
+                path_prefix: Arc::default(),
+                distance_to_relative_ancestor: 0,
+                is_dir: false,
+            }),
+        ]
+    );
+}
+
 #[gpui::test]
 async fn test_matching_paths(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
@@ -23,7 +181,7 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
         .fs
         .as_fake()
         .insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "a": {
                     "banana": "",
@@ -33,7 +191,7 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
 
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
@@ -153,7 +311,7 @@ async fn test_complex_path(cx: &mut TestAppContext) {
         .fs
         .as_fake()
         .insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "其他": {
                     "S数据表格": {
@@ -164,7 +322,7 @@ async fn test_complex_path(cx: &mut TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
 
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
@@ -194,7 +352,7 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
         .fs
         .as_fake()
         .insert_tree(
-            "/src",
+            path!("/src"),
             json!({
                 "test": {
                     first_file_name: first_file_contents,
@@ -204,7 +362,7 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
 
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
@@ -269,7 +427,7 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
         .fs
         .as_fake()
         .insert_tree(
-            "/src",
+            path!("/src"),
             json!({
                 "test": {
                     first_file_name: first_file_contents,
@@ -279,7 +437,7 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
 
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
@@ -1777,7 +1935,7 @@ async fn test_opens_file_on_modifier_keys_release(cx: &mut gpui::TestAppContext)
         .fs
         .as_fake()
         .insert_tree(
-            "/test",
+            path!("/test"),
             json!({
                 "1.txt": "// One",
                 "2.txt": "// Two",
@@ -1785,7 +1943,7 @@ async fn test_opens_file_on_modifier_keys_release(cx: &mut gpui::TestAppContext)
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/test".as_ref()], cx).await;
+    let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
     open_queried_buffer("1", 1, "1.txt", &workspace, cx).await;

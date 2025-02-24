@@ -6,6 +6,7 @@ pub mod repository;
 pub mod status;
 
 use anyhow::{anyhow, Context as _, Result};
+use gpui::action_with_deprecated_aliases;
 use gpui::actions;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
@@ -29,20 +30,24 @@ pub static INDEX_LOCK: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("i
 actions!(
     git,
     [
+        // per-hunk
+        ToggleStaged,
+        StageAndNext,
+        UnstageAndNext,
+        // per-file
         StageFile,
         UnstageFile,
-        ToggleStaged,
-        // Revert actions are currently in the editor crate:
-        // editor::RevertFile,
-        // editor::RevertSelectedHunks
+        // repo-wide
         StageAll,
         UnstageAll,
-        RevertAll,
+        RestoreTrackedFiles,
+        TrashUntrackedFiles,
         Uncommit,
         Commit,
-        ClearCommitMessage
     ]
 );
+action_with_deprecated_aliases!(git, RestoreFile, ["editor::RevertFile"]);
+action_with_deprecated_aliases!(git, Restore, ["editor::RevertSelectedHunks"]);
 
 /// The length of a Git short SHA.
 pub const SHORT_SHA_LENGTH: usize = 7;

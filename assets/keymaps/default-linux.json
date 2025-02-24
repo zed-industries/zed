@@ -24,10 +24,10 @@
       "shift-escape": "workspace::ToggleZoom",
       "open": "workspace::Open",
       "ctrl-o": "workspace::Open",
-      "ctrl-=": "zed::IncreaseBufferFontSize",
-      "ctrl-+": "zed::IncreaseBufferFontSize",
-      "ctrl--": "zed::DecreaseBufferFontSize",
-      "ctrl-0": "zed::ResetBufferFontSize",
+      "ctrl-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
+      "ctrl-+": ["zed::IncreaseBufferFontSize", { "persist": false }],
+      "ctrl--": ["zed::DecreaseBufferFontSize", { "persist": false }],
+      "ctrl-0": ["zed::ResetBufferFontSize", { "persist": false }],
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
       "f11": "zed::ToggleFullScreen",
@@ -84,12 +84,12 @@
       "pageup": "editor::MovePageUp",
       "alt-pageup": "editor::PageUp",
       "shift-pageup": "editor::SelectPageUp",
-      "home": "editor::MoveToBeginningOfLine",
+      "home": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": true }],
       "down": "editor::MoveDown",
       "pagedown": "editor::MovePageDown",
       "alt-pagedown": "editor::PageDown",
       "shift-pagedown": "editor::SelectPageDown",
-      "end": "editor::MoveToEndOfLine",
+      "end": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }],
       "left": "editor::MoveLeft",
       "right": "editor::MoveRight",
       "ctrl-left": "editor::MoveToPreviousWordStart",
@@ -116,9 +116,9 @@
       // "alt-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-alt-space": "editor::ShowCharacterPalette",
       "ctrl-;": "editor::ToggleLineNumbers",
-      "ctrl-k ctrl-r": "editor::RevertSelectedHunks",
+      "ctrl-k ctrl-r": "git::Restore",
       "ctrl-'": "editor::ToggleSelectedDiffHunks",
-      "ctrl-\"": "editor::ExpandAllHunkDiffs",
+      "ctrl-\"": "editor::ExpandAllDiffHunks",
       "ctrl-i": "editor::ShowSignatureHelp",
       "alt-g b": "editor::ToggleGitBlame",
       "menu": "editor::OpenContextMenu",
@@ -184,8 +184,9 @@
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-k h": "assistant::DeployHistory",
       "ctrl-k l": "assistant::DeployPromptLibrary",
-      "new": "assistant::NewContext",
-      "ctrl-n": "assistant::NewContext"
+      "new": "assistant::NewChat",
+      "ctrl-t": "assistant::NewChat",
+      "ctrl-n": "assistant::NewChat"
     }
   },
   {
@@ -343,9 +344,9 @@
       "alt-ctrl-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
       "ctrl-m": "editor::MoveToEnclosingBracket",
-      "ctrl-shift-\\": "editor::MoveToEnclosingBracket",
-      "ctrl-shift-[": "editor::Fold",
-      "ctrl-shift-]": "editor::UnfoldLines",
+      "ctrl-|": "editor::MoveToEnclosingBracket",
+      "ctrl-{": "editor::Fold",
+      "ctrl-}": "editor::UnfoldLines",
       "ctrl-k ctrl-l": "editor::ToggleFold",
       "ctrl-k ctrl-[": "editor::FoldRecursive",
       "ctrl-k ctrl-]": "editor::UnfoldRecursive",
@@ -510,13 +511,14 @@
     "context": "Editor && edit_prediction",
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
-      "alt-l": "editor::AcceptEditPrediction"
+      "alt-l": "editor::AcceptEditPrediction",
+      "tab": "editor::AcceptEditPrediction"
     }
   },
   {
-    "context": "Editor && edit_prediction && !edit_prediction_requires_modifier",
+    "context": "Editor && edit_prediction_conflict",
     "bindings": {
-      "tab": "editor::AcceptEditPrediction",
+      "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction"
     }
   },
@@ -586,6 +588,7 @@
       "save": "workspace::Save",
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-<": "assistant::InsertIntoEditor",
+      "ctrl-alt-/": "assistant::ToggleModelSelector",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",
@@ -649,8 +652,8 @@
       "right": "outline_panel::ExpandSelectedEntry",
       "alt-copy": "outline_panel::CopyPath",
       "ctrl-alt-c": "outline_panel::CopyPath",
-      "alt-shift-copy": "outline_panel::CopyRelativePath",
-      "alt-ctrl-shift-c": "outline_panel::CopyRelativePath",
+      "alt-shift-copy": "workspace::CopyRelativePath",
+      "alt-ctrl-shift-c": "workspace::CopyRelativePath",
       "alt-ctrl-r": "outline_panel::RevealInFileManager",
       "space": "outline_panel::Open",
       "shift-down": "menu::SelectNext",
@@ -678,8 +681,8 @@
       "ctrl-v": "project_panel::Paste",
       "alt-copy": "project_panel::CopyPath",
       "ctrl-alt-c": "project_panel::CopyPath",
-      "alt-shift-copy": "project_panel::CopyRelativePath",
-      "alt-ctrl-shift-c": "project_panel::CopyRelativePath",
+      "alt-shift-copy": "workspace::CopyRelativePath",
+      "alt-ctrl-shift-c": "workspace::CopyRelativePath",
       "enter": "project_panel::Rename",
       "f2": "project_panel::Rename",
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
@@ -765,28 +768,13 @@
     }
   },
   {
-    "context": "FileFinder",
-    "bindings": {
-      "ctrl": "file_finder::ToggleMenu"
-    }
-  },
-  {
-    "context": "FileFinder && !menu_open",
+    "context": "FileFinder || (FileFinder > Picker > Editor) || (FileFinder > Picker > menu)",
     "bindings": {
       "ctrl-shift-p": "file_finder::SelectPrev",
       "ctrl-j": "pane::SplitDown",
       "ctrl-k": "pane::SplitUp",
       "ctrl-h": "pane::SplitLeft",
       "ctrl-l": "pane::SplitRight"
-    }
-  },
-  {
-    "context": "FileFinder && menu_open",
-    "bindings": {
-      "j": "pane::SplitDown",
-      "k": "pane::SplitUp",
-      "h": "pane::SplitLeft",
-      "l": "pane::SplitRight"
     }
   },
   {

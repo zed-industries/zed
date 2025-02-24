@@ -2,7 +2,7 @@
 
 Elm support is available through the [Elm extension](https://github.com/zed-extensions/elm).
 
-- Tree Sitter: [elm-tooling/tree-sitter-elm](https://github.com/elm-tooling/tree-sitter-elm)
+- Tree-sitter: [elm-tooling/tree-sitter-elm](https://github.com/elm-tooling/tree-sitter-elm)
 - Language Server: [elm-tooling/elm-language-server](https://github.com/elm-tooling/elm-language-server)
 
 ## Setup

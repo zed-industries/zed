@@ -21,7 +21,7 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
     // * `no_focus` — always show the task's pane, add the task's tab in it, but don't focus it
     // * `never` — do not alter focus, but still add/reuse the task's tab in its pane
     "reveal": "always",
-    // What to do with the terminal pane and tab, after the command had finished:
+    // What to do with the terminal pane and tab, after the command has finished:
     // * `never` — Do nothing when the command finishes (default)
     // * `always` — always hide the terminal tab, hide the pane also if it was the last tab in it
     // * `on_success` — hide the terminal tab on task success only, otherwise behaves similar to `always`
@@ -50,11 +50,11 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
 ]
 ```
 
-There are two actions that drive the workflow of using tasks: `task: spawn` and `task: rerun`
+There are two actions that drive the workflow of using tasks: `task: spawn` and `task: rerun`.
 `task: spawn` opens a modal with all available tasks in the current file.
-`task: rerun` reruns the most-recently spawned task. You can also rerun tasks from task modal.
+`task: rerun` reruns the most recently spawned task. You can also rerun tasks from the task modal.
 
-By default, rerunning tasks reuses the same terminal (due to the `"use_new_terminal": false` default) but waits for the previous task to finish before start (due to the `"allow_concurrent_runs": false` default).
+By default, rerunning tasks reuses the same terminal (due to the `"use_new_terminal": false` default) but waits for the previous task to finish before starting (due to the `"allow_concurrent_runs": false` default).
 
 Keep `"use_new_terminal": false` and set `"allow_concurrent_runs": true` to allow cancelling previous tasks on rerun.
 
@@ -62,9 +62,9 @@ Keep `"use_new_terminal": false` and set `"allow_concurrent_runs": true` to allo
 
 Tasks can be defined:
 
-- in global `tasks.json` file; such tasks are available in all Zed projects you work on. This file is usually located in `~/.config/zed/tasks.json`. You can edit them by using `zed: open tasks` action.
-- in worktree-specific (local) `.zed/tasks.json` file; such tasks are available only when working on a project with that worktree included. You can edit worktree-specific tasks by using `zed: open local tasks`.
-- on the fly with [oneshot tasks](#oneshot-tasks). These tasks are project-specific and do not persist across sections.
+- in the global `tasks.json` file; such tasks are available in all Zed projects you work on. This file is usually located in `~/.config/zed/tasks.json`. You can edit them by using the `zed: open tasks` action.
+- in the worktree-specific (local) `.zed/tasks.json` file; such tasks are available only when working on a project with that worktree included. You can edit worktree-specific tasks by using the `zed: open local tasks` action.
+- on the fly with [oneshot tasks](#oneshot-tasks). These tasks are project-specific and do not persist across sessions.
 - by language extension.
 
 ## Variables
@@ -95,7 +95,7 @@ To use a variable in a task, prefix it with a dollar sign (`$`):
 
 You can also use verbose syntax that allows specifying a default if a given variable is not available: `${ZED_FILE:default_value}`
 
-These environmental variables can also be used in tasks `cwd`, `args` and `label` fields.
+These environmental variables can also be used in tasks' `cwd`, `args`, and `label` fields.
 
 ### Variable Quoting
 
@@ -110,7 +110,7 @@ For example, instead of this (which will fail if the path has a space):
 }
 ```
 
-Provide the
+Provide the following:
 
 ```json
 {
@@ -133,18 +133,18 @@ Or explicitly include escaped quotes like so:
 
 The same task modal opened via `task: spawn` supports arbitrary bash-like command execution: type a command inside the modal text field, and use `opt-enter` to spawn it.
 
-Task modal will persist list of those command for current Zed session, `task: rerun` will also rerun such tasks if they were the last ones spawned.
+The task modal persists these ad-hoc commands for the duration of the session, `task: rerun` will also rerun such tasks if they were the last ones spawned.
 
-You can also adjust currently selected task in a modal (`tab` is a default key binding). Doing so will put its command into a prompt that can then be edited & spawned as an oneshot task.
+You can also adjust the currently selected task in a modal (`tab` is the default key binding). Doing so will put its command into a prompt that can then be edited & spawned as a oneshot task.
 
 ### Ephemeral tasks
 
-You can use cmd modifier when spawning a task via a modal; tasks spawned this way will not have their usage count increased (thus, they will not be respawned with `task: rerun` and they won't be have a high rank in task modal).
+You can use the `cmd` modifier when spawning a task via a modal; tasks spawned this way will not have their usage count increased (thus, they will not be respawned with `task: rerun` and they won't have a high rank in the task modal).
 The intended use of ephemeral tasks is to stay in the flow with continuous `task: rerun` usage.
 
 ## Custom keybindings for tasks
 
-You can define your own keybindings for your tasks via additional argument to `task::Spawn`. If you wanted to bind the aforementioned `echo current file's path` task to `alt-g`, you would add the following snippet in your [`keymap.json`](./key-bindings.md) file:
+You can define your own keybindings for your tasks via an additional argument to `task::Spawn`. If you wanted to bind the aforementioned `echo current file's path` task to `alt-g`, you would add the following snippet in your [`keymap.json`](./key-bindings.md) file:
 
 ```json
 {
@@ -181,13 +181,13 @@ This could be useful for launching a terminal application that you want to use i
 
 ## Binding runnable tags to task templates
 
-Zed supports overriding default action for inline runnable indicators via workspace-local and global `tasks.json` file with the following precedence hierarchy:
+Zed supports overriding the default action for inline runnable indicators via workspace-local and global `tasks.json` file with the following precedence hierarchy:
 
 1. Workspace `tasks.json`
 2. Global `tasks.json`
 3. Language-provided tag bindings (default).
 
-To tag a task, add the runnable tag name to `tags` field on task template:
+To tag a task, add the runnable tag name to the `tags` field on the task template:
 
 ```json
 {
@@ -197,4 +197,4 @@ To tag a task, add the runnable tag name to `tags` field on task template:
 }
 ```
 
-In doing so, you can change which task is shown in runnables indicator.
+In doing so, you can change which task is shown in the runnables indicator.

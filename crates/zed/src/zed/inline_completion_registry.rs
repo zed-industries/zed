@@ -3,7 +3,7 @@ use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
 use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
-use gpui::{AnyWindowHandle, App, AppContext, Context, Entity, WeakEntity};
+use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{all_language_settings, EditPredictionProvider};
 use settings::SettingsStore;
 use std::{cell::RefCell, rc::Rc, sync::Arc};

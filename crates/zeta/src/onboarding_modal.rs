@@ -4,7 +4,6 @@ use crate::{onboarding_event, ZED_PREDICT_DATA_COLLECTION_CHOICE};
 use anyhow::Context as _;
 use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
-use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
     ease_in_out, svg, Animation, AnimationExt as _, ClickEvent, DismissEvent, Entity, EventEmitter,
@@ -67,14 +66,14 @@ impl ZedPredictModal {
     }
 
     fn view_blog(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/blog/edit-predictions");
+        cx.open_url("https://zed.dev/blog/edit-prediction");
         cx.notify();
 
         onboarding_event!("Blog Link clicked");
     }
 
     fn inline_completions_doc(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/docs/configuring-zed#inline-completions");
+        cx.open_url("https://zed.dev/docs/configuring-zed#disabled-globs");
         cx.notify();
 
         onboarding_event!("Docs Link Clicked");
@@ -288,16 +287,12 @@ impl Render for ZedPredictModal {
                 )),
             ));
 
-        let blog_post_button = cx
-            .has_flag::<feature_flags::PredictEditsLaunchFeatureFlag>()
-            .then(|| {
-                Button::new("view-blog", "Read the Blog Post")
-                    .full_width()
-                    .icon(IconName::ArrowUpRight)
-                    .icon_size(IconSize::Indicator)
-                    .icon_color(Color::Muted)
-                    .on_click(cx.listener(Self::view_blog))
-            });
+        let blog_post_button = Button::new("view-blog", "Read the Blog Post")
+            .full_width()
+            .icon(IconName::ArrowUpRight)
+            .icon_size(IconSize::Indicator)
+            .icon_color(Color::Muted)
+            .on_click(cx.listener(Self::view_blog));
 
         if self.user_store.read(cx).current_user().is_some() {
             let copy = match self.sign_in_status {
@@ -449,7 +444,7 @@ impl Render for ZedPredictModal {
                                 .full_width()
                                 .on_click(cx.listener(Self::accept_and_enable)),
                         )
-                        .children(blog_post_button),
+                        .child(blog_post_button),
                 )
         } else {
             base.child(
@@ -468,7 +463,7 @@ impl Render for ZedPredictModal {
                             .full_width()
                             .on_click(cx.listener(Self::sign_in)),
                     )
-                    .children(blog_post_button),
+                    .child(blog_post_button),
             )
         }
     }

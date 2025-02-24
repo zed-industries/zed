@@ -252,7 +252,7 @@ impl SerializableItem for ImageView {
         let workspace_id = workspace.database_id()?;
         let image_path = self.image_item.read(cx).file.as_local()?.abs_path(cx);
 
-        Some(cx.background_executor().spawn({
+        Some(cx.background_spawn({
             async move {
                 IMAGE_VIEWER
                     .save_image_path(item_id, workspace_id, image_path)

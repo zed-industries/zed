@@ -28,6 +28,7 @@ serde.workspace = true
 smol.workspace = true
 log.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
+regex.workspace = true
 reqwest.workspace = true
 
 [dev-dependencies]

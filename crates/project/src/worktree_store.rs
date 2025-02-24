@@ -13,7 +13,9 @@ use futures::{
     FutureExt, SinkExt,
 };
 use git::repository::Branch;
-use gpui::{App, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity};
+use gpui::{
+    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity,
+};
 use postage::oneshot;
 use rpc::{
     proto::{self, FromProto, ToProto, SSH_PROJECT_ID},
@@ -179,8 +181,7 @@ impl WorktreeStore {
             Task::ready(Ok((tree, relative_path)))
         } else {
             let worktree = self.create_worktree(abs_path, visible, cx);
-            cx.background_executor()
-                .spawn(async move { Ok((worktree.await?, PathBuf::new())) })
+            cx.background_spawn(async move { Ok((worktree.await?, PathBuf::new())) })
         }
     }
 
@@ -679,7 +680,7 @@ impl WorktreeStore {
         let (output_tx, output_rx) = smol::channel::bounded(64);
         let (matching_paths_tx, matching_paths_rx) = smol::channel::unbounded();
 
-        let input = cx.background_executor().spawn({
+        let input = cx.background_spawn({
             let fs = fs.clone();
             let query = query.clone();
             async move {
@@ -696,7 +697,7 @@ impl WorktreeStore {
             }
         });
         const MAX_CONCURRENT_FILE_SCANS: usize = 64;
-        let filters = cx.background_executor().spawn(async move {
+        let filters = cx.background_spawn(async move {
             let fs = &fs;
             let query = &query;
             executor
@@ -712,25 +713,24 @@ impl WorktreeStore {
                 })
                 .await;
         });
-        cx.background_executor()
-            .spawn(async move {
-                let mut matched = 0;
-                while let Ok(mut receiver) = output_rx.recv().await {
-                    let Some(path) = receiver.next().await else {
-                        continue;
-                    };
-                    let Ok(_) = matching_paths_tx.send(path).await else {
-                        break;
-                    };
-                    matched += 1;
-                    if matched == limit {
-                        break;
-                    }
+        cx.background_spawn(async move {
+            let mut matched = 0;
+            while let Ok(mut receiver) = output_rx.recv().await {
+                let Some(path) = receiver.next().await else {
+                    continue;
+                };
+                let Ok(_) = matching_paths_tx.send(path).await else {
+                    break;
+                };
+                matched += 1;
+                if matched == limit {
+                    break;
                 }
-                drop(input);
-                drop(filters);
-            })
-            .detach();
+            }
+            drop(input);
+            drop(filters);
+        })
+        .detach();
         matching_paths_rx
     }
 
@@ -934,7 +934,7 @@ impl WorktreeStore {
                     }),
                 });
 
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     let response = request.await?;
 
                     let branches = response
@@ -1021,7 +1021,7 @@ impl WorktreeStore {
                     branch_name: new_branch,
                 });
 
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     request.await?;
                     Ok(())
                 })

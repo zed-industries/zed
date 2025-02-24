@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 mod decorated_icon;
 mod icon_decoration;
 
@@ -131,6 +129,7 @@ pub enum IconName {
     AiDeepSeek,
     AiGoogle,
     AiLmStudio,
+    AiMistral,
     AiOllama,
     AiOpenAi,
     AiZed,

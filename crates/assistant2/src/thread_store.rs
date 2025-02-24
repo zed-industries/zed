@@ -9,7 +9,9 @@ use context_server::manager::ContextServerManager;
 use context_server::{ContextServerFactoryRegistry, ContextServerTool};
 use futures::future::{self, BoxFuture, Shared};
 use futures::FutureExt as _;
-use gpui::{prelude::*, App, BackgroundExecutor, Context, Entity, SharedString, Task};
+use gpui::{
+    prelude::*, App, BackgroundExecutor, Context, Entity, Global, ReadGlobal, SharedString, Task,
+};
 use heed::types::SerdeBincode;
 use heed::Database;
 use language_model::Role;
@@ -19,6 +21,10 @@ use util::ResultExt as _;
 
 use crate::thread::{MessageId, Thread, ThreadId};
 
+pub fn init(cx: &mut App) {
+    ThreadsDatabase::init(cx);
+}
+
 pub struct ThreadStore {
     #[allow(unused)]
     project: Entity<Project>,
@@ -26,7 +32,6 @@ pub struct ThreadStore {
     context_server_manager: Entity<ContextServerManager>,
     context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
     threads: Vec<SavedThreadMetadata>,
-    database_future: Shared<BoxFuture<'static, Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>,
 }
 
 impl ThreadStore {
@@ -41,24 +46,12 @@ impl ThreadStore {
                 ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
             });
 
-            let executor = cx.background_executor().clone();
-            let database_future = executor
-                .spawn({
-                    let executor = executor.clone();
-                    let database_path = paths::support_dir().join("threads/threads-db.0.mdb");
-                    async move { ThreadsDatabase::new(database_path, executor) }
-                })
-                .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
-                .boxed()
-                .shared();
-
             let this = Self {
                 project,
                 tools,
                 context_server_manager,
                 context_server_tool_ids: HashMap::default(),
                 threads: Vec::new(),
-                database_future,
             };
             this.register_context_server_handlers(cx);
             this.reload(cx).detach_and_log_err(cx);
@@ -94,7 +87,7 @@ impl ThreadStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Thread>>> {
         let id = id.clone();
-        let database_future = self.database_future.clone();
+        let database_future = ThreadsDatabase::global_future(cx);
         cx.spawn(|this, mut cx| async move {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             let thread = database
@@ -127,7 +120,7 @@ impl ThreadStore {
             (id, thread)
         });
 
-        let database_future = self.database_future.clone();
+        let database_future = ThreadsDatabase::global_future(cx);
         cx.spawn(|this, mut cx| async move {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             database.save_thread(metadata, thread).await?;
@@ -138,7 +131,7 @@ impl ThreadStore {
 
     pub fn delete_thread(&mut self, id: &ThreadId, cx: &mut Context<Self>) -> Task<Result<()>> {
         let id = id.clone();
-        let database_future = self.database_future.clone();
+        let database_future = ThreadsDatabase::global_future(cx);
         cx.spawn(|this, mut cx| async move {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             database.delete_thread(id.clone()).await?;
@@ -149,8 +142,8 @@ impl ThreadStore {
         })
     }
 
-    fn reload(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let database_future = self.database_future.clone();
+    pub fn reload(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let database_future = ThreadsDatabase::global_future(cx);
         cx.spawn(|this, mut cx| async move {
             let threads = database_future
                 .await
@@ -253,13 +246,40 @@ pub struct SavedMessage {
     pub text: String,
 }
 
-struct ThreadsDatabase {
+struct GlobalThreadsDatabase(
+    Shared<BoxFuture<'static, Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>,
+);
+
+impl Global for GlobalThreadsDatabase {}
+
+pub(crate) struct ThreadsDatabase {
     executor: BackgroundExecutor,
     env: heed::Env,
     threads: Database<SerdeBincode<ThreadId>, SerdeBincode<SavedThread>>,
 }
 
 impl ThreadsDatabase {
+    fn global_future(
+        cx: &mut App,
+    ) -> Shared<BoxFuture<'static, Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>> {
+        GlobalThreadsDatabase::global(cx).0.clone()
+    }
+
+    fn init(cx: &mut App) {
+        let executor = cx.background_executor().clone();
+        let database_future = executor
+            .spawn({
+                let executor = executor.clone();
+                let database_path = paths::support_dir().join("threads/threads-db.0.mdb");
+                async move { ThreadsDatabase::new(database_path, executor) }
+            })
+            .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
+            .boxed()
+            .shared();
+
+        cx.set_global(GlobalThreadsDatabase(database_future));
+    }
+
     pub fn new(path: PathBuf, executor: BackgroundExecutor) -> Result<Self> {
         std::fs::create_dir_all(&path)?;
 

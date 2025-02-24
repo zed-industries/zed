@@ -7,7 +7,9 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use fs::Fs;
 use futures::FutureExt;
-use gpui::{App, Context, Entity, EntityId, EventEmitter, Subscription, Task, WeakEntity};
+use gpui::{
+    App, AppContext as _, Context, Entity, EntityId, EventEmitter, Subscription, Task, WeakEntity,
+};
 use language::LanguageRegistry;
 use log;
 use project::{Project, Worktree, WorktreeId};
@@ -250,7 +252,7 @@ impl ProjectIndex {
                         let worktree_id = index.worktree().read(cx).id();
                         let db_connection = index.db_connection().clone();
                         let db = *index.embedding_index().db();
-                        cx.background_executor().spawn(async move {
+                        cx.background_spawn(async move {
                             let txn = db_connection
                                 .read_txn()
                                 .context("failed to create read transaction")?;
@@ -432,7 +434,7 @@ impl ProjectIndex {
                         let file_digest_db = summary_index.file_digest_db();
                         let summary_db = summary_index.summary_db();
 
-                        cx.background_executor().spawn(async move {
+                        cx.background_spawn(async move {
                             let txn = db_connection
                                 .read_txn()
                                 .context("failed to create db read transaction")?;
@@ -519,8 +521,9 @@ impl ProjectIndex {
 
                 index
                     .read_with(&cx, |index, cx| {
-                        cx.background_executor()
-                            .spawn(index.summary_index().flush_backlog(worktree_abs_path, cx))
+                        cx.background_spawn(
+                            index.summary_index().flush_backlog(worktree_abs_path, cx),
+                        )
                     })?
                     .await
             })

@@ -244,18 +244,17 @@ impl TestServer {
                             .await
                             .expect("retrieving user failed")
                             .unwrap();
-                        cx.background_executor()
-                            .spawn(server.handle_connection(
-                                server_conn,
-                                client_name,
-                                Principal::User(user),
-                                ZedVersion(SemanticVersion::new(1, 0, 0)),
-                                None,
-                                None,
-                                Some(connection_id_tx),
-                                Executor::Deterministic(cx.background_executor().clone()),
-                            ))
-                            .detach();
+                        cx.background_spawn(server.handle_connection(
+                            server_conn,
+                            client_name,
+                            Principal::User(user),
+                            ZedVersion(SemanticVersion::new(1, 0, 0)),
+                            None,
+                            None,
+                            Some(connection_id_tx),
+                            Executor::Deterministic(cx.background_executor().clone()),
+                        ))
+                        .detach();
                         let connection_id = connection_id_rx.await.map_err(|e| {
                             EstablishConnectionError::Other(anyhow!(
                                 "{} (is server shutting down?)",

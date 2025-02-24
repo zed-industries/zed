@@ -851,7 +851,7 @@ impl AssistantContext {
             .collect::<Vec<_>>();
         context_ops.extend(self.pending_ops.iter().cloned());
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let buffer_ops = buffer_ops.await;
             context_ops.sort_unstable_by_key(|op| op.timestamp());
             buffer_ops
@@ -1192,11 +1192,14 @@ impl AssistantContext {
         let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
             return;
         };
+        let debounce = self.token_count.is_some();
         self.pending_token_count = cx.spawn(|this, mut cx| {
             async move {
-                cx.background_executor()
-                    .timer(Duration::from_millis(200))
-                    .await;
+                if debounce {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(200))
+                        .await;
+                }
 
                 let token_count = cx.update(|cx| model.count_tokens(request, cx))?.await?;
                 this.update(&mut cx, |this, cx| {
@@ -3363,7 +3366,7 @@ impl SavedContextV0_1_0 {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SavedContextMetadata {
     pub title: String,
     pub path: PathBuf,

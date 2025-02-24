@@ -17,9 +17,10 @@ use gpui::{
 };
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
-    CloudModel, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId, LanguageModelName,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelProviderTosView, LanguageModelRequest, RateLimiter, ZED_CLOUD_PROVIDER_ID,
+    AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
+    LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelProviderTosView, LanguageModelRequest, RateLimiter,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
     LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider,
@@ -271,6 +272,18 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         IconName::AiZed
     }
 
+    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let llm_api_token = self.state.read(cx).llm_api_token.clone();
+        let model = CloudModel::Anthropic(anthropic::Model::default());
+        Some(Arc::new(CloudLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            llm_api_token: llm_api_token.clone(),
+            client: self.client.clone(),
+            request_limiter: RateLimiter::new(4),
+        }))
+    }
+
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
@@ -363,7 +376,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         !self.state.read(cx).is_signed_out()
     }
 
-    fn authenticate(&self, _cx: &mut App) -> Task<Result<()>> {
+    fn authenticate(&self, _cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         Task::ready(Ok(()))
     }
 

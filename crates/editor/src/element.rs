@@ -15,31 +15,29 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
-    AcceptEditPrediction, BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint,
-    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
+    BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
+    DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk,
     GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
-    InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
-    RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR,
-    EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT, FILE_HEADER_HEIGHT,
+    InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt,
+    RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap, StickyHeaderExcerpt,
+    ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
-use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus};
+use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
 use file_icons::FileIcons;
 use git::{blame::BlameEntry, Oid};
 use gpui::{
-    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash,
-    point, px, quad, relative, size, svg, transparent_black, Action, AnyElement, App,
-    AvailableSpace, Axis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners,
-    CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _,
-    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement,
-    KeyBindingContextPredicate, Keystroke, Length, ModifiersChangedEvent, MouseButton,
+    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
+    relative, size, svg, transparent_black, Action, AnyElement, App, AvailableSpace, Axis, Bounds,
+    ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase,
+    Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
+    Hsla, InteractiveElement, IntoElement, Keystroke, Length, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
     ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    Subscription, TextRun, TextStyleRefinement, WeakEntity, Window,
+    Subscription, TextRun, TextStyleRefinement, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -54,8 +52,8 @@ use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
     RowInfo, ToOffset,
 };
-use project::project_settings::{GitGutterSetting, ProjectSettings};
-use settings::{KeyBindingValidator, KeyBindingValidatorRegistration, Settings};
+use project::project_settings::{self, GitGutterSetting, ProjectSettings};
+use settings::Settings;
 use smallvec::{smallvec, SmallVec};
 use std::{
     any::TypeId,
@@ -69,16 +67,17 @@ use std::{
 };
 use sum_tree::Bias;
 use text::BufferId;
-use theme::{ActiveTheme, Appearance, PlayerColor};
+use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
 use ui::{
     h_flex, prelude::*, ButtonLike, ButtonStyle, ContextMenu, IconButtonShape, KeyBinding, Tooltip,
     POPOVER_Y_PADDING,
 };
 use unicode_segmentation::UnicodeSegmentation;
-use util::{markdown::MarkdownString, RangeExt, ResultExt};
-use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
+use util::{debug_panic, RangeExt, ResultExt};
+use workspace::{item::Item, notifications::NotifyTaskExt};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
+const MIN_SCROLL_THUMB_SIZE: f32 = 25.;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DisplayDiffHunk {
@@ -291,6 +290,8 @@ impl EditorElement {
         register_action(editor, window, Editor::move_to_end_of_paragraph);
         register_action(editor, window, Editor::move_to_beginning);
         register_action(editor, window, Editor::move_to_end);
+        register_action(editor, window, Editor::move_to_start_of_excerpt);
+        register_action(editor, window, Editor::move_to_end_of_excerpt);
         register_action(editor, window, Editor::select_up);
         register_action(editor, window, Editor::select_down);
         register_action(editor, window, Editor::select_left);
@@ -303,6 +304,8 @@ impl EditorElement {
         register_action(editor, window, Editor::select_to_end_of_line);
         register_action(editor, window, Editor::select_to_start_of_paragraph);
         register_action(editor, window, Editor::select_to_end_of_paragraph);
+        register_action(editor, window, Editor::select_to_start_of_excerpt);
+        register_action(editor, window, Editor::select_to_end_of_excerpt);
         register_action(editor, window, Editor::select_to_beginning);
         register_action(editor, window, Editor::select_to_end);
         register_action(editor, window, Editor::select_all);
@@ -404,6 +407,7 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_indent_guides);
         register_action(editor, window, Editor::toggle_inlay_hints);
         register_action(editor, window, Editor::toggle_inline_completions);
+        register_action(editor, window, Editor::toggle_inline_diagnostics);
         register_action(editor, window, hover_popover::hover);
         register_action(editor, window, Editor::reveal_in_finder);
         register_action(editor, window, Editor::copy_path);
@@ -418,6 +422,8 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_git_blame_inline);
         register_action(editor, window, Editor::toggle_selected_diff_hunks);
         register_action(editor, window, Editor::toggle_staged_selected_diff_hunks);
+        register_action(editor, window, Editor::stage_and_next);
+        register_action(editor, window, Editor::unstage_and_next);
         register_action(editor, window, Editor::expand_all_diff_hunks);
 
         register_action(editor, window, |editor, action, window, cx| {
@@ -491,8 +497,8 @@ impl EditorElement {
         register_action(editor, window, Editor::unique_lines_case_sensitive);
         register_action(editor, window, Editor::accept_partial_inline_completion);
         register_action(editor, window, Editor::accept_edit_prediction);
-        register_action(editor, window, Editor::revert_file);
-        register_action(editor, window, Editor::revert_selected_hunks);
+        register_action(editor, window, Editor::restore_file);
+        register_action(editor, window, Editor::git_restore);
         register_action(editor, window, Editor::apply_all_diff_hunks);
         register_action(editor, window, Editor::apply_selected_diff_hunks);
         register_action(editor, window, Editor::open_active_item_in_terminal);
@@ -515,6 +521,7 @@ impl EditorElement {
                     if editor.hover_state.focused(window, cx) {
                         return;
                     }
+
                     editor.handle_modifiers_changed(event.modifiers, &position_map, window, cx);
                 })
             }
@@ -540,7 +547,7 @@ impl EditorElement {
         let mut modifiers = event.modifiers;
 
         if let Some(hovered_hunk) = hovered_hunk {
-            editor.toggle_diff_hunks_in_ranges_narrow(vec![hovered_hunk], cx);
+            editor.toggle_single_diff_hunk(hovered_hunk, cx);
             cx.notify();
             return;
         } else if gutter_hitbox.is_hovered(window) {
@@ -594,7 +601,7 @@ impl EditorElement {
 
         let point_for_position = position_map.point_for_position(event.position);
         let position = point_for_position.previous_valid;
-        if modifiers.shift && modifiers.alt {
+        if modifiers == COLUMNAR_SELECTION_MODIFIERS {
             editor.select(
                 SelectPhase::BeginColumnar {
                     position,
@@ -1294,6 +1301,9 @@ impl EditorElement {
                     // Buffer Search Results
                     (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
                     ||
+                    // Selected Text Occurrences
+                    (is_singleton && scrollbar_settings.selected_text && editor.has_background_highlights::<SelectedTextHighlight>())
+                    ||
                     // Selected Symbol Occurrences
                     (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
                     ||
@@ -1379,17 +1389,21 @@ impl EditorElement {
                     if text_units_per_page.horizontal >= total_text_units_x {
                         return None;
                     }
-
-                    let thumb_percent =
-                        (text_units_per_page.horizontal / total_text_units_x).min(1.);
-
-                    Some(track_bounds_x.size.width * thumb_percent)
+                    if track_bounds_x.size.width < px(MIN_SCROLL_THUMB_SIZE) {
+                        return Some(track_bounds_x.size.width);
+                    }
+                    let thumb_size = track_bounds_x.size.width
+                        * (text_units_per_page.horizontal / total_text_units_x);
+                    Some(thumb_size.clamp(px(MIN_SCROLL_THUMB_SIZE), track_bounds_x.size.width))
                 }),
             total_text_units.vertical.zip(track_bounds.vertical).map(
                 |(total_text_units_y, track_bounds_y)| {
-                    let thumb_percent = (text_units_per_page.vertical / total_text_units_y).min(1.);
-
-                    track_bounds_y.size.height * thumb_percent
+                    if track_bounds_y.size.height < px(MIN_SCROLL_THUMB_SIZE) {
+                        return track_bounds_y.size.height;
+                    }
+                    let thumb_size = track_bounds_y.size.height
+                        * (text_units_per_page.vertical / total_text_units_y);
+                    thumb_size.clamp(px(MIN_SCROLL_THUMB_SIZE), track_bounds_y.size.height)
                 },
             ),
         );
@@ -1601,6 +1615,157 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn layout_inline_diagnostics(
+        &self,
+        line_layouts: &[LineWithInvisibles],
+        crease_trailers: &[Option<CreaseTrailerLayout>],
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        inline_completion_popover_origin: Option<gpui::Point<Pixels>>,
+        start_row: DisplayRow,
+        end_row: DisplayRow,
+        line_height: Pixels,
+        em_width: Pixels,
+        style: &EditorStyle,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> HashMap<DisplayRow, AnyElement> {
+        let max_severity = ProjectSettings::get_global(cx)
+            .diagnostics
+            .inline
+            .max_severity
+            .map_or(DiagnosticSeverity::HINT, |severity| match severity {
+                project_settings::DiagnosticSeverity::Error => DiagnosticSeverity::ERROR,
+                project_settings::DiagnosticSeverity::Warning => DiagnosticSeverity::WARNING,
+                project_settings::DiagnosticSeverity::Info => DiagnosticSeverity::INFORMATION,
+                project_settings::DiagnosticSeverity::Hint => DiagnosticSeverity::HINT,
+            });
+
+        let active_diagnostics_group = self
+            .editor
+            .read(cx)
+            .active_diagnostics
+            .as_ref()
+            .map(|active_diagnostics| active_diagnostics.group_id);
+
+        let diagnostics_by_rows = self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            editor
+                .inline_diagnostics
+                .iter()
+                .filter(|(_, diagnostic)| diagnostic.severity <= max_severity)
+                .filter(|(_, diagnostic)| match active_diagnostics_group {
+                    Some(active_diagnostics_group) => {
+                        // Active diagnostics are all shown in the editor already, no need to display them inline
+                        diagnostic.group_id != active_diagnostics_group
+                    }
+                    None => true,
+                })
+                .map(|(point, diag)| (point.to_display_point(&snapshot), diag.clone()))
+                .skip_while(|(point, _)| point.row() < start_row)
+                .take_while(|(point, _)| point.row() < end_row)
+                .fold(HashMap::default(), |mut acc, (point, diagnostic)| {
+                    acc.entry(point.row())
+                        .or_insert_with(Vec::new)
+                        .push(diagnostic);
+                    acc
+                })
+        });
+
+        if diagnostics_by_rows.is_empty() {
+            return HashMap::default();
+        }
+
+        let severity_to_color = |sev: &DiagnosticSeverity| match sev {
+            &DiagnosticSeverity::ERROR => Color::Error,
+            &DiagnosticSeverity::WARNING => Color::Warning,
+            &DiagnosticSeverity::INFORMATION => Color::Info,
+            &DiagnosticSeverity::HINT => Color::Hint,
+            _ => Color::Error,
+        };
+
+        let padding = ProjectSettings::get_global(cx).diagnostics.inline.padding as f32 * em_width;
+        let min_x = ProjectSettings::get_global(cx)
+            .diagnostics
+            .inline
+            .min_column as f32
+            * em_width;
+
+        let mut elements = HashMap::default();
+        for (row, mut diagnostics) in diagnostics_by_rows {
+            diagnostics.sort_by_key(|diagnostic| {
+                (
+                    diagnostic.severity,
+                    std::cmp::Reverse(diagnostic.is_primary),
+                    diagnostic.start.row,
+                    diagnostic.start.column,
+                )
+            });
+
+            let Some(diagnostic_to_render) = diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic.is_primary)
+                .or_else(|| diagnostics.first())
+            else {
+                continue;
+            };
+
+            let pos_y = content_origin.y
+                + line_height * (row.0 as f32 - scroll_pixel_position.y / line_height);
+
+            let window_ix = row.minus(start_row) as usize;
+            let pos_x = {
+                let crease_trailer_layout = &crease_trailers[window_ix];
+                let line_layout = &line_layouts[window_ix];
+
+                let line_end = if let Some(crease_trailer) = crease_trailer_layout {
+                    crease_trailer.bounds.right()
+                } else {
+                    content_origin.x - scroll_pixel_position.x + line_layout.width
+                };
+
+                let padded_line = line_end + padding;
+                let min_start = content_origin.x - scroll_pixel_position.x + min_x;
+
+                cmp::max(padded_line, min_start)
+            };
+
+            let behind_inline_completion_popover = inline_completion_popover_origin
+                .as_ref()
+                .map_or(false, |inline_completion_popover_origin| {
+                    (pos_y..pos_y + line_height).contains(&inline_completion_popover_origin.y)
+                });
+            let opacity = if behind_inline_completion_popover {
+                0.5
+            } else {
+                1.0
+            };
+
+            let mut element = h_flex()
+                .id(("diagnostic", row.0))
+                .h(line_height)
+                .w_full()
+                .px_1()
+                .rounded_sm()
+                .opacity(opacity)
+                .bg(severity_to_color(&diagnostic_to_render.severity)
+                    .color(cx)
+                    .opacity(0.05))
+                .text_color(severity_to_color(&diagnostic_to_render.severity).color(cx))
+                .text_sm()
+                .font_family(style.text.font().family)
+                .child(diagnostic_to_render.message.clone())
+                .into_any();
+
+            element.prepaint_as_root(point(pos_x, pos_y), AvailableSpace::min_size(), window, cx);
+
+            elements.insert(row, element);
+        }
+
+        elements
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn layout_inline_blame(
         &self,
         display_row: DisplayRow,
@@ -1620,13 +1785,6 @@ impl EditorElement {
         {
             return None;
         }
-
-        let workspace = self
-            .editor
-            .read(cx)
-            .workspace
-            .as_ref()
-            .map(|(w, _)| w.clone());
 
         let editor = self.editor.read(cx);
         let blame = editor.blame.clone()?;
@@ -1656,7 +1814,7 @@ impl EditorElement {
             .flatten()?;
 
         let mut element =
-            render_inline_blame_entry(&blame, blame_entry, &self.style, workspace, cx);
+            render_inline_blame_entry(self.editor.clone(), &blame, blame_entry, &self.style, cx);
 
         let start_y = content_origin.y
             + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
@@ -2123,7 +2281,10 @@ impl EditorElement {
                     .get(&display_row)
                     .unwrap_or(&non_relative_number);
                 write!(&mut line_number, "{number}").unwrap();
-                if matches!(row_info.diff_status, Some(DiffHunkStatus::Removed(_))) {
+                if row_info
+                    .diff_status
+                    .is_some_and(|status| status.is_deleted())
+                {
                     return None;
                 }
 
@@ -2658,6 +2819,7 @@ impl EditorElement {
                                                 &OpenExcerpts,
                                                 &focus_handle,
                                                 window,
+                                                cx,
                                             )
                                             .map(|binding| binding.into_any_element()),
                                         ),
@@ -3181,7 +3343,7 @@ impl EditorElement {
                             max_width,
                             cursor_point,
                             style,
-                            accept_binding.keystroke()?,
+                            accept_binding.keystroke(),
                             window,
                             cx,
                         )?;
@@ -3332,90 +3494,99 @@ impl EditorElement {
             &mut App,
         ) -> Vec<(CursorPopoverType, AnyElement, Size<Pixels>)>,
     ) -> Option<(Vec<(CursorPopoverType, Bounds<Pixels>)>, bool)> {
-        // If the max height won't fit below and there is more space above, put it above the line.
-        let bottom_y_when_flipped = target_position.y - line_height;
-        let available_above = bottom_y_when_flipped - text_hitbox.top();
-        let available_below = text_hitbox.bottom() - target_position.y;
-        let y_overflows_below = max_height > available_below;
-        let mut y_flipped = y_overflows_below && available_above > available_below;
-        let mut height = cmp::min(
-            max_height,
-            if y_flipped {
-                available_above
-            } else {
-                available_below
-            },
-        );
-
-        // If the min height doesn't fit within text bounds, instead fit within the window.
-        if height < min_height {
-            let available_above = bottom_y_when_flipped;
-            let available_below = viewport_bounds.bottom() - target_position.y;
-            if available_below > min_height {
-                y_flipped = false;
-                height = min_height;
-            } else if available_above > min_height {
-                y_flipped = true;
-                height = min_height;
-            } else if available_above > available_below {
-                y_flipped = true;
-                height = available_above;
-            } else {
-                y_flipped = false;
-                height = available_below;
-            }
-        }
-
-        let max_width_for_stable_x = viewport_bounds.right() - target_position.x;
-
-        // TODO: Use viewport_bounds.width as a max width so that it doesn't get clipped on the left
-        // for very narrow windows.
-        let popovers = make_sized_popovers(height, max_width_for_stable_x, y_flipped, window, cx);
-        if popovers.is_empty() {
-            return None;
-        }
-
-        let max_width = popovers
-            .iter()
-            .map(|(_, _, size)| size.width)
-            .max()
-            .unwrap_or_default();
-
-        let mut current_position = gpui::Point {
-            // Snap the right edge of the list to the right edge of the window if its horizontal bounds
-            // overflow. Include space for the scrollbar.
-            x: target_position
-                .x
-                .min((viewport_bounds.right() - max_width).max(Pixels::ZERO)),
-            y: if y_flipped {
-                bottom_y_when_flipped
-            } else {
-                target_position.y
-            },
+        let text_style = TextStyleRefinement {
+            line_height: Some(DefiniteLength::Fraction(
+                BufferLineHeight::Comfortable.value(),
+            )),
+            ..Default::default()
         };
-
-        let mut laid_out_popovers = popovers
-            .into_iter()
-            .map(|(popover_type, element, size)| {
+        window.with_text_style(Some(text_style), |window| {
+            // If the max height won't fit below and there is more space above, put it above the line.
+            let bottom_y_when_flipped = target_position.y - line_height;
+            let available_above = bottom_y_when_flipped - text_hitbox.top();
+            let available_below = text_hitbox.bottom() - target_position.y;
+            let y_overflows_below = max_height > available_below;
+            let mut y_flipped = y_overflows_below && available_above > available_below;
+            let mut height = cmp::min(
+                max_height,
                 if y_flipped {
-                    current_position.y -= size.height;
-                }
-                let position = current_position;
-                window.defer_draw(element, current_position, 1);
-                if !y_flipped {
-                    current_position.y += size.height + MENU_GAP;
+                    available_above
                 } else {
-                    current_position.y -= MENU_GAP;
+                    available_below
+                },
+            );
+
+            // If the min height doesn't fit within text bounds, instead fit within the window.
+            if height < min_height {
+                let available_above = bottom_y_when_flipped;
+                let available_below = viewport_bounds.bottom() - target_position.y;
+                if available_below > min_height {
+                    y_flipped = false;
+                    height = min_height;
+                } else if available_above > min_height {
+                    y_flipped = true;
+                    height = min_height;
+                } else if available_above > available_below {
+                    y_flipped = true;
+                    height = available_above;
+                } else {
+                    y_flipped = false;
+                    height = available_below;
                 }
-                (popover_type, Bounds::new(position, size))
-            })
-            .collect::<Vec<_>>();
+            }
 
-        if y_flipped {
-            laid_out_popovers.reverse();
-        }
+            let max_width_for_stable_x = viewport_bounds.right() - target_position.x;
 
-        Some((laid_out_popovers, y_flipped))
+            // TODO: Use viewport_bounds.width as a max width so that it doesn't get clipped on the left
+            // for very narrow windows.
+            let popovers =
+                make_sized_popovers(height, max_width_for_stable_x, y_flipped, window, cx);
+            if popovers.is_empty() {
+                return None;
+            }
+
+            let max_width = popovers
+                .iter()
+                .map(|(_, _, size)| size.width)
+                .max()
+                .unwrap_or_default();
+
+            let mut current_position = gpui::Point {
+                // Snap the right edge of the list to the right edge of the window if its horizontal bounds
+                // overflow. Include space for the scrollbar.
+                x: target_position
+                    .x
+                    .min((viewport_bounds.right() - max_width).max(Pixels::ZERO)),
+                y: if y_flipped {
+                    bottom_y_when_flipped
+                } else {
+                    target_position.y
+                },
+            };
+
+            let mut laid_out_popovers = popovers
+                .into_iter()
+                .map(|(popover_type, element, size)| {
+                    if y_flipped {
+                        current_position.y -= size.height;
+                    }
+                    let position = current_position;
+                    window.defer_draw(element, current_position, 1);
+                    if !y_flipped {
+                        current_position.y += size.height + MENU_GAP;
+                    } else {
+                        current_position.y -= MENU_GAP;
+                    }
+                    (popover_type, Bounds::new(position, size))
+                })
+                .collect::<Vec<_>>();
+
+            if y_flipped {
+                laid_out_popovers.reverse();
+            }
+
+            Some((laid_out_popovers, y_flipped))
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3440,9 +3611,11 @@ impl EditorElement {
                 available_within_viewport.right - px(1.),
                 MENU_ASIDE_MAX_WIDTH,
             );
-            let Some(mut aside) =
-                self.render_context_menu_aside(size(max_width, max_height - POPOVER_Y_PADDING), cx)
-            else {
+            let Some(mut aside) = self.render_context_menu_aside(
+                size(max_width, max_height - POPOVER_Y_PADDING),
+                window,
+                cx,
+            ) else {
                 return;
             };
             aside.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -3464,7 +3637,7 @@ impl EditorElement {
                     ),
                 ) - POPOVER_Y_PADDING,
             );
-            let Some(mut aside) = self.render_context_menu_aside(max_size, cx) else {
+            let Some(mut aside) = self.render_context_menu_aside(max_size, window, cx) else {
                 return;
             };
             let actual_size = aside.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -3505,7 +3678,7 @@ impl EditorElement {
 
         // Skip drawing if it doesn't fit anywhere.
         if let Some((aside, position)) = positioned_aside {
-            window.defer_draw(aside, position, 1);
+            window.defer_draw(aside, position, 2);
         }
     }
 
@@ -3526,17 +3699,20 @@ impl EditorElement {
     fn render_context_menu_aside(
         &self,
         max_size: Size<Pixels>,
-
+        window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
         if max_size.width < px(100.) || max_size.height < px(12.) {
             None
         } else {
             self.editor.update(cx, |editor, cx| {
-                editor.render_context_menu_aside(&self.style, max_size, cx)
+                editor.render_context_menu_aside(max_size, window, cx)
             })
         }
     }
+
+    const EDIT_PREDICTION_POPOVER_PADDING_X: Pixels = Pixels(24.);
+    const EDIT_PREDICTION_POPOVER_PADDING_Y: Pixels = Pixels(2.);
 
     #[allow(clippy::too_many_arguments)]
     fn layout_edit_prediction_popover(
@@ -3555,10 +3731,7 @@ impl EditorElement {
         style: &EditorStyle,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<AnyElement> {
-        const PADDING_X: Pixels = Pixels(24.);
-        const PADDING_Y: Pixels = Pixels(2.);
-
+    ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
         let editor = self.editor.read(cx);
         let active_inline_completion = editor.active_inline_completion.as_ref()?;
 
@@ -3608,7 +3781,7 @@ impl EditorElement {
                         let origin = start_point + point(cursor_character_x, PADDING_Y);
 
                         element.prepaint_at(origin, window, cx);
-                        return Some(element);
+                        return Some((element, origin));
                     } else if target_display_point.row() >= visible_row_range.end {
                         let mut element = editor
                             .render_edit_prediction_line_popover(
@@ -3636,11 +3809,12 @@ impl EditorElement {
                             );
 
                         element.prepaint_at(origin, window, cx);
-                        return Some(element);
+                        return Some((element, origin));
                     } else {
                         const POLE_WIDTH: Pixels = px(2.);
 
                         let mut element = v_flex()
+                            .items_end()
                             .child(
                                 editor
                                     .render_edit_prediction_line_popover("Jump", None, window, cx)?
@@ -3651,10 +3825,9 @@ impl EditorElement {
                             .child(
                                 div()
                                     .w(POLE_WIDTH)
-                                    .bg(cx.theme().colors().text_accent.opacity(0.8))
+                                    .bg(Editor::edit_prediction_callout_popover_border_color(cx))
                                     .h(line_height),
                             )
-                            .items_end()
                             .into_any();
 
                         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -3676,7 +3849,7 @@ impl EditorElement {
 
                         element.prepaint_at(origin, window, cx);
 
-                        return Some(element);
+                        return Some((element, origin));
                     }
                 }
 
@@ -3691,10 +3864,14 @@ impl EditorElement {
                         .into_any();
 
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-                    let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
+                    let offset = point(
+                        (text_bounds.size.width - size.width) / 2.,
+                        Self::EDIT_PREDICTION_POPOVER_PADDING_Y,
+                    );
 
-                    element.prepaint_at(text_bounds.origin + offset, window, cx);
-                    Some(element)
+                    let origin = text_bounds.origin + offset;
+                    element.prepaint_at(origin, window, cx);
+                    Some((element, origin))
                 } else if (target_display_point.row().as_f32() + 1.) > scroll_bottom {
                     let mut element = editor
                         .render_edit_prediction_line_popover(
@@ -3708,30 +3885,27 @@ impl EditorElement {
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point(
                         (text_bounds.size.width - size.width) / 2.,
-                        text_bounds.size.height - size.height - PADDING_Y,
+                        text_bounds.size.height
+                            - size.height
+                            - Self::EDIT_PREDICTION_POPOVER_PADDING_Y,
                     );
 
-                    element.prepaint_at(text_bounds.origin + offset, window, cx);
-                    Some(element)
+                    let origin = text_bounds.origin + offset;
+                    element.prepaint_at(origin, window, cx);
+                    Some((element, origin))
                 } else {
-                    let mut element = editor
-                        .render_edit_prediction_line_popover("Jump to Edit", None, window, cx)?
-                        .into_any();
-                    let target_line_end = DisplayPoint::new(
-                        target_display_point.row(),
-                        editor_snapshot.line_len(target_display_point.row()),
-                    );
-                    let origin = self.editor.update(cx, |editor, _cx| {
-                        editor.display_to_pixel_point(target_line_end, editor_snapshot, window)
-                    })?;
-
-                    element.prepaint_as_root(
-                        clamp_start(start_point + origin + point(PADDING_X, px(0.))),
-                        AvailableSpace::min_size(),
+                    return self.layout_edit_prediction_end_of_line_popover(
+                        "Jump to Edit",
+                        editor_snapshot,
+                        visible_row_range,
+                        target_display_point,
+                        line_height,
+                        scroll_pixel_position,
+                        content_origin,
+                        editor_width,
                         window,
                         cx,
                     );
-                    Some(element)
                 }
             }
             InlineCompletion::Edit {
@@ -3768,32 +3942,18 @@ impl EditorElement {
                         let range = &edits.first()?.0;
                         let target_display_point = range.end.to_display_point(editor_snapshot);
 
-                        let target_line_end = DisplayPoint::new(
-                            target_display_point.row(),
-                            editor_snapshot.line_len(target_display_point.row()),
-                        );
-                        let (mut element, origin) = self.editor.update(cx, |editor, cx| {
-                            Some((
-                                editor
-                                    .render_edit_prediction_line_popover(
-                                        "Accept", None, window, cx,
-                                    )?
-                                    .into_any(),
-                                editor.display_to_pixel_point(
-                                    target_line_end,
-                                    editor_snapshot,
-                                    window,
-                                )?,
-                            ))
-                        })?;
-
-                        element.prepaint_as_root(
-                            clamp_start(start_point + origin + point(PADDING_X, px(0.))),
-                            AvailableSpace::min_size(),
+                        return self.layout_edit_prediction_end_of_line_popover(
+                            "Accept",
+                            editor_snapshot,
+                            visible_row_range,
+                            target_display_point,
+                            line_height,
+                            scroll_pixel_position,
+                            content_origin,
+                            editor_width,
                             window,
                             cx,
                         );
-                        return Some(element);
                     }
                     EditDisplayMode::Inline => return None,
                     EditDisplayMode::DiffPopover => {}
@@ -3869,8 +4029,10 @@ impl EditorElement {
                         ..Default::default()
                     });
 
-                let x_after_longest =
-                    text_bounds.origin.x + longest_line_width + PADDING_X - scroll_pixel_position.x;
+                let x_after_longest = text_bounds.origin.x
+                    + longest_line_width
+                    + Self::EDIT_PREDICTION_POPOVER_PADDING_X
+                    - scroll_pixel_position.x;
 
                 let element_bounds = element.layout_as_root(AvailableSpace::min_size(), window, cx);
 
@@ -3929,6 +4091,71 @@ impl EditorElement {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn layout_edit_prediction_end_of_line_popover(
+        &self,
+        label: &'static str,
+        editor_snapshot: &EditorSnapshot,
+        visible_row_range: Range<DisplayRow>,
+        target_display_point: DisplayPoint,
+        line_height: Pixels,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        content_origin: gpui::Point<Pixels>,
+        editor_width: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
+        let target_line_end = DisplayPoint::new(
+            target_display_point.row(),
+            editor_snapshot.line_len(target_display_point.row()),
+        );
+
+        let mut element = self
+            .editor
+            .read(cx)
+            .render_edit_prediction_line_popover(label, None, window, cx)?
+            .into_any();
+
+        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+
+        let line_origin = self.editor.update(cx, |editor, _cx| {
+            editor.display_to_pixel_point(target_line_end, editor_snapshot, window)
+        })?;
+
+        let start_point = content_origin - point(scroll_pixel_position.x, Pixels::ZERO);
+        let mut origin = start_point
+            + line_origin
+            + point(Self::EDIT_PREDICTION_POPOVER_PADDING_X, Pixels::ZERO);
+        origin.x = origin.x.max(content_origin.x);
+
+        let max_x = content_origin.x + editor_width - size.width;
+
+        if origin.x > max_x {
+            let offset = line_height + Self::EDIT_PREDICTION_POPOVER_PADDING_Y;
+
+            let icon = if visible_row_range.contains(&(target_display_point.row() + 2)) {
+                origin.y += offset;
+                IconName::ArrowUp
+            } else {
+                origin.y -= offset;
+                IconName::ArrowDown
+            };
+
+            element = self
+                .editor
+                .read(cx)
+                .render_edit_prediction_line_popover(label, Some(icon), window, cx)?
+                .into_any();
+
+            let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+
+            origin.x = content_origin.x + editor_width - size.width - px(2.);
+        }
+
+        element.prepaint_at(origin, window, cx);
+        Some((element, origin))
+    }
+
     fn layout_mouse_context_menu(
         &self,
         editor_snapshot: &EditorSnapshot,
@@ -3974,25 +4201,33 @@ impl EditorElement {
             }
         })?;
 
-        let mut element = self.editor.update(cx, |editor, _| {
-            let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
-            let context_menu = mouse_context_menu.context_menu.clone();
+        let text_style = TextStyleRefinement {
+            line_height: Some(DefiniteLength::Fraction(
+                BufferLineHeight::Comfortable.value(),
+            )),
+            ..Default::default()
+        };
+        window.with_text_style(Some(text_style), |window| {
+            let mut element = self.editor.update(cx, |editor, _| {
+                let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
+                let context_menu = mouse_context_menu.context_menu.clone();
 
-            Some(
-                deferred(
-                    anchored()
-                        .position(position)
-                        .child(context_menu)
-                        .anchor(Corner::TopLeft)
-                        .snap_to_window_with_margin(px(8.)),
+                Some(
+                    deferred(
+                        anchored()
+                            .position(position)
+                            .child(context_menu)
+                            .anchor(Corner::TopLeft)
+                            .snap_to_window_with_margin(px(8.)),
+                    )
+                    .with_priority(1)
+                    .into_any(),
                 )
-                .with_priority(1)
-                .into_any(),
-            )
-        })?;
+            })?;
 
-        element.prepaint_as_root(position, AvailableSpace::min_size(), window, cx);
-        Some(element)
+            element.prepaint_as_root(position, AvailableSpace::min_size(), window, cx);
+            Some(element)
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4153,10 +4388,10 @@ impl EditorElement {
                 if row_infos[row_ix].diff_status.is_none() {
                     continue;
                 }
-                if matches!(
-                    row_infos[row_ix].diff_status,
-                    Some(DiffHunkStatus::Added(_))
-                ) && !matches!(*status, DiffHunkStatus::Added(_))
+                if row_infos[row_ix]
+                    .diff_status
+                    .is_some_and(|status| status.is_added())
+                    && !status.is_added()
                 {
                     continue;
                 }
@@ -4167,21 +4402,26 @@ impl EditorElement {
                     let y = display_row_range.start.as_f32() * line_height
                         + text_hitbox.bounds.top()
                         - scroll_pixel_position.y;
-                    let x = text_hitbox.bounds.right() - px(100.);
 
                     let mut element = diff_hunk_controls(
                         display_row_range.start.0,
+                        status,
                         multi_buffer_range.clone(),
                         line_height,
                         &editor,
                         cx,
                     );
-                    element.prepaint_as_root(
-                        gpui::Point::new(x, y),
-                        size(px(100.0), line_height).into(),
-                        window,
-                        cx,
-                    );
+                    let size =
+                        element.layout_as_root(size(px(100.0), line_height).into(), window, cx);
+
+                    let x = text_hitbox.bounds.right()
+                        - self.style.scrollbar_width
+                        - px(10.)
+                        - size.width;
+
+                    window.with_absolute_element_offset(gpui::Point::new(x, y), |window| {
+                        element.prepaint(window, cx)
+                    });
                     controls.push(element);
                 }
             }
@@ -4236,12 +4476,7 @@ impl EditorElement {
 
         let maybe_element = self.editor.update(cx, |editor, cx| {
             if let Some(popover) = editor.signature_help_state.popover_mut() {
-                let element = popover.render(
-                    &self.style,
-                    max_size,
-                    editor.workspace.as_ref().map(|(w, _)| w.clone()),
-                    cx,
-                );
+                let element = popover.render(max_size, cx);
                 Some(element)
             } else {
                 None
@@ -4555,39 +4790,35 @@ impl EditorElement {
                         );
                         Some((
                             hunk_bounds,
-                            cx.theme().status().modified,
+                            cx.theme().colors().version_control_modified,
                             Corners::all(px(0.)),
-                            &DiffHunkSecondaryStatus::None,
+                            DiffHunkSecondaryStatus::None,
                         ))
                     }
                     DisplayDiffHunk::Unfolded {
                         status,
                         display_row_range,
                         ..
-                    } => hitbox.as_ref().map(|hunk_hitbox| match status {
-                        DiffHunkStatus::Added(secondary_status) => (
+                    } => hitbox.as_ref().map(|hunk_hitbox| match status.kind {
+                        DiffHunkStatusKind::Added => (
                             hunk_hitbox.bounds,
-                            cx.theme().status().created,
+                            cx.theme().colors().version_control_added,
                             Corners::all(px(0.)),
-                            secondary_status,
+                            status.secondary,
                         ),
-                        DiffHunkStatus::Modified(secondary_status) => (
+                        DiffHunkStatusKind::Modified => (
                             hunk_hitbox.bounds,
-                            cx.theme().status().modified,
+                            cx.theme().colors().version_control_modified,
                             Corners::all(px(0.)),
-                            secondary_status,
+                            status.secondary,
                         ),
-                        DiffHunkStatus::Removed(secondary_status)
-                            if !display_row_range.is_empty() =>
-                        {
-                            (
-                                hunk_hitbox.bounds,
-                                cx.theme().status().deleted,
-                                Corners::all(px(0.)),
-                                secondary_status,
-                            )
-                        }
-                        DiffHunkStatus::Removed(secondary_status) => (
+                        DiffHunkStatusKind::Deleted if !display_row_range.is_empty() => (
+                            hunk_hitbox.bounds,
+                            cx.theme().colors().version_control_deleted,
+                            Corners::all(px(0.)),
+                            status.secondary,
+                        ),
+                        DiffHunkStatusKind::Deleted => (
                             Bounds::new(
                                 point(
                                     hunk_hitbox.origin.x - hunk_hitbox.size.width,
@@ -4595,19 +4826,21 @@ impl EditorElement {
                                 ),
                                 size(hunk_hitbox.size.width * px(2.), hunk_hitbox.size.height),
                             ),
-                            cx.theme().status().deleted,
+                            cx.theme().colors().version_control_deleted,
                             Corners::all(1. * line_height),
-                            secondary_status,
+                            status.secondary,
                         ),
                     }),
                 };
 
-                if let Some((hunk_bounds, mut background_color, corner_radii, secondary_status)) =
+                if let Some((hunk_bounds, background_color, corner_radii, secondary_status)) =
                     hunk_to_paint
                 {
-                    if *secondary_status != DiffHunkSecondaryStatus::None {
-                        background_color.a *= 0.6;
-                    }
+                    let background_color = if secondary_status != DiffHunkSecondaryStatus::None {
+                        background_color.opacity(0.3)
+                    } else {
+                        background_color.opacity(1.0)
+                    };
                     window.paint_quad(quad(
                         hunk_bounds,
                         corner_radii,
@@ -4643,7 +4876,7 @@ impl EditorElement {
                 status,
                 ..
             } => {
-                if status.is_removed() && display_row_range.is_empty() {
+                if status.is_deleted() && display_row_range.is_empty() {
                     let row = display_row_range.start;
 
                     let offset = line_height / 2.;
@@ -4716,7 +4949,15 @@ impl EditorElement {
     ) {
         for (_, hunk_hitbox) in &layout.display_hunks {
             if let Some(hunk_hitbox) = hunk_hitbox {
-                window.set_cursor_style(CursorStyle::PointingHand, hunk_hitbox);
+                if !self
+                    .editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .all_diff_hunks_expanded()
+                {
+                    window.set_cursor_style(CursorStyle::PointingHand, hunk_hitbox);
+                }
             }
         }
 
@@ -4804,6 +5045,7 @@ impl EditorElement {
                 self.paint_lines(&invisible_display_ranges, layout, window, cx);
                 self.paint_redactions(layout, window);
                 self.paint_cursors(layout, window, cx);
+                self.paint_inline_diagnostics(layout, window, cx);
                 self.paint_inline_blame(layout, window, cx);
                 self.paint_diff_hunk_controls(layout, window, cx);
                 window.with_element_namespace("crease_trailers", |window| {
@@ -5271,8 +5513,7 @@ impl EditorElement {
                 Some(cx.spawn_in(window, |editor, mut cx| async move {
                     let scrollbar_size = scrollbar_layout.hitbox.size;
                     let scrollbar_markers = cx
-                        .background_executor()
-                        .spawn(async move {
+                        .background_spawn(async move {
                             let max_point = snapshot.display_snapshot.buffer_snapshot.max_point();
                             let mut marker_quads = Vec::new();
                             if scrollbar_settings.git_diff {
@@ -5289,10 +5530,10 @@ impl EditorElement {
                                         if end_display_row != start_display_row {
                                             end_display_row.0 -= 1;
                                         }
-                                        let color = match &hunk.status() {
-                                            DiffHunkStatus::Added(_) => theme.status().created,
-                                            DiffHunkStatus::Modified(_) => theme.status().modified,
-                                            DiffHunkStatus::Removed(_) => theme.status().deleted,
+                                        let color = match &hunk.status().kind {
+                                            DiffHunkStatusKind::Added => theme.status().created,
+                                            DiffHunkStatusKind::Modified => theme.status().modified,
+                                            DiffHunkStatusKind::Deleted => theme.status().deleted,
                                         };
                                         ColoredRange {
                                             start: start_display_row,
@@ -5312,11 +5553,14 @@ impl EditorElement {
                             {
                                 let is_search_highlights = *background_highlight_id
                                     == TypeId::of::<BufferSearchHighlights>();
+                                let is_text_highlights = *background_highlight_id
+                                    == TypeId::of::<SelectedTextHighlight>();
                                 let is_symbol_occurrences = *background_highlight_id
                                     == TypeId::of::<DocumentHighlightRead>()
                                     || *background_highlight_id
                                         == TypeId::of::<DocumentHighlightWrite>();
                                 if (is_search_highlights && scrollbar_settings.search_results)
+                                    || (is_text_highlights && scrollbar_settings.selected_text)
                                     || (is_symbol_occurrences && scrollbar_settings.selected_symbol)
                                 {
                                     let mut color = theme.status().info;
@@ -5477,6 +5721,17 @@ impl EditorElement {
         }
     }
 
+    fn paint_inline_diagnostics(
+        &mut self,
+        layout: &mut EditorLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        for mut inline_diagnostic in layout.inline_diagnostics.drain() {
+            inline_diagnostic.1.paint(window, cx);
+        }
+    }
+
     fn paint_inline_blame(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         if let Some(mut inline_blame) = layout.inline_blame.take() {
             window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
@@ -5598,7 +5853,7 @@ impl EditorElement {
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
-            let multi_buffer_range =
+            let diff_hunk_range =
                 layout
                     .display_hunks
                     .iter()
@@ -5634,7 +5889,7 @@ impl EditorElement {
                             Self::mouse_left_down(
                                 editor,
                                 event,
-                                multi_buffer_range.clone(),
+                                diff_hunk_range.clone(),
                                 &position_map,
                                 line_numbers.as_ref(),
                                 window,
@@ -5834,50 +6089,6 @@ impl AcceptEditPredictionBinding {
     }
 }
 
-struct AcceptEditPredictionsBindingValidator;
-
-inventory::submit! { KeyBindingValidatorRegistration(|| Box::new(AcceptEditPredictionsBindingValidator)) }
-
-impl KeyBindingValidator for AcceptEditPredictionsBindingValidator {
-    fn action_type_id(&self) -> TypeId {
-        TypeId::of::<AcceptEditPrediction>()
-    }
-
-    fn validate(&self, binding: &gpui::KeyBinding) -> Result<(), MarkdownString> {
-        use KeyBindingContextPredicate::*;
-
-        if binding.keystrokes().len() == 1 && binding.keystrokes()[0].modifiers.modified() {
-            return Ok(());
-        }
-        let required_predicate =
-            Not(Identifier(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT.into()).into());
-        match binding.predicate() {
-            Some(predicate) if required_predicate.is_superset(&predicate) => {
-                return Ok(());
-            }
-            _ => {}
-        }
-        let negated_requires_modifier_key_context = MarkdownString::inline_code(&format!(
-            "!{}",
-            EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT
-        ));
-        Err(MarkdownString(format!(
-            "{} can only be bound to a single keystroke with modifiers, so \
-            that pressing these modifiers can be used for prediction \
-            preview.\n\n\
-            This restriction does not apply when the context requires {}, \
-            since these bindings are not used for prediction preview. For \
-            example, in the default keymap `tab` requires {}, and `alt-tab` \
-            is used otherwise.\n\n\
-            See [the documentation]({}) for more details.",
-            MarkdownString::inline_code(AcceptEditPrediction.name()),
-            negated_requires_modifier_key_context.clone(),
-            negated_requires_modifier_key_context,
-            "https://zed.dev/docs/completions#edit-predictions",
-        )))
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn prepaint_gutter_button(
     button: IconButton,
@@ -5922,10 +6133,10 @@ fn prepaint_gutter_button(
 }
 
 fn render_inline_blame_entry(
+    editor: Entity<Editor>,
     blame: &gpui::Entity<GitBlame>,
     blame_entry: BlameEntry,
     style: &EditorStyle,
-    workspace: Option<WeakEntity<Workspace>>,
     cx: &mut App,
 ) -> AnyElement {
     let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
@@ -5941,11 +6152,8 @@ fn render_inline_blame_entry(
         }
         _ => format!("{}, {}", author, relative_timestamp),
     };
-
-    let details = blame.read(cx).details_for_entry(&blame_entry);
-
-    let tooltip =
-        cx.new(|_| CommitTooltip::blame_entry(blame_entry, details, style.clone(), workspace));
+    let blame = blame.clone();
+    let blame_entry = blame_entry.clone();
 
     h_flex()
         .id("inline-blame")
@@ -5956,7 +6164,15 @@ fn render_inline_blame_entry(
         .child(Icon::new(IconName::FileGit).color(Color::Hint))
         .child(text)
         .gap_2()
-        .hoverable_tooltip(move |_, _| tooltip.clone().into())
+        .hoverable_tooltip(move |window, cx| {
+            let details = blame.read(cx).details_for_entry(&blame_entry);
+            let tooltip =
+                cx.new(|cx| CommitTooltip::blame_entry(&blame_entry, details, window, cx));
+            editor.update(cx, |editor, _| {
+                editor.git_blame_inline_tooltip = Some(tooltip.downgrade())
+            });
+            tooltip.into()
+        })
         .into_any()
 }
 
@@ -5990,19 +6206,7 @@ fn render_blame_entry(
 
     let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
     let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
-
     let details = blame.read(cx).details_for_entry(&blame_entry);
-
-    let workspace = editor.read(cx).workspace.as_ref().map(|(w, _)| w.clone());
-
-    let tooltip = cx.new(|_| {
-        CommitTooltip::blame_entry(
-            blame_entry.clone(),
-            details.clone(),
-            style.clone(),
-            workspace,
-        )
-    });
 
     h_flex()
         .w_full()
@@ -6037,16 +6241,20 @@ fn render_blame_entry(
         })
         .hover(|style| style.bg(cx.theme().colors().element_hover))
         .when_some(
-            details.and_then(|details| details.permalink),
+            details
+                .as_ref()
+                .and_then(|details| details.permalink.clone()),
             |this, url| {
-                let url = url.clone();
                 this.cursor_pointer().on_click(move |_, _, cx| {
                     cx.stop_propagation();
                     cx.open_url(url.as_str())
                 })
             },
         )
-        .hoverable_tooltip(move |_, _| tooltip.clone().into())
+        .hoverable_tooltip(move |window, cx| {
+            cx.new(|cx| CommitTooltip::blame_entry(&blame_entry, details.clone(), window, cx))
+                .into()
+        })
         .into_any()
 }
 
@@ -6917,46 +7125,38 @@ impl Element for EditorElement {
                         )
                     };
 
-                    let (mut highlighted_rows, distinguish_unstaged_hunks) =
-                        self.editor.update(cx, |editor, cx| {
-                            (
-                                editor.highlighted_display_rows(window, cx),
-                                editor.distinguish_unstaged_diff_hunks,
-                            )
-                        });
+                    let mut highlighted_rows = self
+                        .editor
+                        .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
 
                     for (ix, row_info) in row_infos.iter().enumerate() {
-                        let background = match row_info.diff_status {
-                            Some(DiffHunkStatus::Added(secondary_status)) => {
-                                let color = style.status.created_background;
-                                match secondary_status {
-                                    DiffHunkSecondaryStatus::HasSecondaryHunk
-                                    | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
-                                        if distinguish_unstaged_hunks =>
-                                    {
-                                        pattern_slash(color, line_height.0 / 4.0)
-                                    }
-                                    _ => color.into(),
-                                }
-                            }
-                            Some(DiffHunkStatus::Removed(secondary_status)) => {
-                                let color = style.status.deleted_background;
-                                match secondary_status {
-                                    DiffHunkSecondaryStatus::HasSecondaryHunk
-                                    | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
-                                        if distinguish_unstaged_hunks =>
-                                    {
-                                        pattern_slash(color, line_height.0 / 4.0)
-                                    }
-                                    _ => color.into(),
-                                }
-                            }
-                            _ => continue,
+                        let Some(diff_status) = row_info.diff_status else {
+                            continue;
                         };
+
+                        let staged_opacity = 0.10;
+                        let unstaged_opacity = 0.04;
+
+                        let background_color = match diff_status.kind {
+                            DiffHunkStatusKind::Added => cx.theme().colors().version_control_added,
+                            DiffHunkStatusKind::Deleted => {
+                                cx.theme().colors().version_control_deleted
+                            }
+                            DiffHunkStatusKind::Modified => {
+                                debug_panic!("modified diff status for row info");
+                                continue;
+                            }
+                        };
+                        let background_color =
+                            if diff_status.secondary == DiffHunkSecondaryStatus::None {
+                                background_color.opacity(staged_opacity)
+                            } else {
+                                background_color.opacity(unstaged_opacity)
+                            };
 
                         highlighted_rows
                             .entry(start_row + DisplayRow(ix as u32))
-                            .or_insert(background);
+                            .or_insert(background_color.into());
                     }
 
                     let highlighted_ranges = self.editor.read(cx).background_highlights_in_range(
@@ -7087,12 +7287,11 @@ impl Element for EditorElement {
                                     blame.blame_for_rows(&[row_infos], cx).next()
                                 })
                                 .flatten()?;
-                            let workspace = editor.workspace.as_ref().map(|(w, _)| w.to_owned());
                             let mut element = render_inline_blame_entry(
+                                self.editor.clone(),
                                 blame,
                                 blame_entry,
                                 &style,
-                                workspace,
                                 cx,
                             );
                             let inline_blame_padding = INLINE_BLAME_PADDING_EM_WIDTHS * em_advance;
@@ -7246,6 +7445,40 @@ impl Element for EditorElement {
                             )
                         });
 
+                    let (inline_completion_popover, inline_completion_popover_origin) = self
+                        .layout_edit_prediction_popover(
+                            &text_hitbox.bounds,
+                            content_origin,
+                            &snapshot,
+                            start_row..end_row,
+                            scroll_position.y,
+                            scroll_position.y + height_in_lines,
+                            &line_layouts,
+                            line_height,
+                            scroll_pixel_position,
+                            newest_selection_head,
+                            editor_width,
+                            &style,
+                            window,
+                            cx,
+                        )
+                        .unzip();
+
+                    let mut inline_diagnostics = self.layout_inline_diagnostics(
+                        &line_layouts,
+                        &crease_trailers,
+                        content_origin,
+                        scroll_pixel_position,
+                        inline_completion_popover_origin,
+                        start_row,
+                        end_row,
+                        line_height,
+                        em_width,
+                        &style,
+                        window,
+                        cx,
+                    );
+
                     let mut inline_blame = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         let display_row = newest_selection_head.row();
@@ -7266,6 +7499,10 @@ impl Element for EditorElement {
                                 window,
                                 cx,
                             );
+                            if inline_blame.is_some() {
+                                // Blame overrides inline diagnostics
+                                inline_diagnostics.remove(&display_row);
+                            }
                         }
                     }
 
@@ -7502,23 +7739,6 @@ impl Element for EditorElement {
                         );
                     }
 
-                    let inline_completion_popover = self.layout_edit_prediction_popover(
-                        &text_hitbox.bounds,
-                        content_origin,
-                        &snapshot,
-                        start_row..end_row,
-                        scroll_position.y,
-                        scroll_position.y + height_in_lines,
-                        &line_layouts,
-                        line_height,
-                        scroll_pixel_position,
-                        newest_selection_head,
-                        editor_width,
-                        &style,
-                        window,
-                        cx,
-                    );
-
                     let mouse_context_menu = self.layout_mouse_context_menu(
                         &snapshot,
                         start_row..end_row,
@@ -7592,7 +7812,7 @@ impl Element for EditorElement {
                         editor.last_position_map = Some(position_map.clone())
                     });
 
-                    let hunk_controls = self.layout_diff_hunk_controls(
+                    let diff_hunk_controls = self.layout_diff_hunk_controls(
                         start_row..end_row,
                         &row_infos,
                         &text_hitbox,
@@ -7625,13 +7845,14 @@ impl Element for EditorElement {
                         line_elements,
                         line_numbers,
                         blamed_display_rows,
+                        inline_diagnostics,
                         inline_blame,
                         blocks,
                         cursors,
                         visible_cursors,
                         selections,
                         inline_completion_popover,
-                        diff_hunk_controls: hunk_controls,
+                        diff_hunk_controls,
                         mouse_context_menu,
                         test_indicators,
                         code_actions_indicator,
@@ -7802,6 +8023,7 @@ pub struct EditorLayout {
     line_numbers: Arc<HashMap<MultiBufferRow, LineNumberLayout>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
+    inline_diagnostics: HashMap<DisplayRow, AnyElement>,
     inline_blame: Option<AnyElement>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
@@ -8438,7 +8660,6 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use language::language_settings;
     use log::info;
-    use similar::DiffableStr;
     use std::num::NonZeroU32;
     use util::test::sample_text;
 
@@ -8738,7 +8959,7 @@ mod tests {
             state
                 .line_numbers
                 .get(&MultiBufferRow(0))
-                .and_then(|line_number| line_number.shaped_line.text.as_str()),
+                .map(|line_number| line_number.shaped_line.text.as_ref()),
             Some("1")
         );
     }
@@ -8958,6 +9179,7 @@ mod tests {
 
 fn diff_hunk_controls(
     row: u32,
+    status: &DiffHunkStatus,
     hunk_range: Range<Anchor>,
     line_height: Pixels,
     editor: &Entity<Editor>,
@@ -8974,40 +9196,72 @@ fn diff_hunk_controls(
         .rounded_b_lg()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
+        .when(status.secondary == DiffHunkSecondaryStatus::None, |el| {
+            el.child(
+                Button::new("unstage", "Unstage")
+                    .tooltip({
+                        let focus_handle = editor.focus_handle(cx);
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Unstage Hunk",
+                                &::git::ToggleStaged,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click({
+                        let editor = editor.clone();
+                        move |_event, _, cx| {
+                            editor.update(cx, |editor, cx| {
+                                editor.stage_or_unstage_diff_hunks(
+                                    false,
+                                    &[hunk_range.start..hunk_range.start],
+                                    cx,
+                                );
+                            });
+                        }
+                    }),
+            )
+        })
+        .when(status.secondary != DiffHunkSecondaryStatus::None, |el| {
+            el.child(
+                Button::new("stage", "Stage")
+                    .tooltip({
+                        let focus_handle = editor.focus_handle(cx);
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Stage Hunk",
+                                &::git::ToggleStaged,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click({
+                        let editor = editor.clone();
+                        move |_event, _, cx| {
+                            editor.update(cx, |editor, cx| {
+                                editor.stage_or_unstage_diff_hunks(
+                                    true,
+                                    &[hunk_range.start..hunk_range.start],
+                                    cx,
+                                );
+                            });
+                        }
+                    }),
+            )
+        })
         .child(
-            IconButton::new(("next-hunk", row as u64), IconName::ArrowDown)
-                .shape(IconButtonShape::Square)
-                .icon_size(IconSize::Small)
-                // .disabled(!has_multiple_hunks)
-                .tooltip({
-                    let focus_handle = editor.focus_handle(cx);
-                    move |window, cx| {
-                        Tooltip::for_action_in("Next Hunk", &GoToHunk, &focus_handle, window, cx)
-                    }
-                })
-                .on_click({
-                    let editor = editor.clone();
-                    move |_event, window, cx| {
-                        editor.update(cx, |editor, cx| {
-                            let snapshot = editor.snapshot(window, cx);
-                            let position = hunk_range.end.to_point(&snapshot.buffer_snapshot);
-                            editor.go_to_hunk_after_position(&snapshot, position, window, cx);
-                            editor.expand_selected_diff_hunks(cx);
-                        });
-                    }
-                }),
-        )
-        .child(
-            IconButton::new(("prev-hunk", row as u64), IconName::ArrowUp)
-                .shape(IconButtonShape::Square)
-                .icon_size(IconSize::Small)
-                // .disabled(!has_multiple_hunks)
+            Button::new("discard", "Restore")
                 .tooltip({
                     let focus_handle = editor.focus_handle(cx);
                     move |window, cx| {
                         Tooltip::for_action_in(
-                            "Previous Hunk",
-                            &GoToPrevHunk,
+                            "Restore Hunk",
+                            &::git::Restore,
                             &focus_handle,
                             window,
                             cx,
@@ -9020,38 +9274,76 @@ fn diff_hunk_controls(
                         editor.update(cx, |editor, cx| {
                             let snapshot = editor.snapshot(window, cx);
                             let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
-                            editor.go_to_hunk_before_position(&snapshot, point, window, cx);
-                            editor.expand_selected_diff_hunks(cx);
+                            editor.restore_hunks_in_ranges(vec![point..point], window, cx);
                         });
                     }
                 }),
         )
-        .child(
-            IconButton::new("discard", IconName::Undo)
-                .shape(IconButtonShape::Square)
-                .icon_size(IconSize::Small)
-                .tooltip({
-                    let focus_handle = editor.focus_handle(cx);
-                    move |window, cx| {
-                        Tooltip::for_action_in(
-                            "Discard Hunk",
-                            &RevertSelectedHunks,
-                            &focus_handle,
-                            window,
-                            cx,
-                        )
-                    }
-                })
-                .on_click({
-                    let editor = editor.clone();
-                    move |_event, window, cx| {
-                        editor.update(cx, |editor, cx| {
-                            let snapshot = editor.snapshot(window, cx);
-                            let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
-                            editor.revert_hunks_in_ranges([point..point].into_iter(), window, cx);
-                        });
-                    }
-                }),
+        .when(
+            !editor.read(cx).buffer().read(cx).all_diff_hunks_expanded(),
+            |el| {
+                el.child(
+                    IconButton::new(("next-hunk", row as u64), IconName::ArrowDown)
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::Small)
+                        // .disabled(!has_multiple_hunks)
+                        .tooltip({
+                            let focus_handle = editor.focus_handle(cx);
+                            move |window, cx| {
+                                Tooltip::for_action_in(
+                                    "Next Hunk",
+                                    &GoToHunk,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
+                        .on_click({
+                            let editor = editor.clone();
+                            move |_event, window, cx| {
+                                editor.update(cx, |editor, cx| {
+                                    let snapshot = editor.snapshot(window, cx);
+                                    let position =
+                                        hunk_range.end.to_point(&snapshot.buffer_snapshot);
+                                    editor
+                                        .go_to_hunk_after_position(&snapshot, position, window, cx);
+                                    editor.expand_selected_diff_hunks(cx);
+                                });
+                            }
+                        }),
+                )
+                .child(
+                    IconButton::new(("prev-hunk", row as u64), IconName::ArrowUp)
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::Small)
+                        // .disabled(!has_multiple_hunks)
+                        .tooltip({
+                            let focus_handle = editor.focus_handle(cx);
+                            move |window, cx| {
+                                Tooltip::for_action_in(
+                                    "Previous Hunk",
+                                    &GoToPrevHunk,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
+                        .on_click({
+                            let editor = editor.clone();
+                            move |_event, window, cx| {
+                                editor.update(cx, |editor, cx| {
+                                    let snapshot = editor.snapshot(window, cx);
+                                    let point =
+                                        hunk_range.start.to_point(&snapshot.buffer_snapshot);
+                                    editor.go_to_hunk_before_position(&snapshot, point, window, cx);
+                                    editor.expand_selected_diff_hunks(cx);
+                                });
+                            }
+                        }),
+                )
+            },
         )
         .into_any_element()
 }

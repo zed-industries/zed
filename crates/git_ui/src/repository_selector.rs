@@ -177,8 +177,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
 
         cx.spawn_in(window, |this, mut cx| async move {
             let filtered_repositories = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     if query.is_empty() {
                         all_repositories
                     } else {
