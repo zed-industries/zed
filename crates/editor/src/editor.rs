@@ -6007,26 +6007,26 @@ impl Editor {
 
         let flag_on_right = target_x < text_bounds.size.width / 2.;
 
+        let mut border_color = Self::edit_prediction_callout_popover_border_color(cx);
+        border_color.l += 0.001;
+
         let mut element = v_flex()
             .items_end()
-            .when(dbg!(flag_on_right), |el| el.items_start())
+            .when(flag_on_right, |el| el.items_start())
             .child(if flag_on_right {
                 self.render_edit_prediction_line_popover("Jump", None, window, cx)?
                     .rounded_bl(px(0.))
                     .rounded_tl(px(0.))
                     .border_l_2()
+                    .border_color(border_color)
             } else {
                 self.render_edit_prediction_line_popover("Jump", None, window, cx)?
                     .rounded_br(px(0.))
                     .rounded_tr(px(0.))
                     .border_r_2()
+                    .border_color(border_color)
             })
-            .child(
-                div()
-                    .w(POLE_WIDTH)
-                    .bg(Editor::edit_prediction_callout_popover_border_color(cx))
-                    .h(line_height),
-            )
+            .child(div().w(POLE_WIDTH).bg(border_color).h(line_height))
             .into_any();
 
         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
