@@ -25,7 +25,7 @@ use futures::channel::oneshot;
 use futures::{future::join_all, future::Shared, FutureExt};
 use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, Task, WeakEntity};
 use rpc::AnyProtoClient;
-use serde_json::Value;
+use serde_json::{json, Value};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::path::PathBuf;
@@ -39,7 +39,7 @@ use std::{
 };
 use task::DebugAdapterConfig;
 use text::{PointUtf16, ToPointUtf16};
-use util::ResultExt;
+use util::{merge_json_value_into, ResultExt};
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Ord, Eq)]
 #[repr(transparent)]
@@ -197,11 +197,9 @@ impl LocalMode {
             let adapter = build_adapter(&disposition.kind).await?;
 
             let binary = cx.update(|cx| {
-                let name = DebugAdapterName::from(adapter.name().as_ref());
-
                 ProjectSettings::get_global(cx)
                     .dap
-                    .get(&name)
+                    .get(&adapter.name())
                     .and_then(|s| s.binary.as_ref().map(PathBuf::from))
             })?;
 
@@ -255,13 +253,14 @@ impl LocalMode {
             let capabilities = this
                 .request(
                     Initialize {
-                        adapter_id: "zed-dap-this-value-needs-changing".to_owned(),
+                        adapter_id: adapter.name().to_string().to_owned(),
                     },
                     cx.background_executor().clone(),
                 )
                 .await?;
 
-            let raw = adapter.request_args(&disposition);
+            let mut raw = adapter.request_args(&disposition);
+            merge_json_value_into(disposition.initialize_args.unwrap_or(json!({})), &mut raw);
 
             // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
             let launch = this.request(Launch { raw }, cx.background_executor().clone());

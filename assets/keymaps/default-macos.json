@@ -211,8 +211,8 @@
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-k h": "assistant::DeployHistory",
       "cmd-k l": "assistant::DeployPromptLibrary",
-      "cmd-t": "assistant::NewContext",
-      "cmd-n": "assistant::NewContext"
+      "cmd-t": "assistant::NewChat",
+      "cmd-n": "assistant::NewChat"
     }
   },
   {
@@ -751,14 +751,6 @@
     }
   },
   {
-    "context": "GitCommit > Editor",
-    "use_key_equivalents": true,
-    "bindings": {
-      "enter": "editor::Newline",
-      "cmd-enter": "git::Commit"
-    }
-  },
-  {
     "context": "GitPanel > Editor",
     "use_key_equivalents": true,
     "bindings": {
@@ -767,6 +759,14 @@
       "tab": "git_panel::FocusChanges",
       "shift-tab": "git_panel::FocusChanges",
       "alt-up": "git_panel::FocusChanges"
+    }
+  },
+  {
+    "context": "GitCommit > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "editor::Newline",
+      "cmd-enter": "git::Commit"
     }
   },
   {
