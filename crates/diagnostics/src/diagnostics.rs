@@ -282,8 +282,7 @@ impl ProjectDiagnosticsEditor {
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
             let is_active = workspace
                 .active_item(cx)
-                .map(|item| item.item_id() == existing.item_id())
-                .unwrap_or(false);
+                .is_some_and(|item| item.item_id() == existing.item_id());
             workspace.activate_item(&existing, true, !is_active, window, cx);
         } else {
             let workspace_handle = cx.entity().downgrade();
