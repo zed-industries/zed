@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::f64::consts::PI;
 use std::path::Path;
 
 use ::settings::Settings;

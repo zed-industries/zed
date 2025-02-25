@@ -141,92 +141,113 @@ impl Inventory {
         Vec<(TaskSourceKind, ResolvedTask)>,
         Vec<(TaskSourceKind, ResolvedTask)>,
     ) {
-        // let language = location
-        //     .as_ref()
-        //     .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
-        // let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
-        //     name: language.name().into(),
-        // });
-        // let file = location
-        //     .as_ref()
-        //     .and_then(|location| location.buffer.read(cx).file().cloned());
+        let language = location
+            .as_ref()
+            .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
+        let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
+            name: language.name().into(),
+        });
+        let file = location
+            .as_ref()
+            .and_then(|location| location.buffer.read(cx).file().cloned());
 
-        // let mut task_labels_to_ids = HashMap::<String, HashSet<TaskId>>::default();
-        // let mut lru_score = 0_u32;
-        // let previously_spawned_tasks = self
-        //     .last_scheduled_tasks
-        //     .iter()
-        //     .rev()
-        //     .filter(|(task_kind, _)| {
-        //         if matches!(task_kind, TaskSourceKind::Language { .. }) {
-        //             Some(task_kind) == task_source_kind.as_ref()
-        //         } else {
-        //             true
-        //         }
-        //     })
-        //     .filter(|(_, resolved_task)| {
-        //         match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
-        //             hash_map::Entry::Occupied(mut o) => {
-        //                 o.get_mut().insert(resolved_task.id.clone());
-        //                 // Neber allow duplicate reused tasks with the same labels
-        //                 false
-        //             }
-        //             hash_map::Entry::Vacant(v) => {
-        //                 v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
-        //                 true
-        //             }
-        //         }
-        //     })
-        //     .map(|(task_source_kind, resolved_task)| {
-        //         (
-        //             task_source_kind.clone(),
-        //             resolved_task.clone(),
-        //             post_inc(&mut lru_score),
-        //         )
-        //     })
-        //     .sorted_unstable_by(task_lru_comparator)
-        //     .map(|(kind, task, _)| (kind, task))
-        //     .collect::<Vec<_>>();
+        let mut applicable_task_contexts = Vec::new();
+        if let Some((_, item_context)) = task_contexts
+            .active_item_context
+            .as_ref()
+            .filter(|(worktree_id, _)| worktree.is_none() || worktree == *worktree_id)
+        {
+            applicable_task_contexts.push(item_context);
+        }
+        if let Some((_, worktree_context)) = task_contexts
+            .active_worktree_context
+            .as_ref()
+            .filter(|(worktree_id, _)| worktree.is_none() || worktree == Some(*worktree_id))
+        {
+            applicable_task_contexts.push(worktree_context);
+        }
+        applicable_task_contexts.extend(
+            task_contexts
+                .other_worktree_contexts
+                .iter()
+                .filter(|(worktree_id, _)| worktree.is_none() || worktree == Some(*worktree_id))
+                .map(|(_, context)| context),
+        );
 
-        // let not_used_score = post_inc(&mut lru_score);
-        // let global_tasks = self.global_templates_from_settings();
-        // let language_tasks = language
-        //     .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
-        //     .into_iter()
-        //     .flat_map(|tasks| tasks.0.into_iter())
-        //     .flat_map(|task| Some((task_source_kind.clone()?, task)))
-        //     .chain(global_tasks);
-        // let worktree_tasks = self
-        //     .worktree_templates_from_settings(worktree)
-        //     .chain(language_tasks);
+        let mut task_labels_to_ids = HashMap::<String, HashSet<TaskId>>::default();
+        let mut lru_score = 0_u32;
+        let previously_spawned_tasks = self
+            .last_scheduled_tasks
+            .iter()
+            .rev()
+            .filter(|(task_kind, _)| {
+                if matches!(task_kind, TaskSourceKind::Language { .. }) {
+                    Some(task_kind) == task_source_kind.as_ref()
+                } else {
+                    true
+                }
+            })
+            .filter(|(_, resolved_task)| {
+                match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
+                    hash_map::Entry::Occupied(mut o) => {
+                        o.get_mut().insert(resolved_task.id.clone());
+                        // Neber allow duplicate reused tasks with the same labels
+                        false
+                    }
+                    hash_map::Entry::Vacant(v) => {
+                        v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
+                        true
+                    }
+                }
+            })
+            .map(|(task_source_kind, resolved_task)| {
+                (
+                    task_source_kind.clone(),
+                    resolved_task.clone(),
+                    post_inc(&mut lru_score),
+                )
+            })
+            .sorted_unstable_by(task_lru_comparator)
+            .map(|(kind, task, _)| (kind, task))
+            .collect::<Vec<_>>();
 
-        // let new_resolved_tasks = worktree_tasks
-        //     .filter_map(|(kind, task)| {
-        //         let id_base = kind.to_id_base();
-        //         Some((
-        //             kind,
-        //             task.resolve_task(&id_base, task_context)?,
-        //             not_used_score,
-        //         ))
-        //     })
-        //     .filter(|(_, resolved_task, _)| {
-        //         match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
-        //             hash_map::Entry::Occupied(mut o) => {
-        //                 // Allow new tasks with the same label, if their context is different
-        //                 o.get_mut().insert(resolved_task.id.clone())
-        //             }
-        //             hash_map::Entry::Vacant(v) => {
-        //                 v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
-        //                 true
-        //             }
-        //         }
-        //     })
-        //     .sorted_unstable_by(task_lru_comparator)
-        //     .map(|(kind, task, _)| (kind, task))
-        //     .collect::<Vec<_>>();
+        let not_used_score = post_inc(&mut lru_score);
+        let global_tasks = self.global_templates_from_settings();
+        let language_tasks = language
+            .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
+            .into_iter()
+            .flat_map(|tasks| tasks.0.into_iter())
+            .flat_map(|task| Some((task_source_kind.clone()?, task)))
+            .chain(global_tasks);
+        let worktree_tasks = self
+            .worktree_templates_from_settings(worktree)
+            .chain(language_tasks);
 
-        // (previously_spawned_tasks, new_resolved_tasks)
-        todo!("TODO kb")
+        let new_resolved_tasks = worktree_tasks
+            .flat_map(|(kind, task)| {
+                let id_base = kind.to_id_base();
+                applicable_task_contexts
+                    .iter()
+                    .filter_map(move |task_context| task.resolve_task(&id_base, task_context))
+                    .map(move |resolved_task| (kind.clone(), resolved_task, not_used_score))
+            })
+            .filter(|(_, resolved_task, _)| {
+                match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
+                    hash_map::Entry::Occupied(mut o) => {
+                        // Allow new tasks with the same label, if their context is different
+                        o.get_mut().insert(resolved_task.id.clone())
+                    }
+                    hash_map::Entry::Vacant(v) => {
+                        v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
+                        true
+                    }
+                }
+            })
+            .sorted_unstable_by(task_lru_comparator)
+            .map(|(kind, task, _)| (kind, task))
+            .collect::<Vec<_>>();
+
+        (previously_spawned_tasks, new_resolved_tasks)
     }
 
     /// Returns the last scheduled task by task_id if provided.
