@@ -638,10 +638,13 @@ impl BlockMap {
                 self.custom_blocks[start_block_ix..end_block_ix]
                     .iter()
                     .filter_map(|block| {
-                        Some((
-                            block.placement.to_wrap_row(wrap_snapshot)?,
-                            Block::Custom(block.clone()),
-                        ))
+                        let placement = block.placement.to_wrap_row(wrap_snapshot)?;
+                        if let BlockPlacement::Above(row) = placement {
+                            if row < new_start {
+                                return None;
+                            }
+                        }
+                        Some((placement, Block::Custom(block.clone())))
                     }),
             );
 
