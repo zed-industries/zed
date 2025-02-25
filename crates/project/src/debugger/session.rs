@@ -38,7 +38,7 @@ use std::{
 };
 use task::DebugAdapterConfig;
 use text::{PointUtf16, ToPointUtf16};
-use util::ResultExt;
+use util::{merge_json_value_into, ResultExt};
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Ord, Eq)]
 #[repr(transparent)]
@@ -283,7 +283,8 @@ impl LocalMode {
                 )
                 .await?;
 
-            let raw = adapter.request_args(&disposition);
+            let mut raw = adapter.request_args(&disposition);
+            merge_json_value_into(disposition.initialize_args.unwrap_or(json!({})), &mut raw);
 
             // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
             let launch = this.request(Launch { raw }, cx.background_executor().clone());
