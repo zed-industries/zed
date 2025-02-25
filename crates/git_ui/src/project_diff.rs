@@ -33,7 +33,7 @@ use crate::git_panel::{GitPanel, GitPanelAddon, GitStatusEntry};
 
 actions!(git, [Diff]);
 
-pub(crate) struct ProjectDiff {
+pub struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
     project: Entity<Project>,
@@ -438,6 +438,15 @@ impl ProjectDiff {
         }
 
         Ok(())
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn excerpt_paths(&self, cx: &App) -> Vec<String> {
+        self.multibuffer
+            .read(cx)
+            .excerpt_paths()
+            .map(|key| key.path().to_string_lossy().to_string())
+            .collect()
     }
 }
 

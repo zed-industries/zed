@@ -88,6 +88,7 @@ pub enum Message {
     Fetch(GitRepo),
 }
 
+#[derive(Debug)]
 pub enum GitEvent {
     ActiveRepositoryChanged,
     FileSystemUpdated,

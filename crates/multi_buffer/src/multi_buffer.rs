@@ -160,6 +160,10 @@ impl PathKey {
     pub fn namespaced(namespace: &'static str, path: Arc<Path>) -> Self {
         Self { namespace, path }
     }
+
+    pub fn path(&self) -> &Arc<Path> {
+        &self.path
+    }
 }
 
 pub type MultiBufferPoint = Point;
@@ -1448,6 +1452,11 @@ impl MultiBuffer {
             excerpt.range.context.start,
         ))
     }
+
+    pub fn excerpt_paths(&self) -> impl Iterator<Item = &PathKey> {
+        self.buffers_by_path.keys()
+    }
+
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
     pub fn set_excerpts_for_path(
         &mut self,
