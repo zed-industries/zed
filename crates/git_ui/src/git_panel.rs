@@ -1814,16 +1814,20 @@ impl GitPanel {
         });
 
         let has_visible_repo = all_repositories.len() > 0 || has_repo_above;
-
         if has_visible_repo {
             Some(
                 self.panel_header_container(window, cx)
-                    .child(
-                        Label::new("Repository")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .child(self.render_repository_selector(cx))
+                    .child(if all_repositories.len() > 1 {
+                        h_flex()
+                            .child(
+                                Label::new("Repository")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(self.render_repository_selector(cx))
+                    } else {
+                        div()
+                    })
                     .child(div().flex_grow()) // spacer
                     .child(
                         div()
