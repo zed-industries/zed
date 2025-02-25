@@ -5,8 +5,11 @@ mod mac_watcher;
 pub mod fs_watcher;
 
 use anyhow::{anyhow, Context as _, Result};
+#[cfg(any(test, feature = "test-support"))]
 use collections::HashMap;
+#[cfg(any(test, feature = "test-support"))]
 use git::status::StatusCode;
+#[cfg(any(test, feature = "test-support"))]
 use git::status::TrackedStatus;
 use git::GitHostingProviderRegistry;
 #[cfg(any(test, feature = "test-support"))]
@@ -14,6 +17,7 @@ use git::{repository::RepoPath, status::FileStatus};
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
+#[cfg(any(test, feature = "test-support"))]
 use std::collections::HashSet;
 #[cfg(unix)]
 use std::os::fd::AsFd;
