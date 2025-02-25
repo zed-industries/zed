@@ -176,20 +176,21 @@ impl BufferDiffSnapshot {
         }
     }
 
-    pub fn secondary_edits_for_stage_or_unstage(
+    pub fn new_secondary_text_for_stage_or_unstage(
         &self,
         stage: bool,
         hunks: impl Iterator<Item = (Range<Anchor>, Range<usize>)>,
         buffer: &text::BufferSnapshot,
-    ) -> Vec<(Range<usize>, String)> {
-        let Some(secondary_diff) = self.secondary_diff() else {
-            log::debug!("no secondary diff");
-            return Vec::new();
+        cx: &mut App,
+    ) -> Option<Rope> {
+        let secondary_diff = self.secondary_diff()?;
+        let index_base = if let Some(index_base) = secondary_diff.base_text() {
+            index_base.text.as_rope().clone()
+        } else if stage {
+            Rope::from("")
+        } else {
+            return None;
         };
-        let index_base = secondary_diff.base_text().map_or_else(
-            || Rope::from(""),
-            |snapshot| snapshot.text.as_rope().clone(),
-        );
         let head_base = self.base_text().map_or_else(
             || Rope::from(""),
             |snapshot| snapshot.text.as_rope().clone(),
@@ -197,8 +198,6 @@ impl BufferDiffSnapshot {
 
         let mut secondary_cursor = secondary_diff.inner.hunks.cursor::<DiffHunkSummary>(buffer);
         secondary_cursor.next(buffer);
-
-        log::debug!("original: {:?}", index_base.to_string());
         let mut edits = Vec::new();
         let mut prev_secondary_hunk_buffer_offset = 0;
         let mut prev_secondary_hunk_base_text_offset = 0;
@@ -247,17 +246,28 @@ impl BufferDiffSnapshot {
 
             let replacement_text = if stage {
                 log::debug!("staging");
-                buffer.text_for_range(buffer_offset_range).collect()
+                buffer
+                    .text_for_range(buffer_offset_range)
+                    .collect::<String>()
             } else {
                 log::debug!("unstaging");
                 head_base
                     .chunks_in_range(diff_base_byte_range.clone())
-                    .collect()
+                    .collect::<String>()
             };
             edits.push((secondary_base_text_range, replacement_text));
         }
-        log::debug!("edits: {edits:?}");
-        edits
+
+        dbg!(&edits);
+
+        let buffer = cx.new(|cx| {
+            language::Buffer::local_normalized(index_base, text::LineEnding::default(), cx)
+        });
+        let new_text = buffer.update(cx, |buffer, cx| {
+            buffer.edit(edits, None, cx);
+            buffer.as_rope().clone()
+        });
+        Some(new_text)
     }
 }
 
@@ -1429,17 +1439,21 @@ mod tests {
 
             let range = buffer.anchor_before(ranges[0].start)..buffer.anchor_before(ranges[0].end);
 
-            let edits = uncommitted_diff.secondary_edits_for_stage_or_unstage(
-                true,
-                uncommitted_diff
-                    .hunks_intersecting_range(range, &buffer)
-                    .map(|hunk| (hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone())),
-                &buffer,
-            );
-
-            let mut index_buffer = Buffer::new(0, BufferId::new(1).unwrap(), example.index_text);
-            index_buffer.edit(edits);
-            let new_index_text = index_buffer.text();
+            let new_index_text = cx
+                .update(|cx| {
+                    uncommitted_diff.new_secondary_text_for_stage_or_unstage(
+                        true,
+                        uncommitted_diff
+                            .hunks_intersecting_range(range, &buffer)
+                            .map(|hunk| {
+                                (hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone())
+                            }),
+                        &buffer,
+                        cx,
+                    )
+                })
+                .unwrap()
+                .to_string();
             pretty_assertions::assert_eq!(
                 new_index_text,
                 example.final_index_text,
@@ -1574,7 +1588,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    async fn test_secondary_edits_for_stage_unstage(cx: &mut TestAppContext, mut rng: StdRng) {
+    async fn test_staging_and_unstaging_hunks(cx: &mut TestAppContext, mut rng: StdRng) {
         fn gen_line(rng: &mut StdRng) -> String {
             if rng.gen_bool(0.2) {
                 "\n".to_owned()
@@ -1639,7 +1653,7 @@ mod tests {
 
         fn uncommitted_diff(
             working_copy: &language::BufferSnapshot,
-            index_text: &Entity<language::Buffer>,
+            index_text: &Rope,
             head_text: String,
             cx: &mut TestAppContext,
         ) -> BufferDiff {
@@ -1648,7 +1662,7 @@ mod tests {
                 buffer_id: working_copy.remote_id(),
                 inner: BufferDiff::build_sync(
                     working_copy.text.clone(),
-                    index_text.read_with(cx, |index_text, _| index_text.text()),
+                    index_text.to_string(),
                     cx,
                 ),
                 secondary_diff: None,
@@ -1679,17 +1693,11 @@ mod tests {
             )
         });
         let working_copy = working_copy.read_with(cx, |working_copy, _| working_copy.snapshot());
-        let index_text = cx.new(|cx| {
-            language::Buffer::local_normalized(
-                if rng.gen() {
-                    Rope::from(head_text.as_str())
-                } else {
-                    working_copy.as_rope().clone()
-                },
-                text::LineEnding::default(),
-                cx,
-            )
-        });
+        let mut index_text = if rng.gen() {
+            Rope::from(head_text.as_str())
+        } else {
+            working_copy.as_rope().clone()
+        };
 
         let mut diff = uncommitted_diff(&working_copy, &index_text, head_text.clone(), cx);
         let mut hunks = cx.update(|cx| {
@@ -1716,13 +1724,16 @@ mod tests {
             };
 
             let snapshot = cx.update(|cx| diff.snapshot(cx));
-            let edits = snapshot.secondary_edits_for_stage_or_unstage(
-                stage,
-                [(hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone())].into_iter(),
-                &working_copy,
-            );
-            index_text.update(cx, |index_text, cx| {
-                index_text.edit(edits, None, cx);
+            index_text = cx.update(|cx| {
+                snapshot
+                    .new_secondary_text_for_stage_or_unstage(
+                        stage,
+                        [(hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone())]
+                            .into_iter(),
+                        &working_copy,
+                        cx,
+                    )
+                    .unwrap()
             });
 
             diff = uncommitted_diff(&working_copy, &index_text, head_text.clone(), cx);
