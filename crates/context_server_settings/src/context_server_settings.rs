@@ -13,7 +13,7 @@ pub fn init(cx: &mut App) {
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
-#[serde(rename_all = "snake_case", untagged)]
+#[serde(rename_all = "snake_case", tag = "type")]
 pub enum ServerConfig {
     Stdio {
         /// The command to run this context server.
