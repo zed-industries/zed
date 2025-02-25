@@ -1087,7 +1087,7 @@ impl ContextEditor {
         patch: AssistantPatch,
         mut cx: AsyncWindowContext,
     ) -> Result<()> {
-        let project = this.update(&mut cx, |this, _| this.project.clone())?;
+        let project = this.read_with(&cx, |this, _| this.project.clone())?;
         let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
 
         let editor = cx.new_window_entity(|window, cx| {
@@ -1120,19 +1120,12 @@ impl ContextEditor {
                 });
                 patch_state.update_task.take();
             }
-
-            this.workspace
-                .update(cx, |workspace, cx| {
-                    workspace.add_item_to_active_pane(
-                        Box::new(editor.clone()),
-                        None,
-                        false,
-                        window,
-                        cx,
-                    )
-                })
-                .log_err();
         })?;
+        this.read_with(&cx, |this, _| this.workspace)?
+            .update(&mut cx, |workspace, cx| {
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, window, cx)
+            })
+            .log_err();
 
         Ok(())
     }
