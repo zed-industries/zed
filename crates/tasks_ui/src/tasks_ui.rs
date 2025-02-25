@@ -239,7 +239,21 @@ fn active_item_selection_properties(
     let worktree_id = active_item
         .as_ref()
         .and_then(|item| item.project_path(cx))
-        .map(|path| path.worktree_id);
+        .map(|path| path.worktree_id)
+        .filter(|worktree_id| {
+            let Some(worktree) = workspace
+                .project()
+                .read(cx)
+                .worktree_for_id(*worktree_id, cx)
+            else {
+                return false;
+            };
+            let worktree = worktree.read(cx);
+            let Some(root_entry) = worktree.root_entry() else {
+                return false;
+            };
+            worktree.is_visible() && root_entry.is_dir()
+        });
     let location = active_item
         .and_then(|active_item| active_item.act_as::<Editor>(cx))
         .and_then(|editor| {
