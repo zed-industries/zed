@@ -193,7 +193,9 @@ impl LanguageModel for CopilotChatLanguageModel {
                     CopilotChatModel::Gpt4 => open_ai::Model::Four,
                     CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
                     CopilotChatModel::O1 | CopilotChatModel::O3Mini => open_ai::Model::Four,
-                    CopilotChatModel::Claude3_5Sonnet | CopilotChatModel::Claude3_7Sonnet | CopilotChatModel::Gemini20Flash => {
+                    CopilotChatModel::Claude3_5Sonnet
+                    | CopilotChatModel::Claude3_7Sonnet
+                    | CopilotChatModel::Gemini20Flash => {
                         unreachable!()
                     }
                 };
