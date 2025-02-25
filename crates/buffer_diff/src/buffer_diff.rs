@@ -258,8 +258,6 @@ impl BufferDiffSnapshot {
             edits.push((secondary_base_text_range, replacement_text));
         }
 
-        dbg!(&edits);
-
         let buffer = cx.new(|cx| {
             language::Buffer::local_normalized(index_base, text::LineEnding::default(), cx)
         });
