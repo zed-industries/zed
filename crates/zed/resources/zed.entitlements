@@ -22,5 +22,7 @@
 	<true/>
 	<key>com.apple.security.personal-information.photos-library</key>
 	<true/>
+	<key>com.apple.security.get-task-allow</key>
+	<true/>
 </dict>
 </plist>
