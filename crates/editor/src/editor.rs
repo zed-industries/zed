@@ -5997,14 +5997,30 @@ impl Editor {
 
         const POLE_WIDTH: Pixels = px(2.);
 
+        let line_layout =
+            line_layouts.get(target_display_point.row().minus(visible_row_range.start) as usize)?;
+        let target_column = target_display_point.column() as usize;
+
+        let target_x = line_layout.x_for_index(target_column);
+        let target_y =
+            (target_display_point.row().as_f32() * line_height) - scroll_pixel_position.y;
+
+        let flag_on_right = target_x < text_bounds.size.width / 2.;
+
         let mut element = v_flex()
             .items_end()
-            .child(
+            .when(dbg!(flag_on_right), |el| el.items_start())
+            .child(if flag_on_right {
+                self.render_edit_prediction_line_popover("Jump", None, window, cx)?
+                    .rounded_bl(px(0.))
+                    .rounded_tl(px(0.))
+                    .border_l_2()
+            } else {
                 self.render_edit_prediction_line_popover("Jump", None, window, cx)?
                     .rounded_br(px(0.))
                     .rounded_tr(px(0.))
-                    .border_r_2(),
-            )
+                    .border_r_2()
+            })
             .child(
                 div()
                     .w(POLE_WIDTH)
@@ -6015,16 +6031,15 @@ impl Editor {
 
         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
 
-        let line_layout =
-            line_layouts.get(target_display_point.row().minus(visible_row_range.start) as usize)?;
-        let target_column = target_display_point.column() as usize;
-
-        let target_x = line_layout.x_for_index(target_column);
-        let target_y =
-            (target_display_point.row().as_f32() * line_height) - scroll_pixel_position.y;
-
         let mut origin = scrolled_content_origin + point(target_x, target_y)
-            - point(size.width - POLE_WIDTH, size.height - line_height);
+            - point(
+                if flag_on_right {
+                    POLE_WIDTH
+                } else {
+                    size.width - POLE_WIDTH
+                },
+                size.height - line_height,
+            );
 
         origin.x = origin.x.max(content_origin.x);
 
@@ -6529,8 +6544,7 @@ impl Editor {
                             .child(div().px_1p5().child(match &prediction.completion {
                                 InlineCompletion::Move { target, snapshot } => {
                                     use text::ToPoint as _;
-                                    if dbg!(target.text_anchor.to_point(&snapshot)).row
-                                        > cursor_point.row
+                                    if target.text_anchor.to_point(&snapshot).row > cursor_point.row
                                     {
                                         Icon::new(IconName::ZedPredictDown)
                                     } else {
