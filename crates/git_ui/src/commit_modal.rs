@@ -37,6 +37,7 @@ pub fn init(cx: &mut App) {
 pub struct CommitModal {
     git_panel: Entity<GitPanel>,
     commit_editor: Entity<Editor>,
+    branch_list_delegate: BranchListDelegate,
     restore_dock: RestoreDock,
     current_suggestion: Option<usize>,
     suggested_messages: Vec<SharedString>,
@@ -108,9 +109,11 @@ impl CommitModal {
                 is_open,
                 active_index,
             };
+
+            let weak_workspace = cx.entity().downgrade();
             workspace.open_panel::<GitPanel>(window, cx);
             workspace.toggle_modal(window, cx, move |window, cx| {
-                CommitModal::new(git_panel, restore_dock_position, window, cx)
+                CommitModal::new(git_panel, restore_dock_position, weak_workspace, window, cx)
             })
         });
     }
@@ -118,6 +121,7 @@ impl CommitModal {
     fn new(
         git_panel: Entity<GitPanel>,
         restore_dock: RestoreDock,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -152,6 +156,11 @@ impl CommitModal {
         let focus_handle = commit_editor.focus_handle(cx);
 
         cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
+            cx.emit(DismissEvent);
+        })
+        .detach();
+
+        cx.spawn_in(window, |window, cx| {
             cx.emit(DismissEvent);
         })
         .detach();
@@ -312,7 +321,7 @@ impl CommitModal {
                 (branch, tooltip, title, co_authors)
             });
 
-        let branch_selector = panel_button(branch)
+        let branch_picker = panel_button(branch)
             .icon(IconName::GitBranch)
             .icon_size(IconSize::Small)
             .icon_color(Color::Placeholder)
@@ -392,7 +401,7 @@ impl CommitModal {
                     .pt_2()
                     .pb_0p5()
                     .gap_1()
-                    .child(h_flex().gap_1().child(branch_selector).children(co_authors))
+                    .child(h_flex().gap_1().child(branch_picker).children(co_authors))
                     .child(div().flex_1())
                     .child(
                         h_flex()

@@ -2975,6 +2975,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "combobox"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "picker",
+ "ui",
+ "util",
+]
+
+[[package]]
 name = "command_palette"
 version = "0.1.0"
 dependencies = [
@@ -5396,6 +5407,7 @@ dependencies = [
  "anyhow",
  "buffer_diff",
  "collections",
+ "combobox",
  "db",
  "editor",
  "feature_flags",
