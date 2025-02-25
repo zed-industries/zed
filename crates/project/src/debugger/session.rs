@@ -24,7 +24,7 @@ use futures::channel::oneshot;
 use futures::{future::join_all, future::Shared, FutureExt};
 use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, Task, WeakEntity};
 use rpc::AnyProtoClient;
-use serde_json::Value;
+use serde_json::{json, Value};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::path::PathBuf;
