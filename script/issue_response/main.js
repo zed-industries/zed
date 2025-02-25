@@ -24,14 +24,28 @@ async function main() {
 
   const owner = "zed-industries";
   const repo = "zed";
-  const staff = await octokit.paginate(octokit.rest.teams.listMembersInOrg, {
-    org: owner,
-    team_slug: "staff",
-    per_page: 100,
-  });
-  let staffHandles = staff.map((member) => member.login);
-  let commenterFilters = staffHandles.map((name) => `-commenter:${name}`);
-  let authorFilters = staffHandles.map((name) => `-author:${name}`);
+  const teams = ["staff", "triagers"];
+  const githubHandleSet = new Set();
+
+  for (const team of teams) {
+    const teamMembers = await octokit.paginate(
+      octokit.rest.teams.listMembersInOrg,
+      {
+        org: owner,
+        team_slug: team,
+        per_page: 100,
+      },
+    );
+
+    for (const teamMember of teamMembers) {
+      githubHandleSet.add(teamMember.login);
+    }
+  }
+
+  const githubHandles = Array.from(githubHandleSet);
+  githubHandles.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  const commenterFilters = githubHandles.map((name) => `-commenter:${name}`);
+  const authorFilters = githubHandles.map((name) => `-author:${name}`);
 
   const q = [
     `repo:${owner}/${repo}`,
@@ -48,8 +62,8 @@ async function main() {
     per_page: 100,
   });
 
-  let issues = response.data.items;
-  let issueLines = issues.map((issue, index) => {
+  const issues = response.data.items;
+  const issueLines = issues.map((issue, index) => {
     const formattedDate = new Date(issue.created_at).toLocaleDateString(
       "en-US",
       {

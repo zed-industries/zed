@@ -157,8 +157,7 @@
       "cmd->": "assistant::QuoteSelection",
       "cmd-<": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol",
-      "alt-enter": "editor::OpenSelectionsInMultibuffer",
-      "cmd-g": "git::Commit"
+      "alt-enter": "editor::OpenSelectionsInMultibuffer"
     }
   },
   {
