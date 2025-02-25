@@ -24,7 +24,7 @@ use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{
     actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, SemanticVersion,
-    Subscription, Task,
+    Subscription, Task, WeakEntity,
 };
 use http_client::{HttpClient, Method};
 use input_excerpt::excerpt_for_cursor_position;
@@ -186,7 +186,7 @@ impl std::fmt::Debug for InlineCompletion {
 }
 
 pub struct Zeta {
-    editor: Option<Entity<Editor>>,
+    editor: Option<WeakEntity<Editor>>,
     client: Arc<Client>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
@@ -209,7 +209,7 @@ impl Zeta {
     }
 
     pub fn register(
-        editor: Option<Entity<Editor>>,
+        editor: Option<WeakEntity<Editor>>,
         worktree: Option<Entity<Worktree>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
@@ -239,7 +239,7 @@ impl Zeta {
     }
 
     fn new(
-        editor: Option<Entity<Editor>>,
+        editor: Option<WeakEntity<Editor>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
         cx: &mut Context<Self>,
@@ -708,7 +708,7 @@ and then another
         let workspace = self
             .editor
             .as_ref()
-            .and_then(|editor| editor.read(cx).workspace());
+            .and_then(|editor| editor.upgrade()?.read(cx).workspace());
         self.request_completion_impl(
             workspace,
             project,
