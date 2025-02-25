@@ -475,10 +475,6 @@ impl Zeta {
                 body,
             })
             .await;
-            let response: Result<PredictEditsResponse, anyhow::Error> =
-                Err(anyhow!(ZedUpdateRequiredError {
-                    minimum_version: SemanticVersion::new(0, 1, 0),
-                }));
             let response = match response {
                 Ok(response) => response,
                 Err(err) => {
