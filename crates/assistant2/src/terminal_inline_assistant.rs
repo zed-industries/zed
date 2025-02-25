@@ -3,7 +3,7 @@ use crate::context_store::ContextStore;
 use crate::inline_prompt_editor::{
     CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
 };
-use crate::terminal_codegen::{CodegenEvent, TerminalCodegen, CLEAR_INPUT};
+use crate::terminal_codegen::{clear_input, CodegenEvent, TerminalCodegen};
 use crate::thread_store::ThreadStore;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -189,7 +189,7 @@ impl TerminalInlineAssistant {
             .update(cx, |terminal, cx| {
                 terminal
                     .terminal()
-                    .update(cx, |terminal, _| terminal.input(CLEAR_INPUT.to_string()));
+                    .update(cx, |terminal, _| clear_input(terminal));
             })
             .log_err();
 

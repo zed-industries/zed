@@ -156,7 +156,18 @@ pub enum CodegenEvent {
 }
 
 pub const CLEAR_INPUT: &str = "\x15";
+pub const CLEAR_WINDOWS_INPUT: &str = "\x1b";
 const CARRIAGE_RETURN: &str = "\x0d";
+
+pub fn clear_input(terminal: &mut Terminal) {
+    if let Some(process) = terminal.pty_info.current.as_ref() {
+        if process.name.ends_with("cmd.exe") || process.name.ends_with("pwsh.exe") {
+            terminal.input(CLEAR_WINDOWS_INPUT.to_string());
+        } else {
+            terminal.input(CLEAR_INPUT.to_string());
+        }
+    };
+}
 
 struct TerminalTransaction {
     terminal: Entity<Terminal>,
@@ -176,7 +187,7 @@ impl TerminalTransaction {
 
     pub fn undo(&self, cx: &mut App) {
         self.terminal
-            .update(cx, |terminal, _| terminal.input(CLEAR_INPUT.to_string()));
+            .update(cx, |terminal, _| clear_input(terminal));
     }
 
     pub fn complete(&self, cx: &mut App) {
