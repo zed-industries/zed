@@ -1330,6 +1330,7 @@ impl FakeFs {
             .files()
             .iter()
             .filter_map(|path| {
+                dbg!(&path, &dot_git);
                 let repo_path =
                     RepoPath::new(path.strip_prefix(dot_git.parent().unwrap()).ok()?.into());
                 let content = self
@@ -1394,6 +1395,7 @@ impl FakeFs {
                         unreachable!();
                     }
                 };
+                dbg!(&path, status);
                 state.statuses.insert(path.clone(), status);
             }
         });

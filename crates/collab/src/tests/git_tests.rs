@@ -26,7 +26,7 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
             "/a",
             json!({
                 ".git": {},
-                "changed.txt": "before\n",
+                "changed.txt": "after\n",
                 "unchanged.txt": "unchanged\n",
                 "created.txt": "created\n",
                 "secret.pem": "secret-changed\n",
@@ -37,7 +37,7 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
     client_a.fs().set_git_content_for_repo(
         Path::new("/a/.git"),
         &[
-            ("changed.txt".into(), "after\n".to_string(), None),
+            ("changed.txt".into(), "before\n".to_string(), None),
             ("unchanged.txt".into(), "unchanged\n".to_string(), None),
             ("deleted.txt".into(), "deleted\n".to_string(), None),
             ("secret.pem".into(), "shh\n".to_string(), None),
@@ -82,5 +82,19 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
             diff.excerpt_paths(cx),
             vec!["changed.txt", "deleted.txt", "created.txt"]
         );
-    })
+    });
+
+    client_a
+        .fs()
+        .insert_tree(
+            "/a",
+            json!({
+                ".git": {},
+                "changed.txt": "before\n",
+                "unchanged.txt": "unchanged\n",
+                "created.txt": "created\n",
+                "secret.pem": "secret-changed\n",
+            }),
+        )
+        .await;
 }
