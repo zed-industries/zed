@@ -14990,7 +14990,7 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/test",
+        path!("/test"),
         json!({
             ".git": {},
             "file-1": "ONE\n",
@@ -15001,7 +15001,7 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
     .await;
 
     fs.set_head_for_repo(
-        "/test/.git".as_ref(),
+        path!("/test/.git").as_ref(),
         &[
             ("file-1".into(), "one\n".into()),
             ("file-2".into(), "two\n".into()),
@@ -15009,12 +15009,13 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
         ],
     );
 
-    let project = Project::test(fs, ["/test".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
     let mut buffers = vec![];
     for i in 1..=3 {
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer(format!("/test/file-{}", i), cx)
+                let path = format!(path!("/test/file-{}"), i);
+                project.open_local_buffer(path, cx)
             })
             .await
             .unwrap();
