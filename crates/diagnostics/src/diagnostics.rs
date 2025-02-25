@@ -36,7 +36,7 @@ use std::{
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
-use ui::{h_flex, prelude::*, Icon, IconName, Label, TintColor};
+use ui::{h_flex, prelude::*, Icon, IconName, Label};
 use util::ResultExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
@@ -101,13 +101,14 @@ impl Render for ProjectDiagnosticsEditor {
                 SharedString::new_static("No errors in workspace")
             };
             v_flex()
-                .gap_1()
                 .key_context("EmptyPane")
-                .bg(cx.theme().colors().editor_background)
+                .size_full()
+                .gap_1()
                 .justify_center()
                 .items_center()
-                .size_full()
-                .child(h_flex().items_center().child(Label::new(label)))
+                .text_center()
+                .bg(cx.theme().colors().editor_background)
+                .child(Label::new(label).color(Color::Muted))
                 .when(self.summary.warning_count > 0, |this| {
                     let plural_suffix = if self.summary.warning_count > 1 {
                         "s"
@@ -119,13 +120,12 @@ impl Render for ProjectDiagnosticsEditor {
                         self.summary.warning_count, plural_suffix
                     );
                     this.child(
-                        Button::new("diagnostics-show-warning-label", label)
-                            .size(ButtonSize::Compact)
-                            .style(ButtonStyle::Tinted(TintColor::Warning))
-                            .on_click(cx.listener(|this, _, window, cx| {
+                        Button::new("diagnostics-show-warning-label", label).on_click(cx.listener(
+                            |this, _, window, cx| {
                                 this.toggle_warnings(&Default::default(), window, cx);
                                 cx.notify();
-                            })),
+                            },
+                        )),
                     )
                 })
         } else {
