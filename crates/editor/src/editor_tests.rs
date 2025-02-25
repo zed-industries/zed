@@ -1510,6 +1510,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let move_to_beg = MoveToBeginningOfLine {
         stop_at_soft_wraps: true,
+        stop_at_indent: true,
     };
 
     let move_to_end = MoveToEndOfLine {
@@ -1590,6 +1591,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         editor.select_to_beginning_of_line(
             &SelectToBeginningOfLine {
                 stop_at_soft_wraps: true,
+                stop_at_indent: true,
             },
             window,
             cx,
@@ -1607,6 +1609,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         editor.select_to_beginning_of_line(
             &SelectToBeginningOfLine {
                 stop_at_soft_wraps: true,
+                stop_at_indent: true,
             },
             window,
             cx,
@@ -1624,6 +1627,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         editor.select_to_beginning_of_line(
             &SelectToBeginningOfLine {
                 stop_at_soft_wraps: true,
+                stop_at_indent: true,
             },
             window,
             cx,
@@ -1684,6 +1688,7 @@ fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let move_to_beg = MoveToBeginningOfLine {
         stop_at_soft_wraps: false,
+        stop_at_indent: false,
     };
 
     let move_to_end = MoveToEndOfLine {
