@@ -837,7 +837,6 @@ impl Worktree {
                                 }
                             }
                         };
-                        cx.emit(Event::UpdatedEntries(Arc::default()));
                         cx.notify();
                         while let Some((scan_id, _)) = this.snapshot_subscriptions.front() {
                             if this.observed_snapshot(*scan_id) {
