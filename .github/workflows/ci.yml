@@ -110,7 +110,7 @@ jobs:
         run: ./script/clippy
 
       - name: Check unused dependencies
-        uses: bnjbvr/cargo-machete@0.7.0
+        uses: bnjbvr/cargo-machete@v0.7.0
 
       - name: Check licenses
         run: |
