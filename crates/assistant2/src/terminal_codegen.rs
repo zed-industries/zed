@@ -166,7 +166,7 @@ pub fn clear_input(terminal: &mut Terminal) {
         } else {
             terminal.input(CLEAR_INPUT.to_string());
         }
-    };
+    }
 }
 
 struct TerminalTransaction {
