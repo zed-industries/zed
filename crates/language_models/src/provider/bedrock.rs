@@ -68,6 +68,12 @@ pub struct AvailableModel {
     pub default_temperature: Option<f32>,
 }
 
+/// The URL of the base AWS service.
+///
+/// Right now we're just using this as the key to store the AWS credentials
+/// under in the keychain.
+const AMAZON_AWS_URL: &str = "https://amazonaws.com";
+
 // These environment variables all use a `ZED_` prefix because we don't want to overwrite the user's AWS credentials.
 const ZED_BEDROCK_ACCESS_KEY_ID_VAR: &str = "ZED_ACCESS_KEY_ID";
 const ZED_BEDROCK_SECRET_ACCESS_KEY_VAR: &str = "ZED_SECRET_ACCESS_KEY";
@@ -86,7 +92,7 @@ impl State {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         cx.spawn(|this, mut cx| async move {
             credentials_provider
-                .delete_credentials(ZED_AWS_CREDENTIALS_VAR, &cx)
+                .delete_credentials(AMAZON_AWS_URL, &cx)
                 .await
                 .log_err();
             this.update(&mut cx, |this, cx| {
@@ -106,7 +112,7 @@ impl State {
         cx.spawn(|this, mut cx| async move {
             credentials_provider
                 .write_credentials(
-                    ZED_AWS_CREDENTIALS_VAR,
+                    AMAZON_AWS_URL,
                     "Bearer",
                     &serde_json::to_vec(&credentials)?,
                     &cx,
@@ -135,7 +141,7 @@ impl State {
                     (credentials, true)
                 } else {
                     let (_, credentials) = credentials_provider
-                        .read_credentials(ZED_AWS_CREDENTIALS_VAR, &cx)
+                        .read_credentials(AMAZON_AWS_URL, &cx)
                         .await?
                         .ok_or_else(|| AuthenticateError::CredentialsNotFound)?;
                     (

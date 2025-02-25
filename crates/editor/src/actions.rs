@@ -22,6 +22,8 @@ pub struct SelectPrevious {
 pub struct MoveToBeginningOfLine {
     #[serde(default = "default_true")]
     pub stop_at_soft_wraps: bool,
+    #[serde(default)]
+    pub stop_at_indent: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -29,6 +31,8 @@ pub struct MoveToBeginningOfLine {
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
     pub(super) stop_at_soft_wraps: bool,
+    #[serde(default)]
+    pub stop_at_indent: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]

@@ -185,6 +185,7 @@ impl LanguageModel for CopilotChatLanguageModel {
     ) -> BoxFuture<'static, Result<usize>> {
         match self.model {
             CopilotChatModel::Claude3_5Sonnet => count_anthropic_tokens(request, cx),
+            CopilotChatModel::Claude3_7Sonnet => count_anthropic_tokens(request, cx),
             CopilotChatModel::Gemini20Flash => count_google_tokens(request, cx),
             _ => {
                 let model = match self.model {
@@ -192,7 +193,9 @@ impl LanguageModel for CopilotChatLanguageModel {
                     CopilotChatModel::Gpt4 => open_ai::Model::Four,
                     CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
                     CopilotChatModel::O1 | CopilotChatModel::O3Mini => open_ai::Model::Four,
-                    CopilotChatModel::Claude3_5Sonnet | CopilotChatModel::Gemini20Flash => {
+                    CopilotChatModel::Claude3_5Sonnet
+                    | CopilotChatModel::Claude3_7Sonnet
+                    | CopilotChatModel::Gemini20Flash => {
                         unreachable!()
                     }
                 };
