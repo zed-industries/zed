@@ -41,7 +41,7 @@ impl Animation {
     }
 }
 
-/// An animation which can be appied to an element when transitioning between states
+/// An animation which can be applied to an element when transitioning between states
 pub struct TransitionAnimation {
     /// The amount of time this animation should run for when transitioning from false to true.
     /// When `None`, this transition isn't animated.
