@@ -49,7 +49,11 @@ pub enum Model {
 impl Model {
     pub fn uses_streaming(&self) -> bool {
         match self {
-            Self::Gpt4o | Self::Gpt4 | Self::Gpt3_5Turbo | Self::Claude3_5Sonnet | Self::Claude3_7Sonnet => true,
+            Self::Gpt4o
+            | Self::Gpt4
+            | Self::Gpt3_5Turbo
+            | Self::Claude3_5Sonnet
+            | Self::Claude3_7Sonnet => true,
             Self::O3Mini | Self::O1 | Self::Gemini20Flash => false,
         }
     }
@@ -101,8 +105,8 @@ impl Model {
             Self::Gpt3_5Turbo => 12_288,
             Self::O3Mini => 64_000,
             Self::O1 => 20_000,
-            Self::Claude3_5Sonnet => 128_000,
-            Self::Claude3_7Sonnet => 128_000,
+            Self::Claude3_5Sonnet => 200_000,
+            Self::Claude3_7Sonnet => 90_000,
             Model::Gemini20Flash => 128_000,
         }
     }
