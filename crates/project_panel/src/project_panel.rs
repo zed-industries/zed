@@ -2142,8 +2142,14 @@ impl ProjectPanel {
                             });
 
                             if item_count == 1 {
+                                // open entry if not dir, and only focus if rename is not pending
                                 if !entry.is_dir() {
-                                    project_panel.open_entry(entry.id, false, false, cx);
+                                    project_panel.open_entry(
+                                        entry.id,
+                                        disambiguation_range.is_none(),
+                                        false,
+                                        cx,
+                                    );
                                 }
 
                                 // if only one entry was pasted and it was disambiguated, open the rename editor
