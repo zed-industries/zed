@@ -1579,8 +1579,11 @@ impl Language {
     pub fn set_theme(&self, theme: &SyntaxTheme) {
         if let Some(grammar) = self.grammar.as_ref() {
             if let Some(highlights_query) = &grammar.highlights_query {
-                *grammar.highlight_map.lock() =
-                    HighlightMap::new(highlights_query.capture_names(), theme);
+                *grammar.highlight_map.lock() = HighlightMap::new(
+                    highlights_query.capture_names(),
+                    self.config.name.lsp_id().as_ref(),
+                    theme,
+                );
             }
         }
     }
