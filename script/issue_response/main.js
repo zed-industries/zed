@@ -25,7 +25,7 @@ async function main() {
   const owner = "zed-industries";
   const repo = "zed";
   const teams = ["staff", "triagers"];
-  let githubHandleSet = new Set();
+  const githubHandleSet = new Set();
 
   for (const team of teams) {
     const teamMembers = await octokit.paginate(
