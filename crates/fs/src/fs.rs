@@ -2022,7 +2022,6 @@ pub async fn copy_recursive<'a>(
     target: &'a Path,
     options: CopyOptions,
 ) -> Result<()> {
-    println!("copy_recursive: source: {:?}, target: {:?}", source, target);
     for (is_dir, item) in read_dir_items(fs, source).await? {
         let Ok(item_relative_path) = item.strip_prefix(source) else {
             continue;
@@ -2032,12 +2031,6 @@ pub async fn copy_recursive<'a>(
         } else {
             target.join(item_relative_path)
         };
-        println!(
-            "    processing {}, {}, {}",
-            is_dir,
-            item.display(),
-            target_item.display()
-        );
         if is_dir {
             if !options.overwrite && fs.metadata(&target_item).await.is_ok_and(|m| m.is_some()) {
                 if options.ignore_if_exists {
@@ -2057,7 +2050,6 @@ pub async fn copy_recursive<'a>(
                 .await;
             fs.create_dir(&target_item).await?;
         } else {
-            println!("    copying: {}, {}", item.display(), target_item.display());
             fs.copy_file(&item, &target_item, options).await?;
         }
     }
