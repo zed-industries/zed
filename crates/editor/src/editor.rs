@@ -13329,7 +13329,7 @@ impl Editor {
         snapshot: &MultiBufferSnapshot,
     ) -> bool {
         let mut hunks = self.diff_hunks_in_ranges(ranges, &snapshot);
-        hunks.any(|hunk| hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk)
+        hunks.any(|hunk| hunk.secondary_status != DiffHunkSecondaryStatus::None)
     }
 
     pub fn toggle_staged_selected_diff_hunks(
@@ -13474,12 +13474,8 @@ impl Editor {
             log::debug!("no diff for buffer id");
             return;
         };
-        let Some(secondary_diff) = diff.secondary_diff() else {
-            log::debug!("no secondary diff for buffer id");
-            return;
-        };
 
-        let edits = diff.secondary_edits_for_stage_or_unstage(
+        let Some(new_index_text) = diff.new_secondary_text_for_stage_or_unstage(
             stage,
             hunks.filter_map(|hunk| {
                 if stage && hunk.secondary_status == DiffHunkSecondaryStatus::None {
@@ -13489,29 +13485,14 @@ impl Editor {
                 {
                     return None;
                 }
-                Some((
-                    hunk.diff_base_byte_range.clone(),
-                    hunk.secondary_diff_base_byte_range.clone(),
-                    hunk.buffer_range.clone(),
-                ))
+                Some((hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone()))
             }),
             &buffer_snapshot,
-        );
-
-        let Some(index_base) = secondary_diff
-            .base_text()
-            .map(|snapshot| snapshot.text.as_rope().clone())
-        else {
-            log::debug!("no index base");
+            cx,
+        ) else {
+            log::debug!("missing secondary diff or index text");
             return;
         };
-        let index_buffer = cx.new(|cx| {
-            Buffer::local_normalized(index_base.clone(), text::LineEnding::default(), cx)
-        });
-        let new_index_text = index_buffer.update(cx, |index_buffer, cx| {
-            index_buffer.edit(edits, None, cx);
-            index_buffer.snapshot().as_rope().to_string()
-        });
         let new_index_text = if new_index_text.is_empty()
             && !stage
             && (diff.is_single_insertion
@@ -13531,7 +13512,7 @@ impl Editor {
 
         cx.background_spawn(
             repo.read(cx)
-                .set_index_text(&path, new_index_text)
+                .set_index_text(&path, new_index_text.map(|rope| rope.to_string()))
                 .log_err(),
         )
         .detach();
