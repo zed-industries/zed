@@ -267,7 +267,7 @@ fn assign_edit_prediction_provider(
                 }
 
                 let zeta = zeta::Zeta::register(
-                    Some(cx.entity()),
+                    editor.workspace().map(|w| w.downgrade()),
                     worktree,
                     client.clone(),
                     user_store,
