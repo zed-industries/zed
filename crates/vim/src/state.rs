@@ -20,7 +20,7 @@ use ui::{Context, KeyBinding, SharedString};
 use workspace::searchable::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, JsonSchema)]
-#[serde(rename_all_fields = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum Mode {
     Normal,
     Insert,
