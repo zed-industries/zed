@@ -1095,6 +1095,7 @@ impl ProjectPanel {
         if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
                 self.open_entry(entry.id, focus_opened_item, allow_preview, cx);
+                cx.notify();
             } else {
                 self.toggle_expanded(entry.id, window, cx);
             }
