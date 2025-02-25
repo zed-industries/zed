@@ -2016,11 +2016,19 @@ pub async fn copy_recursive<'a>(
     target: &'a Path,
     options: CopyOptions,
 ) -> Result<()> {
+    println!("copy_recursive: source: {:?}, target: {:?}", source, target);
     for (is_dir, item) in read_dir_items(fs, source).await? {
+        println!("    processing 1: {}", item.display());
         let Ok(item_relative_path) = item.strip_prefix(source) else {
             continue;
         };
+        println!(
+            "    processing 2: {}<->{}",
+            item.display(),
+            item_relative_path.display()
+        );
         let target_item = target.join(item_relative_path);
+        println!("    target_item: {}", target_item.display());
         if is_dir {
             if !options.overwrite && fs.metadata(&target_item).await.is_ok_and(|m| m.is_some()) {
                 if options.ignore_if_exists {
@@ -2040,6 +2048,7 @@ pub async fn copy_recursive<'a>(
                 .await;
             fs.create_dir(&target_item).await?;
         } else {
+            println!("    copying: {}, {}", item.display(), target_item.display());
             fs.copy_file(&item, &target_item, options).await?;
         }
     }
@@ -2171,6 +2180,57 @@ mod tests {
                 .await
                 .unwrap(),
             "D",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_recursive(executor: BackgroundExecutor) {
+        let fs = FakeFs::new(executor.clone());
+        fs.insert_tree(
+            path!("/outer"),
+            json!({
+                "inner1": {
+                    "a": "A",
+                    "b": "B",
+                    "inner3": {
+                        "d": "D",
+                    }
+                },
+                "inner2": {
+                    "c": "C",
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/inner3/d")),
+            ]
+        );
+
+        let source = Path::new(path!("/outer"));
+        let target = Path::new(path!("/outer/inner1/outer"));
+        copy_recursive(fs.as_ref(), source, target, Default::default())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/inner3/d")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/a")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/b")),
+                PathBuf::from(path!("/outer/inner1/outer/inner2/c")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/inner3/d")),
+            ]
         );
     }
 
