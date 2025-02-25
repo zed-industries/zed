@@ -1,18 +1,18 @@
 use anyhow::{anyhow, Context as _, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 
-use editor::commit_tooltip::CommitTooltip;
-use git::repository::{Branch, GitRepository};
+use git::repository::Branch;
 use gpui::{
-    rems, AnyView, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, WeakEntity, Window,
+    rems, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
+    Task, WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::git::GitRepo;
 use project::ProjectPath;
 use std::sync::Arc;
 use time::OffsetDateTime;
+use time_format::format_local_timestamp;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
@@ -151,24 +151,6 @@ impl BranchListDelegate {
             .iter()
             .filter(|item| matches!(item, BranchEntry::Branch(_)))
             .count()
-    }
-
-    pub fn get_last_commit_info(
-        repo: &dyn GitRepository,
-        branch_name: &str,
-    ) -> anyhow::Result<editor::commit_tooltip::CommitDetails> {
-        let last_commit = repo.show(branch_name)?;
-        Ok(editor::commit_tooltip::CommitDetails {
-            sha: last_commit.sha.clone(),
-            committer_name: last_commit.committer_name.clone(),
-            committer_email: last_commit.committer_email.clone(),
-            commit_time: OffsetDateTime::from_unix_timestamp(last_commit.commit_timestamp)
-                .map_err(|_| anyhow::anyhow!("Invalid commit timestamp"))?,
-            message: Some(editor::commit_tooltip::ParsedCommitMessage {
-                message: last_commit.message.clone(),
-                ..Default::default()
-            }),
-        })
     }
 }
 
@@ -356,14 +338,13 @@ impl PickerDelegate for BranchListDelegate {
             BranchEntry::NewBranch { name } => Some(name.as_str()),
         };
 
-        let commit_details = repo.as_ref().and_then(|repo_entity| {
+        let commit_info = repo.as_ref().and_then(|repo_entity| {
             let repo = repo_entity.read(cx);
             let git_repo = match &repo.git_repo {
                 GitRepo::Local(git_repo) => git_repo.as_ref(),
                 _ => return None,
             };
-            let branch_name = branch_name?;
-            Self::get_last_commit_info(git_repo, branch_name).ok()
+            branch_name.and_then(|name| git_repo.show(name).ok())
         });
 
         Some(
@@ -371,37 +352,6 @@ impl PickerDelegate for BranchListDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .when(matches!(hit, BranchEntry::History(_)), |el| {
-                    el.end_slot(
-                        div()
-                            .child(
-                                Icon::new(IconName::HistoryRerun)
-                                    .color(Color::Muted)
-                                    .size(IconSize::Small),
-                            )
-                            .id("commit-msg-hover")
-                            .hoverable_tooltip(move |window, cx| {
-                                let commit_details = commit_details.clone().unwrap_or(
-                                    editor::commit_tooltip::CommitDetails {
-                                        sha: "N/A".into(),
-                                        committer_name: "Unknown".into(),
-                                        committer_email: "unknown@example.com".into(),
-                                        commit_time: OffsetDateTime::from_unix_timestamp(0)
-                                            .unwrap(),
-                                        message: Some(
-                                            editor::commit_tooltip::ParsedCommitMessage {
-                                                message: "No commit details available".into(),
-                                                ..Default::default()
-                                            },
-                                        ),
-                                    },
-                                );
-                                let tooltip =
-                                    cx.new(|cx| CommitTooltip::new(commit_details, window, cx));
-                                AnyView::from(tooltip)
-                            }),
-                    )
-                })
                 .map(|el| match hit {
                     BranchEntry::Branch(branch) => {
                         let highlights: Vec<_> = branch
@@ -413,10 +363,65 @@ impl PickerDelegate for BranchListDelegate {
 
                         el.child(HighlightedLabel::new(shortened_branch_name, highlights))
                     }
-                    BranchEntry::History(_) => el.child(Label::new(shortened_branch_name)),
-                    BranchEntry::NewBranch { name } => {
-                        el.child(Label::new(format!("Create branch '{name}'")))
+                    BranchEntry::History(_) => {
+                        let (commit_sha, commit_time) = commit_info
+                            .as_ref()
+                            .map(|commit| {
+                                let commit_time =
+                                    OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
+                                        .unwrap_or_else(|_| OffsetDateTime::now_utc());
+                                let formatted_time = format_local_timestamp(
+                                    commit_time,
+                                    OffsetDateTime::now_utc(),
+                                    time_format::TimestampFormat::Relative,
+                                );
+                                (format!("{}", &commit.sha[..7]), formatted_time)
+                            })
+                            .unwrap_or_else(|| {
+                                ("No Commit SHA".to_string(), "Unknown Date".to_string())
+                            });
+
+                        el.child(
+                            h_flex()
+                                .w_full()
+                                .gap_2()
+                                .justify_between()
+                                .child(
+                                    h_flex()
+                                        .gap_1p5()
+                                        .child(div().max_w_80().child(
+                                            Label::new(shortened_branch_name).text_ellipsis(),
+                                        ))
+                                        .child(
+                                            Label::new(commit_sha)
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small)
+                                                .buffer_font(cx),
+                                        ),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_1p5()
+                                        .child(
+                                            Label::new(commit_time)
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small),
+                                        )
+                                        .child(
+                                            Icon::new(IconName::HistoryRerun)
+                                                .color(Color::Muted)
+                                                .size(IconSize::XSmall),
+                                        ),
+                                ),
+                        )
                     }
+
+                    BranchEntry::NewBranch { name } => el.child(
+                        h_flex()
+                            .gap_1()
+                            .child(Label::new("Create Branch:"))
+                            .child(Label::new(format!("{name}")).buffer_font(cx)),
+                    ),
                 }),
         )
     }
