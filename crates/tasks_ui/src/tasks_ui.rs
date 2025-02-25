@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use std::f64::consts::PI;
 use std::path::Path;
 
 use ::settings::Settings;
 use editor::Editor;
-use gpui::{App, AppContext as _, Context, Task, Window};
+use gpui::{App, AppContext as _, Context, Entity, Task, Window};
 use modal::{TaskOverrides, TasksModal};
-use project::{Location, WorktreeId};
+use project::{Location, ProjectEnvironment, TaskContexts, WorktreeId};
 use task::{RevealTarget, TaskContext, TaskId, TaskVariables, VariableName};
 use workspace::tasks::schedule_task;
 use workspace::{tasks::schedule_resolved_task, Workspace};
@@ -46,19 +47,23 @@ pub fn init(cx: &mut App) {
                             if let Some(use_new_terminal) = action.use_new_terminal {
                                 original_task.use_new_terminal = use_new_terminal;
                             }
-                            let context_task = task_contexts(workspace, window, cx);
+                            let task_contexts = task_contexts(workspace, window, cx);
                             cx.spawn_in(window, |workspace, mut cx| async move {
-                                let task_context = context_task.await;
+                                let task_contexts = task_contexts.await;
                                 workspace
-                                    .update(&mut cx, |workspace, cx| {
-                                        schedule_task(
-                                            workspace,
-                                            task_source_kind,
-                                            &original_task,
-                                            &task_context,
-                                            false,
-                                            cx,
-                                        )
+                                    .update_in(&mut cx, |workspace, window, cx| {
+                                        if let Some(task_context) = task_contexts.active_context() {
+                                            schedule_task(
+                                                workspace,
+                                                task_source_kind,
+                                                &original_task,
+                                                task_context,
+                                                false,
+                                                cx,
+                                            )
+                                        } else {
+                                            toggle_modal(workspace, None, window, cx).detach();
+                                        }
                                     })
                                     .ok()
                             })
@@ -124,15 +129,15 @@ fn toggle_modal(
         project.is_local() || project.ssh_connection_string(cx).is_some() || project.is_via_ssh()
     });
     if can_open_modal {
-        let context_task = task_contexts(workspace, window, cx);
+        let task_contexts = task_contexts(workspace, window, cx);
         cx.spawn_in(window, |workspace, mut cx| async move {
-            let task_context = context_task.await;
+            let task_contexts = task_contexts.await;
             workspace
                 .update_in(&mut cx, |workspace, window, cx| {
                     workspace.toggle_modal(window, cx, |window, cx| {
                         TasksModal::new(
                             task_store.clone(),
-                            task_context,
+                            task_contexts,
                             reveal_target.map(|target| TaskOverrides {
                                 reveal_target: Some(target),
                             }),
@@ -156,10 +161,10 @@ fn spawn_task_with_name(
     cx: &mut Context<Workspace>,
 ) -> Task<anyhow::Result<()>> {
     cx.spawn_in(window, |workspace, mut cx| async move {
-        let context_task = workspace.update_in(&mut cx, |workspace, window, cx| {
+        let task_contexts = workspace.update_in(&mut cx, |workspace, window, cx| {
             task_contexts(workspace, window, cx)
         })?;
-        let task_context = context_task.await;
+        let task_contexts = task_contexts.await;
         let tasks = workspace.update(&mut cx, |workspace, cx| {
             let Some(task_inventory) = workspace
                 .project()
@@ -199,7 +204,7 @@ fn spawn_task_with_name(
                     workspace,
                     task_source_kind,
                     &target_task,
-                    &task_context,
+                    task_contexts.active_context()?,
                     false,
                     cx,
                 );
@@ -254,13 +259,7 @@ fn active_item_selection_properties(
     (worktree_id, location)
 }
 
-fn task_contexts(
-    workspace: &Workspace,
-    window: &mut Window,
-    cx: &mut App,
-    // TODO kb
-    // ) -> Task<Vec<TaskContext>> {
-) -> Task<TaskContext> {
+fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Task<TaskContexts> {
     let active_item = workspace.active_item(cx);
     let active_editor = active_item
         .as_ref()
@@ -291,30 +290,34 @@ fn task_contexts(
         })
         .collect::<HashMap<_, _>>();
 
-    let a = cx.background_spawn(async move {
-        let mut worktree_contexts = Vec::new();
+    cx.background_spawn(async move {
+        let mut task_contexts = TaskContexts::default();
         if let Some(editor_context_task) = editor_context_task {
             if let Some(editor_context) = editor_context_task.await {
-                worktree_contexts.push(editor_context);
+                task_contexts.active_item_context = Some(editor_context);
             }
         }
         if let Some(active_worktree) = active_worktree {
             if let Some(active_worktree_abs_path) = worktree_abs_paths.remove(&active_worktree) {
-                worktree_contexts.push(worktree_context(&active_worktree_abs_path));
+                task_contexts.active_worktree_context = Some((
+                    active_worktree,
+                    worktree_context(&active_worktree_abs_path, local_environment.as_ref()),
+                ));
             }
         }
-        worktree_contexts.extend(
-            worktree_abs_paths
-                .values()
-                .map(|worktree_abs_path| worktree_context(worktree_abs_path)),
+        task_contexts.other_worktree_contexts.extend(
+            worktree_abs_paths.into_iter().map(|(id, abs_path)| {
+                (id, worktree_context(&abs_path, local_environment.as_ref()))
+            }),
         );
-        worktree_contexts
-    });
-
-    todo!("TODO kb")
+        task_contexts
+    })
 }
 
-fn worktree_context(worktree_abs_path: &Path) -> TaskContext {
+fn worktree_context(
+    worktree_abs_path: &Path,
+    _local_environment: Option<&Entity<ProjectEnvironment>>,
+) -> TaskContext {
     // TODO kb is it needed?
     // let project_env = local_environment.as_ref().map(|environment| {
     //     environment.update(cx, |environment, cx| {
@@ -359,17 +362,17 @@ mod tests {
             json!({
                 ".zed": {
                     "tasks.json": r#"[
-                            {
-                                "label": "example task",
-                                "command": "echo",
-                                "args": ["4"]
-                            },
-                            {
-                                "label": "another one",
-                                "command": "echo",
-                                "args": ["55"]
-                            },
-                        ]"#,
+                                {
+                                    "label": "example task",
+                                    "command": "echo",
+                                    "args": ["4"]
+                                },
+                                {
+                                    "label": "another one",
+                                    "command": "echo",
+                                    "args": ["55"]
+                                },
+                            ]"#,
                 },
                 "a.ts": "function this_is_a_test() { }",
                 "rust": {
@@ -388,8 +391,8 @@ mod tests {
             )
             .with_outline_query(
                 r#"(function_item
-            "fn" @context
-            name: (_) @name) @item"#,
+                "fn" @context
+                name: (_) @name) @item"#,
             )
             .unwrap()
             .with_context_provider(Some(Arc::new(BasicContextProvider::new(
@@ -404,12 +407,12 @@ mod tests {
             )
             .with_outline_query(
                 r#"(function_declaration
-                    "async"? @context
-                    "function" @context
-                    name: (_) @name
-                    parameters: (formal_parameters
-                      "(" @context
-                      ")" @context)) @item"#,
+                        "async"? @context
+                        "function" @context
+                        name: (_) @name
+                        parameters: (formal_parameters
+                          "(" @context
+                          ")" @context)) @item"#,
             )
             .unwrap()
             .with_context_provider(Some(Arc::new(BasicContextProvider::new(
@@ -461,8 +464,10 @@ mod tests {
             .await;
 
         assert_eq!(
-            first_context,
-            TaskContext {
+            first_context
+                .active_context()
+                .expect("Should have an active context"),
+            &TaskContext {
                 cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
@@ -490,8 +495,10 @@ mod tests {
                 .update_in(cx, |workspace, window, cx| {
                     task_contexts(workspace, window, cx)
                 })
-                .await,
-            TaskContext {
+                .await
+                .active_context()
+                .expect("Should have an active context"),
+            &TaskContext {
                 cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
@@ -516,8 +523,10 @@ mod tests {
                     workspace.activate_item(&editor1, true, true, window, cx);
                     task_contexts(workspace, window, cx)
                 })
-                .await,
-            TaskContext {
+                .await
+                .active_context()
+                .expect("Should have an active context"),
+            &TaskContext {
                 cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
                     (VariableName::File, path!("/dir/a.ts").into()),

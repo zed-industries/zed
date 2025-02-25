@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::active_item_selection_properties;
+use crate::{active_item_selection_properties, TaskContexts};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     rems, Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
@@ -30,7 +30,7 @@ pub(crate) struct TasksModalDelegate {
     selected_index: usize,
     workspace: WeakEntity<Workspace>,
     prompt: String,
-    task_context: TaskContext,
+    task_contexts: TaskContexts,
     placeholder_text: Arc<str>,
 }
 
@@ -44,7 +44,7 @@ pub(crate) struct TaskOverrides {
 impl TasksModalDelegate {
     fn new(
         task_store: Entity<TaskStore>,
-        task_context: TaskContext,
+        task_contexts: TaskContexts,
         task_overrides: Option<TaskOverrides>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -65,7 +65,7 @@ impl TasksModalDelegate {
             divider_index: None,
             selected_index: 0,
             prompt: String::default(),
-            task_context,
+            task_contexts,
             task_overrides,
             placeholder_text,
         }
@@ -76,6 +76,7 @@ impl TasksModalDelegate {
             return None;
         }
 
+        let active_context = self.task_contexts.active_context()?;
         let source_kind = TaskSourceKind::UserInput;
         let id_base = source_kind.to_id_base();
         let mut new_oneshot = TaskTemplate {
@@ -91,7 +92,7 @@ impl TasksModalDelegate {
         }
         Some((
             source_kind,
-            new_oneshot.resolve_task(&id_base, &self.task_context)?,
+            new_oneshot.resolve_task(&id_base, active_context)?,
         ))
     }
 
@@ -122,7 +123,7 @@ pub(crate) struct TasksModal {
 impl TasksModal {
     pub(crate) fn new(
         task_store: Entity<TaskStore>,
-        task_context: TaskContext,
+        task_contexts: TaskContexts,
         task_overrides: Option<TaskOverrides>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
@@ -130,7 +131,7 @@ impl TasksModal {
     ) -> Self {
         let picker = cx.new(|cx| {
             Picker::uniform_list(
-                TasksModalDelegate::new(task_store, task_context, task_overrides, workspace),
+                TasksModalDelegate::new(task_store, task_contexts, task_overrides, workspace),
                 window,
                 cx,
             )
@@ -225,7 +226,7 @@ impl PickerDelegate for TasksModalDelegate {
                                 task_inventory.read(cx).used_and_current_resolved_tasks(
                                     worktree,
                                     location,
-                                    &picker.delegate.task_context,
+                                    &picker.delegate.task_contexts,
                                     cx,
                                 );
                             picker.delegate.last_used_candidate_index = if used.is_empty() {
