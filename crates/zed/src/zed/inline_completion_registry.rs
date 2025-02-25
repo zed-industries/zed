@@ -9,7 +9,7 @@ use settings::SettingsStore;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
-use zeta::ProviderDataCollection;
+use zeta::{ProviderDataCollection, ZetaInlineCompletionProvider};
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
@@ -225,7 +225,9 @@ fn assign_edit_prediction_provider(
     let singleton_buffer = editor.buffer().read(cx).as_singleton();
 
     match provider {
-        EditPredictionProvider::None => {}
+        EditPredictionProvider::None => {
+            editor.set_edit_prediction_provider::<ZetaInlineCompletionProvider>(None, window, cx);
+        }
         EditPredictionProvider::Copilot => {
             if let Some(copilot) = Copilot::global(cx) {
                 if let Some(buffer) = singleton_buffer {

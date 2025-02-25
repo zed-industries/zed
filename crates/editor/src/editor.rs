@@ -1824,6 +1824,7 @@ impl Editor {
                 }),
                 provider: Arc::new(provider),
             });
+        self.update_edit_prediction_settings(cx);
         self.refresh_inline_completion(false, false, window, cx);
     }
 
@@ -1943,7 +1944,7 @@ impl Editor {
         self.auto_replace_emoji_shortcode = auto_replace;
     }
 
-    pub fn toggle_inline_completions(
+    pub fn toggle_edit_predictions(
         &mut self,
         _: &ToggleEditPrediction,
         window: &mut Window,
@@ -1964,6 +1965,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.show_inline_completions_override = show_edit_predictions;
+        self.update_edit_prediction_settings(cx);
 
         if let Some(false) = show_edit_predictions {
             self.discard_inline_completion(false, cx);
@@ -4822,7 +4824,7 @@ impl Editor {
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
 
-        if !self.inline_completions_enabled_in_buffer(&buffer, cursor_buffer_position, cx) {
+        if !self.edit_predictions_enabled_in_buffer(&buffer, cursor_buffer_position, cx) {
             self.discard_inline_completion(false, cx);
             return None;
         }
@@ -4868,6 +4870,22 @@ impl Editor {
                 preview_requires_modifier,
                 ..
             } => preview_requires_modifier,
+        }
+    }
+
+    pub fn update_edit_prediction_settings(&mut self, cx: &mut Context<Self>) {
+        if self.edit_prediction_provider.is_none() {
+            self.edit_prediction_settings = EditPredictionSettings::Disabled;
+        } else {
+            let selection = self.selections.newest_anchor();
+            let cursor = selection.head();
+
+            if let Some((buffer, cursor_buffer_position)) =
+                self.buffer.read(cx).text_anchor_for_position(cursor, cx)
+            {
+                self.edit_prediction_settings =
+                    self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
+            }
         }
     }
 
@@ -4925,18 +4943,18 @@ impl Editor {
         )
     }
 
-    pub fn inline_completions_enabled(&self, cx: &App) -> bool {
+    pub fn edit_predictions_enabled_at_cursor(&self, cx: &App) -> bool {
         let cursor = self.selections.newest_anchor().head();
         if let Some((buffer, cursor_position)) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)
         {
-            self.inline_completions_enabled_in_buffer(&buffer, cursor_position, cx)
+            self.edit_predictions_enabled_in_buffer(&buffer, cursor_position, cx)
         } else {
             false
         }
     }
 
-    fn inline_completions_enabled_in_buffer(
+    fn edit_predictions_enabled_in_buffer(
         &self,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
@@ -15154,6 +15172,7 @@ impl Editor {
 
     fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.tasks_update_task = Some(self.refresh_runnables(window, cx));
+        self.update_edit_prediction_settings(cx);
         self.refresh_inline_completion(true, false, window, cx);
         self.refresh_inlay_hints(
             InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
