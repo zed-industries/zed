@@ -2425,10 +2425,10 @@ impl Pane {
                         )
                         .item(ContextMenuItem::Entry(
                             ContextMenuEntry::new("Close Others")
-                                .action(Some(Box::new(CloseInactiveItems {
+                                .action(Box::new(CloseInactiveItems {
                                     save_intent: None,
                                     close_pinned: false,
-                                })))
+                                }))
                                 .disabled(total_items == 1)
                                 .handler(window.handler_for(&pane, move |pane, window, cx| {
                                     pane.close_items(window, cx, SaveIntent::Close, |id| {
@@ -2440,9 +2440,9 @@ impl Pane {
                         .separator()
                         .item(ContextMenuItem::Entry(
                             ContextMenuEntry::new("Close Left")
-                                .action(Some(Box::new(CloseItemsToTheLeft {
+                                .action(Box::new(CloseItemsToTheLeft {
                                     close_pinned: false,
-                                })))
+                                }))
                                 .disabled(!has_items_to_left)
                                 .handler(window.handler_for(&pane, move |pane, window, cx| {
                                     pane.close_items_to_the_left_by_id(
@@ -2459,9 +2459,9 @@ impl Pane {
                         ))
                         .item(ContextMenuItem::Entry(
                             ContextMenuEntry::new("Close Right")
-                                .action(Some(Box::new(CloseItemsToTheRight {
+                                .action(Box::new(CloseItemsToTheRight {
                                     close_pinned: false,
-                                })))
+                                }))
                                 .disabled(!has_items_to_right)
                                 .handler(window.handler_for(&pane, move |pane, window, cx| {
                                     pane.close_items_to_the_right_by_id(

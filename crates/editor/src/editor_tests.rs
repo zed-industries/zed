@@ -7,7 +7,7 @@ use crate::{
     },
     JoinLines,
 };
-use buffer_diff::{BufferDiff, DiffHunkStatus};
+use buffer_diff::{BufferDiff, DiffHunkStatus, DiffHunkStatusKind};
 use futures::StreamExt;
 use gpui::{
     div, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
@@ -1511,6 +1511,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let move_to_beg = MoveToBeginningOfLine {
         stop_at_soft_wraps: true,
+        stop_at_indent: true,
     };
 
     let move_to_end = MoveToEndOfLine {
@@ -1591,6 +1592,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         editor.select_to_beginning_of_line(
             &SelectToBeginningOfLine {
                 stop_at_soft_wraps: true,
+                stop_at_indent: true,
             },
             window,
             cx,
@@ -1608,6 +1610,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         editor.select_to_beginning_of_line(
             &SelectToBeginningOfLine {
                 stop_at_soft_wraps: true,
+                stop_at_indent: true,
             },
             window,
             cx,
@@ -1625,6 +1628,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         editor.select_to_beginning_of_line(
             &SelectToBeginningOfLine {
                 stop_at_soft_wraps: true,
+                stop_at_indent: true,
             },
             window,
             cx,
@@ -1685,6 +1689,7 @@ fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let move_to_beg = MoveToBeginningOfLine {
         stop_at_soft_wraps: false,
+        stop_at_indent: false,
     };
 
     let move_to_end = MoveToEndOfLine {
@@ -3390,7 +3395,7 @@ async fn test_join_lines_with_git_diff_base(executor: BackgroundExecutor, cx: &m
         .unindent(),
     );
 
-    cx.set_diff_base(&diff_base);
+    cx.set_head_text(&diff_base);
     executor.run_until_parked();
 
     // Join lines
@@ -3430,7 +3435,7 @@ async fn test_custom_newlines_cause_no_false_positive_diffs(
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
     cx.set_state("Line 0\r\nLine 1\rˇ\nLine 2\r\nLine 3");
-    cx.set_diff_base("Line 0\r\nLine 1\r\nLine 2\r\nLine 3");
+    cx.set_head_text("Line 0\r\nLine 1\r\nLine 2\r\nLine 3");
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
@@ -5812,7 +5817,7 @@ async fn test_fold_function_bodies(cx: &mut TestAppContext) {
 
     let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
     cx.set_state(&text);
-    cx.set_diff_base(&base_text);
+    cx.set_head_text(&base_text);
     cx.update_editor(|editor, window, cx| {
         editor.expand_all_diff_hunks(&Default::default(), window, cx);
     });
@@ -11040,7 +11045,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
         .unindent(),
     );
 
-    cx.set_diff_base(&diff_base);
+    cx.set_head_text(&diff_base);
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
@@ -12532,7 +12537,7 @@ async fn test_deleting_over_diff_hunk(cx: &mut TestAppContext) {
         three
         "#};
 
-    cx.set_diff_base(base_text);
+    cx.set_head_text(base_text);
     cx.set_state("\nˇ\n");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _window, cx| {
@@ -13169,7 +13174,7 @@ async fn test_toggle_selected_diff_hunks(executor: BackgroundExecutor, cx: &mut 
         .unindent(),
     );
 
-    cx.set_diff_base(&diff_base);
+    cx.set_head_text(&diff_base);
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
@@ -13303,7 +13308,7 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
         .unindent(),
     );
 
-    cx.set_diff_base(&diff_base);
+    cx.set_head_text(&diff_base);
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
@@ -13331,7 +13336,7 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
         .unindent(),
     );
 
-    cx.set_diff_base("new diff base!");
+    cx.set_head_text("new diff base!");
     executor.run_until_parked();
     cx.assert_state_with_diff(
         r#"
@@ -13631,7 +13636,7 @@ async fn test_edits_around_expanded_insertion_hunks(
         .unindent(),
     );
 
-    cx.set_diff_base(&diff_base);
+    cx.set_head_text(&diff_base);
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
@@ -13779,7 +13784,7 @@ async fn test_toggling_adjacent_diff_hunks(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    cx.set_diff_base(indoc! { "
+    cx.set_head_text(indoc! { "
         one
         two
         three
@@ -13902,7 +13907,7 @@ async fn test_edits_around_expanded_deletion_hunks(
         .unindent(),
     );
 
-    cx.set_diff_base(&diff_base);
+    cx.set_head_text(&diff_base);
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
@@ -14025,7 +14030,7 @@ async fn test_backspace_after_deletion_hunk(executor: BackgroundExecutor, cx: &m
         .unindent(),
     );
 
-    cx.set_diff_base(&base_text);
+    cx.set_head_text(&base_text);
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
@@ -14107,7 +14112,7 @@ async fn test_edit_after_expanded_modification_hunk(
         .unindent(),
     );
 
-    cx.set_diff_base(&diff_base);
+    cx.set_head_text(&diff_base);
     executor.run_until_parked();
     cx.update_editor(|editor, window, cx| {
         editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
@@ -14842,7 +14847,7 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
         "#
         .unindent(),
     );
-    cx.set_diff_base(&diff_base);
+    cx.set_head_text(&diff_base);
     cx.update_editor(|editor, window, cx| {
         editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
     });
@@ -15064,6 +15069,80 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
             DisplayRow(17)..DisplayRow(19),
         ]
     );
+}
+
+#[gpui::test]
+async fn test_partially_staged_hunk(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_head_text(indoc! { "
+        one
+        two
+        three
+        four
+        five
+        "
+    });
+    cx.set_index_text(indoc! { "
+        one
+        two
+        three
+        four
+        five
+        "
+    });
+    cx.set_state(indoc! {"
+        one
+        TWO
+        ˇTHREE
+        FOUR
+        five
+    "});
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_staged_selected_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_index_text(Some(indoc! {"
+        one
+        TWO
+        THREE
+        FOUR
+        five
+    "}));
+    cx.set_state(indoc! { "
+        one
+        TWO
+        ˇTHREE-HUNDRED
+        FOUR
+        five
+    "});
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let hunks = editor
+            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot)
+            .collect::<Vec<_>>();
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(
+            hunks[0].status(),
+            DiffHunkStatus {
+                kind: DiffHunkStatusKind::Modified,
+                secondary: DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
+            }
+        );
+
+        editor.toggle_staged_selected_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_index_text(Some(indoc! {"
+        one
+        TWO
+        THREE-HUNDRED
+        FOUR
+        five
+    "}));
 }
 
 #[gpui::test]
@@ -16429,7 +16508,7 @@ fn assert_hunk_revert(
     cx: &mut EditorLspTestContext,
 ) {
     cx.set_state(not_reverted_text_with_selections);
-    cx.set_diff_base(base_text);
+    cx.set_head_text(base_text);
     cx.executor().run_until_parked();
 
     let actual_hunk_statuses_before = cx.update_editor(|editor, window, cx| {
