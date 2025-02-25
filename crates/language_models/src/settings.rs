@@ -11,6 +11,7 @@ use settings::{update_settings_file, Settings, SettingsSources};
 use crate::provider::{
     self,
     anthropic::AnthropicSettings,
+    bedrock::AmazonBedrockSettings,
     cloud::{self, ZedDotDevSettings},
     copilot_chat::CopilotChatSettings,
     deepseek::DeepSeekSettings,
@@ -57,6 +58,7 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
 #[derive(Default)]
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
+    pub bedrock: AmazonBedrockSettings,
     pub ollama: OllamaSettings,
     pub openai: OpenAiSettings,
     pub zed_dot_dev: ZedDotDevSettings,

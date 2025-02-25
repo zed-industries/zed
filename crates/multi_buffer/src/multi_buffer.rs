@@ -131,7 +131,6 @@ pub struct MultiBufferDiffHunk {
     pub diff_base_byte_range: Range<usize>,
     /// Whether or not this hunk also appears in the 'secondary diff'.
     pub secondary_status: DiffHunkSecondaryStatus,
-    pub secondary_diff_base_byte_range: Option<Range<usize>>,
 }
 
 impl MultiBufferDiffHunk {
@@ -1448,7 +1447,7 @@ impl MultiBuffer {
             excerpt.range.context.start,
         ))
     }
-
+    /// Sets excerpts, returns `true` if at least one new excerpt was added.
     pub fn set_excerpts_for_path(
         &mut self,
         path: PathKey,
@@ -1456,7 +1455,7 @@ impl MultiBuffer {
         ranges: Vec<Range<Point>>,
         context_line_count: u32,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
         let mut insert_after = self
@@ -1475,6 +1474,7 @@ impl MultiBuffer {
         let mut new_excerpt_ids = Vec::new();
         let mut to_remove = Vec::new();
         let mut to_insert = Vec::new();
+        let mut added_a_new_excerpt = false;
         let snapshot = self.snapshot(cx);
 
         let mut excerpts_cursor = snapshot.excerpts.cursor::<Option<&Locator>>(&());
@@ -1489,6 +1489,7 @@ impl MultiBuffer {
                     continue;
                 }
                 (Some(_), None) => {
+                    added_a_new_excerpt = true;
                     to_insert.push(new_iter.next().unwrap());
                     continue;
                 }
@@ -1552,6 +1553,8 @@ impl MultiBuffer {
         } else {
             self.buffers_by_path.insert(path, new_excerpt_ids);
         }
+
+        added_a_new_excerpt
     }
 
     pub fn paths(&self) -> impl Iterator<Item = PathKey> + '_ {
@@ -3502,7 +3505,6 @@ impl MultiBufferSnapshot {
                 buffer_range: hunk.buffer_range.clone(),
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                 secondary_status: hunk.secondary_status,
-                secondary_diff_base_byte_range: hunk.secondary_diff_base_byte_range,
             })
         })
     }
@@ -3872,7 +3874,6 @@ impl MultiBufferSnapshot {
                         buffer_range: hunk.buffer_range.clone(),
                         diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                         secondary_status: hunk.secondary_status,
-                        secondary_diff_base_byte_range: hunk.secondary_diff_base_byte_range,
                     });
                 }
             }
