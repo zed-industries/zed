@@ -313,24 +313,6 @@ function sign_app_binaries() {
         mv "${app_path}" "${dmg_source_directory}"
         notarization_key_file=$(mktemp)
 
-        if [[ $can_code_sign = true ]]; then
-            echo "Creating temporary DMG at ${dmg_file_path} using ${dmg_source_directory} to notarize app bundle"
-            hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
-
-            echo "Code-signing DMG"
-            /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
-
-            echo "Notarizing DMG with Apple"
-            echo "$APPLE_NOTARIZATION_KEY" > "$notarization_key_file"
-            "${xcode_bin_dir_path}/notarytool" submit --wait --key "$notarization_key_file" --key-id "$APPLE_NOTARIZATION_KEY_ID" --issuer "$APPLE_NOTARIZATION_ISSUER_ID" "${dmg_file_path}"
-
-            echo "Removing temporary DMG (used only for notarization)"
-            rm "${dmg_file_path}"
-
-            echo "Stapling notarization ticket to ${dmg_source_directory}/${bundle_name}"
-            "${xcode_bin_dir_path}/stapler" staple "${dmg_source_directory}/${bundle_name}"
-        fi
-
         echo "Adding symlink to /Applications to ${dmg_source_directory}"
         ln -s /Applications ${dmg_source_directory}
 
@@ -349,9 +331,10 @@ function sign_app_binaries() {
         if [[ $can_code_sign = true ]]; then
             echo "Notarizing DMG with Apple"
             /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
+            echo "$APPLE_NOTARIZATION_KEY" > "$notarization_key_file"
             "${xcode_bin_dir_path}/notarytool" submit --wait --key "$notarization_key_file" --key-id "$APPLE_NOTARIZATION_KEY_ID" --issuer "$APPLE_NOTARIZATION_ISSUER_ID" "${dmg_file_path}"
-            "${xcode_bin_dir_path}/stapler" staple "${dmg_file_path}"
             rm "$notarization_key_file"
+            "${xcode_bin_dir_path}/stapler" staple "${dmg_file_path}"
         fi
 
         if [ "$open_result" = true ]; then
