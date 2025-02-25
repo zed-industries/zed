@@ -663,6 +663,30 @@ impl LocalLspStore {
                                 "workspace/didChangeConfiguration" => {
                                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
                                 }
+                                "textDocument/rename" => {
+                                    this.update(&mut cx, |this, _| {
+                                        if let Some(server) = this.language_server_for_id(server_id)
+                                        {
+                                            let options = reg
+                                                .register_options
+                                                .map(|options| {
+                                                    serde_json::from_value::<lsp::RenameOptions>(
+                                                        options,
+                                                    )
+                                                })
+                                                .transpose()?;
+                                            let options = match options {
+                                                None => OneOf::Left(true),
+                                                Some(options) => OneOf::Right(options),
+                                            };
+
+                                            server.update_capabilities(|capabilities| {
+                                                capabilities.rename_provider = Some(options);
+                                            })
+                                        }
+                                        anyhow::Ok(())
+                                    })??;
+                                }
                                 _ => log::warn!("unhandled capability registration: {reg:?}"),
                             }
                         }
@@ -688,6 +712,9 @@ impl LocalLspStore {
                                             );
                                         Some(())
                                     })?;
+                                }
+                                "workspace/didChangeConfiguration" => {
+                                    // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
                                 }
                                 "textDocument/rename" => {
                                     this.update(&mut cx, |this, _| {
