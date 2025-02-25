@@ -190,5 +190,9 @@ operator: "/" @operator
 
 (parameter (identifier) @variable.parameter)
 
-(attribute_item) @attribute
-(inner_attribute_item) @attribute
+(attribute_item (attribute (identifier) @attribute))
+(inner_attribute_item (attribute (identifier) @attribute))
+; Match nested snake case identifiers in attribute items.
+(token_tree (identifier) @attribute (#match? @attribute "^[a-z\\d_]*$"))
+; Override the attribute match for paths in scoped identifiers.
+(token_tree (identifier) @variable "::")

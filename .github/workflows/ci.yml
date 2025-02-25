@@ -109,8 +109,16 @@ jobs:
       - name: cargo clippy
         run: ./script/clippy
 
+      - name: Install cargo-machete
+        uses: clechasseur/rs-cargo@v2
+        with:
+          command: install
+          args: cargo-machete@0.7.0
+
       - name: Check unused dependencies
-        uses: bnjbvr/cargo-machete@main
+        uses: clechasseur/rs-cargo@v2
+        with:
+          command: machete
 
       - name: Check licenses
         run: |

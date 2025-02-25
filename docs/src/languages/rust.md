@@ -36,7 +36,7 @@ The following configuration can be used to change the inlay hint settings for `r
 }
 ```
 
-See [Inlay Hints](https://rust-analyzer.github.io/manual.html#inlay-hints) in the Rust Analyzer Manual for more information.
+See [Inlay Hints](https://rust-analyzer.github.io/book/features.html#inlay-hints) in the Rust Analyzer Manual for more information.
 
 ## Target directory
 
@@ -101,7 +101,7 @@ This `"path"` has to be an absolute path.
 TBD: Is it possible to specify RUSTFLAGS? https://github.com/zed-industries/zed/issues/14334
 -->
 
-Rust-analyzer [manual](https://rust-analyzer.github.io/manual.html) describes various features and configuration options for rust-analyzer language server.
+Rust-analyzer [manual](https://rust-analyzer.github.io/book/) describes various features and configuration options for rust-analyzer language server.
 Rust-analyzer in Zed runs with the default parameters.
 
 ### Large projects and performance
@@ -129,7 +129,7 @@ While that works fine on small projects, it does not scale well.
 
 The alternatives would be to use [tasks](../tasks.md), as Zed already provides a `cargo check --workspace --all-targets` task and the ability to cmd/ctrl-click on the terminal output to navigate to the error, and limit or turn off the check on save feature entirely.
 
-Check on save feature is responsible for returning part of the diagnostics based on cargo check output, so turning it off will limit rust-analyzer with its own [diagnostics](https://rust-analyzer.github.io/manual.html#diagnostics).
+Check on save feature is responsible for returning part of the diagnostics based on cargo check output, so turning it off will limit rust-analyzer with its own [diagnostics](https://rust-analyzer.github.io/book/diagnostics.html).
 
 Consider more `rust-analyzer.cargo.` and `rust-analyzer.check.` and `rust-analyzer.diagnostics.` settings from the manual for more fine-grained configuration.
 Here's a snippet for Zed settings.json (the language server will restart automatically after the `lsp.rust-analyzer` section is edited and saved):

@@ -149,6 +149,13 @@ impl CommitModal {
             }
         }
 
+        let focus_handle = commit_editor.focus_handle(cx);
+
+        cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
+            cx.emit(DismissEvent);
+        })
+        .detach();
+
         Self {
             git_panel,
             commit_editor,

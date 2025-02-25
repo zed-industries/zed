@@ -4958,14 +4958,14 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         fs.paths(true),
         vec![
-            PathBuf::from("/"),
-            PathBuf::from("/one"),
-            PathBuf::from("/one/two"),
-            PathBuf::from("/one/two/c.rs"),
-            PathBuf::from("/one/two/three"),
-            PathBuf::from("/one/two/three/a.txt"),
-            PathBuf::from("/one/two/three/b.."),
-            PathBuf::from("/one/two/three/four"),
+            PathBuf::from(path!("/")),
+            PathBuf::from(path!("/one")),
+            PathBuf::from(path!("/one/two")),
+            PathBuf::from(path!("/one/two/c.rs")),
+            PathBuf::from(path!("/one/two/three")),
+            PathBuf::from(path!("/one/two/three/a.txt")),
+            PathBuf::from(path!("/one/two/three/b..")),
+            PathBuf::from(path!("/one/two/three/four")),
         ]
     );
 

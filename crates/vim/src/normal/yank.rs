@@ -58,18 +58,18 @@ impl Vim {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-                let mut original_positions: HashMap<_, _> = Default::default();
+                let mut start_positions: HashMap<_, _> = Default::default();
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
-                        let original_position = (selection.head(), selection.goal);
                         object.expand_selection(map, selection, around);
-                        original_positions.insert(selection.id, original_position);
+                        let start_position = (selection.start, selection.goal);
+                        start_positions.insert(selection.id, start_position);
                     });
                 });
                 vim.yank_selections_content(editor, false, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|_, selection| {
-                        let (head, goal) = original_positions.remove(&selection.id).unwrap();
+                        let (head, goal) = start_positions.remove(&selection.id).unwrap();
                         selection.collapse_to(head, goal);
                     });
                 });

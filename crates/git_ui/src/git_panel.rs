@@ -2493,16 +2493,18 @@ impl GitPanel {
                 })
             });
 
-        let start_slot = h_flex()
-            .id(("start-slot", ix))
-            .gap(DynamicSpacing::Base04.rems(cx))
-            .child(checkbox)
-            .tooltip(|window, cx| Tooltip::for_action("Stage File", &ToggleStaged, window, cx))
-            .child(git_status_icon(status, cx))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                // prevent the list item active state triggering when toggling checkbox
-                cx.stop_propagation();
-            });
+        let start_slot =
+            h_flex()
+                .id(("start-slot", ix))
+                .gap(DynamicSpacing::Base04.rems(cx))
+                .child(checkbox.tooltip(|window, cx| {
+                    Tooltip::for_action("Stage File", &ToggleStaged, window, cx)
+                }))
+                .child(git_status_icon(status, cx))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                    // prevent the list item active state triggering when toggling checkbox
+                    cx.stop_propagation();
+                });
 
         div()
             .w_full()
