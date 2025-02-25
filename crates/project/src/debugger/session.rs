@@ -219,11 +219,9 @@ impl LocalMode {
             let adapter = build_adapter(&disposition.kind).await?;
 
             let binary = cx.update(|cx| {
-                let name = DebugAdapterName::from(adapter.name().as_ref());
-
                 ProjectSettings::get_global(cx)
                     .dap
-                    .get(&name)
+                    .get(&adapter.name())
                     .and_then(|s| s.binary.as_ref().map(PathBuf::from))
             })?;
 
@@ -277,7 +275,7 @@ impl LocalMode {
             let capabilities = this
                 .request(
                     Initialize {
-                        adapter_id: "zed-dap-this-value-needs-changing".to_owned(),
+                        adapter_id: adapter.name().to_string().to_owned(),
                     },
                     cx.background_executor().clone(),
                 )
