@@ -6146,6 +6146,16 @@ where
                     || self.diff_transforms.item().is_none()
                 {
                     self.excerpts.next(&());
+                } else if let Some(DiffTransform::DeletedHunk { hunk_info, .. }) =
+                    self.diff_transforms.item()
+                {
+                    if self
+                        .excerpts
+                        .item()
+                        .map_or(false, |excerpt| excerpt.id != hunk_info.excerpt_id)
+                    {
+                        self.excerpts.next(&());
+                    }
                 }
             }
         }
@@ -6183,12 +6193,13 @@ where
             return true;
         }
 
-        self.diff_transforms.next(&());
-        let next_transform = self.diff_transforms.item();
-        self.diff_transforms.prev(&());
-
-        next_transform.map_or(true, |next_transform| {
-            matches!(next_transform, DiffTransform::BufferContent { .. })
+        let next_transform = self.diff_transforms.next_item();
+        next_transform.map_or(true, |next_transform| match next_transform {
+            DiffTransform::BufferContent { .. } => true,
+            DiffTransform::DeletedHunk { hunk_info, .. } => self
+                .excerpts
+                .item()
+                .map_or(false, |excerpt| excerpt.id != hunk_info.excerpt_id),
         })
     }
 

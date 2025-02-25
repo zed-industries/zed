@@ -24,7 +24,7 @@ use language::{
     Override, Point,
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
-use multi_buffer::IndentGuide;
+use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::project_settings::{LspSettings, ProjectSettings};
@@ -36,6 +36,7 @@ use std::{
     sync::atomic::{self, AtomicUsize},
 };
 use test::{build_editor_with_project, editor_lsp_test_context::rust_lang};
+use text::ToPoint as _;
 use unindent::Unindent;
 use util::{
     assert_set_eq, path,
@@ -14980,6 +14981,94 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
           b
         "#
         .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_display_diff_hunks(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/test"),
+        json!({
+            ".git": {},
+            "file-1": "ONE\n",
+            "file-2": "TWO\n",
+            "file-3": "THREE\n",
+        }),
+    )
+    .await;
+
+    fs.set_head_for_repo(
+        path!("/test/.git").as_ref(),
+        &[
+            ("file-1".into(), "one\n".into()),
+            ("file-2".into(), "two\n".into()),
+            ("file-3".into(), "three\n".into()),
+        ],
+    );
+
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let mut buffers = vec![];
+    for i in 1..=3 {
+        let buffer = project
+            .update(cx, |project, cx| {
+                let path = format!(path!("/test/file-{}"), i);
+                project.open_local_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+        buffers.push(buffer);
+    }
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        multibuffer.set_all_diff_hunks_expanded(cx);
+        for buffer in &buffers {
+            let snapshot = buffer.read(cx).snapshot();
+            multibuffer.set_excerpts_for_path(
+                PathKey::namespaced("", buffer.read(cx).file().unwrap().path().clone()),
+                buffer.clone(),
+                vec![text::Anchor::MIN.to_point(&snapshot)..text::Anchor::MAX.to_point(&snapshot)],
+                DEFAULT_MULTIBUFFER_CONTEXT,
+                cx,
+            );
+        }
+        multibuffer
+    });
+
+    let editor = cx.add_window(|window, cx| {
+        Editor::new(
+            EditorMode::Full,
+            multibuffer,
+            Some(project),
+            true,
+            window,
+            cx,
+        )
+    });
+    cx.run_until_parked();
+
+    let snapshot = editor
+        .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+        .unwrap();
+    let hunks = snapshot
+        .display_diff_hunks_for_rows(DisplayRow(0)..DisplayRow(u32::MAX), &Default::default())
+        .map(|hunk| match hunk {
+            DisplayDiffHunk::Unfolded {
+                display_row_range, ..
+            } => display_row_range,
+            DisplayDiffHunk::Folded { .. } => unreachable!(),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        hunks,
+        [
+            DisplayRow(3)..DisplayRow(5),
+            DisplayRow(10)..DisplayRow(12),
+            DisplayRow(17)..DisplayRow(19),
+        ]
     );
 }
 

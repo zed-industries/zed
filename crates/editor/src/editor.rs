@@ -52,7 +52,7 @@ pub use actions::{AcceptEditPrediction, OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
-use buffer_diff::DiffHunkSecondaryStatus;
+use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus};
 use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -251,6 +251,19 @@ impl Navigated {
             Navigated::No
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DisplayDiffHunk {
+    Folded {
+        display_row: DisplayRow,
+    },
+    Unfolded {
+        diff_base_byte_range: Range<usize>,
+        display_row_range: Range<DisplayRow>,
+        multi_buffer_range: Range<Anchor>,
+        status: DiffHunkStatus,
+    },
 }
 
 pub fn init_settings(cx: &mut App) {
@@ -16913,6 +16926,52 @@ impl EditorSnapshot {
         }
 
         hunks
+    }
+
+    fn display_diff_hunks_for_rows<'a>(
+        &'a self,
+        display_rows: Range<DisplayRow>,
+        folded_buffers: &'a HashSet<BufferId>,
+    ) -> impl 'a + Iterator<Item = DisplayDiffHunk> {
+        let buffer_start = DisplayPoint::new(display_rows.start, 0).to_point(self);
+        let buffer_end = DisplayPoint::new(display_rows.end, 0).to_point(self);
+
+        self.buffer_snapshot
+            .diff_hunks_in_range(buffer_start..buffer_end)
+            .filter_map(|hunk| {
+                if folded_buffers.contains(&hunk.buffer_id) {
+                    return None;
+                }
+
+                let hunk_start_point = Point::new(hunk.row_range.start.0, 0);
+                let hunk_end_point = Point::new(hunk.row_range.end.0, 0);
+
+                let hunk_display_start = self.point_to_display_point(hunk_start_point, Bias::Left);
+                let hunk_display_end = self.point_to_display_point(hunk_end_point, Bias::Right);
+
+                let display_hunk = if hunk_display_start.column() != 0 {
+                    DisplayDiffHunk::Folded {
+                        display_row: hunk_display_start.row(),
+                    }
+                } else {
+                    let mut end_row = hunk_display_end.row();
+                    if hunk_display_end.column() > 0 {
+                        end_row.0 += 1;
+                    }
+                    DisplayDiffHunk::Unfolded {
+                        status: hunk.status(),
+                        diff_base_byte_range: hunk.diff_base_byte_range,
+                        display_row_range: hunk_display_start.row()..end_row,
+                        multi_buffer_range: Anchor::range_in_buffer(
+                            hunk.excerpt_id,
+                            hunk.buffer_id,
+                            hunk.buffer_range,
+                        ),
+                    }
+                };
+
+                Some(display_hunk)
+            })
     }
 
     pub fn language_at<T: ToOffset>(&self, position: T) -> Option<&Arc<Language>> {
