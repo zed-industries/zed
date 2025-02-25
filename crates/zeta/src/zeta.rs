@@ -9,7 +9,6 @@ mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
 use db::kvp::KEY_VALUE_STORE;
-use editor::Editor;
 pub use init::*;
 use inline_completion::DataCollectionState;
 pub use license_detection::is_license_eligible_for_data_collection;
@@ -186,14 +185,7 @@ impl std::fmt::Debug for InlineCompletion {
 }
 
 pub struct Zeta {
-    /// A reference to the editor that this Zeta instance is associated with.
-    ///
-    /// Note: We're primarily interested in the [`Workspace`] on the editor,
-    /// however, we can't simply clone off the workspace in advance. The
-    /// workspace on the editor is optional, and doesn't get set until after the
-    /// point where we would clone it off. So instead we need to hold on to the
-    /// editor in order to always get the latest copy of its workspace.
-    editor: Option<WeakEntity<Editor>>,
+    workspace: Option<WeakEntity<Workspace>>,
     client: Arc<Client>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
@@ -216,14 +208,14 @@ impl Zeta {
     }
 
     pub fn register(
-        editor: Option<WeakEntity<Editor>>,
+        workspace: Option<WeakEntity<Workspace>>,
         worktree: Option<Entity<Worktree>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
         cx: &mut App,
     ) -> Entity<Self> {
         let this = Self::global(cx).unwrap_or_else(|| {
-            let entity = cx.new(|cx| Self::new(editor, client, user_store, cx));
+            let entity = cx.new(|cx| Self::new(workspace, client, user_store, cx));
             cx.set_global(ZetaGlobal(entity.clone()));
             entity
         });
@@ -246,7 +238,7 @@ impl Zeta {
     }
 
     fn new(
-        editor: Option<WeakEntity<Editor>>,
+        workspace: Option<WeakEntity<Workspace>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
         cx: &mut Context<Self>,
@@ -257,7 +249,7 @@ impl Zeta {
         let data_collection_choice = cx.new(|_| data_collection_choice);
 
         Self {
-            editor,
+            workspace,
             client,
             events: VecDeque::new(),
             shown_completions: VecDeque::new(),
@@ -713,9 +705,9 @@ and then another
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<InlineCompletion>>> {
         let workspace = self
-            .editor
+            .workspace
             .as_ref()
-            .and_then(|editor| editor.upgrade()?.read(cx).workspace());
+            .and_then(|workspace| workspace.upgrade());
         self.request_completion_impl(
             workspace,
             project,
