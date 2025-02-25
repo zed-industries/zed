@@ -1122,7 +1122,7 @@ impl ContextEditor {
             }
         })?;
         this.read_with(&cx, |this, _| this.workspace)?
-            .update(&mut cx, |workspace, cx| {
+            .update_in(&mut cx, |workspace, window, cx| {
                 workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, window, cx)
             })
             .log_err();
