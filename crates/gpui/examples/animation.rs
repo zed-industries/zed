@@ -4,7 +4,7 @@ use anyhow::Result;
 use gpui::{
     black, bounce, div, ease_in_out, percentage, prelude::*, px, rgb, size, svg, Animation,
     AnimationExt as _, App, Application, AssetSource, Bounds, Context, SharedString,
-    Transformation, Window, WindowBounds, WindowOptions,
+    Transformation, TransitionAnimation, Window, WindowBounds, WindowOptions,
 };
 
 struct Assets {}
@@ -33,10 +33,12 @@ const ARROW_CIRCLE_SVG: &str = concat!(
     "/examples/image/arrow_circle.svg"
 );
 
-struct AnimationExample {}
+struct AnimationExample {
+    hovered: bool,
+}
 
 impl Render for AnimationExample {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div().flex().flex_col().size_full().justify_around().child(
             div().flex().flex_row().w_full().justify_around().child(
                 div()
@@ -54,15 +56,33 @@ impl Render for AnimationExample {
                             .size_8()
                             .path(ARROW_CIRCLE_SVG)
                             .text_color(black())
+                            .id("svg")
+                            .on_mouse_move(|_, _, _| {})
+                            .on_hover(cx.listener(|this, hovered, _, cx| {
+                                this.hovered = *hovered;
+                                cx.notify();
+                            }))
                             .with_animation(
                                 "image_circle",
                                 Animation::new(Duration::from_secs(2))
                                     .repeat()
                                     .with_easing(bounce(ease_in_out)),
                                 |svg, delta| {
-                                    svg.with_transformation(Transformation::rotate(percentage(
-                                        delta,
-                                    )))
+                                    svg.map_element(|svg| {
+                                        svg.with_transformation(Transformation::rotate(percentage(
+                                            delta,
+                                        )))
+                                    })
+                                },
+                            )
+                            .with_transition(
+                                self.hovered,
+                                "hover-transition",
+                                TransitionAnimation::new(Duration::from_millis(1000))
+                                    .backward(Some(Duration::from_millis(500)))
+                                    .with_easing(ease_in_out),
+                                |svg, _forward, delta| {
+                                    svg.map_element(|svg| svg.size(px(32.0 + delta * 32.0)))
                                 },
                             ),
                     ),
@@ -85,7 +105,7 @@ fn main() {
             };
             cx.open_window(options, |_, cx| {
                 cx.activate(false);
-                cx.new(|_| AnimationExample {})
+                cx.new(|_| AnimationExample { hovered: false })
             })
             .unwrap();
         });
