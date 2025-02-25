@@ -1890,9 +1890,11 @@ impl GitPanel {
                     let status = &upstream.tracking;
 
                     let disabled = status.is_gone();
+                    let mut behind = 0;
 
                     panel_filled_button(match status {
                         git::repository::UpstreamTracking::Tracked(status) if status.behind > 0 => {
+                            behind = status.behind;
                             format!("Pull ({})", status.behind)
                         }
                         _ => "Pull".to_string(),
@@ -1906,8 +1908,16 @@ impl GitPanel {
                         if disabled {
                             Tooltip::simple("Upstream is gone", cx)
                         } else {
+                            let mut title = "git pull".to_string();
+                            if behind > 0 {
+                                title.push_str(&format!(
+                                    "\n{} incoming commit{}",
+                                    behind,
+                                    if behind > 1 { "s" } else { "" }
+                                ));
+                            }
                             // TODO: Add <origin> and <branch> argument substitutions to this
-                            Tooltip::for_action("git pull", &git::Pull, window, cx)
+                            Tooltip::for_action(title, &git::Pull, window, cx)
                         }
                     })
                     .on_click(
