@@ -375,7 +375,7 @@ impl PickerDelegate for BranchListDelegate {
                                     OffsetDateTime::now_utc(),
                                     time_format::TimestampFormat::Relative,
                                 );
-                                (format!("{}", &commit.sha[..7]), formatted_time)
+                                (commit.sha[..7].to_string(), formatted_time)
                             })
                             .unwrap_or_else(|| {
                                 ("No Commit SHA".to_string(), "Unknown Date".to_string())
@@ -420,7 +420,7 @@ impl PickerDelegate for BranchListDelegate {
                         h_flex()
                             .gap_1()
                             .child(Label::new("Create Branch:"))
-                            .child(Label::new(format!("{name}")).buffer_font(cx)),
+                            .child(Label::new(name.to_string()).buffer_font(cx)),
                     ),
                 }),
         )
