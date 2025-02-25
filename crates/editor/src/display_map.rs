@@ -1964,8 +1964,8 @@ pub mod tests {
         });
         map.update(cx, |m, cx| assert_eq!(m.snapshot(cx).text(), "\n\n\na"));
 
-        dbg!(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
-
+        // Regression test: updating the display map does not crash when a
+        // block is immediately followed by a multi-line inlay.
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(1..1, "b")], None, cx);
         });
