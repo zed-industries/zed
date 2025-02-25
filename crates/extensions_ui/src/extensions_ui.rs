@@ -722,6 +722,7 @@ impl ExtensionsPage {
                                     Some(Self::render_remote_extension_context_menu(
                                         &this,
                                         extension_id.clone(),
+                                        repository_url.clone(),
                                         window,
                                         cx,
                                     ))
@@ -734,11 +735,15 @@ impl ExtensionsPage {
     fn render_remote_extension_context_menu(
         this: &Entity<Self>,
         extension_id: Arc<str>,
+        repository_url: String,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<ContextMenu> {
         let context_menu = ContextMenu::build(window, cx, |context_menu, window, _| {
             context_menu
+                .entry("Copy Repository URL", None, move |_, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(repository_url.clone()));
+                })
                 .entry(
                     "Install Another Version...",
                     None,
