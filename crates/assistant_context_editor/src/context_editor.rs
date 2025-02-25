@@ -1112,7 +1112,7 @@ impl ContextEditor {
             editor
         })?;
 
-        this.update_in(&mut cx, |this, window, cx| {
+        this.update(&mut cx, |this, _| {
             if let Some(patch_state) = this.patches.get_mut(&patch.range) {
                 patch_state.editor = Some(PatchEditorState {
                     editor: editor.downgrade(),
@@ -1121,7 +1121,7 @@ impl ContextEditor {
                 patch_state.update_task.take();
             }
         })?;
-        this.read_with(&cx, |this, _| this.workspace)?
+        this.read_with(&cx, |this, _| this.workspace.clone())?
             .update_in(&mut cx, |workspace, window, cx| {
                 workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, window, cx)
             })
