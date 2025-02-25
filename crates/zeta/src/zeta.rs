@@ -704,7 +704,10 @@ and then another
         can_collect_data: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<InlineCompletion>>> {
-        let workspace = self.workspace.as_ref().and_then(|w| w.upgrade());
+        let workspace = self
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.upgrade());
         self.request_completion_impl(
             workspace,
             project,
