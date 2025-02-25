@@ -56,11 +56,16 @@ pub enum TaskSourceKind {
     Language { name: SharedString },
 }
 
-/// TODO kb
+/// A collection of task contexts, applicable to the current state of the workspace.
+/// Only contains worktrees that are visible and with their root being a directory.
 #[derive(Debug, Default)]
 pub struct TaskContexts {
+    /// A context, related to the currently opened item.
+    /// Item can be opened from an invisible worktree, or any other, not necessarily active worktree.
     pub active_item_context: Option<(Option<WorktreeId>, TaskContext)>,
+    /// A worktree that corresponds to the active item, or the only worktree in the workspace.
     pub active_worktree_context: Option<(WorktreeId, TaskContext)>,
+    /// If there are more than one worktree in the workspace, all non-active ones are included here.
     pub other_worktree_contexts: Vec<(WorktreeId, TaskContext)>,
 }
 
@@ -151,29 +156,6 @@ impl Inventory {
             .as_ref()
             .and_then(|location| location.buffer.read(cx).file().cloned());
 
-        let mut applicable_task_contexts = Vec::new();
-        if let Some((_, item_context)) = task_contexts
-            .active_item_context
-            .as_ref()
-            .filter(|(worktree_id, _)| worktree.is_none() || worktree == *worktree_id)
-        {
-            applicable_task_contexts.push(item_context);
-        }
-        if let Some((_, worktree_context)) = task_contexts
-            .active_worktree_context
-            .as_ref()
-            .filter(|(worktree_id, _)| worktree.is_none() || worktree == Some(*worktree_id))
-        {
-            applicable_task_contexts.push(worktree_context);
-        }
-        applicable_task_contexts.extend(
-            task_contexts
-                .other_worktree_contexts
-                .iter()
-                .filter(|(worktree_id, _)| worktree.is_none() || worktree == Some(*worktree_id))
-                .map(|(_, context)| context),
-        );
-
         let mut task_labels_to_ids = HashMap::<String, HashSet<TaskId>>::default();
         let mut lru_score = 0_u32;
         let previously_spawned_tasks = self
@@ -223,29 +205,55 @@ impl Inventory {
             .worktree_templates_from_settings(worktree)
             .chain(language_tasks);
 
-        let new_resolved_tasks = worktree_tasks
-            .flat_map(|(kind, task)| {
-                let id_base = kind.to_id_base();
-                applicable_task_contexts
-                    .iter()
-                    .filter_map(move |task_context| task.resolve_task(&id_base, task_context))
+        let new_resolved_tasks =
+            worktree_tasks
+                .flat_map(|(kind, task)| {
+                    let id_base = kind.to_id_base();
+                    None.or_else(|| {
+                        let (_, item_context) = task_contexts.active_item_context.as_ref().filter(
+                            |(worktree_id, _)| worktree.is_none() || worktree == *worktree_id,
+                        )?;
+                        task.resolve_task(&id_base, item_context)
+                    })
+                    .or_else(|| {
+                        let (_, worktree_context) = task_contexts
+                            .active_worktree_context
+                            .as_ref()
+                            .filter(|(worktree_id, _)| {
+                                worktree.is_none() || worktree == Some(*worktree_id)
+                            })?;
+                        task.resolve_task(&id_base, worktree_context)
+                    })
+                    .or_else(|| {
+                        if let TaskSourceKind::Worktree { id, .. } = &kind {
+                            let worktree_context = task_contexts
+                                .other_worktree_contexts
+                                .iter()
+                                .find(|(worktree_id, _)| worktree_id == id)
+                                .map(|(_, context)| context)?;
+                            task.resolve_task(&id_base, worktree_context)
+                        } else {
+                            None
+                        }
+                    })
+                    .or_else(|| task.resolve_task(&id_base, &TaskContext::default()))
                     .map(move |resolved_task| (kind.clone(), resolved_task, not_used_score))
-            })
-            .filter(|(_, resolved_task, _)| {
-                match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
-                    hash_map::Entry::Occupied(mut o) => {
-                        // Allow new tasks with the same label, if their context is different
-                        o.get_mut().insert(resolved_task.id.clone())
+                })
+                .filter(|(_, resolved_task, _)| {
+                    match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
+                        hash_map::Entry::Occupied(mut o) => {
+                            // Allow new tasks with the same label, if their context is different
+                            o.get_mut().insert(resolved_task.id.clone())
+                        }
+                        hash_map::Entry::Vacant(v) => {
+                            v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
+                            true
+                        }
                     }
-                    hash_map::Entry::Vacant(v) => {
-                        v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
-                        true
-                    }
-                }
-            })
-            .sorted_unstable_by(task_lru_comparator)
-            .map(|(kind, task, _)| (kind, task))
-            .collect::<Vec<_>>();
+                })
+                .sorted_unstable_by(task_lru_comparator)
+                .map(|(kind, task, _)| (kind, task))
+                .collect::<Vec<_>>();
 
         (previously_spawned_tasks, new_resolved_tasks)
     }

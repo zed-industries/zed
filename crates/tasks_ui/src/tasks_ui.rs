@@ -5,7 +5,7 @@ use ::settings::Settings;
 use editor::Editor;
 use gpui::{App, AppContext as _, Context, Entity, Task, Window};
 use modal::{TaskOverrides, TasksModal};
-use project::{Location, ProjectEnvironment, TaskContexts, Worktree, WorktreeId};
+use project::{Location, TaskContexts, Worktree, WorktreeId};
 use task::{RevealTarget, TaskContext, TaskId, TaskVariables, VariableName};
 use workspace::tasks::schedule_task;
 use workspace::{tasks::schedule_resolved_task, Workspace};
@@ -297,13 +297,6 @@ fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Ta
         None
     };
 
-    let local_environment = workspace
-        .project()
-        .read(cx)
-        .task_store()
-        .read(cx)
-        .local_project_environment();
-
     let mut worktree_abs_paths = workspace
         .worktrees(cx)
         .filter(|worktree| is_visible_directory(worktree, cx))
@@ -324,22 +317,20 @@ fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Ta
 
         if let Some(active_worktree) = active_worktree {
             if let Some(active_worktree_abs_path) = worktree_abs_paths.remove(&active_worktree) {
-                task_contexts.active_worktree_context = Some((
-                    active_worktree,
-                    worktree_context(&active_worktree_abs_path, local_environment.as_ref()),
-                ));
+                task_contexts.active_worktree_context =
+                    Some((active_worktree, worktree_context(&active_worktree_abs_path)));
             }
         } else if worktree_abs_paths.len() == 1 {
-            task_contexts.active_worktree_context =
-                worktree_abs_paths.drain().next().map(|(id, abs_path)| {
-                    (id, worktree_context(&abs_path, local_environment.as_ref()))
-                });
+            task_contexts.active_worktree_context = worktree_abs_paths
+                .drain()
+                .next()
+                .map(|(id, abs_path)| (id, worktree_context(&abs_path)));
         }
 
         task_contexts.other_worktree_contexts.extend(
-            worktree_abs_paths.into_iter().map(|(id, abs_path)| {
-                (id, worktree_context(&abs_path, local_environment.as_ref()))
-            }),
+            worktree_abs_paths
+                .into_iter()
+                .map(|(id, abs_path)| (id, worktree_context(&abs_path))),
         );
         task_contexts
     })
@@ -350,17 +341,7 @@ fn is_visible_directory(worktree: &Entity<Worktree>, cx: &App) -> bool {
     worktree.is_visible() && worktree.root_entry().map_or(false, |entry| entry.is_dir())
 }
 
-fn worktree_context(
-    worktree_abs_path: &Path,
-    _local_environment: Option<&Entity<ProjectEnvironment>>,
-) -> TaskContext {
-    // TODO kb is it needed?
-    // let project_env = local_environment.as_ref().map(|environment| {
-    //     environment.update(cx, |environment, cx| {
-    //         environment.get_environment(Some(worktree_id), Some(worktree_abs_path.clone()), cx)
-    //     })
-    // });
-
+fn worktree_context(worktree_abs_path: &Path) -> TaskContext {
     let mut task_variables = TaskVariables::default();
     task_variables.insert(
         VariableName::WorktreeRoot,
