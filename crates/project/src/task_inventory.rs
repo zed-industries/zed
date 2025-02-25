@@ -59,18 +59,21 @@ pub enum TaskSourceKind {
 /// TODO kb
 #[derive(Debug, Default)]
 pub struct TaskContexts {
-    pub active_item_context: Option<TaskContext>,
+    pub active_item_context: Option<(Option<WorktreeId>, TaskContext)>,
     pub active_worktree_context: Option<(WorktreeId, TaskContext)>,
     pub other_worktree_contexts: Vec<(WorktreeId, TaskContext)>,
 }
 
 impl TaskContexts {
     pub fn active_context(&self) -> Option<&TaskContext> {
-        self.active_item_context.as_ref().or_else(|| {
-            self.active_worktree_context
-                .as_ref()
-                .map(|(_, context)| context)
-        })
+        self.active_item_context
+            .as_ref()
+            .map(|(_, context)| context)
+            .or_else(|| {
+                self.active_worktree_context
+                    .as_ref()
+                    .map(|(_, context)| context)
+            })
     }
 }
 
@@ -516,9 +519,9 @@ impl ContextProvider for BasicContextProvider {
                     self.worktree_store
                         .read(cx)
                         .worktree_for_id(worktree_id, cx)
-                        .map(|worktree| worktree.read(cx).root_dir())
+                        .and_then(|worktree| worktree.read(cx).root_dir())
                 });
-        if let Some(Some(worktree_path)) = worktree_root_dir {
+        if let Some(worktree_path) = worktree_root_dir {
             task_variables.insert(
                 VariableName::WorktreeRoot,
                 worktree_path.to_sanitized_string(),

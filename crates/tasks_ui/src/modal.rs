@@ -76,7 +76,11 @@ impl TasksModalDelegate {
             return None;
         }
 
-        let active_context = self.task_contexts.active_context()?;
+        let default_context = TaskContext::default();
+        let active_context = self
+            .task_contexts
+            .active_context()
+            .unwrap_or(&default_context);
         let source_kind = TaskSourceKind::UserInput;
         let id_base = source_kind.to_id_base();
         let mut new_oneshot = TaskTemplate {
