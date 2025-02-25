@@ -831,6 +831,7 @@
       "cmd-k": "terminal::Clear",
       "cmd-n": "workspace::NewTerminal",
       "ctrl-enter": "assistant::InlineAssist",
+      "ctrl-_": null, // emacs undo
       // Some nice conveniences
       "cmd-backspace": ["terminal::SendText", "\u0015"],
       "cmd-right": ["terminal::SendText", "\u0005"],
