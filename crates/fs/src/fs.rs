@@ -1337,7 +1337,10 @@ impl FakeFs {
     pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
-        queue.push_back((PathBuf::from("/"), self.state.lock().root.clone()));
+        queue.push_back((
+            PathBuf::from(util::path!("/")),
+            self.state.lock().root.clone(),
+        ));
         while let Some((path, entry)) = queue.pop_front() {
             if let FakeFsEntry::Dir { entries, .. } = &*entry.lock() {
                 for (name, entry) in entries {
@@ -1358,7 +1361,10 @@ impl FakeFs {
     pub fn directories(&self, include_dot_git: bool) -> Vec<PathBuf> {
         let mut result = Vec::new();
         let mut queue = collections::VecDeque::new();
-        queue.push_back((PathBuf::from("/"), self.state.lock().root.clone()));
+        queue.push_back((
+            PathBuf::from(util::path!("/")),
+            self.state.lock().root.clone(),
+        ));
         while let Some((path, entry)) = queue.pop_front() {
             if let FakeFsEntry::Dir { entries, .. } = &*entry.lock() {
                 for (name, entry) in entries {
@@ -2020,7 +2026,11 @@ pub async fn copy_recursive<'a>(
         let Ok(item_relative_path) = item.strip_prefix(source) else {
             continue;
         };
-        let target_item = target.join(item_relative_path);
+        let target_item = if item_relative_path == Path::new("") {
+            target.to_path_buf()
+        } else {
+            target.join(item_relative_path)
+        };
         if is_dir {
             if !options.overwrite && fs.metadata(&target_item).await.is_ok_and(|m| m.is_some()) {
                 if options.ignore_if_exists {
@@ -2175,6 +2185,142 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_copy_recursive_with_single_file(executor: BackgroundExecutor) {
+        let fs = FakeFs::new(executor.clone());
+        fs.insert_tree(
+            path!("/outer"),
+            json!({
+                "a": "A",
+                "b": "B",
+                "inner": {}
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/a")),
+                PathBuf::from(path!("/outer/b")),
+            ]
+        );
+
+        let source = Path::new(path!("/outer/a"));
+        let target = Path::new(path!("/outer/a copy"));
+        copy_recursive(fs.as_ref(), source, target, Default::default())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/a")),
+                PathBuf::from(path!("/outer/a copy")),
+                PathBuf::from(path!("/outer/b")),
+            ]
+        );
+
+        let source = Path::new(path!("/outer/a"));
+        let target = Path::new(path!("/outer/inner/a copy"));
+        copy_recursive(fs.as_ref(), source, target, Default::default())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/a")),
+                PathBuf::from(path!("/outer/a copy")),
+                PathBuf::from(path!("/outer/b")),
+                PathBuf::from(path!("/outer/inner/a copy")),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_copy_recursive_with_single_dir(executor: BackgroundExecutor) {
+        let fs = FakeFs::new(executor.clone());
+        fs.insert_tree(
+            path!("/outer"),
+            json!({
+                "a": "A",
+                "empty": {},
+                "non-empty": {
+                    "b": "B",
+                }
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/a")),
+                PathBuf::from(path!("/outer/non-empty/b")),
+            ]
+        );
+        assert_eq!(
+            fs.directories(false),
+            vec![
+                PathBuf::from(path!("/")),
+                PathBuf::from(path!("/outer")),
+                PathBuf::from(path!("/outer/empty")),
+                PathBuf::from(path!("/outer/non-empty")),
+            ]
+        );
+
+        let source = Path::new(path!("/outer/empty"));
+        let target = Path::new(path!("/outer/empty copy"));
+        copy_recursive(fs.as_ref(), source, target, Default::default())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/a")),
+                PathBuf::from(path!("/outer/non-empty/b")),
+            ]
+        );
+        assert_eq!(
+            fs.directories(false),
+            vec![
+                PathBuf::from(path!("/")),
+                PathBuf::from(path!("/outer")),
+                PathBuf::from(path!("/outer/empty")),
+                PathBuf::from(path!("/outer/empty copy")),
+                PathBuf::from(path!("/outer/non-empty")),
+            ]
+        );
+
+        let source = Path::new(path!("/outer/non-empty"));
+        let target = Path::new(path!("/outer/non-empty copy"));
+        copy_recursive(fs.as_ref(), source, target, Default::default())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs.files(),
+            vec![
+                PathBuf::from(path!("/outer/a")),
+                PathBuf::from(path!("/outer/non-empty/b")),
+                PathBuf::from(path!("/outer/non-empty copy/b")),
+            ]
+        );
+        assert_eq!(
+            fs.directories(false),
+            vec![
+                PathBuf::from(path!("/")),
+                PathBuf::from(path!("/outer")),
+                PathBuf::from(path!("/outer/empty")),
+                PathBuf::from(path!("/outer/empty copy")),
+                PathBuf::from(path!("/outer/non-empty")),
+                PathBuf::from(path!("/outer/non-empty copy")),
+            ]
+        );
+    }
+
+    #[gpui::test]
     async fn test_copy_recursive(executor: BackgroundExecutor) {
         let fs = FakeFs::new(executor.clone());
         fs.insert_tree(
@@ -2185,7 +2331,8 @@ mod tests {
                     "b": "B",
                     "inner3": {
                         "d": "D",
-                    }
+                    },
+                    "inner4": {}
                 },
                 "inner2": {
                     "c": "C",
@@ -2201,6 +2348,17 @@ mod tests {
                 PathBuf::from(path!("/outer/inner1/b")),
                 PathBuf::from(path!("/outer/inner2/c")),
                 PathBuf::from(path!("/outer/inner1/inner3/d")),
+            ]
+        );
+        assert_eq!(
+            fs.directories(false),
+            vec![
+                PathBuf::from(path!("/")),
+                PathBuf::from(path!("/outer")),
+                PathBuf::from(path!("/outer/inner1")),
+                PathBuf::from(path!("/outer/inner2")),
+                PathBuf::from(path!("/outer/inner1/inner3")),
+                PathBuf::from(path!("/outer/inner1/inner4")),
             ]
         );
 
@@ -2221,6 +2379,22 @@ mod tests {
                 PathBuf::from(path!("/outer/inner1/outer/inner1/b")),
                 PathBuf::from(path!("/outer/inner1/outer/inner2/c")),
                 PathBuf::from(path!("/outer/inner1/outer/inner1/inner3/d")),
+            ]
+        );
+        assert_eq!(
+            fs.directories(false),
+            vec![
+                PathBuf::from(path!("/")),
+                PathBuf::from(path!("/outer")),
+                PathBuf::from(path!("/outer/inner1")),
+                PathBuf::from(path!("/outer/inner2")),
+                PathBuf::from(path!("/outer/inner1/inner3")),
+                PathBuf::from(path!("/outer/inner1/inner4")),
+                PathBuf::from(path!("/outer/inner1/outer")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1")),
+                PathBuf::from(path!("/outer/inner1/outer/inner2")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/inner3")),
+                PathBuf::from(path!("/outer/inner1/outer/inner1/inner4")),
             ]
         );
     }
