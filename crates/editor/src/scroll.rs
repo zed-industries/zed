@@ -496,14 +496,8 @@ impl Editor {
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
 
-        if let EditPredictionPreview::Active {
-            previous_scroll_position,
-        } = &mut self.edit_prediction_preview
-        {
-            if !autoscroll {
-                previous_scroll_position.take();
-            }
-        }
+        self.edit_prediction_preview
+            .set_previous_scroll_position(None);
 
         self.scroll_manager.set_scroll_position(
             scroll_position,
