@@ -1925,7 +1925,7 @@ pub mod tests {
                 buffer.clone(),
                 font("Helvetica"),
                 font_size,
-                Some(px(72.0)),
+                None,
                 true,
                 1,
                 1,
