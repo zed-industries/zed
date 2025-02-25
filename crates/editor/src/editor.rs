@@ -6486,12 +6486,8 @@ impl Editor {
         }
 
         let completion = match &self.active_inline_completion {
-            Some(completion) => match &completion.completion {
-                InlineCompletion::Move {
-                    target, snapshot, ..
-                } if !self.has_visible_completions_menu() => {
-                    use text::ToPoint as _;
-
+            Some(prediction) => {
+                if !self.has_visible_completions_menu() {
                     return Some(
                         h_flex()
                             .px_2()
@@ -6501,13 +6497,19 @@ impl Editor {
                             .border_color(cx.theme().colors().border)
                             .rounded(px(6.))
                             .rounded_tl(px(0.))
-                            .child(
-                                if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
-                                    Icon::new(IconName::ZedPredictDown)
-                                } else {
-                                    Icon::new(IconName::ZedPredictUp)
-                                },
-                            )
+                            .child(match &prediction.completion {
+                                InlineCompletion::Move { target, snapshot } => {
+                                    use text::ToPoint as _;
+
+                                    if target.text_anchor.to_point(&snapshot).row > cursor_point.row
+                                    {
+                                        Icon::new(IconName::ZedPredictDown)
+                                    } else {
+                                        Icon::new(IconName::ZedPredictUp)
+                                    }
+                                }
+                                InlineCompletion::Edit { .. } => Icon::new(IconName::ZedPredict),
+                            })
                             .child(Label::new("Hold").size(LabelSize::Small))
                             .child(h_flex().children(ui::render_modifiers(
                                 &accept_keystroke?.modifiers,
@@ -6519,13 +6521,14 @@ impl Editor {
                             .into_any(),
                     );
                 }
-                _ => self.render_edit_prediction_cursor_popover_preview(
-                    completion,
+
+                self.render_edit_prediction_cursor_popover_preview(
+                    prediction,
                     cursor_point,
                     style,
                     cx,
-                )?,
-            },
+                )?
+            }
 
             None if is_refreshing => match &self.stale_inline_completion_in_menu {
                 Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
