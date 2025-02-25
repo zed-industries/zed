@@ -3505,13 +3505,21 @@ impl LspStore {
         }
 
         let Some(language_server) = buffer_handle.update(cx, |buffer, cx| match server {
-            LanguageServerToQuery::Primary => self
-                .as_local()
-                .and_then(|local| local.primary_language_server_for_buffer(buffer, cx))
-                .map(|(_, server)| server.clone()),
+            LanguageServerToQuery::FirstCapable => self.as_local().and_then(|local| {
+                local
+                    .language_servers_for_buffer(buffer, cx)
+                    .find(|(_, server)| {
+                        request.check_capabilities(server.adapter_server_capabilities())
+                    })
+                    .map(|(_, server)| server.clone())
+            }),
             LanguageServerToQuery::Other(id) => self
                 .language_server_for_local_buffer(buffer, id, cx)
-                .map(|(_, server)| Arc::clone(server)),
+                .and_then(|(_, server)| {
+                    request
+                        .check_capabilities(server.adapter_server_capabilities())
+                        .then(|| Arc::clone(server))
+                }),
         }) else {
             return Task::ready(Ok(Default::default()));
         };
@@ -3519,99 +3527,95 @@ impl LspStore {
         let buffer = buffer_handle.read(cx);
         let file = File::from_dyn(buffer.file()).and_then(File::as_local);
 
-        if let Some(file) = file {
-            let lsp_params = match request.to_lsp_params_or_response(
-                &file.abs_path(cx),
-                buffer,
-                &language_server,
-                cx,
-            ) {
-                Ok(LspParamsOrResponse::Params(lsp_params)) => lsp_params,
-                Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
+        let Some(file) = file else {
+            return Task::ready(Ok(Default::default()));
+        };
 
-                Err(err) => {
-                    let message = format!(
-                        "{} via {} failed: {}",
-                        request.display_name(),
-                        language_server.name(),
-                        err
-                    );
-                    log::warn!("{}", message);
-                    return Task::ready(Err(anyhow!(message)));
-                }
-            };
+        let lsp_params = match request.to_lsp_params_or_response(
+            &file.abs_path(cx),
+            buffer,
+            &language_server,
+            cx,
+        ) {
+            Ok(LspParamsOrResponse::Params(lsp_params)) => lsp_params,
+            Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
 
-            let status = request.status();
-            if !request.check_capabilities(language_server.adapter_server_capabilities()) {
-                return Task::ready(Ok(Default::default()));
+            Err(err) => {
+                let message = format!(
+                    "{} via {} failed: {}",
+                    request.display_name(),
+                    language_server.name(),
+                    err
+                );
+                log::warn!("{}", message);
+                return Task::ready(Err(anyhow!(message)));
             }
-            return cx.spawn(move |this, cx| async move {
-                let lsp_request = language_server.request::<R::LspRequest>(lsp_params);
+        };
 
-                let id = lsp_request.id();
-                let _cleanup = if status.is_some() {
+        let status = request.status();
+        if !request.check_capabilities(language_server.adapter_server_capabilities()) {
+            return Task::ready(Ok(Default::default()));
+        }
+        return cx.spawn(move |this, cx| async move {
+            let lsp_request = language_server.request::<R::LspRequest>(lsp_params);
+
+            let id = lsp_request.id();
+            let _cleanup = if status.is_some() {
+                cx.update(|cx| {
+                    this.update(cx, |this, cx| {
+                        this.on_lsp_work_start(
+                            language_server.server_id(),
+                            id.to_string(),
+                            LanguageServerProgress {
+                                is_disk_based_diagnostics_progress: false,
+                                is_cancellable: false,
+                                title: None,
+                                message: status.clone(),
+                                percentage: None,
+                                last_update_at: cx.background_executor().now(),
+                            },
+                            cx,
+                        );
+                    })
+                })
+                .log_err();
+
+                Some(defer(|| {
                     cx.update(|cx| {
                         this.update(cx, |this, cx| {
-                            this.on_lsp_work_start(
-                                language_server.server_id(),
-                                id.to_string(),
-                                LanguageServerProgress {
-                                    is_disk_based_diagnostics_progress: false,
-                                    is_cancellable: false,
-                                    title: None,
-                                    message: status.clone(),
-                                    percentage: None,
-                                    last_update_at: cx.background_executor().now(),
-                                },
-                                cx,
-                            );
+                            this.on_lsp_work_end(language_server.server_id(), id.to_string(), cx);
                         })
                     })
                     .log_err();
+                }))
+            } else {
+                None
+            };
 
-                    Some(defer(|| {
-                        cx.update(|cx| {
-                            this.update(cx, |this, cx| {
-                                this.on_lsp_work_end(
-                                    language_server.server_id(),
-                                    id.to_string(),
-                                    cx,
-                                );
-                            })
-                        })
-                        .log_err();
-                    }))
-                } else {
-                    None
-                };
+            let result = lsp_request.await;
 
-                let result = lsp_request.await;
+            let response = result.map_err(|err| {
+                let message = format!(
+                    "{} via {} failed: {}",
+                    request.display_name(),
+                    language_server.name(),
+                    err
+                );
+                log::warn!("{}", message);
+                anyhow!(message)
+            })?;
 
-                let response = result.map_err(|err| {
-                    let message = format!(
-                        "{} via {} failed: {}",
-                        request.display_name(),
-                        language_server.name(),
-                        err
-                    );
-                    log::warn!("{}", message);
-                    anyhow!(message)
-                })?;
-
-                let response = request
-                    .response_from_lsp(
-                        response,
-                        this.upgrade().ok_or_else(|| anyhow!("no app context"))?,
-                        buffer_handle,
-                        language_server.server_id(),
-                        cx.clone(),
-                    )
-                    .await;
-                response
-            });
-        }
-
-        Task::ready(Ok(Default::default()))
+            let response = request
+                .response_from_lsp(
+                    response,
+                    this.upgrade().ok_or_else(|| anyhow!("no app context"))?,
+                    buffer_handle,
+                    language_server.server_id(),
+                    cx.clone(),
+                )
+                .await;
+            response
+        });
     }
 
     fn on_settings_changed(&mut self, cx: &mut Context<Self>) {
@@ -3950,7 +3954,7 @@ impl LspStore {
             .or_else(|| {
                 self.upstream_client()
                     .is_some()
-                    .then_some(LanguageServerToQuery::Primary)
+                    .then_some(LanguageServerToQuery::FirstCapable)
             })
             .filter(|_| {
                 maybe!({
@@ -4061,7 +4065,7 @@ impl LspStore {
         });
         self.request_lsp(
             buffer.clone(),
-            LanguageServerToQuery::Primary,
+            LanguageServerToQuery::FirstCapable,
             OnTypeFormatting {
                 position,
                 trigger,
@@ -4660,7 +4664,7 @@ impl LspStore {
         } else {
             let lsp_request_task = self.request_lsp(
                 buffer_handle.clone(),
-                LanguageServerToQuery::Primary,
+                LanguageServerToQuery::FirstCapable,
                 lsp_request,
                 cx,
             );
@@ -5774,7 +5778,7 @@ impl LspStore {
             .update(&mut cx, |this, cx| {
                 this.request_lsp(
                     buffer_handle.clone(),
-                    LanguageServerToQuery::Primary,
+                    LanguageServerToQuery::FirstCapable,
                     request,
                     cx,
                 )
@@ -8069,7 +8073,9 @@ async fn populate_labels_for_completions(
 
 #[derive(Debug)]
 pub enum LanguageServerToQuery {
-    Primary,
+    /// Query language servers in order of users preference, up until one capable of handling the request is found.
+    FirstCapable,
+    /// Query a specific language server.
     Other(LanguageServerId),
 }
 
