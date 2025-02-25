@@ -186,6 +186,13 @@ impl std::fmt::Debug for InlineCompletion {
 }
 
 pub struct Zeta {
+    /// A reference to the editor that this Zeta instance is associated with.
+    ///
+    /// Note: We're primarily interested in the [`Workspace`] on the editor,
+    /// however, we can't simply clone off the workspace in advance. The
+    /// workspace on the editor is optional, and doesn't get set until after the
+    /// point where we would clone it off. So instead we need to hold on to the
+    /// editor in order to always get the latest copy of its workspace.
     editor: Option<WeakEntity<Editor>>,
     client: Arc<Client>,
     events: VecDeque<Event>,
