@@ -73,7 +73,7 @@ use ui::{
     POPOVER_Y_PADDING,
 };
 use unicode_segmentation::UnicodeSegmentation;
-use util::{debug_panic, RangeExt, ResultExt};
+use util::{debug_panic, maybe, RangeExt, ResultExt};
 use workspace::{item::Item, notifications::NotifyTaskExt};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
@@ -2698,6 +2698,14 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Div {
+        let _file_status = maybe!({
+            let project = self.editor.read(cx).project.as_ref()?.read(cx);
+            let (repo, path) =
+                project.repository_and_path_for_buffer_id(for_excerpt.buffer_id, cx)?;
+            let status = repo.read(cx).repository_entry.status_for_path(&path)?;
+            Some(status.status)
+        });
+
         let include_root = self
             .editor
             .read(cx)
