@@ -1,11 +1,17 @@
-use std::path::Path;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use call::ActiveCall;
+use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git_ui::project_diff::ProjectDiff;
 use gpui::{TestAppContext, VisualTestContext};
+use project::ProjectPath;
 use serde_json::json;
 use workspace::Workspace;
 
+//
 use crate::tests::TestServer;
 
 #[gpui::test]
@@ -43,7 +49,7 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
             ("secret.pem".into(), "shh\n".to_string(), None),
         ],
     );
-    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
     let active_call_a = cx_a.read(ActiveCall::global);
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
@@ -91,10 +97,34 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
             json!({
                 ".git": {},
                 "changed.txt": "before\n",
-                "unchanged.txt": "unchanged\n",
+                "unchanged.txt": "changed\n",
                 "created.txt": "created\n",
                 "secret.pem": "secret-changed\n",
             }),
         )
         .await;
+    cx_b.run_until_parked();
+
+    project_b.update(cx_b, |project, cx| {
+        let project_path = ProjectPath {
+            worktree_id,
+            path: Arc::from(PathBuf::from("unchanged.txt")),
+        };
+        let entry = project.entry_for_path(&project_path, cx).unwrap();
+        let status = project.project_path_git_status(&project_path, cx);
+        assert_eq!(
+            status.unwrap(),
+            FileStatus::Tracked(TrackedStatus {
+                worktree_status: StatusCode::Modified,
+                index_status: StatusCode::Unmodified,
+            })
+        );
+    });
+
+    diff.update(cx_b, |diff, cx| {
+        assert_eq!(
+            diff.excerpt_paths(cx),
+            vec!["deleted.txt", "unchanged.txt", "created.txt"]
+        );
+    });
 }
