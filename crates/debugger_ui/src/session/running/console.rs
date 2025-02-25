@@ -403,7 +403,8 @@ impl ConsoleQueryBarCompletionProvider {
             let mut string_matches = Vec::new();
 
             for variable in console.variable_list.update(cx, |variable_list, cx| {
-                variable_list.completion_variables(cx)
+                // variable_list.completion_variables(cx)
+                todo!()
             }) {
                 if let Some(evaluate_name) = &variable.variable.dap.evaluate_name {
                     variables.insert(evaluate_name.clone(), variable.variable.dap.value.clone());

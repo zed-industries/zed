@@ -2809,8 +2809,7 @@ message DapCompletionResponse {
 message DapScopesRequest {
     uint64 project_id = 1;
     uint64 client_id = 2;
-    uint64 thread_id = 3;
-    uint64 stack_frame_id = 4;
+    uint64 stack_frame_id = 3;
 }
 
 message DapScopesResponse {

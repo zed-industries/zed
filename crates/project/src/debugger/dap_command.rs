@@ -1282,7 +1282,6 @@ impl DapCommand for StackTraceCommand {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub(crate) struct ScopesCommand {
-    pub thread_id: u64,
     pub stack_frame_id: u64,
 }
 
@@ -1312,14 +1311,12 @@ impl DapCommand for ScopesCommand {
         proto::DapScopesRequest {
             project_id: upstream_project_id,
             client_id: debug_client_id.to_proto(),
-            thread_id: self.thread_id,
             stack_frame_id: self.stack_frame_id,
         }
     }
 
     fn from_proto(request: &Self::ProtoRequest) -> Self {
         Self {
-            thread_id: request.thread_id,
             stack_frame_id: request.stack_frame_id,
         }
     }

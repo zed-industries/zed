@@ -10,14 +10,15 @@ use super::dap_command::{
 };
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
-use collections::{HashMap, IndexMap};
+use collections::{HashMap, HashSet, IndexMap};
 use dap::{
     adapters::{DapDelegate, DapStatus, DebugAdapterName},
     client::{DebugAdapterClient, SessionId},
     messages::{self, Events, Message},
     requests::SetBreakpoints,
-    Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, SetBreakpointsArguments,
-    Source, SourceBreakpoint, SteppingGranularity, StoppedEvent,
+    Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, ScopeId,
+    SetBreakpointsArguments, Source, SourceBreakpoint, StackFrameId, SteppingGranularity,
+    StoppedEvent, VariableReference,
 };
 use dap_adapters::build_adapter;
 use futures::channel::oneshot;
@@ -102,12 +103,10 @@ pub enum ThreadStatus {
     Ended,
 }
 
-type StackFrameId = u64;
-
 #[derive(Debug)]
 pub struct Thread {
     dap: dap::Thread,
-    stack_frames: IndexMap<StackFrameId, StackFrame>,
+    stack_frame_ids: HashSet<StackFrameId>,
     has_stopped: bool,
 }
 
@@ -115,7 +114,7 @@ impl From<dap::Thread> for Thread {
     fn from(dap: dap::Thread) -> Self {
         Self {
             dap,
-            stack_frames: IndexMap::new(),
+            stack_frame_ids: Default::default(),
             has_stopped: false,
         }
     }
@@ -420,6 +419,7 @@ pub struct Session {
     threads: IndexMap<ThreadId, Thread>,
     requests: HashMap<RequestSlot, Shared<Task<Option<()>>>>,
     variables: HashMap<VariablesReference, Vec<Variable>>,
+    stack_frames: IndexMap<StackFrameId, StackFrame>,
     thread_states: ThreadStates,
     is_session_terminated: bool,
     _background_tasks: Vec<Task<()>>,
@@ -559,6 +559,7 @@ impl Session {
                     modules: Vec::default(),
                     loaded_sources: Vec::default(),
                     threads: IndexMap::default(),
+                    stack_frames: IndexMap::default(),
                     _background_tasks,
                     is_session_terminated: false,
                 }
@@ -583,6 +584,7 @@ impl Session {
             breakpoint_store,
             ignore_breakpoints,
             variables: Default::default(),
+            stack_frames: IndexMap::default(),
             thread_states: ThreadStates::default(),
             last_processed_output: 0,
             output: Vec::default(),
@@ -1167,17 +1169,9 @@ impl Session {
             .unwrap_or_default()
     }
 
-    pub fn scopes(
-        &mut self,
-        thread_id: ThreadId,
-        stack_frame_id: u64,
-        cx: &mut Context<Self>,
-    ) -> Vec<Scope> {
+    pub fn scopes(&mut self, stack_frame_id: u64, cx: &mut Context<Self>) -> Vec<Scope> {
         self.fetch(
-            ScopesCommand {
-                thread_id: thread_id.0,
-                stack_frame_id,
-            },
+            ScopesCommand { stack_frame_id },
             move |this, scopes, cx| {
                 this.threads.entry(thread_id).and_modify(|thread| {
                     if let Some(stack_frame) = thread.stack_frames.get_mut(&stack_frame_id) {
@@ -1197,25 +1191,6 @@ impl Session {
                     .map(|stack_frame| stack_frame.scopes.clone())
             })
             .unwrap_or_default()
-    }
-
-    fn find_scope(
-        &mut self,
-        thread_id: ThreadId,
-        stack_frame_id: u64,
-        variables_reference: u64,
-    ) -> Option<&mut Scope> {
-        self.threads.get_mut(&thread_id).and_then(|thread| {
-            thread
-                .stack_frames
-                .get_mut(&stack_frame_id)
-                .and_then(|frame| {
-                    frame
-                        .scopes
-                        .iter_mut()
-                        .find(|scope| scope.dap.variables_reference == variables_reference)
-                })
-        })
     }
 
     #[allow(clippy::too_many_arguments)]
