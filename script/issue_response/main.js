@@ -44,7 +44,6 @@ async function main() {
 
   const githubHandles = Array.from(githubHandleSet);
   githubHandles.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
-  console.log(githubHandles);
   const commenterFilters = githubHandles.map((name) => `-commenter:${name}`);
   const authorFilters = githubHandles.map((name) => `-author:${name}`);
 
