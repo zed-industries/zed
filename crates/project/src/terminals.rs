@@ -32,15 +32,10 @@ pub struct Terminals {
 #[derive(Debug)]
 pub enum TerminalKind {
     /// Run a shell at the given path (or $HOME if None)
-    Shell(ShellOptions),
+    Shell(Option<PathBuf>),
+    LocalShell(Option<PathBuf>),
     /// Run a task.
     Task(SpawnInTerminal),
-}
-
-#[derive(Debug, Default)]
-pub struct ShellOptions {
-    pub path: Option<PathBuf>,
-    pub run_locally: Option<bool>,
 }
 
 /// SshCommand describes how to connect to a remote server
@@ -91,9 +86,8 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let path: Option<Arc<Path>> = match &kind {
-            TerminalKind::Shell(options) => {
-                options.path.as_ref().map(|path| Arc::from(path.as_ref()))
-            }
+            TerminalKind::Shell(path) => path.as_ref().map(|path| Arc::from(path.as_ref())),
+            TerminalKind::LocalShell(path) => path.as_ref().map(|path| Arc::from(path.as_ref())),
             TerminalKind::Task(spawn_task) => {
                 if let Some(cwd) = &spawn_task.cwd {
                     Some(Arc::from(cwd.as_ref()))
@@ -196,9 +190,8 @@ impl Project {
     ) -> Result<Entity<Terminal>> {
         let this = &mut *self;
         let path: Option<Arc<Path>> = match &kind {
-            TerminalKind::Shell(options) => {
-                options.path.as_ref().map(|path| Arc::from(path.as_ref()))
-            }
+            TerminalKind::Shell(path) => path.as_ref().map(|path| Arc::from(path.as_ref())),
+            TerminalKind::LocalShell(path) => path.as_ref().map(|path| Arc::from(path.as_ref())),
             TerminalKind::Task(spawn_task) => {
                 if let Some(cwd) = &spawn_task.cwd {
                     Some(Arc::from(cwd.as_ref()))
@@ -239,44 +232,42 @@ impl Project {
         };
 
         let mut python_venv_activate_command = None;
+        let is_local_shell = matches!(kind, TerminalKind::LocalShell(_));
 
         let (spawn_task, shell) = match kind {
-            TerminalKind::Shell(options) => {
+            TerminalKind::Shell(_) => {
                 if let Some(python_venv_directory) = &python_venv_directory {
                     python_venv_activate_command =
                         this.python_activate_command(python_venv_directory, &settings.detect_venv);
                 }
 
-                if options.run_locally.is_some_and(|r| r) {
-                    (None, settings.shell.clone())
-                } else {
-                    match &ssh_details {
-                        Some((host, ssh_command)) => {
-                            log::debug!("Connecting to a remote server: {ssh_command:?}");
+                match &ssh_details {
+                    Some((host, ssh_command)) => {
+                        log::debug!("Connecting to a remote server: {ssh_command:?}");
 
-                            // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
-                            // to properly display colors.
-                            // We do not have the luxury of assuming the host has it installed,
-                            // so we set it to a default that does not break the highlighting via ssh.
-                            env.entry("TERM".to_string())
-                                .or_insert_with(|| "xterm-256color".to_string());
+                        // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
+                        // to properly display colors.
+                        // We do not have the luxury of assuming the host has it installed,
+                        // so we set it to a default that does not break the highlighting via ssh.
+                        env.entry("TERM".to_string())
+                            .or_insert_with(|| "xterm-256color".to_string());
 
-                            let (program, args) =
-                                wrap_for_ssh(&ssh_command, None, path.as_deref(), env, None);
-                            env = HashMap::default();
-                            (
-                                Option::<TaskState>::None,
-                                Shell::WithArguments {
-                                    program,
-                                    args,
-                                    title_override: Some(format!("{} — Terminal", host).into()),
-                                },
-                            )
-                        }
-                        None => (None, settings.shell.clone()),
+                        let (program, args) =
+                            wrap_for_ssh(&ssh_command, None, path.as_deref(), env, None);
+                        env = HashMap::default();
+                        (
+                            Option::<TaskState>::None,
+                            Shell::WithArguments {
+                                program,
+                                args,
+                                title_override: Some(format!("{} — Terminal", host).into()),
+                            },
+                        )
                     }
+                    None => (None, settings.shell.clone()),
                 }
             }
+            TerminalKind::LocalShell(_) => (None, settings.shell.clone()),
             TerminalKind::Task(spawn_task) => {
                 let task_state = Some(TaskState {
                     id: spawn_task.id,
@@ -347,7 +338,7 @@ impl Project {
             settings.cursor_shape.unwrap_or_default(),
             settings.alternate_scroll,
             settings.max_scroll_history_lines,
-            ssh_details.is_some(),
+            ssh_details.is_some() && !is_local_shell,
             window,
             completion_tx,
             cx,

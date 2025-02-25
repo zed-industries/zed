@@ -1,4 +1,3 @@
-use project::terminals::ShellOptions;
 use std::{cmp, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
@@ -51,22 +50,23 @@ const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 actions!(terminal_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(
-        |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
-            workspace.register_action(|workspace, _: &NewTerminal, window, cx| {
-                TerminalPanel::new_terminal(workspace, window, cx, false);
-            });
+    cx.observe_new(|workspace: &mut Workspace, _window, cx| {
+        workspace.register_action(|workspace, _: &NewTerminal, window, cx| {
+            TerminalPanel::new_terminal(workspace, window, cx, false);
+        });
+
+        if workspace.project().read(cx).is_via_ssh() {
             workspace.register_action(|workspace, _: &NewLocalTerminal, window, cx| {
                 TerminalPanel::new_terminal(workspace, window, cx, true);
             });
-            workspace.register_action(TerminalPanel::open_terminal);
-            workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
-                if is_enabled_in_workspace(workspace, cx) {
-                    workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
-                }
-            });
-        },
-    )
+        }
+        workspace.register_action(TerminalPanel::open_terminal);
+        workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
+            if is_enabled_in_workspace(workspace, cx) {
+                workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
+            }
+        });
+    })
     .detach();
 }
 
@@ -131,6 +131,7 @@ impl TerminalPanel {
 
     fn apply_tab_bar_buttons(&self, terminal_pane: &Entity<Pane>, cx: &mut Context<Self>) {
         let assistant_tab_bar_button = self.assistant_tab_bar_button.clone();
+        let workspace = self.workspace.clone();
         terminal_pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, window, cx| {
                 let split_context = pane
@@ -141,6 +142,7 @@ impl TerminalPanel {
                     return (None, None);
                 }
                 let focus_handle = pane.focus_handle(cx);
+                let workspace = workspace.clone();
                 let right_children = h_flex()
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
@@ -153,8 +155,9 @@ impl TerminalPanel {
                             .with_handle(pane.new_item_context_menu_handle.clone())
                             .menu(move |window, cx| {
                                 let focus_handle = focus_handle.clone();
-                                let menu = ContextMenu::build(window, cx, |menu, _, _| {
-                                    menu.context(focus_handle.clone())
+                                let menu = ContextMenu::build(window, cx, |menu, _, cx| {
+                                    let context_menu = menu
+                                        .context(focus_handle.clone())
                                         .action(
                                             "New Terminal",
                                             workspace::NewTerminal.boxed_clone(),
@@ -165,7 +168,20 @@ impl TerminalPanel {
                                         .action(
                                             "Spawn task",
                                             zed_actions::Spawn::modal().boxed_clone(),
+                                        );
+                                    if workspace
+                                        .read_with(cx, |workspace, cx| {
+                                            workspace.project().read(cx).is_via_ssh()
+                                        })
+                                        .is_ok_and(|f| f)
+                                    {
+                                        context_menu.action(
+                                            "New Local Terminal",
+                                            workspace::NewLocalTerminal.boxed_clone(),
                                         )
+                                    } else {
+                                        context_menu
+                                    }
                                 });
 
                                 Some(menu)
@@ -438,10 +454,7 @@ impl TerminalPanel {
                 )
             })
             .unwrap_or((None, None));
-        let kind = TerminalKind::Shell(ShellOptions {
-            path: working_directory,
-            run_locally: None,
-        });
+        let kind = TerminalKind::Shell(working_directory);
         let window_handle = window.window_handle();
         let terminal = project
             .update(cx, |project, cx| {
@@ -487,10 +500,7 @@ impl TerminalPanel {
         terminal_panel
             .update(cx, |panel, cx| {
                 panel.add_terminal(
-                    TerminalKind::Shell(ShellOptions {
-                        path: Some(action.working_directory.clone()),
-                        run_locally: None,
-                    }),
+                    TerminalKind::Shell(Some(action.working_directory.clone())),
                     RevealStrategy::Always,
                     window,
                     cx,
@@ -604,10 +614,11 @@ impl TerminalPanel {
             return;
         };
 
-        let kind = TerminalKind::Shell(ShellOptions {
-            path: default_working_directory(workspace, cx),
-            run_locally: Some(run_locally),
-        });
+        let kind = if run_locally {
+            TerminalKind::LocalShell(default_working_directory(workspace, cx))
+        } else {
+            TerminalKind::Shell(default_working_directory(workspace, cx))
+        };
 
         terminal_panel
             .update(cx, |this, cx| {
@@ -1435,10 +1446,7 @@ impl Panel for TerminalPanel {
         }
         cx.defer_in(window, |this, window, cx| {
             let Ok(kind) = this.workspace.update(cx, |workspace, cx| {
-                TerminalKind::Shell(ShellOptions {
-                    path: default_working_directory(workspace, cx),
-                    run_locally: None,
-                })
+                TerminalKind::Shell(default_working_directory(workspace, cx))
             }) else {
                 return;
             };

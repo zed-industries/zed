@@ -3,10 +3,7 @@ use async_recursion::async_recursion;
 use collections::HashSet;
 use futures::{stream::FuturesUnordered, StreamExt as _};
 use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
-use project::{
-    terminals::{ShellOptions, TerminalKind},
-    Project,
-};
+use project::{terminals::TerminalKind, Project};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use ui::{App, Context, Pixels, Window};
@@ -243,10 +240,9 @@ async fn deserialize_pane_group(
                             .update(cx, |workspace, cx| default_working_directory(workspace, cx))
                             .ok()
                             .flatten();
-                        let kind = TerminalKind::Shell(ShellOptions {
-                            path: working_directory.as_deref().map(Path::to_path_buf),
-                            run_locally: None,
-                        });
+                        let kind = TerminalKind::Shell(
+                            working_directory.as_deref().map(Path::to_path_buf),
+                        );
                         let window = window.window_handle();
                         let terminal = project
                             .update(cx, |project, cx| project.create_terminal(kind, window, cx));

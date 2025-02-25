@@ -13,11 +13,7 @@ use gpui::{
     Pixels, Render, ScrollWheelEvent, Stateful, Styled, Subscription, Task, WeakEntity,
 };
 use persistence::TERMINAL_DB;
-use project::{
-    search::SearchQuery,
-    terminals::{ShellOptions, TerminalKind},
-    Fs, Metadata, Project,
-};
+use project::{search::SearchQuery, terminals::TerminalKind, Fs, Metadata, Project};
 use schemars::JsonSchema;
 use terminal::{
     alacritty_terminal::{
@@ -156,10 +152,7 @@ impl TerminalView {
         let working_directory = default_working_directory(workspace, cx);
         TerminalPanel::add_center_terminal(
             workspace,
-            TerminalKind::Shell(ShellOptions {
-                path: working_directory,
-                run_locally: None,
-            }),
+            TerminalKind::Shell(working_directory),
             window,
             cx,
         )
@@ -1317,10 +1310,7 @@ impl Item for TerminalView {
                     .or_else(|| Some(project.active_project_directory(cx)?.to_path_buf()));
                 let python_venv_directory = terminal.python_venv_directory.clone();
                 project.create_terminal_with_venv(
-                    TerminalKind::Shell(ShellOptions {
-                        path: working_directory,
-                        run_locally: None,
-                    }),
+                    TerminalKind::Shell(working_directory),
                     python_venv_directory,
                     window_handle,
                     cx,
@@ -1480,14 +1470,7 @@ impl SerializableItem for TerminalView {
 
             let terminal = project
                 .update(&mut cx, |project, cx| {
-                    project.create_terminal(
-                        TerminalKind::Shell(ShellOptions {
-                            path: cwd,
-                            run_locally: None,
-                        }),
-                        window_handle,
-                        cx,
-                    )
+                    project.create_terminal(TerminalKind::Shell(cwd), window_handle, cx)
                 })?
                 .await?;
             cx.update(|window, cx| {
