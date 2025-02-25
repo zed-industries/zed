@@ -112,7 +112,7 @@ use linked_editing_ranges::refresh_linked_ranges;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
-    debugger::breakpoint_store::{BreakpointEditAction, BreakpointStore, BreakpointStoreEvent},
+    debugger::breakpoint_store::{BreakpointEditAction, BreakpointStore},
     ProjectPath,
 };
 
@@ -5678,9 +5678,10 @@ impl Editor {
     /// TODO debugger: Use this function to color toggle symbols that house nested breakpoints
     fn active_breakpoint_points(
         &mut self,
+        range: Range<DisplayRow>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> HashMap<DisplayRow, Breakpoint> {
+    ) -> HashMap<DisplayRow, (text::Anchor, Breakpoint)> {
         let mut breakpoint_display_points = HashMap::default();
 
         let Some(dap_store) = self.dap_store.clone() else {
@@ -5688,24 +5689,6 @@ impl Editor {
         };
 
         let snapshot = self.snapshot(window, cx);
-
-        let breakpoints = &dap_store.read(cx).breakpoint_store().read(cx).breakpoints;
-
-        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-            let buffer = buffer.read(cx);
-
-            if let Some(project_path) = buffer.project_path(cx) {
-                if let Some(breakpoints) = breakpoints.get(&project_path) {
-                    for breakpoint in breakpoints {
-                        let point = breakpoint.point_for_buffer(&buffer.text_snapshot());
-                        breakpoint_display_points
-                            .insert(point.to_display_point(&snapshot).row(), breakpoint.clone());
-                    }
-                };
-            };
-
-            return breakpoint_display_points;
-        }
 
         let multi_buffer_snapshot = &snapshot.display_snapshot.buffer_snapshot;
         let Some(project) = self.project.as_ref() else {
@@ -5735,28 +5718,34 @@ impl Editor {
                         .buffer
                         .summary_for_anchor::<Point>(&info.range.context.end);
 
-                let Some(project_path) = project.read_with(cx, |this, cx| {
-                    this.buffer_for_id(info.buffer_id, cx)
-                        .and_then(|buffer| buffer.read_with(cx, |b, cx| b.project_path(cx)))
+                let Some(abs_path) = project.read_with(cx, |this, cx| {
+                    this.buffer_for_id(info.buffer_id, cx).and_then(|buffer| {
+                        buffer.read_with(cx, |b, cx| {
+                            b.project_path(cx)
+                                .and_then(|path| this.absolute_path(&path, cx))
+                        })
+                    })
                 }) else {
                     continue;
                 };
+                let breakpoints = dap_store.read(cx).breakpoint_store().read(cx).breakpoints(
+                    &abs_path,
+                    None,
+                    info.buffer.clone(),
+                );
 
-                if let Some(breakpoint_set) = breakpoints.get(&project_path) {
-                    for breakpoint in breakpoint_set {
-                        let breakpoint_position =
-                            breakpoint.point_for_buffer_snapshot(&info.buffer);
+                for breakpoint in breakpoints {
+                    let breakpoint_position = breakpoint.0.point_for_buffer_snapshot(&info.buffer);
 
-                        if buffer_range.contains(&breakpoint_position) {
-                            // Translated breakpoint position from singular buffer to multi buffer
-                            let delta = breakpoint_position.row - buffer_range.start.row;
+                    if buffer_range.contains(&breakpoint_position) {
+                        // Translated breakpoint position from singular buffer to multi buffer
+                        let delta = breakpoint_position.row - buffer_range.start.row;
 
-                            let position = excerpt_head + DisplayPoint::new(DisplayRow(delta), 0);
+                        let position = excerpt_head + DisplayPoint::new(DisplayRow(delta), 0);
 
-                            breakpoint_display_points.insert(position.row(), breakpoint.clone());
-                        }
+                        breakpoint_display_points.insert(position.row(), breakpoint.clone());
                     }
-                };
+                }
             };
         }
 
@@ -7588,13 +7577,31 @@ impl Editor {
             return;
         };
 
+        let Some(file) = self
+            .buffer()
+            .read(cx)
+            .buffer(buffer_id)
+            .and_then(|file| file.read(cx).file())
+        else {
+            return;
+        };
+        let Some(abs_path) = self.project.as_ref().and_then(|project| {
+            project.read_with(cx, |project, cx| {
+                project.absolute_path(
+                    &ProjectPath {
+                        path: file.path().clone(),
+                        worktree_id: file.worktree_id(cx),
+                    },
+                    cx,
+                )
+            })
+        }) else {
+            return;
+        };
         breakpoint_store.update(cx, |breakpoint_store, cx| {
             breakpoint_store.toggle_breakpoint(
-                buffer_id,
-                Breakpoint {
-                    position: breakpoint_position,
-                    kind,
-                },
+                abs_path.into(),
+                (breakpoint_position, Breakpoint { kind }),
                 edit_action,
                 cx,
             );
@@ -15141,19 +15148,6 @@ impl Editor {
             multi_buffer::Event::Saved => cx.emit(EditorEvent::Saved),
             multi_buffer::Event::FileHandleChanged => {
                 cx.emit(EditorEvent::TitleChanged);
-
-                if let Some(dap_store) = &self.dap_store {
-                    if let Some(project_path) = self.project_path(cx) {
-                        dap_store.update(cx, |dap_store, cx| {
-                            dap_store.breakpoint_store().update(cx, |_, cx| {
-                                cx.emit(BreakpointStoreEvent::BreakpointsChanged {
-                                    project_path,
-                                    source_changed: true,
-                                });
-                            });
-                        });
-                    }
-                }
             }
             multi_buffer::Event::Reloaded => cx.emit(EditorEvent::TitleChanged),
             // multi_buffer::Event::DiffBaseChanged => {

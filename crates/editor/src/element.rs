@@ -2060,7 +2060,7 @@ impl EditorElement {
         gutter_hitbox: &Hitbox,
         rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
         snapshot: &EditorSnapshot,
-        breakpoints: HashMap<DisplayRow, Breakpoint>,
+        breakpoints: HashMap<DisplayRow, (text::Anchor, Breakpoint)>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
@@ -2070,11 +2070,11 @@ impl EditorElement {
             };
 
             breakpoints
-                .iter()
-                .filter_map(|(point, bp)| {
+                .into_iter()
+                .filter_map(|(point, (text_anchor, bp))| {
                     let row = MultiBufferRow { 0: point.0 };
 
-                    if range.start > *point || range.end < *point {
+                    if range.start > point || range.end < point {
                         return None;
                     }
 
@@ -2082,11 +2082,11 @@ impl EditorElement {
                         return None;
                     }
 
-                    let button = editor.render_breakpoint(bp.position, *point, &bp.kind, cx);
+                    let button = editor.render_breakpoint(text_anchor, point, &bp.kind, cx);
 
                     let button = prepaint_gutter_button(
                         button,
-                        *point,
+                        point,
                         line_height,
                         gutter_dimensions,
                         scroll_pixel_position,
@@ -6996,10 +6996,6 @@ impl Element for EditorElement {
         window.set_view_id(self.editor.entity_id());
         window.set_focus_handle(&focus_handle, cx);
 
-        let mut breakpoint_rows = self
-            .editor
-            .update(cx, |editor, cx| editor.active_breakpoint_points(window, cx));
-
         let rem_size = self.rem_size(cx);
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
@@ -7251,7 +7247,9 @@ impl Element for EditorElement {
                         window,
                         cx,
                     );
-
+                    let mut breakpoint_rows = self.editor.update(cx, |editor, cx| {
+                        editor.active_breakpoint_points(start_row..end_row, window, cx)
+                    });
                     let line_numbers = self.layout_line_numbers(
                         Some(&gutter_hitbox),
                         gutter_dimensions,
@@ -7279,8 +7277,6 @@ impl Element for EditorElement {
                                 let position = snapshot
                                     .display_point_to_breakpoint_anchor(gutter_breakpoint_point);
                                 let breakpoint = Breakpoint {
-                                    position: position.text_anchor,
-
                                     kind: BreakpointKind::Standard,
                                 };
 

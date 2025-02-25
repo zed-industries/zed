@@ -17,60 +17,38 @@ use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use settings::Settings;
 use settings::WorktreeId;
 use std::{
+    collections::BTreeSet,
     hash::{Hash, Hasher},
     num::NonZeroU32,
+    ops::Range,
     path::Path,
     sync::Arc,
 };
-use text::Point;
+use sum_tree::TreeMap;
+use text::{Anchor, Point};
 use util::{maybe, ResultExt as _};
 
+#[derive(Clone)]
 struct RemoteBreakpointStore {
     upstream_client: Option<AnyProtoClient>,
     upstream_project_id: u64,
 }
 
-enum BreakpointMode {
-    Local,
-    Remote(RemoteBreakpointStore),
-}
-
 pub struct BreakpointStore {
-    pub breakpoints: BTreeMap<ProjectPath, HashSet<Breakpoint>>,
-    buffer_store: Entity<BufferStore>,
-    worktree_store: Entity<WorktreeStore>,
+    // TODO: This is.. less than ideal, as it's O(n) and does not return entries in order. We'll have to change TreeMap to support passing in the context for comparisons
+    breakpoints: BTreeMap<Arc<Path>, Vec<(text::Anchor, Breakpoint)>>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     active_stack_frames: HashMap<u64, (Arc<Path>, Point)>,
-    mode: BreakpointMode,
+    // E.g ssh
+    upstream_client: Option<RemoteBreakpointStore>,
 }
-
-pub enum BreakpointStoreEvent {
-    BreakpointsChanged {
-        project_path: ProjectPath,
-        source_changed: bool,
-    },
-    StackFrameChanged {
-        thread_id: u64,
-        path: Arc<Path>,
-        position: Point,
-    },
-}
-
-impl EventEmitter<BreakpointStoreEvent> for BreakpointStore {}
 
 impl BreakpointStore {
-    pub fn init(client: &AnyProtoClient) {}
-
-    pub fn local(
-        buffer_store: Entity<BufferStore>,
-        worktree_store: Entity<WorktreeStore>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub(crate) fn init(client: &AnyProtoClient) {}
+    pub fn local() -> Self {
         BreakpointStore {
             breakpoints: BTreeMap::new(),
-            buffer_store,
-            worktree_store,
-            mode: BreakpointMode::Local,
+            upstream_client: None,
             downstream_client: None,
             active_stack_frames: Default::default(),
         }
@@ -79,15 +57,11 @@ impl BreakpointStore {
     pub(crate) fn remote(
         upstream_project_id: u64,
         upstream_client: AnyProtoClient,
-        buffer_store: Entity<BufferStore>,
-        worktree_store: Entity<WorktreeStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         BreakpointStore {
             breakpoints: BTreeMap::new(),
-            buffer_store,
-            worktree_store,
-            mode: BreakpointMode::Remote(RemoteBreakpointStore {
+            upstream_client: Some(RemoteBreakpointStore {
                 upstream_client: Some(upstream_client),
                 upstream_project_id,
             }),
@@ -106,20 +80,8 @@ impl BreakpointStore {
         cx.notify();
     }
 
-    fn upstream_client(&self) -> Option<(AnyProtoClient, u64)> {
-        match &self.mode {
-            BreakpointMode::Remote(RemoteBreakpointStore {
-                upstream_client: Some(upstream_client),
-                upstream_project_id,
-                ..
-            }) => Some((upstream_client.clone(), *upstream_project_id)),
-
-            BreakpointMode::Remote(RemoteBreakpointStore {
-                upstream_client: None,
-                ..
-            }) => None,
-            BreakpointMode::Local => None,
-        }
+    fn upstream_client(&self) -> Option<RemoteBreakpointStore> {
+        self.upstream_client.clone()
     }
 
     pub fn set_active_stack_frame(
@@ -131,189 +93,94 @@ impl BreakpointStore {
     ) {
         self.active_stack_frames
             .insert(thread_id, (path.clone(), position.clone()));
-        cx.emit(BreakpointStoreEvent::StackFrameChanged {
-            thread_id,
-            path,
-            position,
-        });
     }
 
     pub fn toggle_breakpoint(
         &mut self,
-        buffer_id: BufferId,
-        mut breakpoint: Breakpoint,
+        abs_path: Arc<Path>,
+        mut breakpoint: (text::Anchor, Breakpoint),
         edit_action: BreakpointEditAction,
         cx: &mut Context<Self>,
     ) {
-        let Some(project_path) = self
-            .buffer_store
-            .read(cx)
-            .get(buffer_id)
-            .and_then(|buffer| buffer.read(cx).project_path(cx))
-        else {
-            return;
-        };
-
         let upstream_client = self.upstream_client();
-        let breakpoint_set = self.breakpoints.entry(project_path.clone()).or_default();
+        let breakpoint_set = self.breakpoints.entry(abs_path.clone()).or_default();
 
         match edit_action {
             BreakpointEditAction::Toggle => {
-                if !breakpoint_set.remove(&breakpoint) {
-                    breakpoint_set.insert(breakpoint);
+                let len_before = breakpoint_set.len();
+                breakpoint_set.retain(|value| &breakpoint != value);
+                if len_before == breakpoint_set.len() {
+                    // We did not remove any breakpoint, hence let's toggle one.
+                    breakpoint_set.push(breakpoint);
                 }
             }
             BreakpointEditAction::EditLogMessage(log_message) => {
                 if !log_message.is_empty() {
-                    breakpoint.kind = BreakpointKind::Log(log_message.clone());
-                    breakpoint_set.remove(&breakpoint);
-                    breakpoint_set.insert(breakpoint);
-                } else if matches!(&breakpoint.kind, BreakpointKind::Log(_)) {
-                    breakpoint_set.remove(&breakpoint);
+                    breakpoint.1.kind = BreakpointKind::Log(log_message.clone());
+                    let len_before = breakpoint_set.len();
+                    breakpoint_set.retain(|value| &breakpoint != value);
+                    if len_before == breakpoint_set.len() {
+                        // We did not remove any breakpoint, hence let's toggle one.
+                        breakpoint_set.push(breakpoint);
+                    }
+                } else if matches!(&breakpoint.1.kind, BreakpointKind::Log(_)) {
+                    breakpoint_set.retain(|value| &breakpoint != value);
                 }
             }
         }
 
         if breakpoint_set.is_empty() {
-            self.breakpoints.remove(&project_path);
+            self.breakpoints.remove(&abs_path);
         }
-
-        cx.emit(BreakpointStoreEvent::BreakpointsChanged {
-            project_path: project_path.clone(),
-            source_changed: false,
-        });
 
         cx.notify();
     }
 
     pub fn on_file_rename(
         &mut self,
-        old_project_path: ProjectPath,
-        new_project_path: ProjectPath,
+        old_path: Arc<Path>,
+        new_path: Arc<Path>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(breakpoints) = self.breakpoints.remove(&old_project_path) {
-            self.breakpoints
-                .insert(new_project_path.clone(), breakpoints);
+        if let Some(breakpoints) = self.breakpoints.remove(&old_path) {
+            self.breakpoints.insert(new_path.clone(), breakpoints);
 
-            cx.emit(BreakpointStoreEvent::BreakpointsChanged {
-                project_path: new_project_path,
-                source_changed: false,
-            });
             cx.notify();
         }
     }
 
-    pub fn breakpoint_at_row(
-        &self,
-        row: u32,
-        project_path: &ProjectPath,
+    pub fn breakpoints<'a>(
+        &'a self,
+        path: &'a Path,
+        range: Option<Range<text::Anchor>>,
         buffer_snapshot: BufferSnapshot,
-    ) -> Option<Breakpoint> {
-        let breakpoint_set = self.breakpoints.get(project_path)?;
-
-        breakpoint_set
-            .iter()
-            .find(|breakpoint| breakpoint.point_for_buffer_snapshot(&buffer_snapshot).row == row)
-            .cloned()
-    }
-
-    pub fn toggle_breakpoint_for_buffer(
-        &mut self,
-        project_path: &ProjectPath,
-        mut breakpoint: Breakpoint,
-        edit_action: BreakpointEditAction,
-        cx: &mut Context<Self>,
-    ) {
-        let upstream_client = self.upstream_client();
-
-        let breakpoint_set = self.breakpoints.entry(project_path.clone()).or_default();
-
-        match edit_action {
-            BreakpointEditAction::Toggle => {
-                if !breakpoint_set.remove(&breakpoint) {
-                    breakpoint_set.insert(breakpoint);
-                }
-            }
-            BreakpointEditAction::EditLogMessage(log_message) => {
-                if !log_message.is_empty() {
-                    breakpoint.kind = BreakpointKind::Log(log_message.clone());
-                    breakpoint_set.remove(&breakpoint);
-                    breakpoint_set.insert(breakpoint);
-                } else if matches!(&breakpoint.kind, BreakpointKind::Log(_)) {
-                    breakpoint_set.remove(&breakpoint);
-                }
-            }
-        }
-
-        if breakpoint_set.is_empty() {
-            self.breakpoints.remove(project_path);
-        }
-
-        cx.emit(BreakpointStoreEvent::BreakpointsChanged {
-            project_path: project_path.clone(),
-            source_changed: false,
-        });
-        cx.notify();
-    }
-
-    pub(crate) fn serialize_breakpoints_for_project_path(
-        &self,
-        project_path: &ProjectPath,
-        cx: &App,
-    ) -> Option<(Arc<Path>, Vec<SerializedBreakpoint>)> {
-        let buffer = maybe!({
-            let buffer_id = self
-                .buffer_store
-                .read(cx)
-                .buffer_id_for_project_path(project_path)?;
-            Some(self.buffer_store.read(cx).get(*buffer_id)?.read(cx))
-        });
-
-        let worktree_path = self
-            .worktree_store
-            .read(cx)
-            .worktree_for_id(project_path.worktree_id, cx)?
-            .read(cx)
-            .abs_path();
-
-        Some((
-            worktree_path,
-            self.breakpoints
-                .get(&project_path)?
-                .iter()
-                .map(|bp| bp.to_serialized(buffer, project_path.path.clone()))
-                .collect(),
-        ))
-    }
-
-    pub fn serialize_breakpoints(&self, cx: &App) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
-        let mut result: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
-
-        if !DebuggerSettings::get_global(cx).save_breakpoints {
-            return result;
-        }
-
-        for project_path in self.breakpoints.keys() {
-            if let Some((worktree_path, mut serialized_breakpoint)) =
-                self.serialize_breakpoints_for_project_path(project_path, cx)
-            {
-                result
-                    .entry(worktree_path.clone())
-                    .or_default()
-                    .append(&mut serialized_breakpoint)
-            }
-        }
-
-        result
+    ) -> impl Iterator<Item = &'a (text::Anchor, Breakpoint)> + 'a {
+        self.breakpoints
+            .get(path)
+            .into_iter()
+            .flat_map(move |breakpoints| {
+                breakpoints.into_iter().filter({
+                    let range = range.clone();
+                    let buffer_snapshot = buffer_snapshot.clone();
+                    move |(position, _)| {
+                        if let Some(range) = &range {
+                            position.cmp(&range.start, &buffer_snapshot).is_ge()
+                                && position.cmp(&range.end, &buffer_snapshot).is_le()
+                        } else {
+                            false
+                        }
+                    }
+                })
+            })
     }
 
     pub(crate) fn all_breakpoints(
         &self,
-        as_abs_path: bool,
         cx: &App,
     ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
-        let mut all_breakpoints: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
+        let all_breakpoints: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
+        let as_abs_path = true;
+        /*
 
         for (project_path, breakpoints) in &self.breakpoints {
             let buffer = maybe!({
@@ -348,7 +215,7 @@ impl BreakpointStore {
                     .into_iter()
                     .map(|bp| bp.to_serialized(buffer, project_path.clone().path)),
             );
-        }
+        }*/
 
         all_breakpoints
     }
@@ -405,46 +272,13 @@ impl Hash for BreakpointKind {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Breakpoint {
-    pub position: text::Anchor,
     pub kind: BreakpointKind,
 }
 
 impl Breakpoint {
-    pub fn point_for_buffer(&self, buffer: &text::BufferSnapshot) -> Point {
-        buffer.summary_for_anchor::<Point>(&self.position)
-    }
-
-    pub fn point_for_buffer_snapshot(&self, buffer_snapshot: &BufferSnapshot) -> Point {
-        buffer_snapshot.summary_for_anchor::<Point>(&self.position)
-    }
-
-    fn to_serialized(&self, buffer: Option<&Buffer>, path: Arc<Path>) -> SerializedBreakpoint {
-        match buffer {
-            Some(buffer) => {
-                let position = {
-                    let ret = buffer.summary_for_anchor::<Point>(&self.position).row + 1;
-
-                    ret
-                };
-                SerializedBreakpoint {
-                    position,
-                    path,
-                    kind: self.kind.clone(),
-                }
-            }
-            None => unimplemented!(
-                r#"SerializedBreakpoint {{
-                position: self.cached_position,
-                path,
-                kind: self.kind.clone(),
-                }}"#
-            ),
-        }
-    }
-
-    fn to_proto(&self) -> Option<client::proto::Breakpoint> {
+    fn to_proto(&self, path: &Path, position: &text::Anchor) -> Option<client::proto::Breakpoint> {
         Some(client::proto::Breakpoint {
-            position: Some(serialize_text_anchor(&self.position)),
+            position: Some(serialize_text_anchor(position)),
 
             kind: match self.kind {
                 BreakpointKind::Standard => proto::BreakpointKind::Standard.into(),
@@ -459,15 +293,16 @@ impl Breakpoint {
     }
 
     fn from_proto(breakpoint: client::proto::Breakpoint) -> Option<Self> {
-        Some(Self {
-            position: deserialize_anchor(breakpoint.position?)?,
-            kind: match proto::BreakpointKind::from_i32(breakpoint.kind) {
-                Some(proto::BreakpointKind::Log) => {
-                    BreakpointKind::Log(breakpoint.message.clone().unwrap_or_default().into())
-                }
-                None | Some(proto::BreakpointKind::Standard) => BreakpointKind::Standard,
-            },
-        })
+        None
+        // Some(Self {
+        //     position: deserialize_anchor(breakpoint.position?)?,
+        //     kind: match proto::BreakpointKind::from_i32(breakpoint.kind) {
+        //         Some(proto::BreakpointKind::Log) => {
+        //             BreakpointKind::Log(breakpoint.message.clone().unwrap_or_default().into())
+        //         }
+        //         None | Some(proto::BreakpointKind::Standard) => BreakpointKind::Standard,
+        //     },
+        // })
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::project_settings::ProjectSettings;
 
-use super::breakpoint_store::{BreakpointStore, BreakpointStoreEvent};
+use super::breakpoint_store::BreakpointStore;
 use super::dap_command::{
     self, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand,
     Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, ModulesCommand, NextCommand,
@@ -288,8 +288,7 @@ impl LocalMode {
             // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
             let launch = this.request(Launch { raw }, cx.background_executor().clone());
             let that = this.clone();
-            let breakpoints =
-                breakpoints.update(&mut cx, |this, cx| this.all_breakpoints(true, cx))?;
+            let breakpoints = breakpoints.update(&mut cx, |this, cx| this.all_breakpoints(cx))?;
             let caps = &capabilities;
             let configuration_sequence = async move {
                 let _ = initialized_rx.await?;

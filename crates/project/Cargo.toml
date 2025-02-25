@@ -72,6 +72,7 @@ shlex.workspace = true
 smol.workspace = true
 snippet.workspace = true
 snippet_provider.workspace = true
+sum_tree.workspace = true
 terminal.workspace = true
 text.workspace = true
 toml.workspace = true
