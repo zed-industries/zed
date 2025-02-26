@@ -1,6 +1,6 @@
 #![allow(unused, dead_code)]
 
-use crate::git_panel::{commit_message_editor, GitPanel};
+use crate::git_panel::{self, commit_message_editor, GitPanel};
 use crate::repository_selector::RepositorySelector;
 use anyhow::Result;
 use git::Commit;
@@ -271,6 +271,7 @@ impl CommitModal {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let (width, padding_x, modal_border_radius) = self.container_properties(window, cx);
+        let git_panel = self.git_panel.clone();
 
         let border_radius = modal_border_radius - padding_x / 2.0;
 
@@ -339,13 +340,6 @@ impl CommitModal {
                 None
             };
 
-        let fake_commit_kb =
-            ui::KeyBinding::new(gpui::KeyBinding::new("cmd-enter", gpui::NoAction, None), cx);
-
-        let commit_hint =
-            KeybindingHint::new(fake_commit_kb, cx.theme().colors().editor_background)
-                .suffix(commit_label);
-
         let focus_handle = self.focus_handle(cx);
 
         // let next_suggestion_kb =
@@ -360,9 +354,27 @@ impl CommitModal {
         //     KeybindingHint::new(kb, cx.theme().colors().editor_background)
         //         .suffix("Previous Suggestion")
         // });
+        //
+
+        let (panel_editor_focus_handle, can_commit) = git_panel.update(cx, |git_panel, cx| {
+            (git_panel.editor_focus_handle(cx), git_panel.can_commit())
+        });
+
+        let commit_button = panel_filled_button(commit_label)
+            .tooltip(move |window, cx| {
+                let focus_handle = focus_handle.clone();
+                Tooltip::for_action_in(tooltip, &Commit, &panel_editor_focus_handle, window, cx)
+            })
+            .disabled(!can_commit)
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.git_panel
+                    .update(cx, |git_panel, cx| git_panel.commit_changes(window, cx));
+                cx.emit(DismissEvent);
+            }));
 
         v_flex()
             .id("editor-container")
+            .cursor_text()
             .bg(cx.theme().colors().editor_background)
             .flex_1()
             .size_full()
@@ -396,8 +408,6 @@ impl CommitModal {
                     .child(div().flex_1())
                     .child(
                         h_flex()
-                            .opacity(0.7)
-                            .group_hover("commit_editor_footer", |this| this.opacity(1.0))
                             .items_center()
                             .justify_end()
                             .flex_none()
@@ -405,78 +415,8 @@ impl CommitModal {
                             .gap_4()
                             .children(close_kb_hint)
                             // .children(next_suggestion_hint)
-                            .child(commit_hint),
+                            .child(panel_filled_button(commit_label)),
                     ),
-            )
-    }
-
-    pub fn render_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (branch, tooltip, title, co_authors) = self.git_panel.update(cx, |git_panel, cx| {
-            let branch = git_panel
-                .active_repository
-                .as_ref()
-                .and_then(|repo| {
-                    repo.read(cx)
-                        .repository_entry
-                        .branch()
-                        .map(|b| b.name.clone())
-                })
-                .unwrap_or_else(|| "<no branch>".into());
-            let tooltip = if git_panel.has_staged_changes() {
-                "Commit staged changes"
-            } else {
-                "Commit changes to tracked files"
-            };
-            let title = if git_panel.has_staged_changes() {
-                "Commit"
-            } else {
-                "Commit All"
-            };
-            let co_authors = git_panel.render_co_authors(cx);
-            (branch, tooltip, title, co_authors)
-        });
-
-        let branch_selector = panel_button(branch)
-            .icon(IconName::GitBranch)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .icon_position(IconPosition::Start)
-            .tooltip(Tooltip::for_action_title(
-                "Switch Branch",
-                &zed_actions::git::Branch,
-            ))
-            .on_click(cx.listener(|_, _, window, cx| {
-                window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
-            }))
-            .style(ButtonStyle::Transparent);
-
-        let changes_count = self.git_panel.read(cx).total_staged_count();
-
-        let close_kb_hint =
-            if let Some(close_kb) = ui::KeyBinding::for_action(&menu::Cancel, window, cx) {
-                Some(
-                    KeybindingHint::new(close_kb, cx.theme().colors().editor_background)
-                        .suffix("Cancel"),
-                )
-            } else {
-                None
-            };
-
-        h_flex()
-            .items_center()
-            .h(px(36.0))
-            .w_full()
-            .justify_between()
-            .px_3()
-            .child(h_flex().child(branch_selector))
-            .child(
-                h_flex().gap_1p5().children(co_authors).child(
-                    Button::new("stage-button", title)
-                        .tooltip(Tooltip::for_action_title(tooltip, &git::Commit))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.commit(&Default::default(), window, cx);
-                        })),
-                ),
             )
     }
 
