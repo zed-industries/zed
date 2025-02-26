@@ -982,7 +982,6 @@ impl FakeFsState {
                 path: path.into(),
                 kind,
             }));
-        dbg!(&self.buffered_events, &self.events_paused);
 
         if !self.events_paused {
             self.flush_events(self.buffered_events.len());
@@ -1395,7 +1394,6 @@ impl FakeFs {
                         unreachable!();
                     }
                 };
-                dbg!(&path, status);
                 state.statuses.insert(path.clone(), status);
             }
         });
