@@ -780,6 +780,10 @@ impl<'a> Chunks<'a> {
             reversed,
         }
     }
+
+    pub fn reversed(&self) -> bool {
+        self.reversed
+    }
 }
 
 impl<'a> Iterator for Chunks<'a> {

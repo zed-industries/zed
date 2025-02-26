@@ -16324,6 +16324,66 @@ mod autoclose_tags {
 
                 let tag_name = buffer.text_for_range(tag_name_range).collect::<String>();
                 dbg!(&tag_name);
+                {
+                    let mut tree_root_node = open_tag;
+                    // todo! child_with_descendant
+                    while let Some(parent) = tree_root_node.parent() {
+                        tree_root_node = parent;
+                        if parent.is_error()
+                            || (parent.kind() != "jsx_element"
+                                && parent.kind() != "jsx_opening_element")
+                        {
+                            break;
+                        }
+                    }
+
+                    dbg!(tree_root_node);
+
+                    let mut unclosed_open_tag_count: i32 = 0;
+
+                    let mut stack = Vec::with_capacity(tree_root_node.descendant_count());
+                    stack.push(tree_root_node);
+
+                    let mut cursor = tree_root_node.walk();
+
+                    // todo! use cursor for more efficient traversal
+                    // if child -> go to child
+                    // else if next sibling -> go to next sibling
+                    // else -> go to parent
+                    // if parent == tree_root_node -> break
+                    while let Some(node) = stack.pop() {
+                        if node.kind() == "jsx_opening_element" {
+                            if node.child_by_field_name("name").map_or(false, |node| {
+                                chunk_equals_str(
+                                    buffer.text_for_range(node.byte_range()),
+                                    &tag_name,
+                                )
+                            }) {
+                                dbg!("found open");
+                                unclosed_open_tag_count += 1;
+                            }
+                            continue;
+                        } else if node.kind() == "jsx_closing_element" {
+                            if node.child_by_field_name("name").map_or(false, |node| {
+                                chunk_equals_str(
+                                    buffer.text_for_range(node.byte_range()),
+                                    &tag_name,
+                                )
+                            }) {
+                                dbg!("found close");
+                                unclosed_open_tag_count -= 1;
+                            }
+                            continue;
+                        }
+
+                        stack.extend(node.children(&mut cursor));
+                    }
+
+                    if unclosed_open_tag_count <= 0 {
+                        // skip if already closed
+                        continue;
+                    }
+                }
                 let edit_anchor = buffer.anchor_after(edited_range.end);
                 let edit_range = edit_anchor..edit_anchor;
                 edits.push((edit_range, format!("</{}>", tag_name)));
@@ -16331,6 +16391,39 @@ mod autoclose_tags {
             return Ok(edits);
             // Ok(vec![])
         }
+    }
+
+    pub fn chunk_equals_str(chunk: text::Chunks<'_>, other: &str) -> bool {
+        if chunk.reversed() {
+            let mut offset = other.len();
+            for chunk in chunk {
+                if other[0..offset].ends_with(chunk) {
+                    offset -= chunk.len();
+                } else {
+                    return false;
+                }
+            }
+            if offset != 0 {
+                return false;
+            }
+        } else {
+            let mut offset = 0;
+            for chunk in chunk {
+                if offset >= other.len() {
+                    return false;
+                }
+                if other[offset..].starts_with(chunk) {
+                    offset += chunk.len();
+                } else {
+                    return false;
+                }
+            }
+            if offset != other.len() {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     #[gpui::test]
@@ -16352,6 +16445,16 @@ mod autoclose_tags {
     check!(
         basic,
         "<divˇ" + ">" => "<div>ˇ</div>"
+    );
+
+    check!(
+        basic_nested,
+        "<div><divˇ</div>" + ">" => "<div><div>ˇ</div></div>"
+    );
+
+    check!(
+        basic_ignore_already_closed,
+        "<div><divˇ</div></div>" + ">" => "<div><div>ˇ</div></div>"
     );
 }
 
