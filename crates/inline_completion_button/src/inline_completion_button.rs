@@ -592,7 +592,7 @@ impl InlineCompletionButton {
 
         if cx.has_flag::<feature_flags::PredictEditsNonEagerModeFeatureFlag>() {
             let is_eager_preview_enabled = match settings.edit_predictions_mode() {
-                language::EditPredictionsMode::Stealth => false,
+                language::EditPredictionsMode::Subtle => false,
                 language::EditPredictionsMode::Eager => true,
             };
             menu = menu.separator().toggleable_entry(
@@ -608,7 +608,7 @@ impl InlineCompletionButton {
                             cx,
                             move |settings, _cx| {
                                 let new_mode = match is_eager_preview_enabled {
-                                    true => language::EditPredictionsMode::Stealth,
+                                    true => language::EditPredictionsMode::Subtle,
                                     false => language::EditPredictionsMode::Eager,
                                 };
 
