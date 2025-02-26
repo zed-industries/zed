@@ -26,7 +26,7 @@ use windows::{
 
 use crate::{Args, OpenListener};
 
-pub fn check_single_instance(opener: OpenListener) -> bool {
+pub fn check_single_instance(opener: OpenListener, run_foreground: bool) -> bool {
     unsafe {
         CreateMutexW(
             None,
@@ -39,7 +39,7 @@ pub fn check_single_instance(opener: OpenListener) -> bool {
     if first_instance {
         // We are the first instance, listen for messages sent from other instances
         std::thread::spawn(move || with_pipe(|url| opener.open_urls(vec![url])));
-    } else {
+    } else if !run_foreground {
         // We are not the first instance, send args to the first instance
         send_args_to_instance().log_err();
     }

@@ -603,6 +603,7 @@ mod windows {
         fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
             std::process::Command::new(self.0.clone())
                 .arg(ipc_url)
+                .arg("--foreground")
                 .spawn()?
                 .wait()
         }
