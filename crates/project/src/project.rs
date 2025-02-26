@@ -650,7 +650,6 @@ impl Project {
         SettingsObserver::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
-        BreakpointStore::init(&client);
         DapStore::init(&client);
     }
 
@@ -976,7 +975,6 @@ impl Project {
             SettingsObserver::init(&ssh_proto);
             TaskStore::init(Some(&ssh_proto));
             ToolchainStore::init(&ssh_proto);
-            BreakpointStore::init(&ssh_proto);
             DapStore::init(&ssh_proto);
             GitStore::init(&ssh_proto);
 

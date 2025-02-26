@@ -24,7 +24,6 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use sum_tree::TreeMap;
 use text::{Anchor, Point};
 use util::{maybe, ResultExt as _};
 
@@ -34,9 +33,15 @@ struct RemoteBreakpointStore {
     upstream_project_id: u64,
 }
 
-pub struct BreakpointStore {
+#[derive(Clone)]
+struct BreakpointsInFile {
+    buffer: Entity<Buffer>,
     // TODO: This is.. less than ideal, as it's O(n) and does not return entries in order. We'll have to change TreeMap to support passing in the context for comparisons
-    breakpoints: BTreeMap<Arc<Path>, Vec<(text::Anchor, Breakpoint)>>,
+    breakpoints: Vec<(text::Anchor, Breakpoint)>,
+}
+
+pub struct BreakpointStore {
+    breakpoints: BTreeMap<Arc<Path>, BreakpointsInFile>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     active_stack_frames: HashMap<u64, (Arc<Path>, Point)>,
     // E.g ssh
@@ -44,7 +49,6 @@ pub struct BreakpointStore {
 }
 
 impl BreakpointStore {
-    pub(crate) fn init(client: &AnyProtoClient) {}
     pub fn local() -> Self {
         BreakpointStore {
             breakpoints: BTreeMap::new(),
@@ -95,41 +99,65 @@ impl BreakpointStore {
             .insert(thread_id, (path.clone(), position.clone()));
     }
 
+    fn abs_path_from_buffer(buffer: &Entity<Buffer>, cx: &App) -> Option<Arc<Path>> {
+        worktree::File::from_dyn(buffer.read(cx).file())
+            .and_then(|file| file.worktree.read(cx).absolutize(&file.path).ok())
+            .map(|path_buf| Arc::<Path>::from(path_buf))
+    }
+
     pub fn toggle_breakpoint(
         &mut self,
-        abs_path: Arc<Path>,
+        buffer: Entity<Buffer>,
         mut breakpoint: (text::Anchor, Breakpoint),
         edit_action: BreakpointEditAction,
         cx: &mut Context<Self>,
     ) {
-        let upstream_client = self.upstream_client();
-        let breakpoint_set = self.breakpoints.entry(abs_path.clone()).or_default();
+        dbg!("In toggle breakpoint");
+        let Some(abs_path) = Self::abs_path_from_buffer(&buffer, cx) else {
+            dbg!("couldn't get abs path from buffer");
+            return;
+        };
+
+        let breakpoint_set =
+            self.breakpoints
+                .entry(abs_path.clone())
+                .or_insert_with(|| BreakpointsInFile {
+                    breakpoints: Default::default(),
+                    buffer,
+                });
 
         match edit_action {
             BreakpointEditAction::Toggle => {
-                let len_before = breakpoint_set.len();
-                breakpoint_set.retain(|value| &breakpoint != value);
-                if len_before == breakpoint_set.len() {
+                let len_before = breakpoint_set.breakpoints.len();
+                breakpoint_set
+                    .breakpoints
+                    .retain(|value| &breakpoint != value);
+                if len_before == breakpoint_set.breakpoints.len() {
                     // We did not remove any breakpoint, hence let's toggle one.
-                    breakpoint_set.push(breakpoint);
+                    breakpoint_set.breakpoints.push(breakpoint);
+                    dbg!(&breakpoint_set.breakpoints);
                 }
             }
             BreakpointEditAction::EditLogMessage(log_message) => {
                 if !log_message.is_empty() {
                     breakpoint.1.kind = BreakpointKind::Log(log_message.clone());
-                    let len_before = breakpoint_set.len();
-                    breakpoint_set.retain(|value| &breakpoint != value);
-                    if len_before == breakpoint_set.len() {
+                    let len_before = breakpoint_set.breakpoints.len();
+                    breakpoint_set
+                        .breakpoints
+                        .retain(|value| &breakpoint != value);
+                    if len_before == breakpoint_set.breakpoints.len() {
                         // We did not remove any breakpoint, hence let's toggle one.
-                        breakpoint_set.push(breakpoint);
+                        breakpoint_set.breakpoints.push(breakpoint);
                     }
                 } else if matches!(&breakpoint.1.kind, BreakpointKind::Log(_)) {
-                    breakpoint_set.retain(|value| &breakpoint != value);
+                    breakpoint_set
+                        .breakpoints
+                        .retain(|value| &breakpoint != value);
                 }
             }
         }
 
-        if breakpoint_set.is_empty() {
+        if breakpoint_set.breakpoints.is_empty() {
             self.breakpoints.remove(&abs_path);
         }
 
@@ -151,15 +179,17 @@ impl BreakpointStore {
 
     pub fn breakpoints<'a>(
         &'a self,
-        path: &'a Path,
+        buffer: &'a Entity<Buffer>,
         range: Option<Range<text::Anchor>>,
         buffer_snapshot: BufferSnapshot,
+        cx: &App,
     ) -> impl Iterator<Item = &'a (text::Anchor, Breakpoint)> + 'a {
-        self.breakpoints
-            .get(path)
+        let abs_path = Self::abs_path_from_buffer(buffer, cx);
+        abs_path
+            .and_then(|path| self.breakpoints.get(&path))
             .into_iter()
-            .flat_map(move |breakpoints| {
-                breakpoints.into_iter().filter({
+            .flat_map(move |file_breakpoints| {
+                file_breakpoints.breakpoints.iter().filter({
                     let range = range.clone();
                     let buffer_snapshot = buffer_snapshot.clone();
                     move |(position, _)| {

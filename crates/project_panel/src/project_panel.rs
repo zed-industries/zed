@@ -1184,7 +1184,8 @@ impl ProjectPanel {
                             };
 
                             project.breakpoint_store().update(cx, |breakpoint_store, cx| {
-                                breakpoint_store.on_file_rename(old_path, new_path, cx);
+                                unimplemented!();
+                               // breakpoint_store.on_file_rename(old_path, new_path, cx);
                             });
                         });
 

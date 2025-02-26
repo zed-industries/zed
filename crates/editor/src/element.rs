@@ -2111,7 +2111,7 @@ impl EditorElement {
         gutter_hitbox: &Hitbox,
         rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
         snapshot: &EditorSnapshot,
-        breakpoints: &mut HashMap<DisplayRow, Breakpoint>,
+        breakpoints: &mut HashMap<DisplayRow, (text::Anchor, Breakpoint)>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
@@ -2206,7 +2206,7 @@ impl EditorElement {
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
         rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
-        breakpoint_points: &mut HashMap<DisplayRow, Breakpoint>,
+        breakpoint_points: &mut HashMap<DisplayRow, (text::Anchor, Breakpoint)>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
@@ -2314,7 +2314,7 @@ impl EditorElement {
         active_rows: &BTreeMap<DisplayRow, bool>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
-        breakpoint_rows: &HashMap<DisplayRow, Breakpoint>,
+        breakpoint_rows: &HashMap<DisplayRow, (text::Anchor, Breakpoint)>,
         window: &mut Window,
         cx: &mut App,
     ) -> Arc<HashMap<MultiBufferRow, LineNumberLayout>> {
@@ -7280,7 +7280,7 @@ impl Element for EditorElement {
                                     kind: BreakpointKind::Standard,
                                 };
 
-                                breakpoint
+                                (position.text_anchor, breakpoint)
                             });
                     }
 

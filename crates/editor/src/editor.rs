@@ -5597,7 +5597,7 @@ impl Editor {
         _style: &EditorStyle,
         row: DisplayRow,
         is_active: bool,
-        breakpoint: Option<&Breakpoint>,
+        breakpoint: Option<&(text::Anchor, Breakpoint)>,
         cx: &mut Context<Self>,
     ) -> Option<IconButton> {
         let color = if breakpoint.is_some() {
@@ -5606,10 +5606,10 @@ impl Editor {
             Color::Muted
         };
 
-        let position = breakpoint.as_ref().map(|bp| bp.position);
+        let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
         let bp_kind = Arc::new(
             breakpoint
-                .map(|bp| bp.kind.clone())
+                .map(|(_, bp)| bp.kind.clone())
                 .unwrap_or(BreakpointKind::Standard),
         );
 
@@ -5705,46 +5705,38 @@ impl Editor {
                     continue;
                 };
 
+                let Some(buffer) =
+                    project.read_with(cx, |this, cx| this.buffer_for_id(info.buffer_id, cx))
+                else {
+                    continue;
+                };
+
+                let breakpoints = dap_store.read(cx).breakpoint_store().read(cx).breakpoints(
+                    &buffer,
+                    Some(info.range.context.start..info.range.context.end),
+                    info.buffer.clone(),
+                    cx,
+                );
+
                 // To translate a breakpoint's position within a singular buffer to a multi buffer
                 // position we need to know it's excerpt starting location, it's position within
                 // the singular buffer, and if that position is within the excerpt's range.
                 let excerpt_head = excerpt_ranges
                     .start
                     .to_display_point(&snapshot.display_snapshot);
-                let buffer_range = info // Buffer lines being shown within the excerpt
+
+                let buffer_start = info
                     .buffer
-                    .summary_for_anchor::<Point>(&info.range.context.start)
-                    ..info
-                        .buffer
-                        .summary_for_anchor::<Point>(&info.range.context.end);
+                    .summary_for_anchor::<Point>(&info.range.context.start);
 
-                let Some(abs_path) = project.read_with(cx, |this, cx| {
-                    this.buffer_for_id(info.buffer_id, cx).and_then(|buffer| {
-                        buffer.read_with(cx, |b, cx| {
-                            b.project_path(cx)
-                                .and_then(|path| this.absolute_path(&path, cx))
-                        })
-                    })
-                }) else {
-                    continue;
-                };
-                let breakpoints = dap_store.read(cx).breakpoint_store().read(cx).breakpoints(
-                    &abs_path,
-                    None,
-                    info.buffer.clone(),
-                );
+                for (anchor, breakpoint) in breakpoints {
+                    let as_row = info.buffer.summary_for_anchor::<Point>(&anchor).row;
+                    let delta = as_row - buffer_start.row;
 
-                for breakpoint in breakpoints {
-                    let breakpoint_position = breakpoint.0.point_for_buffer_snapshot(&info.buffer);
+                    let position = excerpt_head + DisplayPoint::new(DisplayRow(delta), 0);
 
-                    if buffer_range.contains(&breakpoint_position) {
-                        // Translated breakpoint position from singular buffer to multi buffer
-                        let delta = breakpoint_position.row - buffer_range.start.row;
-
-                        let position = excerpt_head + DisplayPoint::new(DisplayRow(delta), 0);
-
-                        breakpoint_display_points.insert(position.row(), breakpoint.clone());
-                    }
+                    breakpoint_display_points
+                        .insert(position.row(), (anchor.clone(), breakpoint.clone()));
                 }
             };
         }
@@ -5982,7 +5974,7 @@ impl Editor {
         _style: &EditorStyle,
         is_active: bool,
         row: DisplayRow,
-        breakpoint: Option<Breakpoint>,
+        breakpoint: Option<(text::Anchor, Breakpoint)>,
         cx: &mut Context<Self>,
     ) -> IconButton {
         let color = if breakpoint.is_some() {
@@ -5991,10 +5983,10 @@ impl Editor {
             Color::Muted
         };
 
-        let position = breakpoint.as_ref().map(|bp| bp.position);
+        let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
         let bp_kind = Arc::new(
             breakpoint
-                .map(|bp| bp.kind)
+                .map(|(_, bp)| bp.kind)
                 .unwrap_or(BreakpointKind::Standard),
         );
 
@@ -7454,10 +7446,10 @@ impl Editor {
     }
 
     pub(crate) fn breakpoint_at_cursor_head(
-        &mut self,
+        &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<(text::Anchor, BreakpointKind)> {
+    ) -> Option<(text::Anchor, Breakpoint)> {
         let cursor_position: Point = self.selections.newest(cx).head();
 
         // We Set the column position to zero so this function interacts correctly
@@ -7485,14 +7477,22 @@ impl Editor {
             .row;
 
         let bp = self.dap_store.clone()?.read_with(cx, |dap_store, cx| {
-            dap_store.breakpoint_store().read(cx).breakpoint_at_row(
-                row,
-                &project_path,
-                buffer_snapshot,
-            )
-        })?;
-
-        Some((bp.position, bp.kind))
+            dap_store
+                .breakpoint_store()
+                .read(cx)
+                .breakpoints(
+                    &buffer,
+                    Some(breakpoint_position..(text::Anchor::MAX)),
+                    buffer_snapshot.clone(),
+                    cx,
+                )
+                .next()
+                .filter(|(anchor, _)| {
+                    buffer_snapshot.summary_for_anchor::<Point>(anchor).row == row
+                })
+                .cloned()
+        });
+        bp
     }
 
     pub fn edit_log_breakpoint(
@@ -7501,7 +7501,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (anchor, kind) = self
+        let (anchor, bp) = self
             .breakpoint_at_cursor_head(window, cx)
             .unwrap_or_else(|| {
                 let cursor_position: Point = self.selections.newest(cx).head();
@@ -7513,9 +7513,12 @@ impl Editor {
                     .breakpoint_anchor(Point::new(cursor_position.row, 0))
                     .text_anchor;
 
-                let kind = BreakpointKind::Standard;
-
-                (breakpoint_position, kind)
+                (
+                    breakpoint_position,
+                    Breakpoint {
+                        kind: BreakpointKind::Standard,
+                    },
+                )
             });
 
         if let Some(buffer) = self
@@ -7529,7 +7532,7 @@ impl Editor {
                 .to_display_point(&self.snapshot(window, cx))
                 .row();
 
-            self.add_edit_breakpoint_block(row, anchor, &kind, window, cx);
+            self.add_edit_breakpoint_block(row, anchor, &bp.kind, window, cx);
         }
     }
 
@@ -7541,8 +7544,8 @@ impl Editor {
     ) {
         let edit_action = BreakpointEditAction::Toggle;
 
-        if let Some((anchor, kind)) = self.breakpoint_at_cursor_head(window, cx) {
-            self.edit_breakpoint_at_anchor(anchor, kind, edit_action, cx);
+        if let Some((anchor, breakpoint)) = self.breakpoint_at_cursor_head(window, cx) {
+            self.edit_breakpoint_at_anchor(anchor, breakpoint.kind, edit_action, cx);
         } else {
             let cursor_position: Point = self.selections.newest(cx).head();
 
@@ -7569,6 +7572,7 @@ impl Editor {
         edit_action: BreakpointEditAction,
         cx: &mut Context<Self>,
     ) {
+        dbg!(&kind);
         let Some(breakpoint_store) = &self.breakpoint_store else {
             return;
         };
@@ -7577,30 +7581,13 @@ impl Editor {
             return;
         };
 
-        let Some(file) = self
-            .buffer()
-            .read(cx)
-            .buffer(buffer_id)
-            .and_then(|file| file.read(cx).file())
-        else {
+        let Some(buffer) = self.buffer().read(cx).buffer(buffer_id) else {
             return;
         };
-        let Some(abs_path) = self.project.as_ref().and_then(|project| {
-            project.read_with(cx, |project, cx| {
-                project.absolute_path(
-                    &ProjectPath {
-                        path: file.path().clone(),
-                        worktree_id: file.worktree_id(cx),
-                    },
-                    cx,
-                )
-            })
-        }) else {
-            return;
-        };
+
         breakpoint_store.update(cx, |breakpoint_store, cx| {
             breakpoint_store.toggle_breakpoint(
-                abs_path.into(),
+                buffer.into(),
                 (breakpoint_position, Breakpoint { kind }),
                 edit_action,
                 cx,
