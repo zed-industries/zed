@@ -956,8 +956,10 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         const IAM_CONSOLE_URL: &str = "https://us-east-1.console.aws.amazon.com/iam/home";
-        const BEDROCK_DOCS_URL: &str = "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html";
-        const BEDROCK_MODEL_CATALOG: &str = "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess";
+        const BEDROCK_DOCS_URL: &str =
+            "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html";
+        const BEDROCK_MODEL_CATALOG: &str =
+            "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess";
         const INSTRUCTIONS: [&str; 5] = [
             "To use Zed's assistant with Bedrock, you need to add the Access Key ID, Secret Access Key and AWS Region. Follow these steps:",
             "- Create your credentials at:",
@@ -976,7 +978,6 @@ impl Render for ConfigurationView {
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials...")).into_any()
         } else if self.should_render_editor(cx) {
-
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_credentials))
