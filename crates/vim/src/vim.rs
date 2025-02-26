@@ -1641,12 +1641,42 @@ pub enum UseSystemClipboard {
     OnYank,
 }
 
+#[derive(Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BoundaryMovementsLeftRight {
+    /// Disable.
+    #[default]
+    Off,
+    /// Enable for both `h`/`l` and the arrows.
+    On,
+}
+
+#[derive(Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BoundaryMovementsUpDown {
+    /// Disable.
+    #[default]
+    Off,
+    /// Enable for both `j`/`k` and the arrows.
+    On,
+}
+
+#[derive(Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+pub struct BoundaryMovements {
+    #[serde(default)]
+    left_right: BoundaryMovementsLeftRight,
+    #[serde(default)]
+    up_down: BoundaryMovementsUpDown,
+}
+
 #[derive(Deserialize)]
 struct VimSettings {
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: UseSystemClipboard,
     pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
+    #[serde(default)]
+    pub boundary_movements: BoundaryMovements,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
 }
@@ -1657,6 +1687,7 @@ struct VimSettingsContent {
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_multiline_find: Option<bool>,
     pub use_smartcase_find: Option<bool>,
+    pub boundary_movements: Option<BoundaryMovements>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
 }

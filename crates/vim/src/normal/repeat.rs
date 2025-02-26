@@ -5,10 +5,11 @@ use crate::{
     motion::Motion,
     normal::InsertBefore,
     state::{Mode, Operator, RecordedSelection, ReplayableAction, VimGlobals},
-    Vim,
+    Vim, VimSettings,
 };
 use editor::Editor;
 use gpui::{actions, Action, App, Context, Window};
+use settings::Settings as _;
 use workspace::Workspace;
 
 actions!(vim, [Repeat, EndRepeat, ToggleRecord, ReplayLastRecording]);
@@ -247,16 +248,38 @@ impl Vim {
             self.switch_mode(mode, false, window, cx)
         }
 
+        let (_left_right_wrap, up_down_wrap): (bool, bool) = {
+            let boundary_movements = VimSettings::get_global(cx).boundary_movements;
+
+            let left_right = match boundary_movements.left_right {
+                crate::BoundaryMovementsLeftRight::Off => false,
+                crate::BoundaryMovementsLeftRight::On => true,
+            };
+
+            let up_down = match boundary_movements.up_down {
+                crate::BoundaryMovementsUpDown::Off => false,
+                crate::BoundaryMovementsUpDown::On => true,
+            };
+
+            (left_right, up_down)
+        };
+
         match selection {
             RecordedSelection::SingleLine { cols } => {
                 if cols > 1 {
-                    self.visual_motion(Motion::Right, Some(cols as usize - 1), window, cx)
+                    self.visual_motion(
+                        Motion::Right { wrap: false },
+                        Some(cols as usize - 1),
+                        window,
+                        cx,
+                    )
                 }
             }
             RecordedSelection::Visual { rows, cols } => {
                 self.visual_motion(
                     Motion::Down {
                         display_lines: false,
+                        wrap: up_down_wrap,
                     },
                     Some(rows as usize),
                     window,
@@ -271,26 +294,38 @@ impl Vim {
                     cx,
                 );
                 if cols > 1 {
-                    self.visual_motion(Motion::Right, Some(cols as usize - 1), window, cx)
+                    self.visual_motion(
+                        Motion::Right { wrap: /* XXX */ false },
+                        Some(cols as usize - 1),
+                        window,
+                        cx,
+                    )
                 }
             }
             RecordedSelection::VisualBlock { rows, cols } => {
                 self.visual_motion(
                     Motion::Down {
                         display_lines: false,
+                        wrap: up_down_wrap,
                     },
                     Some(rows as usize),
                     window,
                     cx,
                 );
                 if cols > 1 {
-                    self.visual_motion(Motion::Right, Some(cols as usize - 1), window, cx);
+                    self.visual_motion(
+                        Motion::Right { wrap: false },
+                        Some(cols as usize - 1),
+                        window,
+                        cx,
+                    );
                 }
             }
             RecordedSelection::VisualLine { rows } => {
                 self.visual_motion(
                     Motion::Down {
                         display_lines: false,
+                        wrap: up_down_wrap,
                     },
                     Some(rows as usize),
                     window,

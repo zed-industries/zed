@@ -81,12 +81,12 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &DeleteLeft, window, cx| {
         vim.record_current_action(cx);
         let times = Vim::take_count(cx);
-        vim.delete_motion(Motion::Left, times, window, cx);
+        vim.delete_motion(Motion::Left { wrap: true }, times, window, cx);
     });
     Vim::action(editor, cx, |vim, _: &DeleteRight, window, cx| {
         vim.record_current_action(cx);
         let times = Vim::take_count(cx);
-        vim.delete_motion(Motion::Right, times, window, cx);
+        vim.delete_motion(Motion::Right { wrap: true }, times, window, cx);
     });
     Vim::action(editor, cx, |vim, _: &ChangeToEndOfLine, window, cx| {
         vim.start_recording(cx);
@@ -284,7 +284,9 @@ impl Vim {
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                s.move_cursors_with(|map, cursor, _| (right(map, cursor, 1), SelectionGoal::None));
+                s.move_cursors_with(|map, cursor, _| {
+                    (right(map, cursor, 1, false), SelectionGoal::None)
+                });
             });
         });
     }

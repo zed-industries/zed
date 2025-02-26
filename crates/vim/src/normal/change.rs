@@ -24,8 +24,8 @@ impl Vim {
         // Some motions ignore failure when switching to normal mode
         let mut motion_succeeded = matches!(
             motion,
-            Motion::Left
-                | Motion::Right
+            Motion::Left { .. }
+                | Motion::Right { .. }
                 | Motion::EndOfLine { .. }
                 | Motion::Backspace
                 | Motion::StartOfLine { .. }

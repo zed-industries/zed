@@ -39,7 +39,7 @@ impl Vim {
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         if selection.start == selection.end {
-                            Motion::Right.expand_selection(
+                            Motion::Right { wrap: true }.expand_selection(
                                 map,
                                 selection,
                                 count,

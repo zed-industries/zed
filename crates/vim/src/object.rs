@@ -583,7 +583,7 @@ fn in_word(
         .ignore_punctuation(ignore_punctuation);
     let start = movement::find_preceding_boundary_display_point(
         map,
-        right(map, relative_to, 1),
+        right(map, relative_to, 1, false),
         movement::FindRange::SingleLine,
         |left, right| classifier.kind(left) != classifier.kind(right),
     );
@@ -621,7 +621,7 @@ fn in_subword(
     let start = if in_subword {
         movement::find_preceding_boundary_display_point(
             map,
-            right(map, relative_to, 1),
+            right(map, relative_to, 1, false),
             movement::FindRange::SingleLine,
             |left, right| {
                 let is_word_start = classifier.kind(left) != classifier.kind(right);
@@ -775,7 +775,7 @@ fn around_subword(
         .ignore_punctuation(ignore_punctuation);
     let start = movement::find_preceding_boundary_display_point(
         map,
-        right(map, relative_to, 1),
+        right(map, relative_to, 1, false),
         movement::FindRange::SingleLine,
         |left, right| {
             let is_word_start = classifier.kind(left) != classifier.kind(right);
@@ -835,7 +835,7 @@ fn around_next_word(
     // Get the start of the word
     let start = movement::find_preceding_boundary_display_point(
         map,
-        right(map, relative_to, 1),
+        right(map, relative_to, 1, false),
         FindRange::SingleLine,
         |left, right| classifier.kind(left) != classifier.kind(right),
     );

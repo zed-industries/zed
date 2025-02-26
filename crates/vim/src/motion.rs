@@ -11,6 +11,7 @@ use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use settings::Settings as _;
 use std::ops::Range;
 use workspace::searchable::Direction;
 
@@ -18,20 +19,26 @@ use crate::{
     normal::mark,
     state::{Mode, Operator},
     surrounds::SurroundsType,
-    Vim,
+    Vim, VimSettings,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Motion {
-    Left,
+    Left {
+        wrap: bool,
+    },
     Backspace,
     Down {
         display_lines: bool,
+        wrap: bool,
     },
     Up {
         display_lines: bool,
+        wrap: bool,
     },
-    Right,
+    Right {
+        wrap: bool,
+    },
     Space,
     NextWordStart {
         ignore_punctuation: bool,
@@ -306,7 +313,16 @@ actions!(
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Left, window, cx| {
-        vim.motion(Motion::Left, window, cx)
+        vim.motion(
+            Motion::Left {
+                wrap: match VimSettings::get_global(cx).boundary_movements.left_right {
+                    crate::BoundaryMovementsLeftRight::Off => false,
+                    crate::BoundaryMovementsLeftRight::On => true,
+                },
+            },
+            window,
+            cx,
+        )
     });
     Vim::action(editor, cx, |vim, _: &Backspace, window, cx| {
         vim.motion(Motion::Backspace, window, cx)
@@ -315,6 +331,10 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.motion(
             Motion::Down {
                 display_lines: action.display_lines,
+                wrap: match VimSettings::get_global(cx).boundary_movements.up_down {
+                    crate::BoundaryMovementsUpDown::Off => false,
+                    crate::BoundaryMovementsUpDown::On => true,
+                },
             },
             window,
             cx,
@@ -324,13 +344,26 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.motion(
             Motion::Up {
                 display_lines: action.display_lines,
+                wrap: match VimSettings::get_global(cx).boundary_movements.up_down {
+                    crate::BoundaryMovementsUpDown::Off => false,
+                    crate::BoundaryMovementsUpDown::On => true,
+                },
             },
             window,
             cx,
         )
     });
     Vim::action(editor, cx, |vim, _: &Right, window, cx| {
-        vim.motion(Motion::Right, window, cx)
+        vim.motion(
+            Motion::Right {
+                wrap: match VimSettings::get_global(cx).boundary_movements.left_right {
+                    crate::BoundaryMovementsLeftRight::Off => false,
+                    crate::BoundaryMovementsLeftRight::On => true,
+                },
+            },
+            window,
+            cx,
+        )
     });
     Vim::action(editor, cx, |vim, _: &Space, window, cx| {
         vim.motion(Motion::Space, window, cx)
@@ -638,9 +671,9 @@ impl Motion {
             | UnmatchedForward { .. }
             | UnmatchedBackward { .. }
             | FindForward { .. }
-            | Left
+            | Left { .. }
             | Backspace
-            | Right
+            | Right { .. }
             | SentenceBackward
             | SentenceForward
             | Space
@@ -678,9 +711,9 @@ impl Motion {
             | UnmatchedBackward { .. }
             | FindForward { .. }
             | RepeatFind { .. }
-            | Left
+            | Left { .. }
             | Backspace
-            | Right
+            | Right { .. }
             | Space
             | StartOfLine { .. }
             | StartOfParagraph
@@ -746,9 +779,9 @@ impl Motion {
             | PreviousSubwordEnd { .. }
             | NextLineStart
             | PreviousLineStart => true,
-            Left
+            Left { .. }
             | Backspace
-            | Right
+            | Right { .. }
             | Space
             | StartOfLine { .. }
             | StartOfLineDownward
@@ -795,21 +828,32 @@ impl Motion {
         use Motion::*;
         let infallible = self.infallible();
         let (new_point, goal) = match self {
-            Left => (left(map, point, times), SelectionGoal::None),
+            Left { wrap } => (left(map, point, times, *wrap), SelectionGoal::None),
             Backspace => (backspace(map, point, times), SelectionGoal::None),
             Down {
                 display_lines: false,
-            } => up_down_buffer_rows(map, point, goal, times as isize, text_layout_details),
+                wrap,
+            } => up_down_buffer_rows(map, point, goal, times as isize, text_layout_details, *wrap),
             Down {
                 display_lines: true,
-            } => down_display(map, point, goal, times, text_layout_details),
+                wrap,
+            } => down_display(map, point, goal, times, text_layout_details, *wrap),
             Up {
                 display_lines: false,
-            } => up_down_buffer_rows(map, point, goal, 0 - times as isize, text_layout_details),
+                wrap,
+            } => up_down_buffer_rows(
+                map,
+                point,
+                goal,
+                0 - times as isize,
+                text_layout_details,
+                *wrap,
+            ),
             Up {
                 display_lines: true,
-            } => up_display(map, point, goal, times, text_layout_details),
-            Right => (right(map, point, times), SelectionGoal::None),
+                wrap,
+            } => up_display(map, point, goal, times, text_layout_details, *wrap),
+            Right { wrap } => (right(map, point, times, *wrap), SelectionGoal::None),
             Space => (space(map, point, times), SelectionGoal::None),
             NextWordStart { ignore_punctuation } => (
                 next_word_start(map, point, *ignore_punctuation, times),
@@ -1264,11 +1308,18 @@ impl Motion {
     }
 }
 
-fn left(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
+fn left(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize, wrap: bool) -> DisplayPoint {
     for _ in 0..times {
-        point = movement::saturating_left(map, point);
-        if point.column() == 0 {
-            break;
+        if wrap {
+            point = movement::left(map, point);
+            if point.is_zero() {
+                break;
+            }
+        } else {
+            point = movement::saturating_left(map, point);
+            if point.column() == 0 {
+                break;
+            }
         }
     }
     point
@@ -1333,12 +1384,23 @@ fn up_down_buffer_rows(
     mut goal: SelectionGoal,
     times: isize,
     text_layout_details: &TextLayoutDetails,
+    wrap: bool,
 ) -> (DisplayPoint, SelectionGoal) {
+    let fold_point = map.display_point_to_fold_point(point, Bias::Left);
+
+    if wrap {
+        if times < 0 && fold_point.row() == 0 {
+            return (start_of_line(map, true, point), goal);
+        }
+        if times > 0 && fold_point.row() == map.fold_snapshot.max_point().row() {
+            return (end_of_line(map, true, point, 1), goal);
+        }
+    }
+
     let bias = if times < 0 { Bias::Left } else { Bias::Right };
-    let start = map.display_point_to_fold_point(point, Bias::Left);
     let begin_folded_line = map.fold_point_to_display_point(
         map.fold_snapshot
-            .clip_point(FoldPoint::new(start.row(), 0), Bias::Left),
+            .clip_point(FoldPoint::new(fold_point.row(), 0), Bias::Left),
     );
     let select_nth_wrapped_row = point.row().0 - begin_folded_line.row().0;
 
@@ -1353,7 +1415,7 @@ fn up_down_buffer_rows(
         }
     };
 
-    let target = start.row() as isize + times;
+    let target = fold_point.row() as isize + times;
     let new_row = (target.max(0) as u32).min(map.fold_snapshot.max_point().row());
 
     let mut begin_folded_line = map.fold_point_to_display_point(
@@ -1394,8 +1456,13 @@ fn down_display(
     mut goal: SelectionGoal,
     times: usize,
     text_layout_details: &TextLayoutDetails,
+    wrap: bool,
 ) -> (DisplayPoint, SelectionGoal) {
     for _ in 0..times {
+        if wrap && point.row() == map.max_point().row() {
+            point = end_of_line(map, true, point, 1);
+            break;
+        }
         (point, goal) = movement::down(map, point, goal, true, text_layout_details);
     }
 
@@ -1408,21 +1475,38 @@ fn up_display(
     mut goal: SelectionGoal,
     times: usize,
     text_layout_details: &TextLayoutDetails,
+    wrap: bool,
 ) -> (DisplayPoint, SelectionGoal) {
     for _ in 0..times {
+        if wrap && point.row().0 == 0 {
+            point = start_of_line(map, true, point);
+            break;
+        }
         (point, goal) = movement::up(map, point, goal, true, text_layout_details);
     }
 
     (point, goal)
 }
 
-pub(crate) fn right(map: &DisplaySnapshot, mut point: DisplayPoint, times: usize) -> DisplayPoint {
+pub(crate) fn right(
+    map: &DisplaySnapshot,
+    mut point: DisplayPoint,
+    times: usize,
+    wrap: bool,
+) -> DisplayPoint {
     for _ in 0..times {
-        let new_point = movement::saturating_right(map, point);
-        if point == new_point {
-            break;
+        if wrap {
+            point = wrapping_right(map, point);
+            if point == map.max_point() {
+                break;
+            }
+        } else {
+            let new_point = movement::saturating_right(map, point);
+            if point == new_point {
+                break;
+            }
+            point = new_point;
         }
-        point = new_point;
     }
     point
 }
@@ -2418,7 +2502,12 @@ fn previous_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize)
 
 fn go_to_column(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
     let correct_line = start_of_relative_buffer_row(map, point, 0);
-    right(map, correct_line, times.saturating_sub(1))
+    right(
+        map,
+        correct_line,
+        times.saturating_sub(1),
+        /* XXX */ false,
+    )
 }
 
 pub(crate) fn next_line_end(
