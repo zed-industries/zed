@@ -784,18 +784,6 @@ impl Session {
         }
     }
 
-    fn _handle_start_debugging_request(&mut self, _request: messages::Request) {}
-
-    fn _handle_run_in_terminal_request(&mut self, _request: messages::Request) {}
-
-    pub(crate) fn _wait_for_request<R: DapCommand + PartialEq + Eq + Hash>(
-        &self,
-        request: R,
-    ) -> Option<Shared<Task<Option<()>>>> {
-        let request_slot = RequestSlot::from(request);
-        self.requests.get(&request_slot).cloned()
-    }
-
     /// Ensure that there's a request in flight for the given command, and if not, send it. Use this to run requests that are idempotent.
     fn fetch<T: DapCommand + PartialEq + Eq + Hash>(
         &mut self,
