@@ -110,13 +110,13 @@ jobs:
         run: ./script/clippy
 
       - name: Install cargo-machete
-        uses: clechasseur/rs-cargo@v2
+        uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386 # v2
         with:
           command: install
           args: cargo-machete@0.7.0
 
       - name: Check unused dependencies
-        uses: clechasseur/rs-cargo@v2
+        uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386 # v2
         with:
           command: machete
 
