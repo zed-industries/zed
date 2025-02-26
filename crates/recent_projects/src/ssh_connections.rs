@@ -15,7 +15,7 @@ use gpui::{
 use language::CursorShape;
 use markdown::{Markdown, MarkdownStyle};
 use release_channel::ReleaseChannel;
-use remote::ssh_session::ConnectionIdentifier;
+use remote::ssh_session::{ConnectionIdentifier, SshPortForwardOption};
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -52,6 +52,7 @@ impl SshSettings {
                     host,
                     port,
                     username,
+                    port_forwards: conn.port_forwards,
                     password: None,
                 };
             }
@@ -86,6 +87,9 @@ pub struct SshConnection {
     // limited outbound internet access.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upload_binary_over_ssh: Option<bool>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_forwards: Option<Vec<SshPortForwardOption>>,
 }
 
 impl From<SshConnection> for SshConnectionOptions {
@@ -98,6 +102,7 @@ impl From<SshConnection> for SshConnectionOptions {
             args: Some(val.args),
             nickname: val.nickname,
             upload_binary_over_ssh: val.upload_binary_over_ssh.unwrap_or_default(),
+            port_forwards: val.port_forwards,
         }
     }
 }
@@ -181,7 +186,7 @@ impl SshPrompt {
         let refinement = TextStyleRefinement {
             font_family: Some(theme.buffer_font.family.clone()),
             font_features: Some(FontFeatures::disable_ligatures()),
-            font_size: Some(theme.buffer_font_size.into()),
+            font_size: Some(theme.buffer_font_size(cx).into()),
             color: Some(cx.theme().colors().editor_foreground),
             background_color: Some(gpui::transparent_black()),
             ..Default::default()
@@ -202,8 +207,7 @@ impl SshPrompt {
             selection_background_color: cx.theme().players().local().selection,
             ..Default::default()
         };
-        let markdown =
-            cx.new(|cx| Markdown::new_text(prompt, markdown_style, None, None, window, cx));
+        let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), markdown_style, cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();
         window.focus(&self.editor.focus_handle(cx));

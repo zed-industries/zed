@@ -83,7 +83,7 @@ pub trait StyledTypography: Styled + Sized {
     /// or other places that text needs to match the user's buffer font size.
     fn text_buffer(self, cx: &App) -> Self {
         let settings = ThemeSettings::get_global(cx);
-        self.text_size(settings.buffer_font_size())
+        self.text_size(settings.buffer_font_size(cx))
     }
 }
 
@@ -140,8 +140,8 @@ impl TextSize {
             Self::Default => rems_from_px(14.),
             Self::Small => rems_from_px(12.),
             Self::XSmall => rems_from_px(10.),
-            Self::Ui => rems_from_px(theme_settings.ui_font_size.into()),
-            Self::Editor => rems_from_px(theme_settings.buffer_font_size.into()),
+            Self::Ui => rems_from_px(theme_settings.ui_font_size(cx).into()),
+            Self::Editor => rems_from_px(theme_settings.buffer_font_size(cx).into()),
         }
     }
 }
@@ -237,40 +237,37 @@ impl Headline {
 impl ComponentPreview for Headline {
     fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
         v_flex()
-            .gap_6()
-            .children(vec![example_group_with_title(
-                "Headline Sizes",
-                vec![
-                    single_example(
-                        "XLarge",
-                        Headline::new("XLarge Headline")
-                            .size(HeadlineSize::XLarge)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Large",
-                        Headline::new("Large Headline")
-                            .size(HeadlineSize::Large)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Medium (Default)",
-                        Headline::new("Medium Headline").into_any_element(),
-                    ),
-                    single_example(
-                        "Small",
-                        Headline::new("Small Headline")
-                            .size(HeadlineSize::Small)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "XSmall",
-                        Headline::new("XSmall Headline")
-                            .size(HeadlineSize::XSmall)
-                            .into_any_element(),
-                    ),
-                ],
-            )])
+            .gap_1()
+            .children(vec![
+                single_example(
+                    "XLarge",
+                    Headline::new("XLarge Headline")
+                        .size(HeadlineSize::XLarge)
+                        .into_any_element(),
+                ),
+                single_example(
+                    "Large",
+                    Headline::new("Large Headline")
+                        .size(HeadlineSize::Large)
+                        .into_any_element(),
+                ),
+                single_example(
+                    "Medium (Default)",
+                    Headline::new("Medium Headline").into_any_element(),
+                ),
+                single_example(
+                    "Small",
+                    Headline::new("Small Headline")
+                        .size(HeadlineSize::Small)
+                        .into_any_element(),
+                ),
+                single_example(
+                    "XSmall",
+                    Headline::new("XSmall Headline")
+                        .size(HeadlineSize::XSmall)
+                        .into_any_element(),
+                ),
+            ])
             .into_any_element()
     }
 }

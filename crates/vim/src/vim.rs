@@ -126,6 +126,7 @@ actions!(
         SwitchToVisualBlockMode,
         SwitchToHelixNormalMode,
         ClearOperators,
+        ClearExchange,
         Tab,
         Enter,
         InnerObject,
@@ -138,6 +139,7 @@ actions!(
         ResizePaneDown,
         PushChange,
         PushDelete,
+        Exchange,
         PushYank,
         PushReplace,
         PushDeleteSurrounds,
@@ -215,7 +217,7 @@ pub fn init(cx: &mut App) {
             };
 
             let theme = ThemeSettings::get_global(cx);
-            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
+            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
 
             let desired_size = if let Some(count) = Vim::take_count(cx) {
                 height * count
@@ -233,7 +235,7 @@ pub fn init(cx: &mut App) {
             };
             let Ok(width) = window
                 .text_system()
-                .advance(font_id, theme.buffer_font_size(), 'm')
+                .advance(font_id, theme.buffer_font_size(cx), 'm')
             else {
                 return;
             };
@@ -248,7 +250,7 @@ pub fn init(cx: &mut App) {
             };
             let Ok(width) = window
                 .text_system()
-                .advance(font_id, theme.buffer_font_size(), 'm')
+                .advance(font_id, theme.buffer_font_size(cx), 'm')
             else {
                 return;
             };
@@ -258,14 +260,14 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &ResizePaneUp, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             let theme = ThemeSettings::get_global(cx);
-            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
+            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
             workspace.resize_pane(Axis::Vertical, height * count, window, cx);
         });
 
         workspace.register_action(|workspace, _: &ResizePaneDown, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             let theme = ThemeSettings::get_global(cx);
-            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
+            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
             workspace.resize_pane(Axis::Vertical, -height * count, window, cx);
         });
 
@@ -352,7 +354,7 @@ impl Vim {
         let editor = cx.entity().clone();
 
         cx.new(|cx| Vim {
-            mode: Mode::Normal,
+            mode: VimSettings::get_global(cx).default_mode,
             last_mode: Mode::Normal,
             temp_mode: false,
             exit_temporary_mode: false,
@@ -637,6 +639,18 @@ impl Vim {
                 },
             );
 
+            Vim::action(editor, cx, |vim, _: &Exchange, window, cx| {
+                if vim.mode.is_visual() {
+                    vim.exchange_visual(window, cx)
+                } else {
+                    vim.push_operator(Operator::Exchange, window, cx)
+                }
+            });
+
+            Vim::action(editor, cx, |vim, _: &ClearExchange, window, cx| {
+                vim.clear_exchange(window, cx)
+            });
+
             Vim::action(editor, cx, |vim, _: &PushToggleComments, window, cx| {
                 vim.push_operator(Operator::ToggleComments, window, cx)
             });
@@ -825,6 +839,7 @@ impl Vim {
                 | Operator::Uppercase
                 | Operator::OppositeCase
                 | Operator::ToggleComments
+                | Operator::ReplaceWithRegister
         ) {
             self.start_recording(cx)
         };
@@ -1145,8 +1160,10 @@ impl Vim {
         self.stop_recording_immediately(NormalBefore.boxed_clone(), cx);
         self.store_visual_marks(window, cx);
         self.clear_operator(window, cx);
-        self.update_editor(window, cx, |_, editor, _, cx| {
-            editor.set_cursor_shape(language::CursorShape::Hollow, cx);
+        self.update_editor(window, cx, |vim, editor, _, cx| {
+            if vim.cursor_shape() == CursorShape::Block {
+                editor.set_cursor_shape(CursorShape::Hollow, cx);
+            }
         });
     }
 
@@ -1626,6 +1643,7 @@ pub enum UseSystemClipboard {
 
 #[derive(Deserialize)]
 struct VimSettings {
+    pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: UseSystemClipboard,
     pub use_multiline_find: bool,
@@ -1636,6 +1654,7 @@ struct VimSettings {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 struct VimSettingsContent {
+    pub default_mode: Option<ModeContent>,
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_multiline_find: Option<bool>,
@@ -1644,12 +1663,62 @@ struct VimSettingsContent {
     pub highlight_on_yank_duration: Option<u64>,
 }
 
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModeContent {
+    #[default]
+    Normal,
+    Insert,
+    Replace,
+    Visual,
+    VisualLine,
+    VisualBlock,
+    HelixNormal,
+}
+
+impl From<ModeContent> for Mode {
+    fn from(mode: ModeContent) -> Self {
+        match mode {
+            ModeContent::Normal => Self::Normal,
+            ModeContent::Insert => Self::Insert,
+            ModeContent::Replace => Self::Replace,
+            ModeContent::Visual => Self::Visual,
+            ModeContent::VisualLine => Self::VisualLine,
+            ModeContent::VisualBlock => Self::VisualBlock,
+            ModeContent::HelixNormal => Self::HelixNormal,
+        }
+    }
+}
+
 impl Settings for VimSettings {
     const KEY: Option<&'static str> = Some("vim");
 
     type FileContent = VimSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
+        let settings: VimSettingsContent = sources.json_merge()?;
+
+        Ok(Self {
+            default_mode: settings
+                .default_mode
+                .ok_or_else(Self::missing_default)?
+                .into(),
+            toggle_relative_line_numbers: settings
+                .toggle_relative_line_numbers
+                .ok_or_else(Self::missing_default)?,
+            use_system_clipboard: settings
+                .use_system_clipboard
+                .ok_or_else(Self::missing_default)?,
+            use_multiline_find: settings
+                .use_multiline_find
+                .ok_or_else(Self::missing_default)?,
+            use_smartcase_find: settings
+                .use_smartcase_find
+                .ok_or_else(Self::missing_default)?,
+            custom_digraphs: settings.custom_digraphs.ok_or_else(Self::missing_default)?,
+            highlight_on_yank_duration: settings
+                .highlight_on_yank_duration
+                .ok_or_else(Self::missing_default)?,
+        })
     }
 }

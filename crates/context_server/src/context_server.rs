@@ -4,6 +4,7 @@ mod extension_context_server;
 pub mod manager;
 pub mod protocol;
 mod registry;
+mod transport;
 pub mod types;
 
 use command_palette_hooks::CommandPaletteFilter;

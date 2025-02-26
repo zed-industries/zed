@@ -40,6 +40,10 @@ pub struct ProjectSettings {
     #[serde(default)]
     pub lsp: HashMap<LanguageServerName, LspSettings>,
 
+    /// Configuration for Diagnostics-related features.
+    #[serde(default)]
+    pub diagnostics: DiagnosticsSettings,
+
     /// Configuration for Git-related features
     #[serde(default)]
     pub git: GitSettings,
@@ -59,11 +63,11 @@ pub struct ProjectSettings {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct NodeBinarySettings {
-    /// The path to the node binary
+    /// The path to the Node binary.
     pub path: Option<String>,
-    ///  The path to the npm binary Zed should use (defaults to .path/../npm)
+    /// The path to the npm binary Zed should use (defaults to `.path/../npm`).
     pub npm_path: Option<String>,
-    /// If disabled, zed will download its own copy of node.
+    /// If disabled, Zed will download its own copy of Node.
     #[serde(default)]
     pub ignore_system_version: Option<bool>,
 }
@@ -76,6 +80,77 @@ pub enum DirenvSettings {
     /// Load direnv configuration directly using `direnv export json`
     #[default]
     Direct,
+}
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct DiagnosticsSettings {
+    /// Whether or not to include warning diagnostics
+    #[serde(default = "true_value")]
+    pub include_warnings: bool,
+
+    /// Settings for showing inline diagnostics
+    #[serde(default)]
+    pub inline: InlineDiagnosticsSettings,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct InlineDiagnosticsSettings {
+    /// Whether or not to show inline diagnostics
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub enabled: bool,
+    /// Whether to only show the inline diaganostics after a delay after the
+    /// last editor event.
+    ///
+    /// Default: 150
+    #[serde(default = "default_inline_diagnostics_debounce_ms")]
+    pub update_debounce_ms: u64,
+    /// The amount of padding between the end of the source line and the start
+    /// of the inline diagnostic in units of columns.
+    ///
+    /// Default: 4
+    #[serde(default = "default_inline_diagnostics_padding")]
+    pub padding: u32,
+    /// The minimum column to display inline diagnostics. This setting can be
+    /// used to horizontally align inline diagnostics at some position. Lines
+    /// longer than this value will still push diagnostics further to the right.
+    ///
+    /// Default: 0
+    #[serde(default)]
+    pub min_column: u32,
+
+    #[serde(default)]
+    pub max_severity: Option<DiagnosticSeverity>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DiagnosticSeverity {
+    Error,
+    Warning,
+    Info,
+    Hint,
+}
+
+impl Default for InlineDiagnosticsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            update_debounce_ms: default_inline_diagnostics_debounce_ms(),
+            padding: default_inline_diagnostics_padding(),
+            min_column: 0,
+            max_severity: None,
+        }
+    }
+}
+
+fn default_inline_diagnostics_debounce_ms() -> u64 {
+    150
+}
+
+fn default_inline_diagnostics_padding() -> u32 {
+    4
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -156,16 +231,12 @@ pub struct InlineBlameSettings {
     /// Whether to show commit summary as part of the inline blame.
     ///
     /// Default: false
-    #[serde(default = "false_value")]
+    #[serde(default)]
     pub show_commit_summary: bool,
 }
 
 const fn true_value() -> bool {
     true
-}
-
-const fn false_value() -> bool {
-    false
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

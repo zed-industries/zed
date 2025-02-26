@@ -52,8 +52,7 @@ impl WorktreeIndex {
         cx.spawn(|mut cx| async move {
             let entries_being_indexed = Arc::new(IndexingEntrySet::new(status_tx));
             let (embedding_index, summary_index) = cx
-                .background_executor()
-                .spawn({
+                .background_spawn({
                     let entries_being_indexed = Arc::clone(&entries_being_indexed);
                     let db_connection = db_connection.clone();
                     async move {

@@ -193,6 +193,8 @@ pub struct ContextEditor {
     // the file is opened. In order to keep the worktree alive for the duration of the
     // context editor, we keep a reference here.
     dragged_file_worktrees: Vec<Entity<Worktree>>,
+    language_model_selector: Entity<LanguageModelSelector>,
+    language_model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
 }
 
 pub const DEFAULT_TAB_TITLE: &str = "New Chat";
@@ -238,6 +240,22 @@ impl ContextEditor {
             cx.subscribe_in(&editor, window, Self::handle_editor_search_event),
         ];
 
+        let fs_clone = fs.clone();
+        let language_model_selector = cx.new(|cx| {
+            LanguageModelSelector::new(
+                move |model, cx| {
+                    update_settings_file::<AssistantSettings>(
+                        fs_clone.clone(),
+                        cx,
+                        move |settings, _| settings.set_model(model.clone()),
+                    );
+                },
+                window,
+                cx,
+            )
+        });
+
+        let language_model_selector_menu_handle = PopoverMenuHandle::default();
         let sections = context.read(cx).slash_command_output_sections().to_vec();
         let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
         let slash_commands = context.read(cx).slash_commands().clone();
@@ -262,6 +280,8 @@ impl ContextEditor {
             show_accept_terms: false,
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
+            language_model_selector,
+            language_model_selector_menu_handle,
         };
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
@@ -614,7 +634,7 @@ impl ContextEditor {
                                 }
                             });
                             let placeholder = FoldPlaceholder {
-                                render: Arc::new(move |_, _, _, _| Empty.into_any()),
+                                render: Arc::new(move |_, _, _| Empty.into_any()),
                                 ..Default::default()
                             };
                             let render_toggle = {
@@ -1067,7 +1087,7 @@ impl ContextEditor {
         patch: AssistantPatch,
         mut cx: AsyncWindowContext,
     ) -> Result<()> {
-        let project = this.update(&mut cx, |this, _| this.project.clone())?;
+        let project = this.read_with(&cx, |this, _| this.project.clone())?;
         let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
 
         let editor = cx.new_window_entity(|window, cx| {
@@ -1092,7 +1112,7 @@ impl ContextEditor {
             editor
         })?;
 
-        this.update_in(&mut cx, |this, window, cx| {
+        this.update(&mut cx, |this, _| {
             if let Some(patch_state) = this.patches.get_mut(&patch.range) {
                 patch_state.editor = Some(PatchEditorState {
                     editor: editor.downgrade(),
@@ -1100,19 +1120,12 @@ impl ContextEditor {
                 });
                 patch_state.update_task.take();
             }
-
-            this.workspace
-                .update(cx, |workspace, cx| {
-                    workspace.add_item_to_active_pane(
-                        Box::new(editor.clone()),
-                        None,
-                        false,
-                        window,
-                        cx,
-                    )
-                })
-                .log_err();
         })?;
+        this.read_with(&cx, |this, _| this.workspace.clone())?
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, window, cx)
+            })
+            .log_err();
 
         Ok(())
     }
@@ -1214,8 +1227,8 @@ impl ContextEditor {
                     .px_1()
                     .mr_0p5()
                     .border_1()
-                    .border_color(theme::color_alpha(colors.border_variant, 0.6))
-                    .bg(theme::color_alpha(colors.element_background, 0.6))
+                    .border_color(colors.border_variant.alpha(0.6))
+                    .bg(colors.element_background.alpha(0.6))
                     .child("esc"),
             )
             .child("to cancel")
@@ -1494,15 +1507,11 @@ impl ContextEditor {
 
                 (!text.is_empty()).then_some((text, true))
             } else {
-                let anchor = context_editor.selections.newest_anchor();
-                let text = context_editor
-                    .buffer()
-                    .read(cx)
-                    .read(cx)
-                    .text_for_range(anchor.range())
-                    .collect::<String>();
+                let selection = context_editor.selections.newest_adjusted(cx);
+                let buffer = context_editor.buffer().read(cx).snapshot(cx);
+                let selected_text = buffer.text_for_range(selection.range()).collect::<String>();
 
-                (!text.is_empty()).then_some((text, false))
+                (!selected_text.is_empty()).then_some((selected_text, false))
             }
         })
     }
@@ -1757,23 +1766,16 @@ impl ContextEditor {
         &mut self,
         cx: &mut Context<Self>,
     ) -> (String, CopyMetadata, Vec<text::Selection<usize>>) {
-        let (snapshot, selection, creases) = self.editor.update(cx, |editor, cx| {
-            let mut selection = editor.selections.newest::<Point>(cx);
+        let (selection, creases) = self.editor.update(cx, |editor, cx| {
+            let mut selection = editor.selections.newest_adjusted(cx);
             let snapshot = editor.buffer().read(cx).snapshot(cx);
 
-            let is_entire_line = selection.is_empty() || editor.selections.line_mode;
-            if is_entire_line {
-                selection.start = Point::new(selection.start.row, 0);
-                selection.end =
-                    cmp::min(snapshot.max_point(), Point::new(selection.start.row + 1, 0));
-                selection.goal = SelectionGoal::None;
-            }
+            selection.goal = SelectionGoal::None;
 
             let selection_start = snapshot.point_to_offset(selection.start);
 
             (
-                snapshot.clone(),
-                selection.clone(),
+                selection.map(|point| snapshot.point_to_offset(point)),
                 editor.display_map.update(cx, |display_map, cx| {
                     display_map
                         .snapshot(cx)
@@ -1813,7 +1815,6 @@ impl ContextEditor {
             )
         });
 
-        let selection = selection.map(|point| snapshot.point_to_offset(point));
         let context = self.context.read(cx);
 
         let mut text = String::new();
@@ -2021,6 +2022,15 @@ impl ContextEditor {
                 context.split_message(range, cx);
             }
         });
+    }
+
+    fn toggle_model_selector(
+        &mut self,
+        _: &ToggleModelSelector,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.language_model_selector_menu_handle.toggle(window, cx);
     }
 
     fn save(&mut self, _: &Save, _window: &mut Window, cx: &mut Context<Self>) {
@@ -2290,7 +2300,7 @@ impl ContextEditor {
                 },
             ))
             .children(
-                KeyBinding::for_action_in(&Assist, &focus_handle, window)
+                KeyBinding::for_action_in(&Assist, &focus_handle, window, cx)
                     .map(|binding| binding.into_any_element()),
             )
             .on_click(move |_event, window, cx| {
@@ -2343,7 +2353,7 @@ impl ContextEditor {
             .layer(ElevationIndex::ModalSurface)
             .child(Label::new("Suggest Edits"))
             .children(
-                KeyBinding::for_action_in(&Edit, &focus_handle, window)
+                KeyBinding::for_action_in(&Edit, &focus_handle, window, cx)
                     .map(|binding| binding.into_any_element()),
             )
             .on_click(move |_event, window, cx| {
@@ -2355,13 +2365,59 @@ impl ContextEditor {
         slash_command_picker::SlashCommandSelector::new(
             self.slash_commands.clone(),
             cx.entity().downgrade(),
-            Button::new("trigger", "Add Context")
-                .icon(IconName::Plus)
+            IconButton::new("trigger", IconName::Plus)
                 .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .icon_position(IconPosition::Start),
-            Tooltip::text("Type / to insert via keyboard"),
+                .icon_color(Color::Muted),
+            move |window, cx| {
+                Tooltip::with_meta(
+                    "Add Context",
+                    None,
+                    "Type / to insert via keyboard",
+                    window,
+                    cx,
+                )
+            },
         )
+    }
+
+    fn render_language_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+        let focus_handle = self.editor().focus_handle(cx).clone();
+        let model_name = match active_model {
+            Some(model) => model.name().0,
+            None => SharedString::from("No model selected"),
+        };
+
+        LanguageModelSelectorPopoverMenu::new(
+            self.language_model_selector.clone(),
+            ButtonLike::new("active-model")
+                .style(ButtonStyle::Subtle)
+                .child(
+                    h_flex()
+                        .gap_0p5()
+                        .child(
+                            Label::new(model_name)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Icon::new(IconName::ChevronDown)
+                                .color(Color::Muted)
+                                .size(IconSize::XSmall),
+                        ),
+                ),
+            move |window, cx| {
+                Tooltip::for_action_in(
+                    "Change Model",
+                    &ToggleModelSelector,
+                    &focus_handle,
+                    window,
+                    cx,
+                )
+            },
+            gpui::Corner::BottomLeft,
+        )
+        .with_handle(self.language_model_selector_menu_handle.clone())
     }
 
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -2593,8 +2649,8 @@ fn render_fold_icon_button(
     editor: WeakEntity<Editor>,
     icon: IconName,
     label: SharedString,
-) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut Window, &mut App) -> AnyElement> {
-    Arc::new(move |fold_id, fold_range, _window, _cx| {
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
+    Arc::new(move |fold_id, fold_range, _cx| {
         let editor = editor.clone();
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
@@ -2654,7 +2710,7 @@ pub fn fold_toggle(
 fn quote_selection_fold_placeholder(title: String, editor: WeakEntity<Editor>) -> FoldPlaceholder {
     FoldPlaceholder {
         render: Arc::new({
-            move |fold_id, fold_range, _window, _cx| {
+            move |fold_id, fold_range, _cx| {
                 let editor = editor.clone();
                 ButtonLike::new(fold_id)
                     .style(ButtonStyle::Filled)
@@ -2820,6 +2876,7 @@ impl Render for ContextEditor {
             .on_action(cx.listener(ContextEditor::edit))
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
+            .on_action(cx.listener(ContextEditor::toggle_model_selector))
             .size_full()
             .children(self.render_notice(cx))
             .child(
@@ -2852,7 +2909,17 @@ impl Render for ContextEditor {
                         .border_t_1()
                         .border_color(cx.theme().colors().border_variant)
                         .bg(cx.theme().colors().editor_background)
-                        .child(h_flex().gap_1().child(self.render_inject_context_menu(cx)))
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(self.render_inject_context_menu(cx))
+                                .child(ui::Divider::vertical())
+                                .child(
+                                    div()
+                                        .pl_0p5()
+                                        .child(self.render_language_model_selector(cx)),
+                                ),
+                        )
                         .child(
                             h_flex()
                                 .w_full()
@@ -3163,80 +3230,67 @@ impl FollowableItem for ContextEditor {
 pub struct ContextEditorToolbarItem {
     active_context_editor: Option<WeakEntity<ContextEditor>>,
     model_summary_editor: Entity<Editor>,
-    language_model_selector: Entity<LanguageModelSelector>,
-    language_model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
 }
 
 impl ContextEditorToolbarItem {
-    pub fn new(
-        workspace: &Workspace,
-        model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
-        model_summary_editor: Entity<Editor>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(model_summary_editor: Entity<Editor>) -> Self {
         Self {
             active_context_editor: None,
             model_summary_editor,
-            language_model_selector: cx.new(|cx| {
-                let fs = workspace.app_state().fs.clone();
-                LanguageModelSelector::new(
-                    move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _| settings.set_model(model.clone()),
-                        );
-                    },
-                    window,
-                    cx,
-                )
-            }),
-            language_model_selector_menu_handle: model_selector_menu_handle,
         }
     }
+}
 
-    fn render_remaining_tokens(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let context = &self
-            .active_context_editor
-            .as_ref()?
-            .upgrade()?
-            .read(cx)
-            .context;
-        let (token_count_color, token_count, max_token_count) = match token_state(context, cx)? {
-            TokenState::NoTokensLeft {
-                max_token_count,
-                token_count,
-            } => (Color::Error, token_count, max_token_count),
-            TokenState::HasMoreTokens {
-                max_token_count,
-                token_count,
-                over_warn_threshold,
-            } => {
-                let color = if over_warn_threshold {
-                    Color::Warning
-                } else {
-                    Color::Muted
-                };
-                (color, token_count, max_token_count)
-            }
-        };
-        Some(
-            h_flex()
-                .gap_0p5()
-                .child(
-                    Label::new(humanize_token_count(token_count))
-                        .size(LabelSize::Small)
-                        .color(token_count_color),
-                )
-                .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
-                .child(
-                    Label::new(humanize_token_count(max_token_count))
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                ),
-        )
-    }
+pub fn render_remaining_tokens(
+    context_editor: &Entity<ContextEditor>,
+    cx: &App,
+) -> Option<impl IntoElement> {
+    let context = &context_editor.read(cx).context;
+
+    let (token_count_color, token_count, max_token_count, tooltip) = match token_state(context, cx)?
+    {
+        TokenState::NoTokensLeft {
+            max_token_count,
+            token_count,
+        } => (
+            Color::Error,
+            token_count,
+            max_token_count,
+            Some("Token Limit Reached"),
+        ),
+        TokenState::HasMoreTokens {
+            max_token_count,
+            token_count,
+            over_warn_threshold,
+        } => {
+            let (color, tooltip) = if over_warn_threshold {
+                (Color::Warning, Some("Token Limit is Close to Exhaustion"))
+            } else {
+                (Color::Muted, None)
+            };
+            (color, token_count, max_token_count, tooltip)
+        }
+    };
+
+    Some(
+        h_flex()
+            .id("token-count")
+            .gap_0p5()
+            .child(
+                Label::new(humanize_token_count(token_count))
+                    .size(LabelSize::Small)
+                    .color(token_count_color),
+            )
+            .child(Label::new("/").size(LabelSize::Small).color(Color::Muted))
+            .child(
+                Label::new(humanize_token_count(max_token_count))
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .when_some(tooltip, |element, tooltip| {
+                element.tooltip(Tooltip::text(tooltip))
+            }),
+    )
 }
 
 impl Render for ContextEditorToolbarItem {
@@ -3263,8 +3317,7 @@ impl Render for ContextEditorToolbarItem {
                         })),
                 ),
             );
-        let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
-        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+
         let right_side = h_flex()
             .gap_2()
             // TODO display this in a nicer way, once we have a design for it.
@@ -3280,57 +3333,12 @@ impl Render for ContextEditorToolbarItem {
             //     scan_items_remaining
             //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
             // })
-            .child(
-                LanguageModelSelectorPopoverMenu::new(
-                    self.language_model_selector.clone(),
-                    ButtonLike::new("active-model")
-                        .style(ButtonStyle::Subtle)
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .gap_0p5()
-                                .child(
-                                    div()
-                                        .overflow_x_hidden()
-                                        .flex_grow()
-                                        .whitespace_nowrap()
-                                        .child(match (active_provider, active_model) {
-                                            (Some(provider), Some(model)) => h_flex()
-                                                .gap_1()
-                                                .child(
-                                                    Icon::new(
-                                                        model
-                                                            .icon()
-                                                            .unwrap_or_else(|| provider.icon()),
-                                                    )
-                                                    .color(Color::Muted)
-                                                    .size(IconSize::XSmall),
-                                                )
-                                                .child(
-                                                    Label::new(model.name().0)
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Muted),
-                                                )
-                                                .into_any_element(),
-                                            _ => Label::new("No model selected")
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted)
-                                                .into_any_element(),
-                                        }),
-                                )
-                                .child(
-                                    Icon::new(IconName::ChevronDown)
-                                        .color(Color::Muted)
-                                        .size(IconSize::XSmall),
-                                ),
-                        ),
-                    move |window, cx| {
-                        Tooltip::for_action("Change Model", &ToggleModelSelector, window, cx)
-                    },
-                )
-                .with_handle(self.language_model_selector_menu_handle.clone()),
-            )
-            .children(self.render_remaining_tokens(cx));
+            .children(
+                self.active_context_editor
+                    .as_ref()
+                    .and_then(|editor| editor.upgrade())
+                    .and_then(|editor| render_remaining_tokens(&editor, cx)),
+            );
 
         h_flex()
             .px_0p5()
@@ -3386,7 +3394,7 @@ fn invoked_slash_command_fold_placeholder(
     FoldPlaceholder {
         constrain_width: false,
         merge_adjacent: false,
-        render: Arc::new(move |fold_id, _, _window, cx| {
+        render: Arc::new(move |fold_id, _, cx| {
             let Some(context) = context.upgrade() else {
                 return Empty.into_any();
             };

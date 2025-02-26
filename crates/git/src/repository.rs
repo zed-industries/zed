@@ -7,6 +7,8 @@ use git2::BranchType;
 use gpui::SharedString;
 use parking_lot::Mutex;
 use rope::Rope;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use std::borrow::Borrow;
 use std::io::Write as _;
 use std::process::Stdio;
@@ -29,6 +31,12 @@ pub struct Branch {
 }
 
 impl Branch {
+    pub fn tracking_status(&self) -> Option<UpstreamTrackingStatus> {
+        self.upstream
+            .as_ref()
+            .and_then(|upstream| upstream.tracking.status())
+    }
+
     pub fn priority_key(&self) -> (bool, Option<i64>) {
         (
             self.is_head,
@@ -42,11 +50,32 @@ impl Branch {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Upstream {
     pub ref_name: SharedString,
-    pub tracking: Option<UpstreamTracking>,
+    pub tracking: UpstreamTracking,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct UpstreamTracking {
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub enum UpstreamTracking {
+    /// Remote ref not present in local repository.
+    Gone,
+    /// Remote ref present in local repository (fetched from remote).
+    Tracked(UpstreamTrackingStatus),
+}
+
+impl UpstreamTracking {
+    pub fn is_gone(&self) -> bool {
+        matches!(self, UpstreamTracking::Gone)
+    }
+
+    pub fn status(&self) -> Option<UpstreamTrackingStatus> {
+        match self {
+            UpstreamTracking::Gone => None,
+            UpstreamTracking::Tracked(status) => Some(*status),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub struct UpstreamTrackingStatus {
     pub ahead: u32,
     pub behind: u32,
 }
@@ -68,6 +97,11 @@ pub struct CommitDetails {
     pub committer_name: SharedString,
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct Remote {
+    pub name: SharedString,
+}
+
 pub enum ResetMode {
     // reset the branch pointer, leave index and worktree unchanged
     // (this will make it look like things that were committed are now
@@ -84,12 +118,12 @@ pub trait GitRepository: Send + Sync {
 
     /// Returns the contents of an entry in the repository's index, or None if there is no entry for the given path.
     ///
-    /// Note that for symlink entries, this will return the contents of the symlink, not the target.
+    /// Also returns `None` for symlinks.
     fn load_index_text(&self, path: &RepoPath) -> Option<String>;
 
     /// Returns the contents of an entry in the repository's HEAD, or None if HEAD does not exist or has no entry for the given path.
     ///
-    /// Note that for symlink entries, this will return the contents of the symlink, not the target.
+    /// Also returns `None` for symlinks.
     fn load_committed_text(&self, path: &RepoPath) -> Option<String>;
 
     fn set_index_text(&self, path: &RepoPath, content: Option<String>) -> anyhow::Result<()>;
@@ -111,6 +145,7 @@ pub trait GitRepository: Send + Sync {
     fn branch_exits(&self, _: &str) -> Result<bool>;
 
     fn reset(&self, commit: &str, mode: ResetMode) -> Result<()>;
+    fn checkout_files(&self, commit: &str, paths: &[RepoPath]) -> Result<()>;
 
     fn show(&self, commit: &str) -> Result<CommitDetails>;
 
@@ -138,6 +173,22 @@ pub trait GitRepository: Send + Sync {
     fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()>;
 
     fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()>;
+
+    fn push(
+        &self,
+        branch_name: &str,
+        upstream_name: &str,
+        options: Option<PushOptions>,
+    ) -> Result<()>;
+    fn pull(&self, branch_name: &str, upstream_name: &str) -> Result<()>;
+    fn get_remotes(&self, branch_name: Option<&str>) -> Result<Vec<Remote>>;
+    fn fetch(&self) -> Result<()>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+pub enum PushOptions {
+    SetUpstream,
+    Force,
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -163,6 +214,14 @@ impl RealGitRepository {
             git_binary_path: git_binary_path.unwrap_or_else(|| PathBuf::from("git")),
             hosting_provider_registry,
         }
+    }
+
+    fn working_directory(&self) -> Result<PathBuf> {
+        self.repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")
+            .map(Path::to_path_buf)
     }
 }
 
@@ -208,12 +267,7 @@ impl GitRepository for RealGitRepository {
     }
 
     fn reset(&self, commit: &str, mode: ResetMode) -> Result<()> {
-        let working_directory = self
-            .repository
-            .lock()
-            .workdir()
-            .context("failed to read git work directory")?
-            .to_path_buf();
+        let working_directory = self.working_directory()?;
 
         let mode_flag = match mode {
             ResetMode::Mixed => "--mixed",
@@ -227,6 +281,26 @@ impl GitRepository for RealGitRepository {
         if !output.status.success() {
             return Err(anyhow!(
                 "Failed to reset:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(())
+    }
+
+    fn checkout_files(&self, commit: &str, paths: &[RepoPath]) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let working_directory = self.working_directory()?;
+
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["checkout", commit, "--"])
+            .args(paths.iter().map(|path| path.as_ref()))
+            .output()?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to checkout files:\n{}",
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
@@ -260,19 +334,17 @@ impl GitRepository for RealGitRepository {
     fn load_committed_text(&self, path: &RepoPath) -> Option<String> {
         let repo = self.repository.lock();
         let head = repo.head().ok()?.peel_to_tree().log_err()?;
-        let oid = head.get_path(path).ok()?.id();
-        let content = repo.find_blob(oid).log_err()?.content().to_owned();
+        let entry = head.get_path(path).ok()?;
+        if entry.filemode() == i32::from(git2::FileMode::Link) {
+            return None;
+        }
+        let content = repo.find_blob(entry.id()).log_err()?.content().to_owned();
         let content = String::from_utf8(content).log_err()?;
         Some(content)
     }
 
     fn set_index_text(&self, path: &RepoPath, content: Option<String>) -> anyhow::Result<()> {
-        let working_directory = self
-            .repository
-            .lock()
-            .workdir()
-            .context("failed to read git work directory")?
-            .to_path_buf();
+        let working_directory = self.working_directory()?;
         if let Some(content) = content {
             let mut child = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
@@ -371,7 +443,7 @@ impl GitRepository for RealGitRepository {
             "%(contents:subject)",
         ]
         .join("%00");
-        let args = vec!["for-each-ref", "refs/heads/*", "--format", &fields];
+        let args = vec!["for-each-ref", "refs/heads/**/*", "--format", &fields];
 
         let output = new_std_command(&self.git_binary_path)
             .current_dir(&working_directory)
@@ -456,12 +528,7 @@ impl GitRepository for RealGitRepository {
     }
 
     fn stage_paths(&self, paths: &[RepoPath]) -> Result<()> {
-        let working_directory = self
-            .repository
-            .lock()
-            .workdir()
-            .context("failed to read git work directory")?
-            .to_path_buf();
+        let working_directory = self.working_directory()?;
 
         if !paths.is_empty() {
             let output = new_std_command(&self.git_binary_path)
@@ -469,6 +536,8 @@ impl GitRepository for RealGitRepository {
                 .args(["update-index", "--add", "--remove", "--"])
                 .args(paths.iter().map(|p| p.as_ref()))
                 .output()?;
+
+            // TODO: Get remote response out of this and show it to the user
             if !output.status.success() {
                 return Err(anyhow!(
                     "Failed to stage paths:\n{}",
@@ -480,12 +549,7 @@ impl GitRepository for RealGitRepository {
     }
 
     fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()> {
-        let working_directory = self
-            .repository
-            .lock()
-            .workdir()
-            .context("failed to read git work directory")?
-            .to_path_buf();
+        let working_directory = self.working_directory()?;
 
         if !paths.is_empty() {
             let output = new_std_command(&self.git_binary_path)
@@ -493,6 +557,8 @@ impl GitRepository for RealGitRepository {
                 .args(["reset", "--quiet", "--"])
                 .args(paths.iter().map(|p| p.as_ref()))
                 .output()?;
+
+            // TODO: Get remote response out of this and show it to the user
             if !output.status.success() {
                 return Err(anyhow!(
                     "Failed to unstage:\n{}",
@@ -504,24 +570,21 @@ impl GitRepository for RealGitRepository {
     }
 
     fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()> {
-        let working_directory = self
-            .repository
-            .lock()
-            .workdir()
-            .context("failed to read git work directory")?
-            .to_path_buf();
-        let mut args = vec!["commit", "--quiet", "-m", message, "--cleanup=strip"];
-        let author = name_and_email.map(|(name, email)| format!("{name} <{email}>"));
-        if let Some(author) = author.as_deref() {
-            args.push("--author");
-            args.push(author);
+        let working_directory = self.working_directory()?;
+
+        let mut cmd = new_std_command(&self.git_binary_path);
+        cmd.current_dir(&working_directory)
+            .args(["commit", "--quiet", "-m"])
+            .arg(message)
+            .arg("--cleanup=strip");
+
+        if let Some((name, email)) = name_and_email {
+            cmd.arg("--author").arg(&format!("{name} <{email}>"));
         }
 
-        let output = new_std_command(&self.git_binary_path)
-            .current_dir(&working_directory)
-            .args(args)
-            .output()?;
+        let output = cmd.output()?;
 
+        // TODO: Get remote response out of this and show it to the user
         if !output.status.success() {
             return Err(anyhow!(
                 "Failed to commit:\n{}",
@@ -529,6 +592,115 @@ impl GitRepository for RealGitRepository {
             ));
         }
         Ok(())
+    }
+
+    fn push(
+        &self,
+        branch_name: &str,
+        remote_name: &str,
+        options: Option<PushOptions>,
+    ) -> Result<()> {
+        let working_directory = self.working_directory()?;
+
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["push", "--quiet"])
+            .args(options.map(|option| match option {
+                PushOptions::SetUpstream => "--set-upstream",
+                PushOptions::Force => "--force-with-lease",
+            }))
+            .arg(remote_name)
+            .arg(format!("{}:{}", branch_name, branch_name))
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to push:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        } else {
+            Ok(())
+        }
+    }
+
+    fn pull(&self, branch_name: &str, remote_name: &str) -> Result<()> {
+        let working_directory = self.working_directory()?;
+
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["pull", "--quiet"])
+            .arg(remote_name)
+            .arg(branch_name)
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to pull:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        } else {
+            return Ok(());
+        }
+    }
+
+    fn fetch(&self) -> Result<()> {
+        let working_directory = self.working_directory()?;
+
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["fetch", "--quiet", "--all"])
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to fetch:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        } else {
+            return Ok(());
+        }
+    }
+
+    fn get_remotes(&self, branch_name: Option<&str>) -> Result<Vec<Remote>> {
+        let working_directory = self.working_directory()?;
+
+        if let Some(branch_name) = branch_name {
+            let output = new_std_command(&self.git_binary_path)
+                .current_dir(&working_directory)
+                .args(["config", "--get"])
+                .arg(format!("branch.{}.remote", branch_name))
+                .output()?;
+
+            if output.status.success() {
+                let remote_name = String::from_utf8_lossy(&output.stdout);
+
+                return Ok(vec![Remote {
+                    name: remote_name.trim().to_string().into(),
+                }]);
+            }
+        }
+
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["remote"])
+            .output()?;
+
+        if output.status.success() {
+            let remote_names = String::from_utf8_lossy(&output.stdout)
+                .split('\n')
+                .filter(|name| !name.is_empty())
+                .map(|name| Remote {
+                    name: name.trim().to_string().into(),
+                })
+                .collect();
+
+            return Ok(remote_names);
+        } else {
+            return Err(anyhow!(
+                "Failed to get remotes:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
     }
 }
 
@@ -614,6 +786,10 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn reset(&self, _: &str, _: ResetMode) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn checkout_files(&self, _: &str, _: &[RepoPath]) -> Result<()> {
         unimplemented!()
     }
 
@@ -708,6 +884,22 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn commit(&self, _message: &str, _name_and_email: Option<(&str, &str)>) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn push(&self, _branch: &str, _remote: &str, _options: Option<PushOptions>) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn pull(&self, _branch: &str, _remote: &str) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn fetch(&self) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn get_remotes(&self, _branch: Option<&str>) -> Result<Vec<Remote>> {
         unimplemented!()
     }
 }
@@ -878,9 +1070,9 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
     Ok(branches)
 }
 
-fn parse_upstream_track(upstream_track: &str) -> Result<Option<UpstreamTracking>> {
+fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
     if upstream_track == "" {
-        return Ok(Some(UpstreamTracking {
+        return Ok(UpstreamTracking::Tracked(UpstreamTrackingStatus {
             ahead: 0,
             behind: 0,
         }));
@@ -896,7 +1088,7 @@ fn parse_upstream_track(upstream_track: &str) -> Result<Option<UpstreamTracking>
     let mut behind: u32 = 0;
     for component in upstream_track.split(", ") {
         if component == "gone" {
-            return Ok(None);
+            return Ok(UpstreamTracking::Gone);
         }
         if let Some(ahead_num) = component.strip_prefix("ahead ") {
             ahead = ahead_num.parse::<u32>()?;
@@ -905,7 +1097,10 @@ fn parse_upstream_track(upstream_track: &str) -> Result<Option<UpstreamTracking>
             behind = behind_num.parse::<u32>()?;
         }
     }
-    Ok(Some(UpstreamTracking { ahead, behind }))
+    Ok(UpstreamTracking::Tracked(UpstreamTrackingStatus {
+        ahead,
+        behind,
+    }))
 }
 
 #[test]
@@ -920,7 +1115,7 @@ fn test_branches_parsing() {
             name: "zed-patches".into(),
             upstream: Some(Upstream {
                 ref_name: "refs/remotes/origin/zed-patches".into(),
-                tracking: Some(UpstreamTracking {
+                tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus {
                     ahead: 0,
                     behind: 0
                 })

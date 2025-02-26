@@ -511,7 +511,7 @@ impl PickerDelegate for TasksModalDelegate {
                 .child(
                     left_button
                         .map(|(label, action)| {
-                            let keybind = KeyBinding::for_action(&*action, window);
+                            let keybind = KeyBinding::for_action(&*action, window, cx);
 
                             Button::new("edit-current-task", label)
                                 .label_size(LabelSize::Small)
@@ -530,7 +530,7 @@ impl PickerDelegate for TasksModalDelegate {
                             secondary: current_modifiers.secondary(),
                         }
                         .boxed_clone();
-                        this.children(KeyBinding::for_action(&*action, window).map(|keybind| {
+                        this.children(KeyBinding::for_action(&*action, window, cx).map(|keybind| {
                             let spawn_oneshot_label = if current_modifiers.secondary() {
                                 "Spawn Oneshot Without History"
                             } else {
@@ -545,26 +545,28 @@ impl PickerDelegate for TasksModalDelegate {
                                 })
                         }))
                     } else if current_modifiers.secondary() {
-                        this.children(KeyBinding::for_action(&menu::SecondaryConfirm, window).map(
-                            |keybind| {
-                                let label = if is_recent_selected {
-                                    "Rerun Without History"
-                                } else {
-                                    "Spawn Without History"
-                                };
-                                Button::new("spawn", label)
-                                    .label_size(LabelSize::Small)
-                                    .key_binding(keybind)
-                                    .on_click(move |_, window, cx| {
-                                        window.dispatch_action(
-                                            menu::SecondaryConfirm.boxed_clone(),
-                                            cx,
-                                        )
-                                    })
-                            },
-                        ))
+                        this.children(
+                            KeyBinding::for_action(&menu::SecondaryConfirm, window, cx).map(
+                                |keybind| {
+                                    let label = if is_recent_selected {
+                                        "Rerun Without History"
+                                    } else {
+                                        "Spawn Without History"
+                                    };
+                                    Button::new("spawn", label)
+                                        .label_size(LabelSize::Small)
+                                        .key_binding(keybind)
+                                        .on_click(move |_, window, cx| {
+                                            window.dispatch_action(
+                                                menu::SecondaryConfirm.boxed_clone(),
+                                                cx,
+                                            )
+                                        })
+                                },
+                            ),
+                        )
                     } else {
-                        this.children(KeyBinding::for_action(&menu::Confirm, window).map(
+                        this.children(KeyBinding::for_action(&menu::Confirm, window, cx).map(
                             |keybind| {
                                 let run_entry_label =
                                     if is_recent_selected { "Rerun" } else { "Spawn" };
@@ -1020,7 +1022,7 @@ mod tests {
 
         let _rs_file = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/b.rs"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(path!("/dir/b.rs")), true, window, cx)
             })
             .await
             .unwrap();

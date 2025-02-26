@@ -706,6 +706,10 @@ impl Item for Editor {
         self.buffer.read(cx).is_singleton()
     }
 
+    fn can_save_as(&self, cx: &App) -> bool {
+        self.buffer.read(cx).is_singleton()
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
@@ -1069,12 +1073,16 @@ impl SerializableItem for Editor {
                             buffer.set_language(Some(language), cx);
                         }
                         buffer.set_text(contents, cx);
+                        if let Some(entry) = buffer.peek_undo_stack() {
+                            buffer.forget_transaction(entry.transaction_id());
+                        }
                     })?;
 
                     cx.update(|window, cx| {
                         cx.new(|cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
 
+                            editor.read_selections_from_db(item_id, workspace_id, window, cx);
                             editor.read_scroll_position_from_db(item_id, workspace_id, window, cx);
                             editor
                         })
@@ -1122,6 +1130,9 @@ impl SerializableItem for Editor {
                                         );
                                     }
                                     buffer.set_text(buffer_text, cx);
+                                    if let Some(entry) = buffer.peek_undo_stack() {
+                                        buffer.forget_transaction(entry.transaction_id());
+                                    }
                                 })?;
                             }
 
@@ -1130,6 +1141,12 @@ impl SerializableItem for Editor {
                                     let mut editor =
                                         Editor::for_buffer(buffer, Some(project), window, cx);
 
+                                    editor.read_selections_from_db(
+                                        item_id,
+                                        workspace_id,
+                                        window,
+                                        cx,
+                                    );
                                     editor.read_scroll_position_from_db(
                                         item_id,
                                         workspace_id,
@@ -1148,6 +1165,7 @@ impl SerializableItem for Editor {
                         window.spawn(cx, |mut cx| async move {
                             let editor = open_by_abs_path?.await?.downcast::<Editor>().with_context(|| format!("Failed to downcast to Editor after opening abs path {abs_path:?}"))?;
                             editor.update_in(&mut cx, |editor, window, cx| {
+                                editor.read_selections_from_db(item_id, workspace_id, window, cx);
                                 editor.read_scroll_position_from_db(item_id, workspace_id, window, cx);
                             })?;
                             Ok(editor)
@@ -1207,28 +1225,27 @@ impl SerializableItem for Editor {
         let snapshot = buffer.read(cx).snapshot();
 
         Some(cx.spawn_in(window, |_this, cx| async move {
-            cx.background_executor()
-                .spawn(async move {
-                    let (contents, language) = if serialize_dirty_buffers && is_dirty {
-                        let contents = snapshot.text();
-                        let language = snapshot.language().map(|lang| lang.name().to_string());
-                        (Some(contents), language)
-                    } else {
-                        (None, None)
-                    };
+            cx.background_spawn(async move {
+                let (contents, language) = if serialize_dirty_buffers && is_dirty {
+                    let contents = snapshot.text();
+                    let language = snapshot.language().map(|lang| lang.name().to_string());
+                    (Some(contents), language)
+                } else {
+                    (None, None)
+                };
 
-                    let editor = SerializedEditor {
-                        abs_path,
-                        contents,
-                        language,
-                        mtime,
-                    };
-                    DB.save_serialized_editor(item_id, workspace_id, editor)
-                        .await
-                        .context("failed to save serialized editor")
-                })
-                .await
-                .context("failed to save contents of buffer")?;
+                let editor = SerializedEditor {
+                    abs_path,
+                    contents,
+                    language,
+                    mtime,
+                };
+                DB.save_serialized_editor(item_id, workspace_id, editor)
+                    .await
+                    .context("failed to save serialized editor")
+            })
+            .await
+            .context("failed to save contents of buffer")?;
 
             Ok(())
         }))
@@ -1401,11 +1418,9 @@ impl SearchableItem for Editor {
         cx: &mut Context<Self>,
     ) {
         self.unfold_ranges(matches, false, false, cx);
-        let mut ranges = Vec::new();
-        for m in matches {
-            ranges.push(self.range_for_match(m))
-        }
-        self.change_selections(None, window, cx, |s| s.select_ranges(ranges));
+        self.change_selections(None, window, cx, |s| {
+            s.select_ranges(matches.iter().cloned())
+        });
     }
     fn replace(
         &mut self,
@@ -1524,7 +1539,7 @@ impl SearchableItem for Editor {
                 ranges.iter().cloned().collect::<Vec<_>>()
             });
 
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             let mut ranges = Vec::new();
 
             let search_within_ranges = if search_within_ranges.is_empty() {

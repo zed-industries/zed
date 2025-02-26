@@ -140,7 +140,6 @@ impl Vim {
                     if !search_bar.show(window, cx) {
                         return;
                     }
-                    let query = search_bar.query(cx);
 
                     search_bar.select_query(window, cx);
                     cx.focus_self(window);
@@ -160,7 +159,6 @@ impl Vim {
                     self.search = SearchState {
                         direction,
                         count,
-                        initial_query: query,
                         prior_selections,
                         prior_operator: self.operator_stack.last().cloned(),
                         prior_mode,
@@ -181,16 +179,17 @@ impl Vim {
         let Some(pane) = self.pane(window, cx) else {
             return;
         };
+        let new_selections = self.editor_selections(window, cx);
         let result = pane.update(cx, |pane, cx| {
             let search_bar = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()?;
             search_bar.update(cx, |search_bar, cx| {
                 let mut count = self.search.count;
                 let direction = self.search.direction;
-                // in the case that the query has changed, the search bar
-                // will have selected the next match already.
-                if (search_bar.query(cx) != self.search.initial_query)
-                    && self.search.direction == Direction::Next
-                {
+                search_bar.has_active_match();
+                let new_head = new_selections.last().unwrap().start;
+                let old_head = self.search.prior_selections.last().unwrap().start;
+
+                if new_head != old_head && self.search.direction == Direction::Next {
                     count = count.saturating_sub(1)
                 }
                 self.search.count = 1;
@@ -830,6 +829,16 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_v_search_aa(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇaa aa").await;
+        cx.simulate_shared_keystrokes("v / a a").await;
+        cx.simulate_shared_keystrokes("enter").await;
+        cx.shared_state().await.assert_eq("«aa aˇ»a");
+    }
+
+    #[gpui::test]
     async fn test_visual_block_search(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -878,10 +887,9 @@ mod test {
             a
              "
         });
-        cx.executor().advance_clock(Duration::from_millis(250));
-        cx.run_until_parked();
 
-        cx.simulate_shared_keystrokes("/ a enter").await;
+        cx.simulate_shared_keystrokes("/ a").await;
+        cx.simulate_shared_keystrokes("enter").await;
         cx.shared_state().await.assert_eq(indoc! {
             "a
                 ba
@@ -894,7 +902,29 @@ mod test {
         });
     }
 
-    // cargo test -p vim --features neovim test_replace_with_range
+    #[gpui::test]
+    async fn test_search_skipping(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {
+            "ˇaa aa aa"
+        })
+        .await;
+
+        cx.simulate_shared_keystrokes("/ a a").await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {
+            "aa ˇaa aa"
+        });
+
+        cx.simulate_shared_keystrokes("left / a a").await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {
+            "aa ˇaa aa"
+        });
+    }
+
     #[gpui::test]
     async fn test_replace_with_range(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;

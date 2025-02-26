@@ -1,7 +1,6 @@
 use super::latest;
 use crate::wasm_host::WasmState;
 use anyhow::Result;
-use async_trait::async_trait;
 use extension::WorktreeDelegate;
 use semantic_version::SemanticVersion;
 use std::sync::{Arc, OnceLock};
@@ -67,7 +66,6 @@ impl From<Command> for latest::Command {
     }
 }
 
-#[async_trait]
 impl HostWorktree for WasmState {
     async fn read_text_file(
         &mut self,
@@ -98,7 +96,6 @@ impl HostWorktree for WasmState {
     }
 }
 
-#[async_trait]
 impl ExtensionImports for WasmState {
     async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
         latest::nodejs::Host::node_binary_path(self).await

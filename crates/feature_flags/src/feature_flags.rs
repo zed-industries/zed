@@ -64,12 +64,6 @@ impl FeatureFlag for PredictEditsFeatureFlag {
     const NAME: &'static str = "predict-edits";
 }
 
-/// A feature flag that controls things that shouldn't go live until the predictive edits launch.
-pub struct PredictEditsLaunchFeatureFlag;
-impl FeatureFlag for PredictEditsLaunchFeatureFlag {
-    const NAME: &'static str = "predict-edits-launch";
-}
-
 pub struct PredictEditsRateCompletionsFeatureFlag;
 impl FeatureFlag for PredictEditsRateCompletionsFeatureFlag {
     const NAME: &'static str = "predict-edits-rate-completions";

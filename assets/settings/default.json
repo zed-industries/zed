@@ -126,6 +126,13 @@
   //  3. Never close the window
   //         "when_closing_with_no_tabs": "keep_window_open",
   "when_closing_with_no_tabs": "platform_default",
+  // What to do when the last window is closed.
+  // May take 2 values:
+  //  1. Use the current platform's convention
+  //         "on_last_window_closed": "platform_default"
+  //  2. Always quit the application
+  //         "on_last_window_closed": "quit_app",
+  "on_last_window_closed": "platform_default",
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
@@ -154,6 +161,10 @@
   // 4. Highlight the full line (default):
   //    "all"
   "current_line_highlight": "all",
+  // Whether to highlight all occurrences of the selected text in an editor.
+  "selection_highlight": true,
+  // The debounce delay before querying highlights based on the selected text.
+  "selection_highlight_debounce": 50,
   // The debounce delay before querying highlights from the language
   // server based on the current cursor location.
   "lsp_highlight_debounce": 75,
@@ -200,6 +211,23 @@
   // Otherwise(when `true`), the closing characters are always skipped over and auto-removed
   // no matter how they were inserted.
   "always_treat_brackets_as_autoclosed": false,
+  // Controls where the `editor::Rewrap` action is allowed in the current language scope.
+  //
+  // This setting can take three values:
+  //
+  // 1. Only allow rewrapping in comments:
+  //    "in_comments"
+  // 2. Only allow rewrapping in the current selection(s):
+  //    "in_selections"
+  // 3. Allow rewrapping anywhere:
+  //    "anywhere"
+  //
+  // When using values other than `in_comments`, it is possible for the rewrapping to produce code
+  // that is syntactically invalid. Keep this in mind when selecting which behavior you would like
+  // to use.
+  //
+  // Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
+  "allow_rewrap": "in_comments",
   // Controls whether edit predictions are shown immediately (true)
   // or manually by triggering `editor::ShowEditPrediction` (false).
   "show_edit_predictions": true,
@@ -259,6 +287,8 @@
     "git_diff": true,
     // Whether to show buffer search results in the scrollbar.
     "search_results": true,
+    // Whether to show selected text occurrences in the scrollbar.
+    "selected_text": true,
     // Whether to show selected symbol occurrences in the scrollbar.
     "selected_symbol": true,
     // Which diagnostic indicators to show in the scrollbar:
@@ -551,7 +581,7 @@
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-5-sonnet"
+      "model": "claude-3-5-sonnet-latest"
     }
   },
   // The settings for slash commands.
@@ -728,11 +758,28 @@
   // Diagnostics configuration.
   "diagnostics": {
     // Whether to show warnings or not by default.
-    "include_warnings": true
+    "include_warnings": true,
+    // Settings for inline diagnostics
+    "inline": {
+      // Whether to show diagnostics inline or not
+      "enabled": false,
+      // The delay in milliseconds to show inline diagnostics after the
+      // last diagnostic update.
+      "update_debounce_ms": 150,
+      // The amount of padding between the end of the source line and the start
+      // of the inline diagnostic in units of em widths.
+      "padding": 4,
+      // The minimum column to display inline diagnostics. This setting can be
+      // used to horizontally align inline diagnostics at some column. Lines
+      // longer than this value will still push diagnostics further to the right.
+      "min_column": 0,
+      // The minimum severity of the diagnostics to show inline.
+      // Shows all diagnostics when not specified.
+      "max_severity": null
+    }
   },
-  // Add files or globs of files that will be excluded by Zed entirely:
-  // they will be skipped during FS scan(s), file tree and file search
-  // will lack the corresponding file entries. Overrides `file_scan_inclusions`.
+  // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file
+  // scans, file searches, and not be displayed in the project file tree. Takes precedence over `file_scan_inclusions`.
   "file_scan_exclusions": [
     "**/.git",
     "**/.svn",
@@ -744,10 +791,10 @@
     "**/.classpath",
     "**/.settings"
   ],
-  // Add files or globs of files that will be included by Zed, even when
-  // ignored by git. This is useful for files that are not tracked by git,
-  // but are still important to your project. Note that globs that are
-  // overly broad can slow down Zed's file scanning. Overridden by `file_scan_exclusions`.
+  // Files or globs of files that will be included by Zed, even when ignored by git. This is useful
+  // for files that are not tracked by git, but are still important to your project. Note that globs
+  // that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes
+  // precedence over these inclusions.
   "file_scan_inclusions": [".env*"],
   // Git gutter behavior configuration.
   "git": {
@@ -788,6 +835,7 @@
       "**/*.key",
       "**/*.cert",
       "**/*.crt",
+      "**/.dev.vars",
       "**/secrets.yml"
     ],
     // When to show edit predictions previews in buffer.
@@ -1045,6 +1093,7 @@
       "tab_size": 2
     },
     "Diff": {
+      "show_edit_predictions": false,
       "remove_trailing_whitespace_on_save": false,
       "ensure_final_newline_on_save": false
     },
@@ -1053,6 +1102,9 @@
     },
     "Erlang": {
       "language_servers": ["erlang-ls", "!elp", "..."]
+    },
+    "Git Commit": {
+      "allow_rewrap": "anywhere"
     },
     "Go": {
       "code_actions_on_format": {
@@ -1097,6 +1149,7 @@
     "Markdown": {
       "format_on_save": "off",
       "use_on_type_format": false,
+      "allow_rewrap": "anywhere",
       "prettier": {
         "allowed": true
       }
@@ -1108,6 +1161,9 @@
         "plugins": ["@prettier/plugin-php"],
         "parser": "php"
       }
+    },
+    "Plain Text": {
+      "allow_rewrap": "anywhere"
     },
     "Ruby": {
       "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "..."]
@@ -1192,6 +1248,9 @@
     },
     "deepseek": {
       "api_url": "https://api.deepseek.com"
+    },
+    "mistral": {
+      "api_url": "https://api.mistral.ai/v1"
     }
   },
   // Zed's Prettier integration settings.
@@ -1237,6 +1296,7 @@
   },
   // Vim settings
   "vim": {
+    "default_mode": "normal",
     "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_multiline_find": false,

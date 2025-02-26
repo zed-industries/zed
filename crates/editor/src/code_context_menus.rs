@@ -1,14 +1,16 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    div, px, uniform_list, AnyElement, BackgroundExecutor, Div, Entity, FontWeight,
+    div, px, uniform_list, AnyElement, BackgroundExecutor, Div, Entity, Focusable, FontWeight,
     ListSizingBehavior, ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText,
-    UniformListScrollHandle, WeakEntity,
+    UniformListScrollHandle,
 };
 use language::Buffer;
-use language::{CodeLabel, CompletionDocumentation};
+use language::CodeLabel;
 use lsp::LanguageServerId;
+use markdown::Markdown;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
+use project::lsp_store::CompletionDocumentation;
 use project::{CodeAction, Completion, TaskSourceKind};
 
 use std::{
@@ -21,12 +23,12 @@ use std::{
 use task::ResolvedTask;
 use ui::{prelude::*, Color, IntoElement, ListItem, Pixels, Popover, Styled};
 use util::ResultExt;
-use workspace::Workspace;
 
+use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
     actions::{ConfirmCodeAction, ConfirmCompletion},
-    render_parsed_markdown, split_words, styled_runs_for_code_label, CodeActionProvider,
-    CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle, ResolvedTasks,
+    split_words, styled_runs_for_code_label, CodeActionProvider, CompletionId, CompletionProvider,
+    DisplayRow, Editor, EditorStyle, ResolvedTasks,
 };
 
 pub const MENU_GAP: Pixels = px(4.);
@@ -137,15 +139,25 @@ impl CodeContextMenu {
     }
 
     pub fn render_aside(
-        &self,
-        style: &EditorStyle,
+        &mut self,
+        editor: &Editor,
         max_size: Size<Pixels>,
-        workspace: Option<WeakEntity<Workspace>>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         match self {
-            CodeContextMenu::Completions(menu) => menu.render_aside(style, max_size, workspace, cx),
+            CodeContextMenu::Completions(menu) => menu.render_aside(editor, max_size, window, cx),
             CodeContextMenu::CodeActions(_) => None,
+        }
+    }
+
+    pub fn focused(&self, window: &mut Window, cx: &mut Context<Editor>) -> bool {
+        match self {
+            CodeContextMenu::Completions(completions_menu) => completions_menu
+                .markdown_element
+                .as_ref()
+                .is_some_and(|markdown| markdown.focus_handle(cx).contains_focused(window, cx)),
+            CodeContextMenu::CodeActions(_) => false,
         }
     }
 }
@@ -169,6 +181,7 @@ pub struct CompletionsMenu {
     resolve_completions: bool,
     show_completion_documentation: bool,
     last_rendered_range: Rc<RefCell<Option<Range<usize>>>>,
+    markdown_element: Option<Entity<Markdown>>,
 }
 
 impl CompletionsMenu {
@@ -199,6 +212,7 @@ impl CompletionsMenu {
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: true,
             last_rendered_range: RefCell::new(None).into(),
+            markdown_element: None,
         }
     }
 
@@ -255,6 +269,7 @@ impl CompletionsMenu {
             resolve_completions: false,
             show_completion_documentation: false,
             last_rendered_range: RefCell::new(None).into(),
+            markdown_element: None,
         }
     }
 
@@ -556,10 +571,10 @@ impl CompletionsMenu {
     }
 
     fn render_aside(
-        &self,
-        style: &EditorStyle,
+        &mut self,
+        editor: &Editor,
         max_size: Size<Pixels>,
-        workspace: Option<WeakEntity<Workspace>>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         if !self.show_completion_documentation {
@@ -571,17 +586,34 @@ impl CompletionsMenu {
             .documentation
             .as_ref()?
         {
-            CompletionDocumentation::MultiLinePlainText(text) => {
-                div().child(SharedString::from(text.clone()))
+            CompletionDocumentation::MultiLinePlainText(text) => div().child(text.clone()),
+            CompletionDocumentation::MultiLineMarkdown(parsed) if !parsed.is_empty() => {
+                let markdown = self.markdown_element.get_or_insert_with(|| {
+                    cx.new(|cx| {
+                        let languages = editor
+                            .workspace
+                            .as_ref()
+                            .and_then(|(workspace, _)| workspace.upgrade())
+                            .map(|workspace| workspace.read(cx).app_state().languages.clone());
+                        let language = editor
+                            .language_at(self.initial_position, cx)
+                            .map(|l| l.name().to_proto());
+                        Markdown::new(
+                            SharedString::default(),
+                            hover_markdown_style(window, cx),
+                            languages,
+                            language,
+                            cx,
+                        )
+                        .copy_code_block_buttons(false)
+                        .open_url(open_markdown_url)
+                    })
+                });
+                markdown.update(cx, |markdown, cx| {
+                    markdown.reset(parsed.clone(), cx);
+                });
+                div().child(markdown.clone())
             }
-            CompletionDocumentation::MultiLineMarkdown(parsed) if !parsed.text.is_empty() => div()
-                .child(render_parsed_markdown(
-                    "completions_markdown",
-                    parsed,
-                    &style,
-                    workspace,
-                    cx,
-                )),
             CompletionDocumentation::MultiLineMarkdown(_) => return None,
             CompletionDocumentation::SingleLine(_) => return None,
             CompletionDocumentation::Undocumented => return None,

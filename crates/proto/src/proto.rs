@@ -441,9 +441,15 @@ messages!(
     (InstallExtension, Background),
     (RegisterBufferWithLanguageServers, Background),
     (GitReset, Background),
+    (GitCheckoutFiles, Background),
     (GitShow, Background),
     (GitCommitDetails, Background),
     (SetIndexText, Background),
+    (Push, Background),
+    (Fetch, Background),
+    (GetRemotes, Background),
+    (GetRemotesResponse, Background),
+    (Pull, Background),
 );
 
 request_messages!(
@@ -579,7 +585,12 @@ request_messages!(
     (RegisterBufferWithLanguageServers, Ack),
     (GitShow, GitCommitDetails),
     (GitReset, Ack),
+    (GitCheckoutFiles, Ack),
     (SetIndexText, Ack),
+    (Push, Ack),
+    (Fetch, Ack),
+    (GetRemotes, GetRemotesResponse),
+    (Pull, Ack),
 );
 
 entity_messages!(
@@ -674,7 +685,12 @@ entity_messages!(
     RegisterBufferWithLanguageServers,
     GitShow,
     GitReset,
+    GitCheckoutFiles,
     SetIndexText,
+    Push,
+    Fetch,
+    GetRemotes,
+    Pull,
 );
 
 entity_messages!(

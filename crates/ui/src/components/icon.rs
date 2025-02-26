@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 mod decorated_icon;
 mod icon_decoration;
 
@@ -127,10 +125,12 @@ impl IconSize {
 pub enum IconName {
     Ai,
     AiAnthropic,
+    AiBedrock,
     AiAnthropicHosted,
     AiDeepSeek,
     AiGoogle,
     AiLmStudio,
+    AiMistral,
     AiOllama,
     AiOpenAi,
     AiZed,
