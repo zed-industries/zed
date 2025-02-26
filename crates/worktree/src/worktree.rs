@@ -20,7 +20,7 @@ use futures::{
 };
 use fuzzy::CharBag;
 use git::{
-    repository::{Branch, GitRepository, RepoPath},
+    repository::{Branch, GitRepository, RepoPath, UpstreamTrackingStatus},
     status::{
         FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
     },
@@ -202,21 +202,25 @@ pub struct RepositoryEntry {
     pub(crate) statuses_by_path: SumTree<StatusEntry>,
     work_directory_id: ProjectEntryId,
     pub work_directory: WorkDirectory,
-    pub(crate) branch: Option<Branch>,
+    pub(crate) current_branch: Option<Branch>,
     pub current_merge_conflicts: TreeSet<RepoPath>,
 }
 
-impl Deref for RepositoryEntry {
-    type Target = WorkDirectory;
-
-    fn deref(&self) -> &Self::Target {
-        &self.work_directory
-    }
-}
-
 impl RepositoryEntry {
+    pub fn relativize(&self, path: &Path) -> Result<RepoPath> {
+        self.work_directory.relativize(path)
+    }
+
+    pub fn unrelativize(&self, path: &RepoPath) -> Option<Arc<Path>> {
+        self.work_directory.unrelativize(path)
+    }
+
+    pub fn directory_contains(&self, path: impl AsRef<Path>) -> bool {
+        self.work_directory.directory_contains(path)
+    }
+
     pub fn branch(&self) -> Option<&Branch> {
-        self.branch.as_ref()
+        self.current_branch.as_ref()
     }
 
     pub fn work_directory_id(&self) -> ProjectEntryId {
@@ -244,8 +248,11 @@ impl RepositoryEntry {
     pub fn initial_update(&self) -> proto::RepositoryEntry {
         proto::RepositoryEntry {
             work_directory_id: self.work_directory_id.to_proto(),
-            branch: self.branch.as_ref().map(|branch| branch.name.to_string()),
-            branch_summary: self.branch.as_ref().map(branch_to_proto),
+            branch: self
+                .current_branch
+                .as_ref()
+                .map(|branch| branch.name.to_string()),
+            branch_summary: self.current_branch.as_ref().map(branch_to_proto),
             updated_statuses: self
                 .statuses_by_path
                 .iter()
@@ -304,8 +311,11 @@ impl RepositoryEntry {
 
         proto::RepositoryEntry {
             work_directory_id: self.work_directory_id.to_proto(),
-            branch: self.branch.as_ref().map(|branch| branch.name.to_string()),
-            branch_summary: self.branch.as_ref().map(branch_to_proto),
+            branch: self
+                .current_branch
+                .as_ref()
+                .map(|branch| branch.name.to_string()),
+            branch_summary: self.current_branch.as_ref().map(branch_to_proto),
             updated_statuses,
             removed_statuses,
             current_merge_conflicts: self
@@ -329,7 +339,7 @@ pub fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
             ref_name: upstream.ref_name.to_string(),
             tracking: upstream
                 .tracking
-                .as_ref()
+                .status()
                 .map(|upstream| proto::UpstreamTracking {
                     ahead: upstream.ahead as u64,
                     behind: upstream.behind as u64,
@@ -355,12 +365,16 @@ pub fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
             .as_ref()
             .map(|upstream| git::repository::Upstream {
                 ref_name: upstream.ref_name.to_string().into(),
-                tracking: upstream.tracking.as_ref().map(|tracking| {
-                    git::repository::UpstreamTracking {
-                        ahead: tracking.ahead as u32,
-                        behind: tracking.behind as u32,
-                    }
-                }),
+                tracking: upstream
+                    .tracking
+                    .as_ref()
+                    .map(|tracking| {
+                        git::repository::UpstreamTracking::Tracked(UpstreamTrackingStatus {
+                            ahead: tracking.ahead as u32,
+                            behind: tracking.behind as u32,
+                        })
+                    })
+                    .unwrap_or(git::repository::UpstreamTracking::Gone),
             }),
         most_recent_commit: proto.most_recent_commit.as_ref().map(|commit| {
             git::repository::CommitSummary {
@@ -2682,7 +2696,8 @@ impl Snapshot {
 
                     self.repositories
                         .update(&PathKey(work_dir_entry.path.clone()), &(), |repo| {
-                            repo.branch = repository.branch_summary.as_ref().map(proto_to_branch);
+                            repo.current_branch =
+                                repository.branch_summary.as_ref().map(proto_to_branch);
                             repo.statuses_by_path.edit(edits, &());
                             repo.current_merge_conflicts = conflicted_paths
                         });
@@ -2704,7 +2719,7 @@ impl Snapshot {
                             work_directory: WorkDirectory::InProject {
                                 relative_path: work_dir_entry.path.clone(),
                             },
-                            branch: repository.branch_summary.as_ref().map(proto_to_branch),
+                            current_branch: repository.branch_summary.as_ref().map(proto_to_branch),
                             statuses_by_path: statuses,
                             current_merge_conflicts: conflicted_paths,
                         },
@@ -2823,7 +2838,7 @@ impl Snapshot {
     pub fn repository_for_path(&self, path: &Path) -> Option<&RepositoryEntry> {
         self.repositories
             .iter()
-            .filter(|repo| repo.work_directory.directory_contains(path))
+            .filter(|repo| repo.directory_contains(path))
             .last()
     }
 
@@ -3506,7 +3521,7 @@ impl BackgroundScannerState {
             RepositoryEntry {
                 work_directory_id: work_dir_id,
                 work_directory: work_directory.clone(),
-                branch: None,
+                current_branch: None,
                 statuses_by_path: Default::default(),
                 current_merge_conflicts: Default::default(),
             },
@@ -5472,6 +5487,9 @@ impl BackgroundScanner {
                         },
                         &(),
                     );
+                    if status.is_conflicted() {
+                        repository.current_merge_conflicts.insert(repo_path.clone());
+                    }
 
                     if let Some(path) = project_path {
                         changed_paths.push(path);
@@ -5491,7 +5509,8 @@ impl BackgroundScanner {
                         entry.merge_message = std::fs::read_to_string(
                             local_repository.dot_git_dir_abs_path.join("MERGE_MSG"),
                         )
-                        .ok();
+                        .ok()
+                        .and_then(|merge_msg| Some(merge_msg.lines().next()?.to_owned()));
                         entry.status_scan_id += 1;
                     },
                 );
@@ -5576,7 +5595,7 @@ fn update_branches(
     let mut repository = snapshot
         .repository(repository.work_directory.path_key())
         .context("Missing repository")?;
-    repository.branch = branches.into_iter().find(|branch| branch.is_head);
+    repository.current_branch = branches.into_iter().find(|branch| branch.is_head);
 
     let mut state = state.lock();
     state
@@ -6008,7 +6027,13 @@ impl<'a> GitTraversal<'a> {
         };
 
         // Update our state if we changed repositories.
-        if reset || self.repo_location.as_ref().map(|(prev_repo, _)| prev_repo) != Some(&repo) {
+        if reset
+            || self
+                .repo_location
+                .as_ref()
+                .map(|(prev_repo, _)| &prev_repo.work_directory)
+                != Some(&repo.work_directory)
+        {
             self.repo_location = Some((repo, repo.statuses_by_path.cursor::<PathProgress>(&())));
         }
 

@@ -4,17 +4,16 @@ use std::ops::Range;
 use std::time::Duration;
 
 use collections::IndexMap;
-use diagnostics::{IncludeWarnings, ProjectDiagnosticsSettings, ToggleWarnings};
+use diagnostics::{IncludeWarnings, ToggleWarnings};
 use editor::Editor;
 use gpui::{
-    list, uniform_list, AppContext, Entity, EventEmitter, Flatten, FocusHandle, Focusable,
-    FontWeight, ListAlignment, ListState, Rgba, StatefulInteractiveElement, Subscription, Task,
-    UniformListScrollHandle, WeakEntity,
+    list, AppContext, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListAlignment,
+    ListState, Subscription, Task, WeakEntity,
 };
 use language::{
-    Anchor, Buffer, DiagnosticEntry, DiagnosticGroup, DiagnosticSeverity, LanguageServerId,
-    OffsetRangeExt,
+    Anchor, Buffer, DiagnosticEntry, DiagnosticSeverity, LanguageServerId, OffsetRangeExt,
 };
+use project::project_settings::ProjectSettings;
 use project::Project;
 use project::{DiagnosticSummary, ProjectPath};
 use settings::Settings;
@@ -105,7 +104,7 @@ impl DiagnosticsView {
                 .collect::<BTreeSet<_>>();
             let include_warnings = match cx.try_global::<IncludeWarnings>() {
                 Some(include_warnings) => include_warnings.0,
-                None => ProjectDiagnosticsSettings::get_global(cx).include_warnings,
+                None => ProjectSettings::get_global(cx).diagnostics.include_warnings,
             };
 
             let entity = cx.entity().downgrade();

@@ -22,6 +22,7 @@ use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::{FeatureFlagAppExt, FeatureFlagViewExt, GitUiFeatureFlag};
 use futures::{channel::mpsc, select_biased, StreamExt};
+use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     actions, point, px, Action, App, AppContext as _, AsyncApp, Context, DismissEvent, Element,
     Entity, Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel,
@@ -562,7 +563,7 @@ fn register_actions(
             move |_, action: &zed_actions::IncreaseUiFontSize, _window, cx| {
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
-                        let ui_font_size = theme::get_ui_font_size(cx) + px(1.0);
+                        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx) + px(1.0);
                         let _ = settings
                             .ui_font_size
                             .insert(theme::clamp_font_size(ui_font_size).0);
@@ -579,7 +580,7 @@ fn register_actions(
             move |_, action: &zed_actions::DecreaseUiFontSize, _window, cx| {
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
-                        let ui_font_size = theme::get_ui_font_size(cx) - px(1.0);
+                        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx) - px(1.0);
                         let _ = settings
                             .ui_font_size
                             .insert(theme::clamp_font_size(ui_font_size).0);
@@ -608,7 +609,8 @@ fn register_actions(
             move |_, action: &zed_actions::IncreaseBufferFontSize, _window, cx| {
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
-                        let buffer_font_size = theme::get_buffer_font_size(cx) + px(1.0);
+                        let buffer_font_size =
+                            ThemeSettings::get_global(cx).buffer_font_size(cx) + px(1.0);
                         let _ = settings
                             .buffer_font_size
                             .insert(theme::clamp_font_size(buffer_font_size).0);
@@ -625,7 +627,8 @@ fn register_actions(
             move |_, action: &zed_actions::DecreaseBufferFontSize, _window, cx| {
                 if action.persist {
                     update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
-                        let buffer_font_size = theme::get_buffer_font_size(cx) - px(1.0);
+                        let buffer_font_size =
+                            ThemeSettings::get_global(cx).buffer_font_size(cx) - px(1.0);
                         let _ = settings
                             .buffer_font_size
                             .insert(theme::clamp_font_size(buffer_font_size).0);
@@ -927,6 +930,8 @@ fn initialize_pane(
             toolbar.add_item(syntax_tree_item, window, cx);
             let migration_banner = cx.new(|cx| MigrationBanner::new(workspace, cx));
             toolbar.add_item(migration_banner, window, cx);
+            let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
+            toolbar.add_item(project_diff_toolbar, window, cx);
         })
     });
 }
@@ -3964,7 +3969,7 @@ mod tests {
         assert_key_bindings_for(
             workspace.into(),
             cx,
-            vec![("backspace", &B), ("[", &ActivatePrevItem)],
+            vec![("backspace", &B), ("{", &ActivatePrevItem)],
             line!(),
         );
     }
@@ -4209,6 +4214,7 @@ mod tests {
 
             app_state.languages.add(markdown_language());
 
+            gpui_tokio::init(cx);
             vim_mode_setting::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             audio::init((), cx);
@@ -4232,7 +4238,7 @@ mod tests {
                 cx,
             );
             image_viewer::init(cx);
-            language_model::init(cx);
+            language_model::init(app_state.client.clone(), cx);
             language_models::init(
                 app_state.user_store.clone(),
                 app_state.client.clone(),

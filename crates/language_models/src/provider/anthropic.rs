@@ -2,6 +2,7 @@ use crate::AllLanguageModelSettings;
 use anthropic::{AnthropicError, ContentDelta, Event, ResponseContent};
 use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
+use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::Stream;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryStreamExt as _};
@@ -12,7 +13,7 @@ use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    LanguageModelProviderState, LanguageModelRequest, MessageContent, RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -26,7 +27,7 @@ use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::{maybe, ResultExt};
 
-pub const PROVIDER_ID: &str = "anthropic";
+const PROVIDER_ID: &str = language_model::ANTHROPIC_PROVIDER_ID;
 const PROVIDER_NAME: &str = "Anthropic";
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -70,10 +71,16 @@ pub struct State {
 
 impl State {
     fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let delete_credentials =
-            cx.delete_credentials(&AllLanguageModelSettings::get_global(cx).anthropic.api_url);
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .anthropic
+            .api_url
+            .clone();
         cx.spawn(|this, mut cx| async move {
-            delete_credentials.await.ok();
+            credentials_provider
+                .delete_credentials(&api_url, &cx)
+                .await
+                .ok();
             this.update(&mut cx, |this, cx| {
                 this.api_key = None;
                 this.api_key_from_env = false;
@@ -83,16 +90,16 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let write_credentials = cx.write_credentials(
-            AllLanguageModelSettings::get_global(cx)
-                .anthropic
-                .api_url
-                .as_str(),
-            "Bearer",
-            api_key.as_bytes(),
-        );
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .anthropic
+            .api_url
+            .clone();
         cx.spawn(|this, mut cx| async move {
-            write_credentials.await?;
+            credentials_provider
+                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
+                .await
+                .ok();
 
             this.update(&mut cx, |this, cx| {
                 this.api_key = Some(api_key);
@@ -110,6 +117,7 @@ impl State {
             return Task::ready(Ok(()));
         }
 
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let api_url = AllLanguageModelSettings::get_global(cx)
             .anthropic
             .api_url
@@ -119,8 +127,8 @@ impl State {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(ANTHROPIC_API_KEY_VAR) {
                 (api_key, true)
             } else {
-                let (_, api_key) = cx
-                    .update(|cx| cx.read_credentials(&api_url))?
+                let (_, api_key) = credentials_provider
+                    .read_credentials(&api_url, &cx)
                     .await?
                     .ok_or(AuthenticateError::CredentialsNotFound)?;
                 (
@@ -173,6 +181,17 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn icon(&self) -> IconName {
         IconName::AiAnthropic
+    }
+
+    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let model = anthropic::Model::default();
+        Some(Arc::new(AnthropicModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        }))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -377,7 +396,8 @@ impl LanguageModel for AnthropicModel {
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
-        let request = request.into_anthropic(
+        let request = into_anthropic(
+            request,
             self.model.id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
@@ -408,7 +428,8 @@ impl LanguageModel for AnthropicModel {
         input_schema: serde_json::Value,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let mut request = request.into_anthropic(
+        let mut request = into_anthropic(
+            request,
             self.model.tool_model_id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
@@ -434,6 +455,117 @@ impl LanguageModel for AnthropicModel {
                 .boxed())
             })
             .boxed()
+    }
+}
+
+pub fn into_anthropic(
+    request: LanguageModelRequest,
+    model: String,
+    default_temperature: f32,
+    max_output_tokens: u32,
+) -> anthropic::Request {
+    let mut new_messages: Vec<anthropic::Message> = Vec::new();
+    let mut system_message = String::new();
+
+    for message in request.messages {
+        if message.contents_empty() {
+            continue;
+        }
+
+        match message.role {
+            Role::User | Role::Assistant => {
+                let cache_control = if message.cache {
+                    Some(anthropic::CacheControl {
+                        cache_type: anthropic::CacheControlType::Ephemeral,
+                    })
+                } else {
+                    None
+                };
+                let anthropic_message_content: Vec<anthropic::RequestContent> = message
+                    .content
+                    .into_iter()
+                    .filter_map(|content| match content {
+                        MessageContent::Text(text) => {
+                            if !text.is_empty() {
+                                Some(anthropic::RequestContent::Text {
+                                    text,
+                                    cache_control,
+                                })
+                            } else {
+                                None
+                            }
+                        }
+                        MessageContent::Image(image) => Some(anthropic::RequestContent::Image {
+                            source: anthropic::ImageSource {
+                                source_type: "base64".to_string(),
+                                media_type: "image/png".to_string(),
+                                data: image.source.to_string(),
+                            },
+                            cache_control,
+                        }),
+                        MessageContent::ToolUse(tool_use) => {
+                            Some(anthropic::RequestContent::ToolUse {
+                                id: tool_use.id.to_string(),
+                                name: tool_use.name,
+                                input: tool_use.input,
+                                cache_control,
+                            })
+                        }
+                        MessageContent::ToolResult(tool_result) => {
+                            Some(anthropic::RequestContent::ToolResult {
+                                tool_use_id: tool_result.tool_use_id,
+                                is_error: tool_result.is_error,
+                                content: tool_result.content,
+                                cache_control,
+                            })
+                        }
+                    })
+                    .collect();
+                let anthropic_role = match message.role {
+                    Role::User => anthropic::Role::User,
+                    Role::Assistant => anthropic::Role::Assistant,
+                    Role::System => unreachable!("System role should never occur here"),
+                };
+                if let Some(last_message) = new_messages.last_mut() {
+                    if last_message.role == anthropic_role {
+                        last_message.content.extend(anthropic_message_content);
+                        continue;
+                    }
+                }
+                new_messages.push(anthropic::Message {
+                    role: anthropic_role,
+                    content: anthropic_message_content,
+                });
+            }
+            Role::System => {
+                if !system_message.is_empty() {
+                    system_message.push_str("\n\n");
+                }
+                system_message.push_str(&message.string_contents());
+            }
+        }
+    }
+
+    anthropic::Request {
+        model,
+        messages: new_messages,
+        max_tokens: max_output_tokens,
+        system: Some(system_message),
+        tools: request
+            .tools
+            .into_iter()
+            .map(|tool| anthropic::Tool {
+                name: tool.name,
+                description: tool.description,
+                input_schema: tool.input_schema,
+            })
+            .collect(),
+        tool_choice: None,
+        metadata: None,
+        stop_sequences: Vec::new(),
+        temperature: request.temperature.or(Some(default_temperature)),
+        top_k: None,
+        top_p: None,
     }
 }
 

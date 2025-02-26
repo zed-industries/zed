@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context as _, Result};
 use collections::BTreeMap;
+use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::{
@@ -63,10 +64,16 @@ impl State {
     }
 
     fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let settings = &AllLanguageModelSettings::get_global(cx).openai;
-        let delete_credentials = cx.delete_credentials(&settings.api_url);
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .openai
+            .api_url
+            .clone();
         cx.spawn(|this, mut cx| async move {
-            delete_credentials.await.log_err();
+            credentials_provider
+                .delete_credentials(&api_url, &cx)
+                .await
+                .log_err();
             this.update(&mut cx, |this, cx| {
                 this.api_key = None;
                 this.api_key_from_env = false;
@@ -76,12 +83,16 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let settings = &AllLanguageModelSettings::get_global(cx).openai;
-        let write_credentials =
-            cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
-
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let api_url = AllLanguageModelSettings::get_global(cx)
+            .openai
+            .api_url
+            .clone();
         cx.spawn(|this, mut cx| async move {
-            write_credentials.await?;
+            credentials_provider
+                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
+                .await
+                .log_err();
             this.update(&mut cx, |this, cx| {
                 this.api_key = Some(api_key);
                 cx.notify();
@@ -94,6 +105,7 @@ impl State {
             return Task::ready(Ok(()));
         }
 
+        let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let api_url = AllLanguageModelSettings::get_global(cx)
             .openai
             .api_url
@@ -102,8 +114,8 @@ impl State {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(OPENAI_API_KEY_VAR) {
                 (api_key, true)
             } else {
-                let (_, api_key) = cx
-                    .update(|cx| cx.read_credentials(&api_url))?
+                let (_, api_key) = credentials_provider
+                    .read_credentials(&api_url, &cx)
                     .await?
                     .ok_or(AuthenticateError::CredentialsNotFound)?;
                 (
@@ -155,6 +167,17 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
 
     fn icon(&self) -> IconName {
         IconName::AiOpenAi
+    }
+
+    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let model = open_ai::Model::default();
+        Some(Arc::new(OpenAiLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        }))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -295,7 +318,7 @@ impl LanguageModel for OpenAiLanguageModel {
         'static,
         Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
     > {
-        let request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
+        let request = into_open_ai(request, self.model.id().into(), self.max_output_tokens());
         let completions = self.stream_completion(request, cx);
         async move {
             Ok(open_ai::extract_text_from_events(completions.await?)
@@ -313,7 +336,7 @@ impl LanguageModel for OpenAiLanguageModel {
         schema: serde_json::Value,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let mut request = request.into_open_ai(self.model.id().into(), self.max_output_tokens());
+        let mut request = into_open_ai(request, self.model.id().into(), self.max_output_tokens());
         request.tool_choice = Some(ToolChoice::Other(ToolDefinition::Function {
             function: FunctionDefinition {
                 name: tool_name.clone(),
@@ -340,6 +363,39 @@ impl LanguageModel for OpenAiLanguageModel {
                 )
             })
             .boxed()
+    }
+}
+
+pub fn into_open_ai(
+    request: LanguageModelRequest,
+    model: String,
+    max_output_tokens: Option<u32>,
+) -> open_ai::Request {
+    let stream = !model.starts_with("o1-");
+    open_ai::Request {
+        model,
+        messages: request
+            .messages
+            .into_iter()
+            .map(|msg| match msg.role {
+                Role::User => open_ai::RequestMessage::User {
+                    content: msg.string_contents(),
+                },
+                Role::Assistant => open_ai::RequestMessage::Assistant {
+                    content: Some(msg.string_contents()),
+                    tool_calls: Vec::new(),
+                },
+                Role::System => open_ai::RequestMessage::System {
+                    content: msg.string_contents(),
+                },
+            })
+            .collect(),
+        stream,
+        stop: request.stop,
+        temperature: request.temperature.unwrap_or(1.0),
+        max_tokens: max_output_tokens,
+        tools: Vec::new(),
+        tool_choice: None,
     }
 }
 

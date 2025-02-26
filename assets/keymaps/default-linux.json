@@ -84,12 +84,12 @@
       "pageup": "editor::MovePageUp",
       "alt-pageup": "editor::PageUp",
       "shift-pageup": "editor::SelectPageUp",
-      "home": "editor::MoveToBeginningOfLine",
+      "home": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
       "down": "editor::MoveDown",
       "pagedown": "editor::MovePageDown",
       "alt-pagedown": "editor::PageDown",
       "shift-pagedown": "editor::SelectPageDown",
-      "end": "editor::MoveToEndOfLine",
+      "end": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }],
       "left": "editor::MoveLeft",
       "right": "editor::MoveRight",
       "ctrl-left": "editor::MoveToPreviousWordStart",
@@ -107,9 +107,9 @@
       "ctrl-a": "editor::SelectAll",
       "ctrl-l": "editor::SelectLine",
       "ctrl-shift-i": "editor::Format",
-      // "cmd-shift-left": ["editor::SelectToBeginningOfLine", {"stop_at_soft_wraps": true }],
-      // "ctrl-shift-a": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true }],
-      "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true }],
+      // "cmd-shift-left": ["editor::SelectToBeginningOfLine", {"stop_at_soft_wraps": true, "stop_at_indent": true }],
+      // "ctrl-shift-a": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
+      "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
       // "cmd-shift-right": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
       // "ctrl-shift-e": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
       "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
@@ -118,7 +118,7 @@
       "ctrl-;": "editor::ToggleLineNumbers",
       "ctrl-k ctrl-r": "git::Restore",
       "ctrl-'": "editor::ToggleSelectedDiffHunks",
-      "ctrl-\"": "editor::ExpandAllHunkDiffs",
+      "ctrl-\"": "editor::ExpandAllDiffHunks",
       "ctrl-i": "editor::ShowSignatureHelp",
       "alt-g b": "editor::ToggleGitBlame",
       "menu": "editor::OpenContextMenu",
@@ -184,8 +184,9 @@
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-k h": "assistant::DeployHistory",
       "ctrl-k l": "assistant::DeployPromptLibrary",
-      "new": "assistant::NewContext",
-      "ctrl-n": "assistant::NewContext"
+      "new": "assistant::NewChat",
+      "ctrl-t": "assistant::NewChat",
+      "ctrl-n": "assistant::NewChat"
     }
   },
   {
@@ -343,9 +344,9 @@
       "alt-ctrl-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
       "ctrl-m": "editor::MoveToEnclosingBracket",
-      "ctrl-shift-\\": "editor::MoveToEnclosingBracket",
-      "ctrl-shift-[": "editor::Fold",
-      "ctrl-shift-]": "editor::UnfoldLines",
+      "ctrl-|": "editor::MoveToEnclosingBracket",
+      "ctrl-{": "editor::Fold",
+      "ctrl-}": "editor::UnfoldLines",
       "ctrl-k ctrl-l": "editor::ToggleFold",
       "ctrl-k ctrl-[": "editor::FoldRecursive",
       "ctrl-k ctrl-]": "editor::UnfoldRecursive",
@@ -367,7 +368,12 @@
       "ctrl-\\": "pane::SplitRight",
       "ctrl-k v": "markdown::OpenPreviewToTheSide",
       "ctrl-shift-v": "markdown::OpenPreview",
-      "ctrl-alt-shift-c": "editor::DisplayCursorNames"
+      "ctrl-alt-shift-c": "editor::DisplayCursorNames",
+      "ctrl-alt-y": "git::ToggleStaged",
+      "alt-y": "git::StageAndNext",
+      "alt-shift-y": "git::UnstageAndNext",
+      "alt-.": "editor::GoToHunk",
+      "alt-,": "editor::GoToPrevHunk"
     }
   },
   {
@@ -705,12 +711,6 @@
     }
   },
   {
-    "context": "GitPanel && !CommitEditor",
-    "bindings": {
-      "escape": "git_panel::Close"
-    }
-  },
-  {
     "context": "GitPanel && ChangesList",
     "bindings": {
       "up": "menu::SelectPrev",
@@ -721,17 +721,34 @@
       "ctrl-shift-space": "git::UnstageAll",
       "tab": "git_panel::FocusEditor",
       "shift-tab": "git_panel::FocusEditor",
-      "escape": "git_panel::ToggleFocus"
+      "escape": "git_panel::ToggleFocus",
+      "ctrl-enter": "git::Commit",
+      "alt-enter": "menu::SecondaryConfirm"
+    }
+  },
+  {
+    "context": "GitCommit > Editor",
+    "bindings": {
+      "enter": "editor::Newline",
+      "ctrl-enter": "git::Commit"
     }
   },
   {
     "context": "GitPanel > Editor",
     "bindings": {
       "escape": "git_panel::FocusChanges",
-      "ctrl-enter": "git::Commit",
       "tab": "git_panel::FocusChanges",
       "shift-tab": "git_panel::FocusChanges",
+      "ctrl-enter": "git::Commit",
       "alt-up": "git_panel::FocusChanges"
+    }
+  },
+  {
+    "context": "GitCommit > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "editor::Newline",
+      "ctrl-enter": "git::Commit"
     }
   },
   {
@@ -812,6 +829,7 @@
       "pagedown": ["terminal::SendKeystroke", "pagedown"],
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
+      "ctrl-b": ["terminal::SendKeystroke", "ctrl-b"],
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
       "shift-pageup": "terminal::ScrollPageUp",
       "shift-pagedown": "terminal::ScrollPageDown",
