@@ -239,7 +239,7 @@ impl Render for RunningState {
                             .child(
                                 h_flex().p_1().mx_2().w_3_4().justify_end().child(
                                     DropdownMenu::new(
-                                        "thread-list",
+                                        ("thread-list", self.session_id.0),
                                         self.thread
                                             .as_ref()
                                             .map(|(_, name)| format!("Thread {name}"))
