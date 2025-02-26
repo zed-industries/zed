@@ -2704,6 +2704,13 @@ impl EditorElement {
                 project.repository_and_path_for_buffer_id(for_excerpt.buffer_id, cx)?;
             let status = repo.read(cx).repository_entry.status_for_path(&path)?;
             Some(status.status)
+        })
+        .filter(|_| {
+            self.editor
+                .read(cx)
+                .buffer
+                .read(cx)
+                .all_diff_hunks_expanded()
         });
 
         let include_root = self
