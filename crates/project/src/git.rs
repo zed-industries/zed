@@ -44,6 +44,19 @@ pub struct Repository {
     update_sender: mpsc::UnboundedSender<(Message, oneshot::Sender<Result<()>>)>,
 }
 
+impl std::fmt::Debug for Repository {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Repository")
+            .field("commit_message_buffer", &self.commit_message_buffer)
+            .field("git_store", &self.git_store)
+            .field("worktree_id", &self.worktree_id)
+            .field("repository_entry", &self.repository_entry)
+            .field("merge_message", &self.merge_message)
+            .field("update_sender", &self.update_sender)
+            .finish()
+    }
+}
+
 #[derive(Clone)]
 pub enum GitRepo {
     Local(Arc<dyn GitRepository>),

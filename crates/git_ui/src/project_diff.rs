@@ -47,6 +47,7 @@ pub(crate) struct ProjectDiff {
     _subscription: Subscription,
 }
 
+#[derive(Debug)]
 struct DiffBuffer {
     path_key: PathKey,
     buffer: Entity<Buffer>,
@@ -897,5 +898,110 @@ impl Render for ProjectDiffToolbar {
                             })),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use collections::HashMap;
+    use editor::test::editor_test_context::assert_state_with_diff;
+    use git::status::{StatusCode, TrackedStatus};
+    use gpui::TestAppContext;
+    use project::FakeFs;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use unindent::Unindent as _;
+    use util::path;
+
+    use super::*;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            language::init(cx);
+            Project::init_settings(cx);
+            workspace::init_settings(cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_save_after_restore(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "foo": "FOO\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        fs.set_head_for_repo(
+            Path::new("/project/.git"),
+            &[("foo".into(), "foo\n".into())],
+        );
+        fs.with_git_state(Path::new("/project/.git"), true, |state| {
+            state.statuses = HashMap::from_iter([(
+                "foo".into(),
+                TrackedStatus {
+                    index_status: StatusCode::Unmodified,
+                    worktree_status: StatusCode::Modified,
+                }
+                .into(),
+            )]);
+        });
+        cx.run_until_parked();
+
+        let buffers_to_load = diff.update(cx, |diff, cx| diff.load_buffers(cx));
+        for buffer_to_load in buffers_to_load {
+            if let Some(buffer) = buffer_to_load.await.log_err() {
+                cx.update(|window, cx| {
+                    diff.update(cx, |this, cx| this.register_buffer(buffer, window, cx));
+                });
+            }
+        }
+        cx.run_until_parked();
+
+        let editor = diff.update(cx, |diff, _| diff.editor.clone());
+        assert_state_with_diff(
+            &editor,
+            cx,
+            &"
+                - foo
+                + FOO
+                  ˇ"
+            .unindent(),
+        );
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.restore_file(&Default::default(), window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_state_with_diff(&editor, cx, &"ˇ".unindent());
+
+        let buffer = project
+            .update_in(cx, |project, _, cx| {
+                project.open_local_buffer("/project/foo", cx)
+            })
+            .await
+            .unwrap();
+        let text = buffer.read_with(cx, |buffer, _| buffer.text());
+        assert_eq!(text, "foo\n");
     }
 }
