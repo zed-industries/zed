@@ -34,7 +34,7 @@ use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
     prelude::*, ButtonLike, Checkbox, ContextMenu, Divider, DividerColor, ElevationIndex, ListItem,
-    ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
+    ListItemSpacing, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
 use workspace::{
@@ -1840,7 +1840,8 @@ impl GitPanel {
                                             cx.dispatch_action(&Diff);
                                         })
                                     }),
-                            ),
+                            )
+                            .child(self.render_overflow_menu()),
                     ),
             )
         } else {
@@ -1860,6 +1861,13 @@ impl GitPanel {
                 )
                 .into_any_element()
         })
+    }
+
+    pub fn render_overflow_menu(&self) -> impl IntoElement {
+        PopoverMenu::new("overflow-menu")
+            .trigger(IconButton::new("overflow-menu-trigger", IconName::Ellipsis))
+            .menu(move |window, cx| Some(Self::panel_context_menu(window, cx)))
+            .anchor(Corner::TopRight)
     }
 
     pub fn render_sync_button(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -2383,21 +2391,26 @@ impl GitPanel {
         self.set_context_menu(context_menu, position, window, cx);
     }
 
+    fn panel_context_menu(window: &mut Window, cx: &mut App) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |context_menu, _, _| {
+            context_menu
+                .action("Stage All", StageAll.boxed_clone())
+                .action("Unstage All", UnstageAll.boxed_clone())
+                .separator()
+                .action("Open Diff", project_diff::Diff.boxed_clone())
+                .separator()
+                .action("Discard Tracked Changes", RestoreTrackedFiles.boxed_clone())
+                .action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
+        })
+    }
+
     fn deploy_panel_context_menu(
         &mut self,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
-            context_menu
-                .action("Stage All", StageAll.boxed_clone())
-                .action("Unstage All", UnstageAll.boxed_clone())
-                .action("Open Diff", project_diff::Diff.boxed_clone())
-                .separator()
-                .action("Discard Tracked Changes", RestoreTrackedFiles.boxed_clone())
-                .action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
-        });
+        let context_menu = Self::panel_context_menu(window, cx);
         self.set_context_menu(context_menu, position, window, cx);
     }
 
