@@ -28,7 +28,7 @@ use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
 use file_icons::FileIcons;
-use git::{blame::BlameEntry, Oid};
+use git::{blame::BlameEntry, status::FileStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
     relative, size, svg, transparent_black, Action, AnyElement, App, AvailableSpace, Axis, Bounds,
@@ -73,7 +73,7 @@ use ui::{
     POPOVER_Y_PADDING,
 };
 use unicode_segmentation::UnicodeSegmentation;
-use util::{debug_panic, RangeExt, ResultExt};
+use util::{debug_panic, maybe, RangeExt, ResultExt};
 use workspace::{item::Item, notifications::NotifyTaskExt};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
@@ -2646,6 +2646,21 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Div {
+        let file_status = maybe!({
+            let project = self.editor.read(cx).project.as_ref()?.read(cx);
+            let (repo, path) =
+                project.repository_and_path_for_buffer_id(for_excerpt.buffer_id, cx)?;
+            let status = repo.read(cx).repository_entry.status_for_path(&path)?;
+            Some(status.status)
+        })
+        .filter(|_| {
+            self.editor
+                .read(cx)
+                .buffer
+                .read(cx)
+                .all_diff_hunks_expanded()
+        });
+
         let include_root = self
             .editor
             .read(cx)
@@ -2749,12 +2764,36 @@ impl EditorElement {
                                 h_flex()
                                     .gap_2()
                                     .child(
-                                        filename
-                                            .map(SharedString::from)
-                                            .unwrap_or_else(|| "untitled".into()),
+                                        Label::new(
+                                            filename
+                                                .map(SharedString::from)
+                                                .unwrap_or_else(|| "untitled".into()),
+                                        )
+                                        .single_line()
+                                        .when_some(
+                                            file_status,
+                                            |el, status| {
+                                                el.color(if status.is_conflicted() {
+                                                    Color::Conflict
+                                                } else if status.is_modified() {
+                                                    Color::Modified
+                                                } else if status.is_deleted() {
+                                                    Color::Disabled
+                                                } else {
+                                                    Color::Created
+                                                })
+                                                .when(status.is_deleted(), |el| el.strikethrough())
+                                            },
+                                        ),
                                     )
                                     .when_some(parent_path, |then, path| {
-                                        then.child(div().child(path).text_color(colors.text_muted))
+                                        then.child(div().child(path).text_color(
+                                            if file_status.is_some_and(FileStatus::is_deleted) {
+                                                colors.text_disabled
+                                            } else {
+                                                colors.text_muted
+                                            },
+                                        ))
                                     }),
                             )
                             .when(is_selected, |el| {
