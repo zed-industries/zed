@@ -358,24 +358,30 @@ impl GitRepository for RealGitRepository {
 
             log::debug!("indexing SHA: {sha}, path {path:?}");
 
-            let status = new_std_command(&self.git_binary_path)
+            let output = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
                 .args(["update-index", "--add", "--cacheinfo", "100644", &sha])
                 .arg(path.as_ref())
-                .status()?;
+                .output()?;
 
-            if !status.success() {
-                return Err(anyhow!("Failed to add to index: {status:?}"));
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "Failed to stage:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         } else {
-            let status = new_std_command(&self.git_binary_path)
+            let output = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
                 .args(["update-index", "--force-remove"])
                 .arg(path.as_ref())
-                .status()?;
+                .output()?;
 
-            if !status.success() {
-                return Err(anyhow!("Failed to remove from index: {status:?}"));
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "Failed to unstage:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         }
 
