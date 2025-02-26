@@ -854,11 +854,15 @@ impl GitPanel {
             1 => return self.revert_entry(&entries[0], window, cx),
             _ => {}
         }
-        let details = entries
+        let mut details = entries
             .iter()
             .filter_map(|entry| entry.repo_path.0.file_name())
             .map(|filename| filename.to_string_lossy())
+            .take(5)
             .join("\n");
+        if entries.len() > 5 {
+            details.push_str(&format!("\nand {} more…", entries.len() - 5))
+        }
 
         #[derive(strum::EnumIter, strum::VariantNames)]
         #[strum(serialize_all = "title_case")]
@@ -908,7 +912,7 @@ impl GitPanel {
             _ => {}
         };
 
-        let details = to_delete
+        let mut details = to_delete
             .iter()
             .map(|entry| {
                 entry
@@ -918,7 +922,12 @@ impl GitPanel {
                     .map(|f| f.to_string_lossy())
                     .unwrap_or_default()
             })
+            .take(5)
             .join("\n");
+
+        if to_delete.len() > 5 {
+            details.push_str(&format!("\nand {} more…", to_delete.len() - 5))
+        }
 
         let prompt = prompt("Trash these files?", Some(&details), window, cx);
         cx.spawn_in(window, |this, mut cx| async move {
