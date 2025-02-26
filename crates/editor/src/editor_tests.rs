@@ -10971,6 +10971,106 @@ async fn cycle_through_same_place_diagnostics(
 }
 
 #[gpui::test]
+async fn active_diagnostics_dismiss_after_invalidation(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+
+    cx.set_state(indoc! {"
+        ˇfn func(abc def: i32) -> u32 {
+        }
+    "});
+
+    let message = "Something's wrong!";
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        version: None,
+                        diagnostics: vec![lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 11),
+                                lsp::Position::new(0, 12),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                            message: message.to_string(),
+                            ..Default::default()
+                        }],
+                    },
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+    executor.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+        assert_eq!(
+            editor
+                .active_diagnostics
+                .as_ref()
+                .map(|diagnostics_group| diagnostics_group.primary_message.as_str()),
+            Some(message),
+            "Should have a diagnostics group activated"
+        );
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        version: None,
+                        diagnostics: Vec::new(),
+                    },
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+    executor.run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        assert_eq!(
+            editor.active_diagnostics, None,
+            "After no diagnostics set to the editor, no diagnostics should be active"
+        );
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+        assert_eq!(
+            editor.active_diagnostics, None,
+            "Should be no diagnostics to go to and activate"
+        );
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+}
+
+#[gpui::test]
 async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
