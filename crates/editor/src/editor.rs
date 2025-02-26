@@ -4959,7 +4959,7 @@ impl Editor {
                 });
 
         let preview_requires_modifier =
-            all_language_settings(file, cx).edit_predictions_mode() == EditPredictionsMode::Auto;
+            all_language_settings(file, cx).edit_predictions_mode() == EditPredictionsMode::Subtle;
 
         EditPredictionSettings::Enabled {
             show_in_menu,
