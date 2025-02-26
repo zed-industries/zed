@@ -56,10 +56,11 @@ impl EditBehaviorProvider for JsxEditBehaviorProvider {
 
     fn auto_edit(
         &self,
-        buffer: language::BufferSnapshot,
-        ranges: &[Range<usize>],
-        state: Self::AutoEditState,
+        _buffer: language::BufferSnapshot,
+        _ranges: &[Range<usize>],
+        _state: Self::AutoEditState,
     ) -> gpui::Result<Vec<(std::ops::Range<Anchor>, String)>> {
+        dbg!(_state.first().map(|s| s.edit_index));
         Ok(vec![])
     }
 }

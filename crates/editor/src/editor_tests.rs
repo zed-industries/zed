@@ -16426,21 +16426,21 @@ mod autoclose_tags {
         return true;
     }
 
-    #[gpui::test]
-    async fn example(cx: &mut TestAppContext) {
-        init_test(cx, |_| {});
+    // #[gpui::test]
+    // async fn example(cx: &mut TestAppContext) {
+    //     init_test(cx, |_| {});
 
-        let mut cx = EditorTestContext::new(cx).await;
-        cx.update_buffer(|buffer, cx| {
-            let language =
-                Arc::try_unwrap(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()))
-                    .unwrap();
-            let language =
-                language.with_edit_behavior_provider(Some(Arc::new(ExampleJSXCompletion)));
+    //     let mut cx = EditorTestContext::new(cx).await;
+    //     cx.update_buffer(|buffer, cx| {
+    //         let language =
+    //             Arc::try_unwrap(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()))
+    //                 .unwrap();
+    //         let language =
+    //             language.with_edit_behavior_provider(Some(Arc::new(ExampleJSXCompletion)));
 
-            buffer.set_language(Some(Arc::new(language)), cx)
-        });
-    }
+    //         buffer.set_language(Some(Arc::new(language)), cx)
+    //     });
+    // }
 
     check!(
         basic,

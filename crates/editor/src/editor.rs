@@ -3212,7 +3212,7 @@ impl Editor {
                     }
                 }
 
-                let Ok(buffer_snapshot) = buffer.read_with(&cx, |buf, cx| buf.snapshot()) else {
+                let Ok(buffer_snapshot) = buffer.read_with(&cx, |buf, _| buf.snapshot()) else {
                     return Err(anyhow!("Autoclose Tag Operation Failed: Buffer Failed to Read"));
                 };
                 let Some(edit_behavior_provider) = language.edit_behavior_provider() else {
