@@ -144,7 +144,6 @@ impl Vim {
                 .map(|s| buffer.anchor_before(s.start))
                 .collect(),
             &buffer_entity,
-            multi_buffer_entity,
             wid,
             cx,
         );
@@ -155,7 +154,6 @@ impl Vim {
                 .map(|s| buffer.anchor_after(s.end))
                 .collect(),
             &buffer_entity,
-            multi_buffer_entity,
             wid,
             cx,
         );

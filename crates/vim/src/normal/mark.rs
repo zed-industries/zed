@@ -1,14 +1,16 @@
 use std::{ops::Range, sync::Arc};
 
 use anyhow::Ok;
+use collections::HashMap;
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
     Anchor, Bias, DisplayPoint, Editor,
 };
-use gpui::{Context, UpdateGlobal, Window};
-use language::SelectionGoal;
+use gpui::{Context, Entity, UpdateGlobal, Window};
+use language::{Buffer, SelectionGoal};
+use text::BufferId;
 
 use crate::{
     motion::{self, Motion},
@@ -34,8 +36,25 @@ impl Vim {
             if let Some(workspace) = vim.workspace(window) {
                 if let Some(id) = workspace.read(cx).database_id() {
                     let multi_buffer = editor.buffer();
-                    if let Some(buffer) = multi_buffer.read(cx).as_singleton() {
-                        vim.set_mark(text.to_string(), anchors, &buffer, multi_buffer, id, cx);
+                    let multi_buffer = multi_buffer.read(cx);
+                    if let Some(buffer) = multi_buffer.as_singleton() {
+                        vim.set_mark(text.to_string(), anchors, &buffer, id, cx);
+                    } else {
+                        let mut map = HashMap::<BufferId, Vec<Anchor>>::default();
+                        for anchor in anchors {
+                            if let Some(buffer_id) = anchor.buffer_id {
+                                map.entry(buffer_id).or_default().push(anchor);
+                            }
+                        }
+                        let mut list: Vec<(Entity<Buffer>, Vec<Anchor>)> = Vec::new();
+                        for (buffer_id, anchors) in map {
+                            if let Some(buffer) = multi_buffer.buffer(buffer_id) {
+                                list.push((buffer, anchors));
+                            }
+                        }
+                        for (buffer, anchors) in list {
+                            vim.set_mark(text.to_string().clone(), anchors, &buffer, id, cx);
+                        }
                     }
                 }
             }
@@ -85,8 +104,8 @@ impl Vim {
             let Some(buffer) = multi_buffer.read(cx).as_singleton() else {
                 return;
             };
-            vim.set_mark("<".to_string(), starts, &buffer, multi_buffer, wid, cx);
-            vim.set_mark(">".to_string(), ends, &buffer, multi_buffer, wid, cx);
+            vim.set_mark("<".to_string(), starts, &buffer, wid, cx);
+            vim.set_mark(">".to_string(), ends, &buffer, wid, cx);
         });
 
         self.stored_visual_mode.replace((mode, reversed));
@@ -144,7 +163,6 @@ impl Vim {
                             workspace.update(cx, |workspace, cx| {
                                 let mut panes = workspace.panes().to_vec();
                                 panes.insert(0, workspace.active_pane().clone());
-                                let name = text.to_string().clone();
                                 for pane in panes {
                                     pane.update(cx, |pane, cx| {
                                         let Some(item_handle) =
@@ -236,18 +254,20 @@ impl Vim {
                                                             })
                                                     },
                                                 ) {
-                                                    editor.change_selections(
-                                                        Some(Autoscroll::fit()),
-                                                        window,
-                                                        cx,
-                                                        |s| {
-                                                            s.select_anchor_ranges(
-                                                                anchors
-                                                                    .iter()
-                                                                    .map(|&anchor| anchor..anchor),
-                                                            );
-                                                        },
-                                                    )
+                                                    if !anchors.is_empty() {
+                                                        editor.change_selections(
+                                                            Some(Autoscroll::fit()),
+                                                            window,
+                                                            cx,
+                                                            |s| {
+                                                                s.select_anchor_ranges(
+                                                                    anchors.iter().map(|&anchor| {
+                                                                        anchor..anchor
+                                                                    }),
+                                                                );
+                                                            },
+                                                        )
+                                                    }
                                                 }
                                             })?;
                                         }
@@ -325,18 +345,20 @@ impl Vim {
                                                             })
                                                     },
                                                 ) {
-                                                    editor.change_selections(
-                                                        Some(Autoscroll::fit()),
-                                                        window,
-                                                        cx,
-                                                        |s| {
-                                                            s.select_anchor_ranges(
-                                                                anchors
-                                                                    .iter()
-                                                                    .map(|&anchor| anchor..anchor),
-                                                            );
-                                                        },
-                                                    )
+                                                    if !anchors.is_empty() {
+                                                        editor.change_selections(
+                                                            Some(Autoscroll::fit()),
+                                                            window,
+                                                            cx,
+                                                            |s| {
+                                                                s.select_anchor_ranges(
+                                                                    anchors.iter().map(|&anchor| {
+                                                                        anchor..anchor
+                                                                    }),
+                                                                );
+                                                            },
+                                                        )
+                                                    }
                                                 }
                                             })?;
                                             Ok(())
@@ -395,7 +417,7 @@ impl Vim {
                     }
                 }
 
-                if !should_jump {
+                if !should_jump && !ranges.is_empty() {
                     editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                         s.select_anchor_ranges(ranges)
                     });

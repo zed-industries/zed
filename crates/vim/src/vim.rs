@@ -23,7 +23,7 @@ use anyhow::Result;
 use collections::HashMap;
 use editor::{
     movement::{self, FindRange},
-    Anchor, Bias, Editor, EditorEvent, EditorMode, MultiBuffer, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
     actions, impl_actions, Action, App, AppContext, Axis, Context, Entity, EventEmitter,
@@ -801,7 +801,6 @@ impl Vim {
         name: String,
         anchors: Vec<Anchor>,
         buffer_entity: &Entity<Buffer>,
-        multi_buffer_entity: &Entity<MultiBuffer>,
         workspace_id: WorkspaceId,
         cx: &mut App,
     ) {
@@ -809,14 +808,9 @@ impl Vim {
             let Some(marks_state) = vim_globals.marks.get(&workspace_id) else {
                 return;
             };
+            let anchors = anchors.iter().map(|anchor| anchor.text_anchor).collect();
             marks_state.update(cx, |ms, cx| {
-                ms.set_mark(
-                    name.clone(),
-                    buffer_entity,
-                    multi_buffer_entity,
-                    anchors,
-                    cx,
-                );
+                ms.set_mark(name.clone(), buffer_entity, anchors, cx);
             });
         });
     }
