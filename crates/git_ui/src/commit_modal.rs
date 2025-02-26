@@ -13,6 +13,9 @@ use workspace::{
     ModalView, Workspace,
 };
 
+// nate: It is a pain to get editors to size correctly and not overflow.
+//
+// this can get replaced with a simple flex layout with more time/a more thoughtful approach.
 #[derive(Debug, Clone, Copy)]
 pub struct ModalContainerProperties {
     pub modal_width: f32,
@@ -38,10 +41,10 @@ impl ModalContainerProperties {
 
         Self {
             modal_width,
-            editor_height: 320.0,
-            footer_height: 32.0,
+            editor_height: 300.0,
+            footer_height: 24.0,
             container_padding,
-            modal_border_radius: 16.0,
+            modal_border_radius: 12.0,
         }
     }
 
@@ -198,21 +201,23 @@ impl CommitModal {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let properties = self.properties;
-        let padding_y = 6.0;
-
-        let editor_inner_height = properties.editor_height - padding_y * 2.0;
+        let padding_t = 3.0;
+        let padding_b = 6.0;
+        // magic number for editor not to overflow the container??
+        let extra_space_hack = 1.5 * window.line_height();
 
         v_flex()
-            .h(px(properties.editor_height))
-            .flex_none()
+            .h(px(properties.editor_height + padding_b + padding_t) + extra_space_hack)
             .w_full()
+            .flex_none()
             .rounded(properties.editor_border_radius())
             .overflow_hidden()
-            .px_2()
-            .py(px(padding_y))
+            .px_1p5()
+            .pt(px(padding_t))
+            .pb(px(padding_b))
             .child(
                 div()
-                    .h(px(editor_inner_height))
+                    .h(px(properties.editor_height))
                     .w_full()
                     .child(self.commit_editor_element(window, cx)),
             )
@@ -354,7 +359,12 @@ impl Render for CommitModal {
                     .on_click(cx.listener(move |_, _: &ClickEvent, window, _cx| {
                         window.focus(&editor_focus_handle);
                     }))
-                    .child(self.render_commit_editor(window, cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .size_full()
+                            .child(self.render_commit_editor(window, cx)),
+                    )
                     .child(self.render_footer(window, cx)),
             )
     }
