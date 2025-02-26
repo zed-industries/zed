@@ -134,7 +134,13 @@ impl ThreadHistory {
                         })
                         .ok();
                 }
-                HistoryEntry::Context(_context) => {}
+                HistoryEntry::Context(context) => {
+                    self.assistant_panel
+                        .update(cx, |this, cx| {
+                            this.delete_context(context.path.clone(), cx);
+                        })
+                        .ok();
+                }
             }
 
             cx.notify();
@@ -344,11 +350,30 @@ impl RenderOnce for PastContext {
         .spacing(ListItemSpacing::Sparse)
         .child(Label::new(summary).size(LabelSize::Small).text_ellipsis())
         .end_slot(
-            h_flex().gap_1p5().child(
-                Label::new(context_timestamp)
-                    .color(Color::Muted)
-                    .size(LabelSize::XSmall),
-            ),
+            h_flex()
+                .gap_1p5()
+                .child(
+                    Label::new(context_timestamp)
+                        .color(Color::Muted)
+                        .size(LabelSize::XSmall),
+                )
+                .child(
+                    IconButton::new("delete", IconName::TrashAlt)
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::XSmall)
+                        .tooltip(Tooltip::text("Delete Prompt Editor"))
+                        .on_click({
+                            let assistant_panel = self.assistant_panel.clone();
+                            let path = self.context.path.clone();
+                            move |_event, _window, cx| {
+                                assistant_panel
+                                    .update(cx, |this, cx| {
+                                        this.delete_context(path.clone(), cx);
+                                    })
+                                    .ok();
+                            }
+                        }),
+                ),
         )
         .on_click({
             let assistant_panel = self.assistant_panel.clone();

@@ -312,8 +312,8 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &AnyBrackets, window, cx| {
         vim.object(Object::AnyBrackets, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &DoubleQuotes, window, cx| {
-        vim.object(Object::DoubleQuotes, window, cx)
+    Vim::action(editor, cx, |vim, _: &BackQuotes, window, cx| {
+        vim.object(Object::BackQuotes, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &DoubleQuotes, window, cx| {
         vim.object(Object::DoubleQuotes, window, cx)
