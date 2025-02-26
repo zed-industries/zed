@@ -15,7 +15,6 @@ use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
 use std::{fmt::Display, ops::Range, sync::Arc};
 use ui::{Context, KeyBinding, SharedString};
-use workspace::searchable::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
@@ -465,7 +464,6 @@ impl Clone for ReplayableAction {
 
 #[derive(Clone, Default, Debug)]
 pub struct SearchState {
-    pub direction: Direction,
     pub count: usize,
     pub initial_query: String,
 

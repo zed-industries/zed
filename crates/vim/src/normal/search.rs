@@ -85,7 +85,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 impl Vim {
     fn move_to_next(&mut self, action: &MoveToNext, window: &mut Window, cx: &mut Context<Self>) {
         self.move_to_internal(
-            Direction::Next,
+            false,
             action.case_sensitive,
             !action.partial_word,
             action.regex,
@@ -96,7 +96,7 @@ impl Vim {
 
     fn move_to_prev(&mut self, action: &MoveToPrev, window: &mut Window, cx: &mut Context<Self>) {
         self.move_to_internal(
-            Direction::Prev,
+            true,
             action.case_sensitive,
             !action.partial_word,
             action.regex,
@@ -111,7 +111,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.move_to_match_internal(self.search.direction, window, cx)
+        self.move_to_match_internal(Direction::Next, window, cx)
     }
 
     fn move_to_prev_match(
@@ -120,17 +120,12 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.move_to_match_internal(self.search.direction.opposite(), window, cx)
+        self.move_to_match_internal(Direction::Prev, window, cx)
     }
 
     fn search(&mut self, action: &Search, window: &mut Window, cx: &mut Context<Self>) {
         let Some(pane) = self.pane(window, cx) else {
             return;
-        };
-        let direction = if action.backwards {
-            Direction::Prev
-        } else {
-            Direction::Next
         };
         let count = Vim::take_count(cx).unwrap_or(1);
         let prior_selections = self.editor_selections(window, cx);
@@ -150,6 +145,9 @@ impl Vim {
                     if action.regex {
                         options |= SearchOptions::REGEX;
                     }
+                    if action.backwards {
+                        options |= SearchOptions::BACKWARDS;
+                    }
                     search_bar.set_search_options(options, cx);
                     let prior_mode = if self.temp_mode {
                         Mode::Insert
@@ -158,7 +156,6 @@ impl Vim {
                     };
 
                     self.search = SearchState {
-                        direction,
                         count,
                         initial_query: query,
                         prior_selections,
@@ -185,16 +182,13 @@ impl Vim {
             let search_bar = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()?;
             search_bar.update(cx, |search_bar, cx| {
                 let mut count = self.search.count;
-                let direction = self.search.direction;
                 // in the case that the query has changed, the search bar
                 // will have selected the next match already.
-                if (search_bar.query(cx) != self.search.initial_query)
-                    && self.search.direction == Direction::Next
-                {
+                if search_bar.query(cx) != self.search.initial_query {
                     count = count.saturating_sub(1)
                 }
                 self.search.count = 1;
-                search_bar.select_match(direction, count, window, cx);
+                search_bar.select_match(Direction::Next, count, window, cx);
                 search_bar.focus_editor(&Default::default(), window, cx);
 
                 let prior_selections: Vec<_> = self.search.prior_selections.drain(..).collect();
@@ -281,7 +275,7 @@ impl Vim {
 
     pub fn move_to_internal(
         &mut self,
-        direction: Direction,
+        backwards: bool,
         case_sensitive: bool,
         whole_word: bool,
         regex: bool,
@@ -296,12 +290,14 @@ impl Vim {
         let vim = cx.entity().clone();
 
         let searched = pane.update(cx, |pane, cx| {
-            self.search.direction = direction;
             let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
                 return false;
             };
             let search = search_bar.update(cx, |search_bar, cx| {
                 let mut options = SearchOptions::NONE;
+                if backwards {
+                    options |= SearchOptions::BACKWARDS;
+                }
                 if case_sensitive {
                     options |= SearchOptions::CASE_SENSITIVE;
                 }
@@ -328,7 +324,7 @@ impl Vim {
             cx.spawn_in(window, |_, mut cx| async move {
                 search.await?;
                 search_bar.update_in(&mut cx, |search_bar, window, cx| {
-                    search_bar.select_match(direction, count, window, cx);
+                    search_bar.select_match(Direction::Next, count, window, cx);
 
                     vim.update(cx, |vim, cx| {
                         let new_selections = vim.editor_selections(window, cx);
@@ -735,6 +731,12 @@ mod test {
         cx.simulate_keystrokes("*");
         cx.assert_state("one two ˇone", Mode::Normal);
 
+        // check that a backward search after last match works correctly
+        cx.set_state("aa\naa\nbbˇ", Mode::Normal);
+        cx.simulate_keystrokes("? a a");
+        cx.simulate_keystrokes("enter");
+        cx.assert_state("aa\nˇaa\nbb", Mode::Normal);
+
         // check that searching with unable search wrap
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<EditorSettings>(cx, |s| s.search_wrap = Some(false));
@@ -881,7 +883,8 @@ mod test {
         cx.executor().advance_clock(Duration::from_millis(250));
         cx.run_until_parked();
 
-        cx.simulate_shared_keystrokes("/ a enter").await;
+        cx.simulate_shared_keystrokes("/ a").await;
+        cx.simulate_shared_keystrokes("enter").await;
         cx.shared_state().await.assert_eq(indoc! {
             "a
                 ba

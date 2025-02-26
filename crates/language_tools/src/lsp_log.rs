@@ -16,7 +16,7 @@ use std::{borrow::Cow, sync::Arc};
 use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, ToggleState};
 use workspace::{
     item::{Item, ItemHandle},
-    searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
+    searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
 };
 
@@ -1170,12 +1170,14 @@ impl SearchableItem for LspLogView {
     }
     fn active_match_index(
         &mut self,
+        direction: Direction,
         matches: &[Self::Match],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
-        self.editor
-            .update(cx, |e, cx| e.active_match_index(matches, window, cx))
+        self.editor.update(cx, |e, cx| {
+            e.active_match_index(direction, matches, window, cx)
+        })
     }
 }
 
