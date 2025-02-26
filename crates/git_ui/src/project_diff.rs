@@ -903,8 +903,6 @@ impl Render for ProjectDiffToolbar {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use collections::HashMap;
     use editor::test::editor_test_context::assert_state_with_diff;
     use git::status::{StatusCode, TrackedStatus};
