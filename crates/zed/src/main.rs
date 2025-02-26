@@ -171,7 +171,7 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 fn main() {
     let args = Args::parse();
 
-    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    #[cfg(target_os = "windows")]
     let run_foreground = args.foreground;
 
     #[cfg(all(not(debug_assertions), target_os = "windows"))]
@@ -229,7 +229,10 @@ fn main() {
 
             #[cfg(target_os = "windows")]
             {
-                !crate::zed::windows_only_instance::check_single_instance(open_listener.clone())
+                !crate::zed::windows_only_instance::check_single_instance(
+                    open_listener.clone(),
+                    run_foreground,
+                )
             }
 
             #[cfg(target_os = "macos")]
@@ -1023,7 +1026,7 @@ struct Args {
 
     /// Run zed in the foreground, only used on Windows, to match the behavior of the behavior on macOS.
     #[arg(long)]
-    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    #[cfg(target_os = "windows")]
     foreground: bool,
 }
 

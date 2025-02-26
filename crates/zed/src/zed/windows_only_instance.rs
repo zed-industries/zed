@@ -36,6 +36,7 @@ pub fn check_single_instance(opener: OpenListener, run_foreground: bool) -> bool
         .expect("Unable to create instance sync event")
     };
     let first_instance = unsafe { GetLastError() } != ERROR_ALREADY_EXISTS;
+
     if first_instance {
         // We are the first instance, listen for messages sent from other instances
         std::thread::spawn(move || with_pipe(|url| opener.open_urls(vec![url])));
