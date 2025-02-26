@@ -98,7 +98,8 @@ pub enum Event {
         ids: Vec<ExcerptId>,
     },
     ExcerptsEdited {
-        ids: Vec<ExcerptId>,
+        excerpt_ids: Vec<ExcerptId>,
+        buffer_ids: Vec<BufferId>,
     },
     DiffHunksToggled,
     Edited {
@@ -164,6 +165,10 @@ pub struct PathKey {
 impl PathKey {
     pub fn namespaced(namespace: &'static str, path: Arc<Path>) -> Self {
         Self { namespace, path }
+    }
+
+    pub fn path(&self) -> &Arc<Path> {
+        &self.path
     }
 }
 
@@ -763,7 +768,9 @@ impl MultiBuffer {
                 this.convert_edits_to_buffer_edits(edits, &snapshot, &original_start_columns);
             drop(snapshot);
 
+            let mut buffer_ids = Vec::new();
             for (buffer_id, mut edits) in buffer_edits {
+                buffer_ids.push(buffer_id);
                 edits.sort_by_key(|edit| edit.range.start);
                 this.buffers.borrow()[&buffer_id]
                     .buffer
@@ -840,7 +847,8 @@ impl MultiBuffer {
             }
 
             cx.emit(Event::ExcerptsEdited {
-                ids: edited_excerpt_ids,
+                excerpt_ids: edited_excerpt_ids,
+                buffer_ids,
             });
         }
     }
@@ -1000,7 +1008,9 @@ impl MultiBuffer {
                 this.convert_edits_to_buffer_edits(edits, &snapshot, &[]);
             drop(snapshot);
 
+            let mut buffer_ids = Vec::new();
             for (buffer_id, mut edits) in buffer_edits {
+                buffer_ids.push(buffer_id);
                 edits.sort_unstable_by_key(|edit| edit.range.start);
 
                 let mut ranges: Vec<Range<usize>> = Vec::new();
@@ -1022,7 +1032,8 @@ impl MultiBuffer {
             }
 
             cx.emit(Event::ExcerptsEdited {
-                ids: edited_excerpt_ids,
+                excerpt_ids: edited_excerpt_ids,
+                buffer_ids,
             });
         }
     }
@@ -1453,6 +1464,11 @@ impl MultiBuffer {
             excerpt.range.context.start,
         ))
     }
+
+    pub fn excerpt_paths(&self) -> impl Iterator<Item = &PathKey> {
+        self.buffers_by_path.keys()
+    }
+
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
     pub fn set_excerpts_for_path(
         &mut self,

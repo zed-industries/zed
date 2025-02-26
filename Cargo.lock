@@ -2833,6 +2833,7 @@ dependencies = [
  "futures 0.3.31",
  "git",
  "git_hosting_providers",
+ "git_ui",
  "google_ai",
  "gpui",
  "hex",
@@ -3100,6 +3101,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assistant_tool",
+ "async-trait",
  "collections",
  "command_palette_hooks",
  "context_server_settings",
@@ -5420,6 +5422,7 @@ dependencies = [
  "theme",
  "time",
  "ui",
+ "unindent",
  "util",
  "windows 0.58.0",
  "workspace",
@@ -16731,7 +16734,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.176.0"
+version = "0.177.0"
 dependencies = [
  "activity_indicator",
  "anyhow",

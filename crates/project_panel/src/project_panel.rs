@@ -485,6 +485,7 @@ impl ProjectPanel {
                                     None,
                                     focus_opened_item,
                                     allow_preview,
+                                    true,
                                     window, cx,
                                 )
                                 .detach_and_prompt_err("Failed to open file", window, cx, move |e, _, _| {

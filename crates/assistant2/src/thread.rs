@@ -518,7 +518,7 @@ impl Thread {
                         match output {
                             Ok(output) => {
                                 tool_results.push(LanguageModelToolResult {
-                                    tool_use_id: tool_use_id.to_string(),
+                                    tool_use_id: tool_use_id.clone(),
                                     content: output,
                                     is_error: false,
                                 });
@@ -527,7 +527,7 @@ impl Thread {
                             }
                             Err(err) => {
                                 tool_results.push(LanguageModelToolResult {
-                                    tool_use_id: tool_use_id.to_string(),
+                                    tool_use_id: tool_use_id.clone(),
                                     content: err.to_string(),
                                     is_error: true,
                                 });

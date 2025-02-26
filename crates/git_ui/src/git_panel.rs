@@ -34,7 +34,7 @@ use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
     prelude::*, ButtonLike, Checkbox, ContextMenu, Divider, DividerColor, ElevationIndex, ListItem,
-    ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
+    ListItemSpacing, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
 use workspace::{
@@ -80,17 +80,6 @@ pub fn init(cx: &mut App) {
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 workspace.toggle_panel_focus::<GitPanel>(window, cx);
             });
-
-            // workspace.register_action(|workspace, _: &Commit, window, cx| {
-            //     workspace.open_panel::<GitPanel>(window, cx);
-            //     if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
-            //         git_panel
-            //             .read(cx)
-            //             .commit_editor
-            //             .focus_handle(cx)
-            //             .focus(window);
-            //     }
-            // });
         },
     )
     .detach();
@@ -632,6 +621,10 @@ impl GitPanel {
         }
     }
 
+    pub(crate) fn editor_focus_handle(&self, cx: &mut Context<Self>) -> FocusHandle {
+        self.commit_editor.focus_handle(cx).clone()
+    }
+
     fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_editor.update(cx, |editor, cx| {
             window.focus(&editor.focus_handle(cx));
@@ -700,7 +693,7 @@ impl GitPanel {
             self.workspace
                 .update(cx, |workspace, cx| {
                     workspace
-                        .open_path_preview(path, None, false, false, window, cx)
+                        .open_path_preview(path, None, false, false, true, window, cx)
                         .detach_and_prompt_err("Failed to open file", window, cx, |e, _, _| {
                             Some(format!("{e}"))
                         });
@@ -865,11 +858,15 @@ impl GitPanel {
             1 => return self.revert_entry(&entries[0], window, cx),
             _ => {}
         }
-        let details = entries
+        let mut details = entries
             .iter()
             .filter_map(|entry| entry.repo_path.0.file_name())
             .map(|filename| filename.to_string_lossy())
+            .take(5)
             .join("\n");
+        if entries.len() > 5 {
+            details.push_str(&format!("\nand {} more…", entries.len() - 5))
+        }
 
         #[derive(strum::EnumIter, strum::VariantNames)]
         #[strum(serialize_all = "title_case")]
@@ -919,7 +916,7 @@ impl GitPanel {
             _ => {}
         };
 
-        let details = to_delete
+        let mut details = to_delete
             .iter()
             .map(|entry| {
                 entry
@@ -929,7 +926,12 @@ impl GitPanel {
                     .map(|f| f.to_string_lossy())
                     .unwrap_or_default()
             })
+            .take(5)
             .join("\n");
+
+        if to_delete.len() > 5 {
+            details.push_str(&format!("\nand {} more…", to_delete.len() - 5))
+        }
 
         let prompt = prompt("Trash these files?", Some(&details), window, cx);
         cx.spawn_in(window, |this, mut cx| async move {
@@ -1116,8 +1118,9 @@ impl GitPanel {
             .contains_focused(window, cx)
         {
             self.commit_changes(window, cx)
+        } else {
+            cx.propagate();
         }
-        cx.propagate();
     }
 
     pub(crate) fn commit_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1383,14 +1386,14 @@ impl GitPanel {
             };
 
             let mut current_remotes: Vec<Remote> = repo
-                .update(&mut cx, |repo, cx| {
+                .update(&mut cx, |repo, _| {
                     let Some(current_branch) = repo.current_branch() else {
                         return Err(anyhow::anyhow!("No active branch"));
                     };
 
-                    Ok(repo.get_remotes(Some(current_branch.name.to_string()), cx))
+                    Ok(repo.get_remotes(Some(current_branch.name.to_string())))
                 })??
-                .await?;
+                .await??;
 
             if current_remotes.len() == 0 {
                 return Err(anyhow::anyhow!("No active remote"));
@@ -1840,7 +1843,8 @@ impl GitPanel {
                                             cx.dispatch_action(&Diff);
                                         })
                                     }),
-                            ),
+                            )
+                            .child(self.render_overflow_menu()),
                     ),
             )
         } else {
@@ -1860,6 +1864,13 @@ impl GitPanel {
                 )
                 .into_any_element()
         })
+    }
+
+    pub fn render_overflow_menu(&self) -> impl IntoElement {
+        PopoverMenu::new("overflow-menu")
+            .trigger(IconButton::new("overflow-menu-trigger", IconName::Ellipsis))
+            .menu(move |window, cx| Some(Self::panel_context_menu(window, cx)))
+            .anchor(Corner::TopRight)
     }
 
     pub fn render_sync_button(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -2346,7 +2357,9 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return Task::ready(Err(anyhow::anyhow!("no active repo")));
         };
-        repo.update(cx, |repo, cx| repo.show(sha, cx))
+
+        let show = repo.read(cx).show(sha);
+        cx.spawn(|_, _| async move { show.await? })
     }
 
     fn deploy_entry_context_menu(
@@ -2383,21 +2396,26 @@ impl GitPanel {
         self.set_context_menu(context_menu, position, window, cx);
     }
 
+    fn panel_context_menu(window: &mut Window, cx: &mut App) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |context_menu, _, _| {
+            context_menu
+                .action("Stage All", StageAll.boxed_clone())
+                .action("Unstage All", UnstageAll.boxed_clone())
+                .separator()
+                .action("Open Diff", project_diff::Diff.boxed_clone())
+                .separator()
+                .action("Discard Tracked Changes", RestoreTrackedFiles.boxed_clone())
+                .action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
+        })
+    }
+
     fn deploy_panel_context_menu(
         &mut self,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
-            context_menu
-                .action("Stage All", StageAll.boxed_clone())
-                .action("Unstage All", UnstageAll.boxed_clone())
-                .action("Open Diff", project_diff::Diff.boxed_clone())
-                .separator()
-                .action("Discard Tracked Changes", RestoreTrackedFiles.boxed_clone())
-                .action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
-        });
+        let context_menu = Self::panel_context_menu(window, cx);
         self.set_context_menu(context_menu, position, window, cx);
     }
 

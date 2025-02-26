@@ -849,6 +849,7 @@ impl Pane {
         project_entry_id: Option<ProjectEntryId>,
         focus_item: bool,
         allow_preview: bool,
+        activate: bool,
         suggested_position: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -876,7 +877,9 @@ impl Pane {
                     }
                 }
             }
-            self.activate_item(index, focus_item, focus_item, window, cx);
+            if activate {
+                self.activate_item(index, focus_item, focus_item, window, cx);
+            }
             existing_item
         } else {
             // If the item is being opened as preview and we have an existing preview tab,
@@ -892,10 +895,11 @@ impl Pane {
             if allow_preview {
                 self.set_preview_item_id(Some(new_item.item_id()), cx);
             }
-            self.add_item(
+            self.add_item_inner(
                 new_item.clone(),
                 true,
                 focus_item,
+                activate,
                 destination_index,
                 window,
                 cx,
@@ -924,11 +928,13 @@ impl Pane {
         }
     }
 
-    pub fn add_item(
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_item_inner(
         &mut self,
         item: Box<dyn ItemHandle>,
         activate_pane: bool,
         focus_item: bool,
+        activate: bool,
         destination_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1015,21 +1021,45 @@ impl Pane {
                 cx.notify();
             }
 
-            self.activate_item(insertion_index, activate_pane, focus_item, window, cx);
+            if activate {
+                self.activate_item(insertion_index, activate_pane, focus_item, window, cx);
+            }
         } else {
             self.items.insert(insertion_index, item.clone());
 
-            if insertion_index <= self.active_item_index
-                && self.preview_item_idx() != Some(self.active_item_index)
-            {
-                self.active_item_index += 1;
-            }
+            if activate {
+                if insertion_index <= self.active_item_index
+                    && self.preview_item_idx() != Some(self.active_item_index)
+                {
+                    self.active_item_index += 1;
+                }
 
-            self.activate_item(insertion_index, activate_pane, focus_item, window, cx);
+                self.activate_item(insertion_index, activate_pane, focus_item, window, cx);
+            }
             cx.notify();
         }
 
         cx.emit(Event::AddItem { item });
+    }
+
+    pub fn add_item(
+        &mut self,
+        item: Box<dyn ItemHandle>,
+        activate_pane: bool,
+        focus_item: bool,
+        destination_index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.add_item_inner(
+            item,
+            activate_pane,
+            focus_item,
+            true,
+            destination_index,
+            window,
+            cx,
+        )
     }
 
     pub fn items_len(&self) -> usize {
@@ -2941,6 +2971,7 @@ impl Pane {
                                                 project_entry_id,
                                                 true,
                                                 false,
+                                                true,
                                                 target,
                                                 window,
                                                 cx,
