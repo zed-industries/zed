@@ -23,6 +23,8 @@ use crate::thread_store::SavedThread;
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
     Chat,
+    /// Used when summarizing a thread.
+    Summarize,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
@@ -243,7 +245,7 @@ impl Thread {
 
     pub fn to_completion_request(
         &self,
-        _request_kind: RequestKind,
+        request_kind: RequestKind,
         _cx: &App,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
@@ -265,12 +267,18 @@ impl Thread {
                 content: Vec::new(),
                 cache: false,
             };
-
             if let Some(tool_results) = self.tool_results_by_message.get(&message.id) {
-                for tool_result in tool_results {
-                    request_message
-                        .content
-                        .push(MessageContent::ToolResult(tool_result.clone()));
+                match request_kind {
+                    RequestKind::Chat => {
+                        for tool_result in tool_results {
+                            request_message
+                                .content
+                                .push(MessageContent::ToolResult(tool_result.clone()));
+                        }
+                    }
+                    RequestKind::Summarize => {
+                        // We don't care about tool use during summarization.
+                    }
                 }
             }
 
@@ -281,10 +289,17 @@ impl Thread {
             }
 
             if let Some(tool_uses) = self.tool_uses_by_message.get(&message.id) {
-                for tool_use in tool_uses {
-                    request_message
-                        .content
-                        .push(MessageContent::ToolUse(tool_use.clone()));
+                match request_kind {
+                    RequestKind::Chat => {
+                        for tool_use in tool_uses {
+                            request_message
+                                .content
+                                .push(MessageContent::ToolUse(tool_use.clone()));
+                        }
+                    }
+                    RequestKind::Summarize => {
+                        // We don't care about tool use during summarization.
+                    }
                 }
             }
 
@@ -451,7 +466,7 @@ impl Thread {
             return;
         }
 
-        let mut request = self.to_completion_request(RequestKind::Chat, cx);
+        let mut request = self.to_completion_request(RequestKind::Summarize, cx);
         request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: vec![
