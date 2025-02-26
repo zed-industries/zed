@@ -5422,6 +5422,7 @@ dependencies = [
  "theme",
  "time",
  "ui",
+ "unindent",
  "util",
  "windows 0.58.0",
  "workspace",

@@ -47,6 +47,14 @@ zed_actions.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
+[dev-dependencies]
+editor = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
+unindent.workspace = true
+
 [features]
 default = []
 test-support = ["multi_buffer/test-support"]

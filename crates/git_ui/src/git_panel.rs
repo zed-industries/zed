@@ -693,7 +693,7 @@ impl GitPanel {
             self.workspace
                 .update(cx, |workspace, cx| {
                     workspace
-                        .open_path_preview(path, None, false, false, window, cx)
+                        .open_path_preview(path, None, false, false, true, window, cx)
                         .detach_and_prompt_err("Failed to open file", window, cx, |e, _, _| {
                             Some(format!("{e}"))
                         });
