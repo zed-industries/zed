@@ -7709,7 +7709,15 @@ impl Editor {
             for hunk in &hunks {
                 self.prepare_restore_change(&mut revert_changes, hunk, cx);
             }
-            Self::do_stage_or_unstage(project, false, buffer_id, hunks.into_iter(), &snapshot, cx);
+            Self::do_stage_or_unstage(
+                project,
+                false,
+                buffer_id,
+                hunks.into_iter(),
+                &snapshot,
+                window,
+                cx,
+            );
         }
         drop(chunk_by);
         if !revert_changes.is_empty() {
@@ -13424,13 +13432,13 @@ impl Editor {
     pub fn toggle_staged_selected_diff_hunks(
         &mut self,
         _: &::git::ToggleStaged,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
         let stage = self.has_stageable_diff_hunks_in_ranges(&ranges, &snapshot);
-        self.stage_or_unstage_diff_hunks(stage, &ranges, cx);
+        self.stage_or_unstage_diff_hunks(stage, &ranges, window, cx);
     }
 
     pub fn stage_and_next(
@@ -13455,6 +13463,7 @@ impl Editor {
         &mut self,
         stage: bool,
         ranges: &[Range<Anchor>],
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -13466,7 +13475,7 @@ impl Editor {
             .diff_hunks_in_ranges(&ranges, &snapshot)
             .chunk_by(|hunk| hunk.buffer_id);
         for (buffer_id, hunks) in &chunk_by {
-            Self::do_stage_or_unstage(project, stage, buffer_id, hunks, &snapshot, cx);
+            Self::do_stage_or_unstage(project, stage, buffer_id, hunks, &snapshot, window, cx);
         }
     }
 
@@ -13478,7 +13487,7 @@ impl Editor {
     ) {
         let mut ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
         if ranges.iter().any(|range| range.start != range.end) {
-            self.stage_or_unstage_diff_hunks(stage, &ranges[..], cx);
+            self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
             return;
         }
 
@@ -13521,7 +13530,7 @@ impl Editor {
                     buffer.read(cx).remote_id(),
                     range,
                 )];
-                self.stage_or_unstage_diff_hunks(stage, &ranges[..], cx);
+                self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
                 let snapshot = self.buffer().read(cx).snapshot(cx);
                 let mut point = ranges.last().unwrap().end.to_point(&snapshot);
                 if point.row < snapshot.max_row().0 {
@@ -13535,7 +13544,7 @@ impl Editor {
                 return;
             }
         }
-        self.stage_or_unstage_diff_hunks(stage, &ranges[..], cx);
+        self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
         self.go_to_next_hunk(&Default::default(), window, cx);
     }
 
@@ -13545,6 +13554,7 @@ impl Editor {
         buffer_id: BufferId,
         hunks: impl Iterator<Item = MultiBufferDiffHunk>,
         snapshot: &MultiBufferSnapshot,
+        window: &mut Window,
         cx: &mut App,
     ) {
         let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
@@ -13587,20 +13597,18 @@ impl Editor {
                 cx,
             )
         };
-
         if file_exists {
             let buffer_store = project.read(cx).buffer_store().clone();
             buffer_store
                 .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
                 .detach_and_log_err(cx);
         }
+        let recv = repo
+            .read(cx)
+            .set_index_text(&path, new_index_text.map(|rope| rope.to_string()));
 
-        cx.background_spawn(
-            repo.read(cx)
-                .set_index_text(&path, new_index_text.map(|rope| rope.to_string()))
-                .log_err(),
-        )
-        .detach();
+        cx.background_spawn(async move { recv.await? })
+            .detach_and_notify_err(window, cx);
     }
 
     pub fn expand_selected_diff_hunks(&mut self, cx: &mut Context<Self>) {
