@@ -324,10 +324,8 @@ impl Vim {
                     });
                 });
             });
-            self.switch_mode(Mode::Insert, false, window, cx);
-        } else {
-            self.switch_mode(Mode::Insert, false, window, cx);
         }
+        self.switch_mode(Mode::Insert, false, window, cx);
     }
 
     fn insert_first_non_whitespace(
