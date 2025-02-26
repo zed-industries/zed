@@ -994,7 +994,7 @@ struct RegisteredInlineCompletionProvider {
     _subscription: Subscription,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct ActiveDiagnosticGroup {
     primary_range: Range<Anchor>,
     primary_message: String,
@@ -12539,16 +12539,20 @@ impl Editor {
 
             if is_valid != active_diagnostics.is_valid {
                 active_diagnostics.is_valid = is_valid;
-                let mut new_styles = HashMap::default();
-                for (block_id, diagnostic) in &active_diagnostics.blocks {
-                    new_styles.insert(
-                        *block_id,
-                        diagnostic_block_renderer(diagnostic.clone(), None, true, is_valid),
-                    );
+                if is_valid {
+                    let mut new_styles = HashMap::default();
+                    for (block_id, diagnostic) in &active_diagnostics.blocks {
+                        new_styles.insert(
+                            *block_id,
+                            diagnostic_block_renderer(diagnostic.clone(), None, true),
+                        );
+                    }
+                    self.display_map.update(cx, |display_map, _cx| {
+                        display_map.replace_blocks(new_styles);
+                    });
+                } else {
+                    self.dismiss_diagnostics(cx);
                 }
-                self.display_map.update(cx, |display_map, _cx| {
-                    display_map.replace_blocks(new_styles)
-                });
             }
         }
     }
@@ -12599,7 +12603,7 @@ impl Editor {
                                 buffer.anchor_after(entry.range.start),
                             ),
                             height: message_height,
-                            render: diagnostic_block_renderer(diagnostic, None, true, true),
+                            render: diagnostic_block_renderer(diagnostic, None, true),
                             priority: 0,
                         }
                     }),
@@ -17795,7 +17799,6 @@ pub fn diagnostic_block_renderer(
     diagnostic: Diagnostic,
     max_message_rows: Option<u8>,
     allow_closing: bool,
-    _is_valid: bool,
 ) -> RenderBlock {
     let (text_without_backticks, code_ranges) =
         highlight_diagnostic_message(&diagnostic, max_message_rows);
