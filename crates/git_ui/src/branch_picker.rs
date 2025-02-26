@@ -316,6 +316,22 @@ impl PickerDelegate for BranchListDelegate {
         cx.emit(DismissEvent);
     }
 
+    fn render_header(&self, _: &mut Window, _cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
+        if self.last_query.is_empty() && !self.matches.is_empty() {
+            Some(
+                Label::new("Recent Branches")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .mt_1()
+                    .mb_0p5()
+                    .ml_2()
+                    .into_any_element(),
+            )
+        } else {
+            None
+        }
+    }
+
     fn render_match(
         &self,
         ix: usize,
@@ -364,9 +380,10 @@ impl PickerDelegate for BranchListDelegate {
                         el.child(HighlightedLabel::new(shortened_branch_name, highlights))
                     }
                     BranchEntry::History(_) => {
-                        let (commit_sha, commit_time) = commit_info
+                        let (commit_sha, commit_time, commit_message) = commit_info
                             .as_ref()
                             .map(|commit| {
+                                let commit_message = commit.message.clone();
                                 let commit_time =
                                     OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
                                         .unwrap_or_else(|_| OffsetDateTime::now_utc());
@@ -375,43 +392,59 @@ impl PickerDelegate for BranchListDelegate {
                                     OffsetDateTime::now_utc(),
                                     time_format::TimestampFormat::Relative,
                                 );
-                                (commit.sha[..7].to_string(), formatted_time)
+                                (commit.sha[..7].to_string(), formatted_time, commit_message)
                             })
                             .unwrap_or_else(|| {
-                                ("No Commit SHA".to_string(), "Unknown Date".to_string())
+                                (
+                                    "No Commit SHA".to_string(),
+                                    "Unknown Date".to_string(),
+                                    SharedString::from("No commit message available"),
+                                )
                             });
-
                         el.child(
-                            h_flex()
+                            v_flex()
                                 .w_full()
-                                .gap_2()
-                                .justify_between()
                                 .child(
                                     h_flex()
-                                        .gap_1p5()
+                                        .w_full()
+                                        .gap_2()
+                                        .justify_between()
                                         .child(div().max_w_80().child(
                                             Label::new(shortened_branch_name).text_ellipsis(),
                                         ))
                                         .child(
-                                            Label::new(commit_sha)
-                                                .color(Color::Muted)
-                                                .size(LabelSize::Small)
-                                                .buffer_font(cx),
+                                            h_flex()
+                                                .gap_2()
+                                                .child(
+                                                    Label::new(commit_sha)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted)
+                                                        .into_element(),
+                                                )
+                                                .child(div().size_1().rounded_full().bg(
+                                                    cx.theme().colors().text_muted.opacity(0.6),
+                                                ))
+                                                .child(
+                                                    Label::new(commit_time)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted)
+                                                        .into_element(),
+                                                ),
                                         ),
                                 )
                                 .child(
-                                    h_flex()
-                                        .gap_1p5()
-                                        .child(
-                                            Label::new(commit_time)
-                                                .color(Color::Muted)
-                                                .size(LabelSize::Small),
+                                    div().max_w_96().child(
+                                        Label::new(
+                                            commit_message
+                                                .split('\n')
+                                                .next()
+                                                .unwrap_or_default()
+                                                .to_string(),
                                         )
-                                        .child(
-                                            Icon::new(IconName::HistoryRerun)
-                                                .color(Color::Muted)
-                                                .size(IconSize::XSmall),
-                                        ),
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .text_ellipsis(),
+                                    ),
                                 ),
                         )
                     }
