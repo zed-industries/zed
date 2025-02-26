@@ -1473,7 +1473,7 @@ impl SerializableItem for TerminalView {
             let is_local_shell = cx
                 .update(|_, _| {
                     TERMINAL_DB
-                        .get_run_locally(item_id, workspace_id)
+                        .get_is_local_shell(item_id, workspace_id)
                         .log_err()
                         .flatten()
                         .is_some_and(|f| f)
