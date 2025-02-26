@@ -59,6 +59,22 @@ pub struct Message {
     pub text: String,
 }
 
+#[derive(Debug)]
+pub struct ToolUse {
+    pub id: LanguageModelToolUseId,
+    pub name: SharedString,
+    pub status: ToolUseStatus,
+    pub input: serde_json::Value,
+}
+
+#[derive(Debug, Clone)]
+pub enum ToolUseStatus {
+    Pending,
+    Running,
+    Finished(SharedString),
+    Error(SharedString),
+}
+
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
@@ -190,6 +206,61 @@ impl Thread {
 
     pub fn pending_tool_uses(&self) -> Vec<&PendingToolUse> {
         self.pending_tool_uses_by_id.values().collect()
+    }
+
+    pub fn tool_uses_for_message(&self, id: MessageId) -> Vec<ToolUse> {
+        let Some(tool_uses_for_message) = &self.tool_uses_by_message.get(&id) else {
+            return Vec::new();
+        };
+
+        // The tool use was requested by an Assistant message, so we need to
+        // look for the tool results on the next user message.
+        let next_user_message = MessageId(id.0 + 1);
+
+        let empty = Vec::new();
+        let tool_results_for_message = self
+            .tool_results_by_message
+            .get(&next_user_message)
+            .unwrap_or_else(|| &empty);
+
+        let mut tool_uses = Vec::new();
+
+        for tool_use in tool_uses_for_message.iter() {
+            let tool_result = tool_results_for_message
+                .iter()
+                .find(|tool_result| tool_result.tool_use_id == tool_use.id);
+
+            let status = (|| {
+                if let Some(tool_result) = tool_result {
+                    return if tool_result.is_error {
+                        ToolUseStatus::Error(tool_result.content.clone().into())
+                    } else {
+                        ToolUseStatus::Finished(tool_result.content.clone().into())
+                    };
+                }
+
+                if let Some(pending_tool_use) = self.pending_tool_uses_by_id.get(&tool_use.id) {
+                    return match pending_tool_use.status {
+                        PendingToolUseStatus::Idle => ToolUseStatus::Pending,
+                        PendingToolUseStatus::Running { .. } => ToolUseStatus::Running,
+                        PendingToolUseStatus::Error(ref err) => {
+                            ToolUseStatus::Error(err.clone().into())
+                        }
+                    };
+                }
+
+                ToolUseStatus::Pending
+            })();
+
+            tool_uses.push(ToolUse {
+                id: tool_use.id.clone(),
+                name: tool_use.name.clone().into(),
+                input: tool_use.input.clone(),
+                status,
+            })
+        }
+
+        tool_uses
     }
 
     pub fn insert_user_message(
@@ -537,6 +608,7 @@ impl Thread {
                                     content: output,
                                     is_error: false,
                                 });
+                                thread.pending_tool_uses_by_id.remove(&tool_use_id);
 
                                 cx.emit(ThreadEvent::ToolFinished { tool_use_id });
                             }
