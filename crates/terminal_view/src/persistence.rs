@@ -330,42 +330,6 @@ async fn deserialize_terminal_panes(
     items
 }
 
-async fn deserialize_diagnostics_views(
-    workspace_id: WorkspaceId,
-    project: Entity<Project>,
-    workspace: WeakEntity<Workspace>,
-    item_ids: &[(u64, PaneKind)],
-    cx: &mut AsyncWindowContext,
-) -> Vec<Entity<DiagnosticsView>> {
-    let mut items = Vec::with_capacity(item_ids.len());
-    let mut deserialized_items = item_ids
-        .iter()
-        .filter_map(|(item_id, pane_kind)| match pane_kind {
-            PaneKind::Diagnostics => Some(
-                cx.update(|window, cx| {
-                    DiagnosticsView::deserialize(
-                        project.clone(),
-                        workspace.clone(),
-                        workspace_id,
-                        *item_id,
-                        window,
-                        cx,
-                    )
-                })
-                .unwrap_or_else(|e| Task::ready(Err(e.context("no window present")))),
-            ),
-            PaneKind::Terminal => None,
-        })
-        .collect::<FuturesUnordered<_>>();
-    while let Some(item) = deserialized_items.next().await {
-        if let Some(item) = item.log_err() {
-            items.push(item);
-        }
-    }
-
-    items
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct SerializedTerminalPanel {
     pub items: SerializedItems,

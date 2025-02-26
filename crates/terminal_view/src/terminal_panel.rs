@@ -78,7 +78,6 @@ pub struct TerminalPanel {
     deferred_tasks: HashMap<TaskId, Task<()>>,
     assistant_enabled: bool,
     assistant_tab_bar_button: Option<AnyView>,
-    // diagnostics_opened: bool,
     active: bool,
 }
 
@@ -100,7 +99,6 @@ impl TerminalPanel {
             assistant_enabled: false,
             assistant_tab_bar_button: None,
             active: false,
-            // diagnostics_opened: false,
         };
         terminal_panel.apply_tab_bar_buttons(&terminal_panel.active_pane, cx);
         terminal_panel
@@ -129,7 +127,6 @@ impl TerminalPanel {
 
     fn apply_tab_bar_buttons(&self, terminal_pane: &Entity<Pane>, cx: &mut Context<Self>) {
         let assistant_tab_bar_button = self.assistant_tab_bar_button.clone();
-        // let diagnostics_opened = self.diagnostics_opened;
         terminal_pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, window, cx| {
                 let split_context = pane
@@ -170,12 +167,6 @@ impl TerminalPanel {
                                             "Open diagnostics",
                                             workspace::NewDiagnostics.boxed_clone(),
                                         )
-                                    // .when(!diagnostics_opened, |this| {
-                                    //     this.action(
-                                    //         "Open diagnostics",
-                                    //         workspace::NewDiagnostics.boxed_clone(),
-                                    //     )
-                                    // })
                                 });
 
                                 Some(menu)
@@ -480,64 +471,6 @@ impl TerminalPanel {
 
         Some(pane)
     }
-
-    // fn new_pane_with_diagnostics(
-    //     &mut self,
-    //     window: &mut Window,
-    //     cx: &mut Context<Self>,
-    // ) -> Option<Entity<Pane>> {
-    //     let workspace = self.workspace.upgrade()?;
-    //     let workspace = workspace.read(cx);
-    //     let database_id = workspace.database_id();
-    //     let weak_workspace = self.workspace.clone();
-    //     let project = workspace.project().clone();
-    //     let (working_directory, python_venv_directory) = self
-    //         .active_pane
-    //         .read(cx)
-    //         .active_item()
-    //         .and_then(|item| item.downcast::<TerminalView>())
-    //         .map(|terminal_view| {
-    //             let terminal = terminal_view.read(cx).terminal().read(cx);
-    //             (
-    //                 terminal
-    //                     .working_directory()
-    //                     .or_else(|| default_working_directory(workspace, cx)),
-    //                 terminal.python_venv_directory.clone(),
-    //             )
-    //         })
-    //         .unwrap_or((None, None));
-    //     let kind = TerminalKind::Shell(working_directory);
-    //     let window_handle = window.window_handle();
-    //     let terminal = project
-    //         .update(cx, |project, cx| {
-    //             project.create_terminal_with_venv(kind, python_venv_directory, window_handle, cx)
-    //         })
-    //         .ok()?;
-
-    //     let terminal_view = Box::new(cx.new(|cx| {
-    //         TerminalView::new(
-    //             terminal.clone(),
-    //             weak_workspace.clone(),
-    //             database_id,
-    //             project.downgrade(),
-    //             window,
-    //             cx,
-    //         )
-    //     }));
-    //     let pane = new_diagnostics_pane(
-    //         weak_workspace,
-    //         project,
-    //         self.active_pane.read(cx).is_zoomed(),
-    //         window,
-    //         cx,
-    //     );
-    //     self.apply_tab_bar_buttons(&pane, cx);
-    //     pane.update(cx, |pane, cx| {
-    //         pane.add_item(terminal_view, true, true, None, window, cx);
-    //     });
-
-    //     Some(pane)
-    // }
 
     pub fn open_terminal(
         workspace: &mut Workspace,
@@ -887,9 +820,6 @@ impl TerminalPanel {
                     let focus = pane.has_focus(window, cx)
                         || matches!(reveal_strategy, RevealStrategy::Always);
                     pane.add_item(diagnostics_view, true, focus, None, window, cx);
-                    // let _ = terminal_panel.update(cx, |this, cx| {
-                    //     this.diagnostics_opened = true;
-                    // });
                     pane.focus_active_item(window, cx);
                 });
 

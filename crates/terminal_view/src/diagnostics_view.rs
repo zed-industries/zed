@@ -27,7 +27,6 @@ use workspace::item::TabContentParams;
 use workspace::SerializableItem;
 use workspace::{item::ItemEvent, searchable::SearchEvent, Event, Item, Workspace, WorkspaceId};
 
-///A terminal view, maintains the PTY's file handles and communicates with the terminal
 pub struct DiagnosticsView {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
@@ -181,7 +180,7 @@ impl DiagnosticsView {
                                     if diag_view.include_warnings {
                                         Some((buffer.clone(), lsp_id, diag))
                                     } else {
-                                        (diag.diagnostic.severity > DiagnosticSeverity::WARNING)
+                                        (diag.diagnostic.severity < DiagnosticSeverity::WARNING)
                                             .then_some((buffer.clone(), lsp_id, diag))
                                     }
                                 });
