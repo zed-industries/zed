@@ -513,7 +513,7 @@ pub fn into_anthropic(
                         }
                         MessageContent::ToolResult(tool_result) => {
                             Some(anthropic::RequestContent::ToolResult {
-                                tool_use_id: tool_result.tool_use_id,
+                                tool_use_id: tool_result.tool_use_id.to_string(),
                                 is_error: tool_result.is_error,
                                 content: tool_result.content,
                                 cache_control,
