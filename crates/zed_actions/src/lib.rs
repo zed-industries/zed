@@ -230,6 +230,12 @@ pub enum Spawn {
         #[serde(default)]
         reveal_target: Option<RevealTarget>,
     },
+    /// Spawns a task by the name given.
+    ByTag {
+        task_tag: String,
+        #[serde(default)]
+        reveal_target: Option<RevealTarget>,
+    },
     /// Spawns a task via modal's selection.
     ViaModal {
         /// Selected task's `reveal_target` property override.
