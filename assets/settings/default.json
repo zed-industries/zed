@@ -840,9 +840,9 @@
     ],
     // When to show edit predictions previews in buffer.
     // This setting takes two possible values:
-    // 1. Display inline when there are no language server completions available.
+    // 1. Display predictions inline when there are no language server completions available.
     //     "mode": "eager"
-    // 2. Display inline when holding modifier key (alt by default).
+    // 2. Display predictions inline only when holding a modifier key (alt by default).
     //     "mode": "stealth"
     "mode": "eager"
   },
