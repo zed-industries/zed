@@ -13490,6 +13490,9 @@ impl Editor {
             return;
         };
         let buffer_snapshot = buffer.read(cx).snapshot();
+        let file_exists = buffer_snapshot
+            .file()
+            .is_some_and(|file| file.disk_state().exists());
         let Some((repo, path)) = project
             .read(cx)
             .repository_and_path_for_buffer_id(buffer_id, cx)
@@ -13520,18 +13523,13 @@ impl Editor {
             log::debug!("missing secondary diff or index text");
             return;
         };
-        let new_index_text = if new_index_text.is_empty()
-            && !stage
-            && (diff.is_single_insertion
-                || buffer_snapshot
-                    .file()
-                    .map_or(false, |file| file.disk_state() == DiskState::New))
-        {
-            log::debug!("removing from index");
-            None
-        } else {
-            Some(new_index_text)
-        };
+        let new_index_text =
+            if new_index_text.is_empty() && !stage && (diff.is_single_insertion || !file_exists) {
+                log::debug!("removing from index");
+                None
+            } else {
+                Some(new_index_text)
+            };
         let buffer_store = project.read(cx).buffer_store().clone();
         buffer_store
             .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))

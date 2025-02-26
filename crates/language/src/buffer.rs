@@ -368,6 +368,14 @@ impl DiskState {
             DiskState::Deleted => None,
         }
     }
+
+    pub fn exists(&self) -> bool {
+        match self {
+            DiskState::New => false,
+            DiskState::Present { .. } => true,
+            DiskState::Deleted => false,
+        }
+    }
 }
 
 /// The file associated with a buffer, in the case where the file is on the local disk.
