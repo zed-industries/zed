@@ -756,7 +756,8 @@ impl Session {
             Events::Output(event) => {
                 if event
                     .category
-                    .is_some_and(|category| category == OutputEventCategory::Telemetry)
+                    .as_ref()
+                    .is_some_and(|category| *category == OutputEventCategory::Telemetry)
                 {
                     return;
                 }
