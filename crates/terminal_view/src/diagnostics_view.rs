@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::time::Duration;
 
@@ -74,14 +73,7 @@ impl DiagnosticsView {
                     project::Event::DiskBasedDiagnosticsStarted { .. } => {
                         cx.notify();
                     }
-                    project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
-                        // log::debug!("disk based diagnostics finished for server {language_server_id}");
-                        // this.update_diagnostics(window, cx);
-                    }
-                    project::Event::DiagnosticsUpdated {
-                        language_server_id,
-                        path,
-                    } => {
+                    project::Event::DiagnosticsUpdated { .. } => {
                         this.paths_to_update = project
                             .read(cx)
                             .diagnostic_summaries(false, cx)
