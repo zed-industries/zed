@@ -13596,11 +13596,11 @@ impl Editor {
             return;
         };
 
-        let new_index_text = if !stage && diff.is_single_insertion || stage && !file_exists {
+        let new_index_text = if stage && !file_exists {
             log::debug!("removing from index");
             None
         } else {
-            diff.new_secondary_text_for_stage_or_unstage(
+            diff.stage_or_unstage_hunks(
                 stage,
                 hunks.filter_map(|hunk| {
                     if stage && hunk.secondary_status == DiffHunkSecondaryStatus::None {
@@ -13613,7 +13613,6 @@ impl Editor {
                     Some((hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone()))
                 }),
                 &buffer_snapshot,
-                cx,
             )
         };
         if file_exists {
@@ -13622,6 +13621,7 @@ impl Editor {
                 .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
                 .detach_and_log_err(cx);
         }
+
         let recv = repo
             .read(cx)
             .set_index_text(&path, new_index_text.map(|rope| rope.to_string()));
