@@ -8778,6 +8778,13 @@ impl Editor {
                 self.change_selections(None, window, cx, |s| {
                     s.select_anchors(selections.to_vec());
                 });
+            } else {
+                log::error!(
+                    "No entry in selection_history found for undo. \
+                     This may correspond to a bug where undo does not update the selection. \
+                     If this is occurring, please add details to \
+                     https://github.com/zed-industries/zed/issues/22692"
+                );
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
@@ -8799,6 +8806,13 @@ impl Editor {
                 self.change_selections(None, window, cx, |s| {
                     s.select_anchors(selections.to_vec());
                 });
+            } else {
+                log::error!(
+                    "No entry in selection_history found for redo. \
+                     This may correspond to a bug where undo does not update the selection. \
+                     If this is occurring, please add details to \
+                     https://github.com/zed-industries/zed/issues/22692"
+                );
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
