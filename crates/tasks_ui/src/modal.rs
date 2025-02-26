@@ -15,8 +15,8 @@ use task::{
 };
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color, FluentBuilder as _, Icon,
-    IconButton, IconButtonShape, IconName, IconSize, IntoElement, KeyBinding, LabelSize, ListItem,
-    ListItemSpacing, RenderOnce, Toggleable, Tooltip, div, h_flex, v_flex,
+    IconButton, IconButtonShape, IconName, IconSize, IntoElement, KeyBinding, Label, LabelSize,
+    ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use workspace::{ModalView, Workspace, tasks::schedule_resolved_task};
@@ -438,7 +438,20 @@ impl PickerDelegate for TasksModalDelegate {
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(true)
                 .start_slot::<Icon>(icon)
-                .end_slot::<AnyElement>(history_run_icon)
+                .end_slot::<AnyElement>(
+                    h_flex()
+                        .gap_1()
+                        .children(
+                            template
+                                .tags
+                                .iter()
+                                .map(|tag| Label::new(format!("#{}", tag)))
+                                .collect::<Vec<_>>(),
+                        )
+                        .flex_none()
+                        .child(history_run_icon.unwrap())
+                        .into_any_element(),
+                )
                 .spacing(ListItemSpacing::Sparse)
                 .when_some(tooltip_label, |list_item, item_label| {
                     list_item.tooltip(move |_, _| item_label.clone())
@@ -470,7 +483,20 @@ impl PickerDelegate for TasksModalDelegate {
                                     Tooltip::simple("Delete Previously Scheduled Task", cx)
                                 }),
                         );
-                        item.end_hover_slot(delete_button)
+                        item.end_hover_slot(
+                            h_flex()
+                                .gap_1()
+                                .children(
+                                    template
+                                        .tags
+                                        .iter()
+                                        .map(|tag| Label::new(format!("#{}", tag)))
+                                        .collect::<Vec<_>>(),
+                                )
+                                .flex_none()
+                                .child(delete_button)
+                                .into_any_element(),
+                        )
                     } else {
                         item
                     };

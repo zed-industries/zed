@@ -61,7 +61,7 @@ pub struct TaskTemplate {
     /// If this task should start a debugger or not
     #[serde(default, skip)]
     pub task_type: TaskType,
-    /// Represents the tags which this template attaches to. Adding this removes this task from other UI.
+    /// Represents the tags which this template attaches to. Adding this removes this task from other UI and gives you ability to run it by tag..
     #[serde(default)]
     pub tags: Vec<String>,
     /// Which shell to use when spawning the task.
