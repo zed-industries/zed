@@ -111,7 +111,6 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
             worktree_id,
             path: Arc::from(PathBuf::from("unchanged.txt")),
         };
-        let entry = project.entry_for_path(&project_path, cx).unwrap();
         let status = project.project_path_git_status(&project_path, cx);
         assert_eq!(
             status.unwrap(),
