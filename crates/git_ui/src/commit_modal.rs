@@ -13,6 +13,43 @@ use workspace::{
     ModalView, Workspace,
 };
 
+#[derive(Debug, Clone, Copy)]
+pub struct ModalContainerProperties {
+    pub modal_width: f32,
+    pub editor_height: f32,
+    pub footer_height: f32,
+    pub container_padding: f32,
+    pub modal_border_radius: f32,
+}
+
+impl ModalContainerProperties {
+    pub fn new(window: &Window, preferred_char_width: usize) -> Self {
+        let container_padding = 5.0;
+
+        // Calculate width based on character width
+        let mut modal_width = 460.0;
+        let style = window.text_style().clone();
+        let font_id = window.text_system().resolve_font(&style.font());
+        let font_size = style.font_size.to_pixels(window.rem_size());
+
+        if let Ok(em_width) = window.text_system().em_width(font_id, font_size) {
+            modal_width = preferred_char_width as f32 * em_width.0 + (container_padding * 2.0);
+        }
+
+        Self {
+            modal_width,
+            editor_height: 320.0,
+            footer_height: 32.0,
+            container_padding,
+            modal_border_radius: 16.0,
+        }
+    }
+
+    pub fn editor_border_radius(&self) -> Pixels {
+        px(self.modal_border_radius - self.container_padding / 2.0)
+    }
+}
+
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
@@ -27,6 +64,7 @@ pub struct CommitModal {
     git_panel: Entity<GitPanel>,
     commit_editor: Entity<Editor>,
     restore_dock: RestoreDock,
+    properties: ModalContainerProperties,
 }
 
 impl Focusable for CommitModal {
@@ -139,55 +177,18 @@ impl CommitModal {
             }
         }
 
+        let properties = ModalContainerProperties::new(window, 50);
+
         Self {
             git_panel,
             commit_editor,
             restore_dock,
+            properties,
         }
-    }
-    fn container_width(&self, window: &mut Window, cx: &mut Context<Self>) -> f32 {
-        let preferred_width = 50; // (chars wide)
-        let padding_x = self.container_padding();
-
-        let mut width = 460.0;
-
-        let style = window.text_style().clone();
-        let font_id = window.text_system().resolve_font(&style.font());
-        let font_size = style.font_size.to_pixels(window.rem_size());
-
-        if let Ok(em_width) = window.text_system().em_width(font_id, font_size) {
-            width = preferred_width as f32 * em_width.0 + (padding_x * 2.0);
-        }
-
-        cx.notify();
-
-        width
-    }
-
-    fn height(&self) -> f32 {
-        360.0
-    }
-
-    fn footer_height(&self) -> f32 {
-        32.0
-    }
-
-    fn container_padding(&self) -> f32 {
-        16.0
-    }
-
-    /// x, y
-    fn editor_padding(&self) -> (f32, f32) {
-        (8.0, 12.0)
-    }
-
-    fn border_radius(&self) -> f32 {
-        8.0
     }
 
     fn commit_editor_element(&self, window: &mut Window, cx: &mut Context<Self>) -> EditorElement {
         let editor_style = panel_editor_style(true, window, cx);
-
         EditorElement::new(&self.commit_editor, editor_style)
     }
 
@@ -196,38 +197,22 @@ impl CommitModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let height = self.height();
-        let footer_height = self.footer_height();
-        let (padding_x, padding_y) = self.editor_padding();
-        let modal_border_radius = self.border_radius();
+        let properties = self.properties;
+        let padding_y = 6.0;
 
-        let container_height = height - padding_y * 2.0;
-        let editor_height = container_height - footer_height;
-        let border_radius = modal_border_radius - padding_x / 2.0;
-
-        let editor = self.commit_editor.clone();
-        let editor_focus_handle = editor.focus_handle(cx);
+        let editor_inner_height = properties.editor_height - padding_y * 2.0;
 
         v_flex()
-            .debug_below()
-            .id("editor-container")
-            .h(px(container_height))
-            .cursor_text()
-            .bg(cx.theme().colors().editor_background)
-            .flex_1()
-            .size_full()
-            .rounded(px(border_radius))
+            .h(px(properties.editor_height))
+            .flex_none()
+            .w_full()
+            .rounded(properties.editor_border_radius())
             .overflow_hidden()
-            .border_1()
-            .border_color(cx.theme().colors().border_variant)
-            // .py_2()
-            .px_3()
-            .on_click(cx.listener(move |_, _: &ClickEvent, window, _cx| {
-                window.focus(&editor_focus_handle);
-            }))
+            .px_2()
+            .py(px(padding_y))
             .child(
                 div()
-                    .h(px(editor_height))
+                    .h(px(editor_inner_height))
                     .w_full()
                     .child(self.commit_editor_element(window, cx)),
             )
@@ -304,8 +289,7 @@ impl CommitModal {
             .items_center()
             .justify_between()
             .w_full()
-            .h(px(self.footer_height()))
-            .pb_0p5()
+            .h(px(self.properties.footer_height))
             .gap_1()
             .child(h_flex().gap_1().child(branch_selector).children(co_authors))
             .child(div().flex_1())
@@ -333,11 +317,11 @@ impl CommitModal {
 
 impl Render for CommitModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let width = self.container_width(window, cx);
-        let height = self.height();
-        let container_padding = self.container_padding();
-        let border_radius = self.border_radius();
-        let footer_height = 32.0;
+        let properties = self.properties;
+        let width = px(properties.modal_width);
+        let container_padding = px(properties.container_padding);
+        let border_radius = properties.modal_border_radius;
+        let editor_focus_handle = self.commit_editor.focus_handle(cx);
 
         v_flex()
             .id("commit-modal")
@@ -352,22 +336,26 @@ impl Render for CommitModal {
             .rounded(px(border_radius))
             .border_1()
             .border_color(cx.theme().colors().border)
-            .w(px(width))
-            .h(px(height))
-            .p(px(container_padding))
-            .child(
-                div()
-                    .h(px(height - footer_height))
-                    .overflow_hidden()
-                    .child(self.render_commit_editor(window, cx)),
-            )
+            .w(width)
+            .p(container_padding)
             .child(
                 v_flex()
-                    .flex_1()
+                    .id("editor-container")
+                    .justify_between()
                     .p_2()
+                    .size_full()
+                    .gap_2()
+                    .rounded(properties.editor_border_radius())
                     .overflow_hidden()
+                    .cursor_text()
+                    .bg(cx.theme().colors().editor_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .on_click(cx.listener(move |_, _: &ClickEvent, window, _cx| {
+                        window.focus(&editor_focus_handle);
+                    }))
+                    .child(self.render_commit_editor(window, cx))
                     .child(self.render_footer(window, cx)),
             )
-        // .child(self.render_footer(window, cx))
     }
 }
