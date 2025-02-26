@@ -179,10 +179,10 @@ pub trait GitRepository: Send + Sync {
         branch_name: &str,
         upstream_name: &str,
         options: Option<PushOptions>,
-    ) -> Result<Option<String>>;
-    fn pull(&self, branch_name: &str, upstream_name: &str) -> Result<Option<String>>;
+    ) -> Result<()>;
+    fn pull(&self, branch_name: &str, upstream_name: &str) -> Result<()>;
     fn get_remotes(&self, branch_name: Option<&str>) -> Result<Vec<Remote>>;
-    fn fetch(&self) -> Result<Option<String>>;
+    fn fetch(&self) -> Result<()>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -599,7 +599,7 @@ impl GitRepository for RealGitRepository {
         branch_name: &str,
         remote_name: &str,
         options: Option<PushOptions>,
-    ) -> Result<Option<String>> {
+    ) -> Result<()> {
         let working_directory = self.working_directory()?;
 
         let output = new_std_command(&self.git_binary_path)
@@ -623,7 +623,7 @@ impl GitRepository for RealGitRepository {
         }
     }
 
-    fn pull(&self, branch_name: &str, remote_name: &str) -> Result<Option<String>> {
+    fn pull(&self, branch_name: &str, remote_name: &str) -> Result<()> {
         let working_directory = self.working_directory()?;
 
         let output = new_std_command(&self.git_binary_path)
@@ -643,7 +643,7 @@ impl GitRepository for RealGitRepository {
         }
     }
 
-    fn fetch(&self) -> Result<Option<String>> {
+    fn fetch(&self) -> Result<()> {
         let working_directory = self.working_directory()?;
 
         let output = new_std_command(&self.git_binary_path)
@@ -887,20 +887,15 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn push(
-        &self,
-        _branch: &str,
-        _remote: &str,
-        _options: Option<PushOptions>,
-    ) -> Result<Option<String>> {
+    fn push(&self, _branch: &str, _remote: &str, _options: Option<PushOptions>) -> Result<()> {
         unimplemented!()
     }
 
-    fn pull(&self, _branch: &str, _remote: &str) -> Result<Option<String>> {
+    fn pull(&self, _branch: &str, _remote: &str) -> Result<()> {
         unimplemented!()
     }
 
-    fn fetch(&self) -> Result<Option<String>> {
+    fn fetch(&self) -> Result<()> {
         unimplemented!()
     }
 
