@@ -50,3 +50,4 @@ windows.workspace = true
 
 [features]
 default = []
+test-support = ["multi_buffer/test-support"]

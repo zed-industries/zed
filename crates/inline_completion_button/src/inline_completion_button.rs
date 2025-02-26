@@ -410,26 +410,39 @@ impl InlineCompletionButton {
 
         menu = menu.header("Show Edit Predictions For");
 
+        let language_state = self.language.as_ref().map(|language| {
+            (
+                language.clone(),
+                language_settings::language_settings(Some(language.name()), None, cx)
+                    .show_edit_predictions,
+            )
+        });
+
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
-            menu = menu.toggleable_entry(
-                "This Buffer",
-                self.editor_show_predictions,
-                IconPosition::Start,
-                Some(Box::new(ToggleEditPrediction)),
-                {
-                    let editor_focus_handle = editor_focus_handle.clone();
-                    move |window, cx| {
-                        editor_focus_handle.dispatch_action(&ToggleEditPrediction, window, cx);
-                    }
-                },
-            );
+            let entry = ContextMenuEntry::new("This Buffer")
+                .toggleable(IconPosition::Start, self.editor_show_predictions)
+                .action(Box::new(ToggleEditPrediction))
+                .handler(move |window, cx| {
+                    editor_focus_handle.dispatch_action(&ToggleEditPrediction, window, cx);
+                });
+
+            match language_state.clone() {
+                Some((language, false)) => {
+                    menu = menu.item(
+                        entry
+                            .disabled(true)
+                            .documentation_aside(move |_cx| {
+                                Label::new(format!("Edit predictions cannot be toggled for this buffer because they are disabled for {}", language.name()))
+                                    .into_any_element()
+                            })
+                    );
+                }
+                Some(_) | None => menu = menu.item(entry),
+            }
         }
 
-        if let Some(language) = self.language.clone() {
+        if let Some((language, language_enabled)) = language_state {
             let fs = fs.clone();
-            let language_enabled =
-                language_settings::language_settings(Some(language.name()), None, cx)
-                    .show_edit_predictions;
 
             menu = menu.toggleable_entry(
                 language.name(),

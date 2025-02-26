@@ -34,7 +34,7 @@ use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
     prelude::*, ButtonLike, Checkbox, ContextMenu, Divider, DividerColor, ElevationIndex, ListItem,
-    ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
+    ListItemSpacing, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
 use workspace::{
@@ -80,17 +80,6 @@ pub fn init(cx: &mut App) {
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 workspace.toggle_panel_focus::<GitPanel>(window, cx);
             });
-
-            // workspace.register_action(|workspace, _: &Commit, window, cx| {
-            //     workspace.open_panel::<GitPanel>(window, cx);
-            //     if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
-            //         git_panel
-            //             .read(cx)
-            //             .commit_editor
-            //             .focus_handle(cx)
-            //             .focus(window);
-            //     }
-            // });
         },
     )
     .detach();
@@ -632,6 +621,10 @@ impl GitPanel {
         }
     }
 
+    pub(crate) fn editor_focus_handle(&self, cx: &mut Context<Self>) -> FocusHandle {
+        self.commit_editor.focus_handle(cx).clone()
+    }
+
     fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_editor.update(cx, |editor, cx| {
             window.focus(&editor.focus_handle(cx));
@@ -865,11 +858,15 @@ impl GitPanel {
             1 => return self.revert_entry(&entries[0], window, cx),
             _ => {}
         }
-        let details = entries
+        let mut details = entries
             .iter()
             .filter_map(|entry| entry.repo_path.0.file_name())
             .map(|filename| filename.to_string_lossy())
+            .take(5)
             .join("\n");
+        if entries.len() > 5 {
+            details.push_str(&format!("\nand {} more…", entries.len() - 5))
+        }
 
         #[derive(strum::EnumIter, strum::VariantNames)]
         #[strum(serialize_all = "title_case")]
@@ -919,7 +916,7 @@ impl GitPanel {
             _ => {}
         };
 
-        let details = to_delete
+        let mut details = to_delete
             .iter()
             .map(|entry| {
                 entry
@@ -929,7 +926,12 @@ impl GitPanel {
                     .map(|f| f.to_string_lossy())
                     .unwrap_or_default()
             })
+            .take(5)
             .join("\n");
+
+        if to_delete.len() > 5 {
+            details.push_str(&format!("\nand {} more…", to_delete.len() - 5))
+        }
 
         let prompt = prompt("Trash these files?", Some(&details), window, cx);
         cx.spawn_in(window, |this, mut cx| async move {
@@ -1116,8 +1118,9 @@ impl GitPanel {
             .contains_focused(window, cx)
         {
             self.commit_changes(window, cx)
+        } else {
+            cx.propagate();
         }
-        cx.propagate();
     }
 
     pub(crate) fn commit_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1840,7 +1843,8 @@ impl GitPanel {
                                             cx.dispatch_action(&Diff);
                                         })
                                     }),
-                            ),
+                            )
+                            .child(self.render_overflow_menu()),
                     ),
             )
         } else {
@@ -1860,6 +1864,13 @@ impl GitPanel {
                 )
                 .into_any_element()
         })
+    }
+
+    pub fn render_overflow_menu(&self) -> impl IntoElement {
+        PopoverMenu::new("overflow-menu")
+            .trigger(IconButton::new("overflow-menu-trigger", IconName::Ellipsis))
+            .menu(move |window, cx| Some(Self::panel_context_menu(window, cx)))
+            .anchor(Corner::TopRight)
     }
 
     pub fn render_sync_button(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -2383,21 +2394,26 @@ impl GitPanel {
         self.set_context_menu(context_menu, position, window, cx);
     }
 
+    fn panel_context_menu(window: &mut Window, cx: &mut App) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |context_menu, _, _| {
+            context_menu
+                .action("Stage All", StageAll.boxed_clone())
+                .action("Unstage All", UnstageAll.boxed_clone())
+                .separator()
+                .action("Open Diff", project_diff::Diff.boxed_clone())
+                .separator()
+                .action("Discard Tracked Changes", RestoreTrackedFiles.boxed_clone())
+                .action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
+        })
+    }
+
     fn deploy_panel_context_menu(
         &mut self,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
-            context_menu
-                .action("Stage All", StageAll.boxed_clone())
-                .action("Unstage All", UnstageAll.boxed_clone())
-                .action("Open Diff", project_diff::Diff.boxed_clone())
-                .separator()
-                .action("Discard Tracked Changes", RestoreTrackedFiles.boxed_clone())
-                .action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
-        });
+        let context_menu = Self::panel_context_menu(window, cx);
         self.set_context_menu(context_menu, position, window, cx);
     }
 
@@ -2493,16 +2509,18 @@ impl GitPanel {
                 })
             });
 
-        let start_slot = h_flex()
-            .id(("start-slot", ix))
-            .gap(DynamicSpacing::Base04.rems(cx))
-            .child(checkbox)
-            .tooltip(|window, cx| Tooltip::for_action("Stage File", &ToggleStaged, window, cx))
-            .child(git_status_icon(status, cx))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                // prevent the list item active state triggering when toggling checkbox
-                cx.stop_propagation();
-            });
+        let start_slot =
+            h_flex()
+                .id(("start-slot", ix))
+                .gap(DynamicSpacing::Base04.rems(cx))
+                .child(checkbox.tooltip(|window, cx| {
+                    Tooltip::for_action("Stage File", &ToggleStaged, window, cx)
+                }))
+                .child(git_status_icon(status, cx))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                    // prevent the list item active state triggering when toggling checkbox
+                    cx.stop_propagation();
+                });
 
         div()
             .w_full()

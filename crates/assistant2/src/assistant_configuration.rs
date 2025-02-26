@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::{AnyView, App, EventEmitter, FocusHandle, Focusable, Subscription};
+use gpui::{Action, AnyView, App, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
 use ui::{prelude::*, Divider, DividerColor, ElevationIndex};
 use zed_actions::assistant::DeployPromptLibrary;
@@ -168,8 +168,8 @@ impl Render for AssistantConfiguration {
                             .icon(IconName::Book)
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::Start)
-                            .on_click(|_event, _window, cx| {
-                                cx.dispatch_action(&DeployPromptLibrary)
+                            .on_click(|_event, window, cx| {
+                                window.dispatch_action(DeployPromptLibrary.boxed_clone(), cx)
                             }),
                     ),
             )

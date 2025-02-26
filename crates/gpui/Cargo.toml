@@ -13,7 +13,7 @@ workspace = true
 [features]
 default = ["http_client", "font-kit", "wayland", "x11"]
 test-support = [
-    "backtrace",
+    "leak-detection",
     "collections/test-support",
     "rand",
     "util/test-support",
@@ -21,6 +21,7 @@ test-support = [
     "wayland",
     "x11",
 ]
+leak-detection = ["backtrace"]
 runtime_shaders = []
 macos-blade = [
     "blade-graphics",

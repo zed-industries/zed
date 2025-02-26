@@ -2833,6 +2833,7 @@ dependencies = [
  "futures 0.3.31",
  "git",
  "git_hosting_providers",
+ "git_ui",
  "google_ai",
  "gpui",
  "hex",
