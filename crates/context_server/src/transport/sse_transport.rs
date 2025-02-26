@@ -100,7 +100,7 @@ impl SseTransport {
                 futures::select! {
                     result = reader.read_line(&mut line).fuse() => {
                         match result {
-                            Ok(n) if n == 0 => break,
+                            Ok(0) => break,
                             Ok(_) => {
                                 if line.starts_with("data: ") {
                                     let data = line.trim_start_matches("data: ");
