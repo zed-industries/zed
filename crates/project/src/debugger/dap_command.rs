@@ -832,6 +832,8 @@ impl DapCommand for RestartCommand {
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub struct VariablesCommand {
+    pub stack_frame_id: u64,
+    pub thread_id: u64,
     pub variables_reference: u64,
     pub filter: Option<VariablesArgumentsFilter>,
     pub start: Option<u64>,
@@ -873,6 +875,8 @@ impl DapCommand for VariablesCommand {
         proto::VariablesRequest {
             project_id: upstream_project_id,
             client_id: debug_client_id.to_proto(),
+            thread_id: self.thread_id,
+            stack_frame_id: self.stack_frame_id,
             variables_reference: self.variables_reference,
             filter: None,
             start: self.start,
@@ -883,6 +887,8 @@ impl DapCommand for VariablesCommand {
 
     fn from_proto(request: &Self::ProtoRequest) -> Self {
         Self {
+            thread_id: request.thread_id,
+            stack_frame_id: request.stack_frame_id,
             variables_reference: request.variables_reference,
             filter: None,
             start: request.start,
