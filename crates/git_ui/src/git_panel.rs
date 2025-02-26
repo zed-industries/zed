@@ -80,17 +80,6 @@ pub fn init(cx: &mut App) {
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 workspace.toggle_panel_focus::<GitPanel>(window, cx);
             });
-
-            // workspace.register_action(|workspace, _: &Commit, window, cx| {
-            //     workspace.open_panel::<GitPanel>(window, cx);
-            //     if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
-            //         git_panel
-            //             .read(cx)
-            //             .commit_editor
-            //             .focus_handle(cx)
-            //             .focus(window);
-            //     }
-            // });
         },
     )
     .detach();
@@ -1116,8 +1105,9 @@ impl GitPanel {
             .contains_focused(window, cx)
         {
             self.commit_changes(window, cx)
+        } else {
+            cx.propagate();
         }
-        cx.propagate();
     }
 
     pub(crate) fn commit_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {

@@ -734,6 +734,12 @@
     }
   },
   {
+    "context": "GitDiff > Editor",
+    "bindings": {
+      "ctrl-enter": "git::Commit"
+    }
+  },
+  {
     "context": "GitPanel > Editor",
     "bindings": {
       "escape": "git_panel::FocusChanges",

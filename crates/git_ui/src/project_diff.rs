@@ -627,6 +627,7 @@ impl Render for ProjectDiff {
 
         div()
             .track_focus(&self.focus_handle)
+            .key_context(if is_empty { "EmptyPane" } else { "GitDiff" })
             .bg(cx.theme().colors().editor_background)
             .flex()
             .items_center()
@@ -873,11 +874,17 @@ impl Render for ProjectDiffToolbar {
                     .when(
                         button_states.unstage_all && !button_states.stage_all,
                         |el| {
-                            el.child(Button::new("unstage-all", "Unstage All").on_click(
-                                cx.listener(|this, _, window, cx| {
-                                    this.dispatch_panel_action(&UnstageAll, window, cx)
-                                }),
-                            ))
+                            el.child(
+                                Button::new("unstage-all", "Unstage All")
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "Unstage all changes",
+                                        &UnstageAll,
+                                        &focus_handle,
+                                    ))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_panel_action(&UnstageAll, window, cx)
+                                    })),
+                            )
                         },
                     )
                     .when(
@@ -889,6 +896,11 @@ impl Render for ProjectDiffToolbar {
                                 div().child(
                                     Button::new("stage-all", "Stage All")
                                         .disabled(!button_states.stage_all)
+                                        .tooltip(Tooltip::for_action_title_in(
+                                            "Stage all changes",
+                                            &StageAll,
+                                            &focus_handle,
+                                        ))
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.dispatch_panel_action(&StageAll, window, cx)
                                         })),
@@ -899,8 +911,12 @@ impl Render for ProjectDiffToolbar {
                     .child(
                         Button::new("commit", "Commit")
                             .disabled(!button_states.commit)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Commit",
+                                &Commit,
+                                &focus_handle,
+                            ))
                             .on_click(cx.listener(|this, _, window, cx| {
-                                // todo this should open modal, not focus panel.
                                 this.dispatch_action(&Commit, window, cx);
                             })),
                     ),
