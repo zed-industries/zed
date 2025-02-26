@@ -7639,7 +7639,7 @@ impl Editor {
         drop(chunk_by);
         if !revert_changes.is_empty() {
             self.transact(window, cx, |editor, window, cx| {
-                editor.revert(revert_changes, window, cx);
+                editor.restore(revert_changes, window, cx);
             });
         }
     }
@@ -15793,7 +15793,7 @@ impl Editor {
         FILE_HEADER_HEIGHT
     }
 
-    pub fn revert(
+    pub fn restore(
         &mut self,
         revert_changes: HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
         window: &mut Window,
