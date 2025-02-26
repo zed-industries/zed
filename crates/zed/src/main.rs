@@ -173,6 +173,13 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 }
 
 fn main() {
+    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    unsafe {
+        use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+
     menu::init();
     zed_actions::init();
 
@@ -217,7 +224,7 @@ fn main() {
 
             #[cfg(target_os = "windows")]
             {
-                !crate::zed::windows_only_instance::check_single_instance()
+                !crate::zed::windows_only_instance::check_single_instance(open_listener.clone())
             }
 
             #[cfg(target_os = "macos")]

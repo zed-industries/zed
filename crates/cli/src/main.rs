@@ -2,6 +2,10 @@
     any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
     allow(dead_code)
 )]
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
@@ -111,6 +115,12 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
 }
 
 fn main() -> Result<()> {
+    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    unsafe {
+        use ::windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
     // Exit flatpak sandbox if needed
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
@@ -521,30 +531,121 @@ mod flatpak {
     }
 }
 
-// todo("windows")
 #[cfg(target_os = "windows")]
 mod windows {
+    use anyhow::Context;
+    use release_channel::ReleaseChannel;
+    use windows::core::HSTRING;
+    use windows::Win32::Foundation::{
+        CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, GENERIC_WRITE, HANDLE,
+    };
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, WriteFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, OPEN_EXISTING,
+    };
+    use windows::Win32::System::Threading::CreateMutexW;
+
     use crate::{Detect, InstalledApp};
     use std::io;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
 
-    struct App;
+    #[inline]
+    fn retrieve_app_identifier() -> &'static str {
+        match *release_channel::RELEASE_CHANNEL {
+            ReleaseChannel::Dev => "Zed-Editor-Dev",
+            ReleaseChannel::Nightly => "Zed-Editor-Nightly",
+            ReleaseChannel::Preview => "Zed-Editor-Preview",
+            ReleaseChannel::Stable => "Zed-Editor-Stable",
+        }
+    }
+
+    #[inline]
+    fn generate_identifier(name: &str) -> HSTRING {
+        HSTRING::from(format!("{}-{}", retrieve_app_identifier(), name))
+    }
+
+    #[inline]
+    fn generate_identifier_with_prefix(prefix: &str, name: &str) -> HSTRING {
+        HSTRING::from(format!("{}{}-{}", prefix, retrieve_app_identifier(), name))
+    }
+
+    fn check_single_instance() -> bool {
+        let handle = unsafe {
+            CreateMutexW(None, false, &generate_identifier("Instance-Mutex"))
+                .expect("Unable to create instance sync mutex")
+        };
+        let last_err = unsafe { GetLastError() };
+        let _ = unsafe { CloseHandle(handle) };
+        last_err != ERROR_ALREADY_EXISTS
+    }
+
+    struct App(PathBuf);
+
     impl InstalledApp for App {
         fn zed_version_string(&self) -> String {
-            unimplemented!()
+            format!(
+                "Zed {}{}{} – {}",
+                if *release_channel::RELEASE_CHANNEL == release_channel::ReleaseChannel::Stable {
+                    "".to_string()
+                } else {
+                    format!("{} ", *release_channel::RELEASE_CHANNEL_NAME)
+                },
+                option_env!("RELEASE_VERSION").unwrap_or_default(),
+                match option_env!("ZED_COMMIT_SHA") {
+                    Some(commit_sha) => format!(" {commit_sha} "),
+                    None => "".to_string(),
+                },
+                self.0.display(),
+            )
         }
-        fn launch(&self, _ipc_url: String) -> anyhow::Result<()> {
-            unimplemented!()
+
+        fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
+            if check_single_instance() {
+                std::process::Command::new(self.0.clone())
+                    .arg(ipc_url)
+                    .spawn()?;
+            } else {
+                unsafe {
+                    let pipe = CreateFileW(
+                        &generate_identifier_with_prefix("\\\\.\\pipe\\", "Named-Pipe"),
+                        GENERIC_WRITE.0,
+                        FILE_SHARE_MODE::default(),
+                        None,
+                        OPEN_EXISTING,
+                        FILE_FLAGS_AND_ATTRIBUTES::default(),
+                        None,
+                    )?;
+                    let message = ipc_url.as_bytes();
+                    let mut bytes_written = 0;
+                    WriteFile(pipe, Some(message), Some(&mut bytes_written), None)?;
+                    CloseHandle(pipe)?;
+                }
+            }
+            Ok(())
         }
-        fn run_foreground(&self, _ipc_url: String) -> io::Result<ExitStatus> {
-            unimplemented!()
+
+        fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
+            std::process::Command::new(self.0.clone())
+                .arg(ipc_url)
+                .spawn()?
+                .wait()
         }
     }
 
     impl Detect {
-        pub fn detect(_path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
-            Ok(App)
+        pub fn detect(path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
+            let path_buf = if let Some(path) = path {
+                path.canonicalize()?.to_path_buf()
+            } else {
+                let current = std::env::current_exe()?;
+                current
+                    .parent()
+                    .context("No parent path for cli")?
+                    .parent()
+                    .context("No parent path for cli")?
+                    .join("Zed.exe")
+            };
+            Ok(App(path_buf))
         }
     }
 }

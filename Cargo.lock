@@ -2653,6 +2653,7 @@ dependencies = [
  "serde",
  "tempfile",
  "util",
+ "windows 0.58.0",
 ]
 
 [[package]]
@@ -4466,6 +4467,15 @@ checksum = "886b70328cba8871bfc025858e1de4be16b1d5088f2ba50b57816f4210672615"
 dependencies = [
  "errno 0.2.8",
  "libc",
+]
+
+[[package]]
+name = "explorer_command_injector"
+version = "0.1.0"
+dependencies = [
+ "windows 0.58.0",
+ "windows-core 0.58.0",
+ "windows-registry",
 ]
 
 [[package]]
