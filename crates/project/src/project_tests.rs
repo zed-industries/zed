@@ -22,7 +22,7 @@ use std::os;
 use std::{str::FromStr, sync::OnceLock};
 
 use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
-use task::ResolvedTask;
+use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
     assert_set_eq, path,
@@ -395,6 +395,96 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                 ))),
             ),
         ]
+    );
+}
+
+#[gpui::test]
+async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    TaskStore::init(None);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".zed": {
+                "tasks.json": r#"[{
+                    "label": "test worktree root",
+                    "command": "echo $ZED_WORKTREE_ROOT"
+                }]"#,
+            },
+            "a": {
+                "a.rs": "fn a() {\n    A\n}"
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let _worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+    let worktree_id = cx.update(|cx| {
+        project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let active_non_worktree_item_tasks = cx.update(|cx| {
+        get_all_tasks(
+            &project,
+            Some(worktree_id),
+            &TaskContexts {
+                active_item_context: Some((Some(worktree_id), TaskContext::default())),
+                active_worktree_context: None,
+                other_worktree_contexts: Vec::new(),
+            },
+            cx,
+        )
+    });
+    assert!(
+        active_non_worktree_item_tasks.is_empty(),
+        "A task can not be resolved with context with no ZED_WORKTREE_ROOT data"
+    );
+
+    let active_worktree_tasks = cx.update(|cx| {
+        get_all_tasks(
+            &project,
+            Some(worktree_id),
+            &TaskContexts {
+                active_item_context: Some((Some(worktree_id), TaskContext::default())),
+                active_worktree_context: Some((worktree_id, {
+                    let mut worktree_context = TaskContext::default();
+                    worktree_context
+                        .task_variables
+                        .insert(task::VariableName::WorktreeRoot, "/dir".to_string());
+                    worktree_context
+                })),
+                other_worktree_contexts: Vec::new(),
+            },
+            cx,
+        )
+    });
+    assert_eq!(
+        active_worktree_tasks
+            .into_iter()
+            .map(|(source_kind, task)| {
+                let resolved = task.resolved.unwrap();
+                (source_kind, resolved.command)
+            })
+            .collect::<Vec<_>>(),
+        vec![(
+            TaskSourceKind::Worktree {
+                id: worktree_id,
+                directory_in_worktree: PathBuf::from(separator!(".zed")),
+                id_base: if cfg!(windows) {
+                    "local worktree tasks from directory \".zed\"".into()
+                } else {
+                    "local worktree tasks from directory \".zed\"".into()
+                },
+            },
+            "echo /dir".to_string(),
+        )]
     );
 }
 
