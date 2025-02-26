@@ -49,16 +49,6 @@ pub enum DiffHunkSecondaryStatus {
     None,
 }
 
-impl DiffHunkSecondaryStatus {
-    pub fn is_secondary(&self) -> bool {
-        match self {
-            DiffHunkSecondaryStatus::HasSecondaryHunk => true,
-            DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => true,
-            DiffHunkSecondaryStatus::None => false,
-        }
-    }
-}
-
 /// A diff hunk resolved to rows in the buffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffHunk {
@@ -179,12 +169,11 @@ impl BufferDiffSnapshot {
     pub fn stage_or_unstage_hunks(
         &self,
         stage: bool,
-        hunks: impl Iterator<Item = (Range<Anchor>, Range<usize>)>,
+        hunks: impl Iterator<Item = DiffHunk>,
         buffer: &text::BufferSnapshot,
     ) -> Option<Rope> {
-        let unstaged_diff = self.secondary_diff()?;
         self.inner
-            .stage_or_unstage_hunks(&unstaged_diff.inner, stage, hunks, buffer)
+            .stage_or_unstage_hunks(&self.secondary_diff()?.inner, stage, hunks, buffer)
     }
 }
 
@@ -193,7 +182,7 @@ impl BufferDiffInner {
         &self,
         unstaged_diff: &Self,
         stage: bool,
-        hunks: impl Iterator<Item = (Range<Anchor>, Range<usize>)>,
+        hunks: impl Iterator<Item = DiffHunk>,
         buffer: &text::BufferSnapshot,
     ) -> Option<Rope> {
         let head_text = self
@@ -225,7 +214,19 @@ impl BufferDiffInner {
         let mut edits = Vec::new();
         let mut prev_unstaged_hunk_buffer_offset = 0;
         let mut prev_unstaged_hunk_base_text_offset = 0;
-        for (buffer_range, diff_base_byte_range) in hunks {
+        for DiffHunk {
+            buffer_range,
+            diff_base_byte_range,
+            secondary_status,
+            ..
+        } in hunks
+        {
+            if (stage && secondary_status == DiffHunkSecondaryStatus::None)
+                || (!stage && secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk)
+            {
+                continue;
+            }
+
             let skipped_hunks = unstaged_hunk_cursor.slice(&buffer_range.start, Bias::Left, buffer);
 
             if let Some(secondary_hunk) = skipped_hunks.last() {
@@ -1464,9 +1465,7 @@ mod tests {
             let new_index_text = uncommitted_diff
                 .stage_or_unstage_hunks(
                     true,
-                    uncommitted_diff
-                        .hunks_intersecting_range(range, &buffer)
-                        .map(|hunk| (hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone())),
+                    uncommitted_diff.hunks_intersecting_range(range, &buffer),
                     &buffer,
                 )
                 .unwrap()
@@ -1742,11 +1741,7 @@ mod tests {
 
             let snapshot = cx.update(|cx| diff.snapshot(cx));
             index_text = snapshot
-                .stage_or_unstage_hunks(
-                    stage,
-                    [(hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone())].into_iter(),
-                    &working_copy,
-                )
+                .stage_or_unstage_hunks(stage, [hunk.clone()].into_iter(), &working_copy)
                 .unwrap();
 
             diff = uncommitted_diff(&working_copy, &index_text, head_text.clone(), cx);

@@ -13602,15 +13602,11 @@ impl Editor {
         } else {
             diff.stage_or_unstage_hunks(
                 stage,
-                hunks.filter_map(|hunk| {
-                    if stage && hunk.secondary_status == DiffHunkSecondaryStatus::None {
-                        return None;
-                    } else if !stage
-                        && hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk
-                    {
-                        return None;
-                    }
-                    Some((hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone()))
+                hunks.map(|hunk| buffer_diff::DiffHunk {
+                    buffer_range: hunk.buffer_range,
+                    diff_base_byte_range: hunk.diff_base_byte_range,
+                    secondary_status: hunk.secondary_status,
+                    row_range: 0..0, // unused
                 }),
                 &buffer_snapshot,
             )
