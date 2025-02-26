@@ -5408,6 +5408,7 @@ dependencies = [
  "gpui",
  "itertools 0.14.0",
  "language",
+ "linkify",
  "linkme",
  "menu",
  "multi_buffer",

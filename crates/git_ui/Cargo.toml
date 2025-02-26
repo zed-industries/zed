@@ -31,6 +31,7 @@ gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
 linkme.workspace = true
+linkify.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 panel.workspace = true
