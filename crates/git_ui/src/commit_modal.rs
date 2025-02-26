@@ -1,28 +1,17 @@
-#![allow(unused, dead_code)]
+// #![allow(unused, dead_code)]
 
-use crate::git_panel::{self, commit_message_editor, GitPanel};
-use crate::repository_selector::RepositorySelector;
-use anyhow::Result;
+use crate::git_panel::{commit_message_editor, GitPanel};
 use git::Commit;
-use language::language_settings::LanguageSettings;
-use language::Buffer;
-use panel::{
-    panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
-    panel_icon_button,
-};
-use settings::Settings;
-use theme::ThemeSettings;
+use panel::{panel_button, panel_editor_style, panel_filled_button};
 use ui::{prelude::*, KeybindingHint, Tooltip};
 
-use editor::{Direction, Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer};
+use editor::{Editor, EditorElement};
 use gpui::*;
-use project::git::Repository;
-use project::{Fs, Project};
-use std::sync::Arc;
-use workspace::dock::{Dock, DockPosition, PanelHandle};
-use workspace::{ModalView, Workspace};
-
-// actions!(commit_modal, [NextSuggestion, PrevSuggestion]);
+use util::ResultExt;
+use workspace::{
+    dock::{Dock, PanelHandle},
+    ModalView, Workspace,
+};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
@@ -38,8 +27,6 @@ pub struct CommitModal {
     git_panel: Entity<GitPanel>,
     commit_editor: Entity<Editor>,
     restore_dock: RestoreDock,
-    current_suggestion: Option<usize>,
-    suggested_messages: Vec<SharedString>,
 }
 
 impl Focusable for CommitModal {
@@ -58,12 +45,15 @@ impl ModalView for CommitModal {
         self.git_panel.update(cx, |git_panel, cx| {
             git_panel.set_modal_open(false, cx);
         });
-        self.restore_dock.dock.update(cx, |dock, cx| {
-            if let Some(active_index) = self.restore_dock.active_index {
-                dock.activate_panel(active_index, window, cx)
-            }
-            dock.set_open(self.restore_dock.is_open, window, cx)
-        });
+        self.restore_dock
+            .dock
+            .update(cx, |dock, cx| {
+                if let Some(active_index) = self.restore_dock.active_index {
+                    dock.activate_panel(active_index, window, cx)
+                }
+                dock.set_open(self.restore_dock.is_open, window, cx)
+            })
+            .log_err();
         workspace::DismissDecision::Dismiss(true)
     }
 }
@@ -75,13 +65,13 @@ struct RestoreDock {
 }
 
 impl CommitModal {
-    pub fn register(workspace: &mut Workspace, _: &mut Window, cx: &mut Context<Workspace>) {
+    pub fn register(workspace: &mut Workspace, _: &mut Window, _cx: &mut Context<Workspace>) {
         workspace.register_action(|workspace, _: &Commit, window, cx| {
             let Some(git_panel) = workspace.panel::<GitPanel>(cx) else {
                 return;
             };
 
-            let (can_commit, conflict) = git_panel.update(cx, |git_panel, cx| {
+            let (can_commit, conflict) = git_panel.update(cx, |git_panel, _cx| {
                 let can_commit = git_panel.can_commit();
                 let conflict = git_panel.has_unstaged_conflicts();
                 (can_commit, conflict)
@@ -149,116 +139,53 @@ impl CommitModal {
             }
         }
 
-        let focus_handle = commit_editor.focus_handle(cx);
-
-        cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
-            cx.emit(DismissEvent);
-        })
-        .detach();
-
         Self {
             git_panel,
             commit_editor,
             restore_dock,
-            current_suggestion: None,
-            suggested_messages: vec![],
         }
     }
-
-    /// Returns container `(width, x padding, border radius)`
-    fn container_properties(&self, window: &mut Window, cx: &mut Context<Self>) -> (f32, f32, f32) {
-        // TODO: Let's set the width based on your set wrap guide if possible
-
-        // let settings = EditorSettings::get_global(cx);
-
-        // let first_wrap_guide = self
-        //     .commit_editor
-        //     .read(cx)
-        //     .wrap_guides(cx)
-        //     .iter()
-        //     .next()
-        //     .map(|(guide, active)| if *active { Some(*guide) } else { None })
-        //     .flatten();
-
-        // let preferred_width = if let Some(guide) = first_wrap_guide {
-        //     guide
-        // } else {
-        //     80
-        // };
-
-        let border_radius = 16.0;
-
+    fn container_width(&self, window: &mut Window, cx: &mut Context<Self>) -> f32 {
         let preferred_width = 50; // (chars wide)
+        let padding_x = self.container_padding();
 
         let mut width = 460.0;
-        let padding_x = 16.0;
 
-        let mut snapshot = self
-            .commit_editor
-            .update(cx, |editor, cx| editor.snapshot(window, cx));
         let style = window.text_style().clone();
-
         let font_id = window.text_system().resolve_font(&style.font());
         let font_size = style.font_size.to_pixels(window.rem_size());
-        let line_height = style.line_height_in_pixels(window.rem_size());
+
         if let Ok(em_width) = window.text_system().em_width(font_id, font_size) {
             width = preferred_width as f32 * em_width.0 + (padding_x * 2.0);
-            cx.notify();
         }
 
-        // cx.notify();
+        cx.notify();
 
-        (width, padding_x, border_radius)
+        width
     }
 
-    // fn cycle_suggested_messages(&mut self, direction: Direction, cx: &mut Context<Self>) {
-    //     let new_index = match direction {
-    //         Direction::Next => {
-    //             (self.current_suggestion.unwrap_or(0) + 1).rem_euclid(self.suggested_messages.len())
-    //         }
-    //         Direction::Prev => {
-    //             (self.current_suggestion.unwrap_or(0) + self.suggested_messages.len() - 1)
-    //                 .rem_euclid(self.suggested_messages.len())
-    //         }
-    //     };
-    //     self.current_suggestion = Some(new_index);
+    fn height(&self) -> f32 {
+        360.0
+    }
 
-    //     cx.notify();
-    // }
+    fn footer_height(&self) -> f32 {
+        32.0
+    }
 
-    // fn next_suggestion(&mut self, _: &NextSuggestion, window: &mut Window, cx: &mut Context<Self>) {
-    //     self.current_suggestion = Some(1);
-    //     self.apply_suggestion(window, cx);
-    // }
+    fn container_padding(&self) -> f32 {
+        16.0
+    }
 
-    // fn prev_suggestion(&mut self, _: &PrevSuggestion, window: &mut Window, cx: &mut Context<Self>) {
-    //     self.current_suggestion = Some(0);
-    //     self.apply_suggestion(window, cx);
-    // }
+    /// x, y
+    fn editor_padding(&self) -> (f32, f32) {
+        (8.0, 12.0)
+    }
 
-    // fn set_commit_message(&mut self, message: &str, window: &mut Window, cx: &mut Context<Self>) {
-    //     self.commit_editor.update(cx, |editor, cx| {
-    //         editor.set_text(message.to_string(), window, cx)
-    //     });
-    //     self.current_suggestion = Some(0);
-    //     cx.notify();
-    // }
-
-    // fn apply_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-    //     let suggested_messages = self.suggested_messages.clone();
-
-    //     if let Some(suggestion) = self.current_suggestion {
-    //         let suggested_message = &suggested_messages[suggestion];
-
-    //         self.set_commit_message(suggested_message, window, cx);
-    //     }
-
-    //     cx.notify();
-    // }
+    fn border_radius(&self) -> f32 {
+        8.0
+    }
 
     fn commit_editor_element(&self, window: &mut Window, cx: &mut Context<Self>) -> EditorElement {
-        let mut editor = self.commit_editor.clone();
-
         let editor_style = panel_editor_style(true, window, cx);
 
         EditorElement::new(&self.commit_editor, editor_style)
@@ -266,31 +193,48 @@ impl CommitModal {
 
     pub fn render_commit_editor(
         &self,
-        name_and_email: Option<(SharedString, SharedString)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let (width, padding_x, modal_border_radius) = self.container_properties(window, cx);
-        let git_panel = self.git_panel.clone();
+        let height = self.height();
+        let footer_height = self.footer_height();
+        let (padding_x, padding_y) = self.editor_padding();
+        let modal_border_radius = self.border_radius();
 
+        let container_height = height - padding_y * 2.0;
+        let editor_height = container_height - footer_height;
         let border_radius = modal_border_radius - padding_x / 2.0;
 
         let editor = self.commit_editor.clone();
         let editor_focus_handle = editor.focus_handle(cx);
 
-        let settings = ThemeSettings::get_global(cx);
-        let line_height = relative(settings.buffer_line_height.value())
-            .to_pixels(settings.buffer_font_size(cx).into(), window.rem_size());
+        v_flex()
+            .debug_below()
+            .id("editor-container")
+            .h(px(container_height))
+            .cursor_text()
+            .bg(cx.theme().colors().editor_background)
+            .flex_1()
+            .size_full()
+            .rounded(px(border_radius))
+            .overflow_hidden()
+            .border_1()
+            .border_color(cx.theme().colors().border_variant)
+            // .py_2()
+            .px_3()
+            .on_click(cx.listener(move |_, _: &ClickEvent, window, _cx| {
+                window.focus(&editor_focus_handle);
+            }))
+            .child(
+                div()
+                    .h(px(editor_height))
+                    .w_full()
+                    .child(self.commit_editor_element(window, cx)),
+            )
+    }
 
-        let mut snapshot = self
-            .commit_editor
-            .update(cx, |editor, cx| editor.snapshot(window, cx));
-        let style = window.text_style().clone();
-
-        let font_id = window.text_system().resolve_font(&style.font());
-        let font_size = style.font_size.to_pixels(window.rem_size());
-        let line_height = style.line_height_in_pixels(window.rem_size());
-        let em_width = window.text_system().em_width(font_id, font_size);
+    fn render_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let git_panel = self.git_panel.clone();
 
         let (branch, tooltip, commit_label, co_authors) =
             self.git_panel.update(cx, |git_panel, cx| {
@@ -328,8 +272,6 @@ impl CommitModal {
             }))
             .style(ButtonStyle::Transparent);
 
-        let changes_count = self.git_panel.read(cx).total_staged_count();
-
         let close_kb_hint =
             if let Some(close_kb) = ui::KeyBinding::for_action(&menu::Cancel, window, cx) {
                 Some(
@@ -340,29 +282,12 @@ impl CommitModal {
                 None
             };
 
-        let focus_handle = self.focus_handle(cx);
-
-        // let next_suggestion_kb =
-        //     ui::KeyBinding::for_action_in(&NextSuggestion, &focus_handle.clone(), window, cx);
-        // let next_suggestion_hint = next_suggestion_kb.map(|kb| {
-        //     KeybindingHint::new(kb, cx.theme().colors().editor_background).suffix("Next Suggestion")
-        // });
-
-        // let prev_suggestion_kb =
-        //     ui::KeyBinding::for_action_in(&PrevSuggestion, &focus_handle.clone(), window, cx);
-        // let prev_suggestion_hint = prev_suggestion_kb.map(|kb| {
-        //     KeybindingHint::new(kb, cx.theme().colors().editor_background)
-        //         .suffix("Previous Suggestion")
-        // });
-        //
-
         let (panel_editor_focus_handle, can_commit) = git_panel.update(cx, |git_panel, cx| {
             (git_panel.editor_focus_handle(cx), git_panel.can_commit())
         });
 
         let commit_button = panel_filled_button(commit_label)
             .tooltip(move |window, cx| {
-                let focus_handle = focus_handle.clone();
                 Tooltip::for_action_in(tooltip, &Commit, &panel_editor_focus_handle, window, cx)
             })
             .disabled(!can_commit)
@@ -372,56 +297,28 @@ impl CommitModal {
                 cx.emit(DismissEvent);
             }));
 
-        v_flex()
-            .id("editor-container")
-            .cursor_text()
-            .bg(cx.theme().colors().editor_background)
-            .flex_1()
-            .size_full()
-            .rounded(px(border_radius))
-            .overflow_hidden()
-            .border_1()
-            .border_color(cx.theme().colors().border_variant)
-            .py_2()
-            .px_3()
-            .on_click(cx.listener(move |_, _: &ClickEvent, window, _cx| {
-                window.focus(&editor_focus_handle);
-            }))
-            .child(
-                div()
-                    .size_full()
-                    .flex_1()
-                    .child(self.commit_editor_element(window, cx)),
-            )
+        h_flex()
+            .group("commit_editor_footer")
+            .flex_none()
+            .w_full()
+            .items_center()
+            .justify_between()
+            .w_full()
+            .h(px(self.footer_height()))
+            .pb_0p5()
+            .gap_1()
+            .child(h_flex().gap_1().child(branch_selector).children(co_authors))
+            .child(div().flex_1())
             .child(
                 h_flex()
-                    .group("commit_editor_footer")
-                    .flex_none()
-                    .w_full()
                     .items_center()
-                    .justify_between()
-                    .w_full()
-                    .pt_2()
-                    .pb_0p5()
-                    .gap_1()
-                    .child(h_flex().gap_1().child(branch_selector).children(co_authors))
-                    .child(div().flex_1())
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .justify_end()
-                            .flex_none()
-                            .px_1()
-                            .gap_4()
-                            .children(close_kb_hint)
-                            // .children(next_suggestion_hint)
-                            .child(panel_filled_button(commit_label)),
-                    ),
+                    .justify_end()
+                    .flex_none()
+                    .px_1()
+                    .gap_4()
+                    .children(close_kb_hint)
+                    .child(commit_button),
             )
-    }
-
-    fn border_radius(&self) -> f32 {
-        8.0
     }
 
     fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -436,32 +333,40 @@ impl CommitModal {
 
 impl Render for CommitModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let (width, _, border_radius) = self.container_properties(window, cx);
+        let width = self.container_width(window, cx);
+        let height = self.height();
+        let container_padding = self.container_padding();
+        let border_radius = self.border_radius();
+        let footer_height = 32.0;
 
         v_flex()
             .id("commit-modal")
             .key_context("GitCommit")
-            .elevation_3(cx)
-            .overflow_hidden()
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::commit))
-            // .on_action(cx.listener(Self::next_suggestion))
-            // .on_action(cx.listener(Self::prev_suggestion))
+            .elevation_3(cx)
+            .overflow_hidden()
+            .flex_none()
             .relative()
-            .justify_between()
             .bg(cx.theme().colors().elevated_surface_background)
             .rounded(px(border_radius))
             .border_1()
             .border_color(cx.theme().colors().border)
             .w(px(width))
-            .h(px(360.))
-            .flex_1()
-            .overflow_hidden()
+            .h(px(height))
+            .p(px(container_padding))
+            .child(
+                div()
+                    .h(px(height - footer_height))
+                    .overflow_hidden()
+                    .child(self.render_commit_editor(window, cx)),
+            )
             .child(
                 v_flex()
                     .flex_1()
                     .p_2()
-                    .child(self.render_commit_editor(None, window, cx)),
+                    .overflow_hidden()
+                    .child(self.render_footer(window, cx)),
             )
         // .child(self.render_footer(window, cx))
     }
