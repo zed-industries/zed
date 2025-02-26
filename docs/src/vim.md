@@ -406,7 +406,7 @@ Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), b
 In non-modal text editors, cursor navigation typically wraps when moving past line ends. Zed, however, handles this behavior exactly like Vim by default: the cursor stops at line boundaries. If you prefer your cursor to wrap between lines, override these keybindings:
 
 ```json
-// In VimScript, this would like like this:
+// In VimScript, this would look like this:
 // set whichwrap+=<,>,[,],h,l
 {
   "context": "VimControl && !menu",
