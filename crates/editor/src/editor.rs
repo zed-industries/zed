@@ -3030,6 +3030,7 @@ impl Editor {
                 let edit_range_buffer = this
                     .buffer()
                     .read(cx)
+                    // todo! excerpt containing full edit_range?
                     .excerpt_containing(edit_range.end, cx)
                     .map(|e| e.1);
                 if let Some(buffer) = edit_range_buffer {
@@ -3170,13 +3171,12 @@ impl Editor {
         for ((buffer_id, language), (buffer, edited_ranges)) in buffer_edit_ranges_map {
             let edited_ranges: Vec<Range<usize>> =
                 edited_ranges.into_iter().map(|edit| edit.new).collect();
-            let mut excerpt_buffer_parse_status_rx = self
-                .buffer
-                .read(cx)
-                .buffer(buffer_id)
-                .unwrap()
-                .read(cx)
-                .parse_status();
+
+            let Ok((mut excerpt_buffer_parse_status_rx, buffer_version_initial)) =
+                buffer.read_with(cx, |buffer, _| (buffer.parse_status(), buffer.version()))
+            else {
+                continue;
+            };
 
             let (reparsed_tx, reparsed_rx) = futures::channel::oneshot::channel();
             let subscription = {
@@ -3195,6 +3195,7 @@ impl Editor {
                 let _unsubscribe_from_subscription = defer(|| drop(subscription));
                 reparsed_rx.await?;
 
+                // todo! remove this loop, is unecessary
                 loop {
                     let status = excerpt_buffer_parse_status_rx.recv().await;
                     match status {
@@ -3207,16 +3208,16 @@ impl Editor {
                             }
                         },
                         Err(err) => {
-                            return Err(anyhow!("Autoclose Tag Operation Failed: Buffer Failed to Parse: {}", err));
+                            return Err(anyhow!("Auto Edit Operation Failed: Buffer Failed to Parse: {}", err));
                         }
                     }
                 }
 
                 let Ok(buffer_snapshot) = buffer.read_with(&cx, |buf, _| buf.snapshot()) else {
-                    return Err(anyhow!("Autoclose Tag Operation Failed: Buffer Failed to Read"));
+                    return Err(anyhow!("Auto Edit Operation Failed: Buffer Failed to Read"));
                 };
                 let Some(edit_behavior_provider) = language.edit_behavior_provider() else {
-                    return Err(anyhow!("Autoclose Tag Operation Failed: Language does not support edit behavior provider"));
+                    return Err(anyhow!("Auto Edit Operation Failed: Language does not support edit behavior provider"));
                 };
 
                 let Some(edit_behavior_state) = edit_behavior_provider.boxed_should_auto_edit(&buffer_snapshot, &edited_ranges) else {
@@ -3230,11 +3231,29 @@ impl Editor {
 
                     edit_behavior_provider.boxed_auto_edit(buffer_snapshot, &edited_ranges, edit_behavior_state)
                 }}).await;
-                let edits = edits?;
+
+                let edits = edits.context("Auto Edit Operation Failed - Failed to compute edits")?;
+
+                {
+                    let has_edits_since_start = this.read_with(&cx, |this, cx| {
+                        this.buffer.read_with(cx, |buffer, cx|
+                            buffer.buffer(buffer_id).map_or(
+                                true,
+                                |buffer| buffer.read_with(cx,
+                                    |buffer, _| buffer.has_edits_since(&buffer_version_initial)
+                                )
+                            )
+                        )
+                    }).context("Auto Edit Operation Failed")?;
+
+                    if has_edits_since_start {
+                        return Err(anyhow!("Auto Edit Operation Failed, Buffer has edits since start"));
+                    }
+                }
 
                 let multi_buffer_snapshot = this.read_with(&cx, |this, cx| {
                     this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
-                })?;
+                }).context("Auto Edit Operation Failed - Failed to get buffer snapshot")?;
 
                 let mut base_selections = Vec::new();
                 let mut buffer_selection_map = HashMap::default();
@@ -3243,7 +3262,7 @@ impl Editor {
                     let selections = this.read_with(&cx, |this, _| {
                         this.selections.disjoint_anchors().clone()
                         // this.selections.disjoint_anchors().iter().filter(|selection| selection.head().buffer_id == selection.tail().buffer_id && selection.head().buffer_id == Some(buffer_id)).cloned().collect::<Vec<_>>()
-                    })?;
+                    }).context("Auto Edit Operation Failed - Failed to get selections")?;
                     for selection in selections.iter() {
                         let Some(selection_buffer_offset_head) = multi_buffer_snapshot.point_to_buffer_offset(selection.head()) else {
                             base_selections.push(selection.clone());
@@ -3271,6 +3290,7 @@ impl Editor {
                 }
 
 
+                let mut any_selections_need_update = false;
                 for edit in &edits {
                     let edit_range_offset = edit.0.to_offset(&buffer_snapshot);
                     if edit_range_offset.start != edit_range_offset.end {
@@ -3281,38 +3301,44 @@ impl Editor {
                             continue;
                         }
                         if selection.1.is_none() {
+                            any_selections_need_update = true;
                             selection.1 = Some(
                                 selection.0.clone().map(|anchor| multi_buffer_snapshot.anchor_before(anchor))
                             );
                         }
                     }
                 }
+
                 // dbg!(selection);
                 buffer.update(&mut cx, |buffer, cx| {
                     // todo! autoindent mode
                     buffer.edit(edits, None, cx);
-                })?;
-                let multi_buffer_snapshot = this.read_with(&cx, |this, cx| {
-                    this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
-                })?;
-                base_selections.extend(buffer_selection_map.values().map(|selection| {
-                    match &selection.1 {
-                        Some(left_biased_selection) => left_biased_selection.clone(),
-                        None => selection.0.clone(),
-                    }
-                }));
+                }).context("Auto Edit Operation Failed - Failed to update buffer")?;
 
-                let base_selections = base_selections.into_iter().map(|selection| selection.map(|anchor| anchor.to_offset(&multi_buffer_snapshot))).collect::<Vec<_>>();
-                // this.read_with(&cx, |this, cx| {
-                //     this.buffer.read_with(cx, |buffer, cx| {
-                //     })
-                // })
-                // multi_buffer_snapshot.
-                this.update_in(&mut cx, |this, window, cx| {
-                    this.change_selections_inner(None, false, window, cx, |s| {
-                        s.select(base_selections);
-                    });
-                })?;
+                if any_selections_need_update {
+                    let multi_buffer_snapshot = this.read_with(&cx, |this, cx| {
+                        this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
+                    }).context("Auto Edit Operation Failed - Failed to get buffer snapshot")?;
+
+                    base_selections.extend(buffer_selection_map.values().map(|selection| {
+                        match &selection.1 {
+                            Some(left_biased_selection) => left_biased_selection.clone(),
+                            None => selection.0.clone(),
+                        }
+                    }));
+
+                    let base_selections = base_selections.into_iter().map(|selection| selection.map(|anchor| anchor.to_offset(&multi_buffer_snapshot))).collect::<Vec<_>>();
+                    // this.read_with(&cx, |this, cx| {
+                    //     this.buffer.read_with(cx, |buffer, cx| {
+                    //     })
+                    // })
+                    // multi_buffer_snapshot.
+                    this.update_in(&mut cx, |this, window, cx| {
+                        this.change_selections_inner(None, false, window, cx, |s| {
+                            s.select(base_selections);
+                        });
+                    }).context("Auto Edit Operation Failed - Failed to update selections")?;
+                }
 
                 // let Ok(edits) = edits else {
                 //     dbg!(edits);
