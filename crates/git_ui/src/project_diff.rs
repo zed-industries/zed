@@ -943,7 +943,7 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let diff = cx.new_window_entity(|window, cx| {
@@ -952,10 +952,10 @@ mod tests {
         cx.run_until_parked();
 
         fs.set_head_for_repo(
-            Path::new("/project/.git"),
+            path!("/project/.git").as_ref(),
             &[("foo".into(), "foo\n".into())],
         );
-        fs.with_git_state(Path::new("/project/.git"), true, |state| {
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.statuses = HashMap::from_iter([(
                 "foo".into(),
                 TrackedStatus {
@@ -965,16 +965,6 @@ mod tests {
                 .into(),
             )]);
         });
-        cx.run_until_parked();
-
-        let buffers_to_load = diff.update(cx, |diff, cx| diff.load_buffers(cx));
-        for buffer_to_load in buffers_to_load {
-            if let Some(buffer) = buffer_to_load.await.log_err() {
-                cx.update(|window, cx| {
-                    diff.update(cx, |this, cx| this.register_buffer(buffer, window, cx));
-                });
-            }
-        }
         cx.run_until_parked();
 
         let editor = diff.update(cx, |diff, _| diff.editor.clone());
@@ -991,17 +981,14 @@ mod tests {
         editor.update_in(cx, |editor, window, cx| {
             editor.restore_file(&Default::default(), window, cx);
         });
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.statuses = HashMap::default();
+        });
         cx.run_until_parked();
 
         assert_state_with_diff(&editor, cx, &"ˇ".unindent());
 
-        let buffer = project
-            .update_in(cx, |project, _, cx| {
-                project.open_local_buffer("/project/foo", cx)
-            })
-            .await
-            .unwrap();
-        let text = buffer.read_with(cx, |buffer, _| buffer.text());
+        let text = String::from_utf8(fs.read_file_sync("/project/foo").unwrap()).unwrap();
         assert_eq!(text, "foo\n");
     }
 }
