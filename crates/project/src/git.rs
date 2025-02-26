@@ -88,6 +88,7 @@ pub enum Message {
     Fetch(GitRepo),
 }
 
+#[derive(Debug)]
 pub enum GitEvent {
     ActiveRepositoryChanged,
     FileSystemUpdated,
@@ -1070,7 +1071,13 @@ impl Repository {
                     };
                     let project_path = (self.worktree_id, path).into();
                     if let Some(buffer) = buffer_store.get_by_path(&project_path, cx) {
-                        save_futures.push(buffer_store.save_buffer(buffer, cx));
+                        if buffer
+                            .read(cx)
+                            .file()
+                            .map_or(false, |file| file.disk_state().exists())
+                        {
+                            save_futures.push(buffer_store.save_buffer(buffer, cx));
+                        }
                     }
                 }
             })
@@ -1109,7 +1116,13 @@ impl Repository {
                     };
                     let project_path = (self.worktree_id, path).into();
                     if let Some(buffer) = buffer_store.get_by_path(&project_path, cx) {
-                        save_futures.push(buffer_store.save_buffer(buffer, cx));
+                        if buffer
+                            .read(cx)
+                            .file()
+                            .map_or(false, |file| file.disk_state().exists())
+                        {
+                            save_futures.push(buffer_store.save_buffer(buffer, cx));
+                        }
                     }
                 }
             })
