@@ -180,6 +180,13 @@ impl CommitModal {
             }
         }
 
+        let focus_handle = commit_editor.focus_handle(cx);
+
+        cx.on_focus_out(&focus_handle, window, |_, _, _, cx| {
+            cx.emit(DismissEvent);
+        })
+        .detach();
+
         let properties = ModalContainerProperties::new(window, 50);
 
         Self {
