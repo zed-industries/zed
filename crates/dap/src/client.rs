@@ -88,6 +88,33 @@ impl DebugAdapterClient {
         })
     }
 
+    pub async fn reconnect(
+        &self,
+        session_id: SessionId,
+        binary: DebugAdapterBinary,
+        message_handler: DapMessageHandler,
+        cx: AsyncApp,
+    ) -> Result<Self> {
+        let binary = match self.transport_delegate.transport() {
+            crate::transport::Transport::Tcp(tcp_transport) => DebugAdapterBinary {
+                command: binary.command,
+                arguments: binary.arguments,
+                envs: binary.envs,
+                cwd: binary.cwd,
+                connection: Some(crate::adapters::TcpArguments {
+                    host: tcp_transport.host,
+                    port: Some(tcp_transport.port),
+                    timeout: Some(tcp_transport.timeout),
+                }),
+                #[cfg(any(test, feature = "test-support"))]
+                is_fake: binary.is_fake,
+            },
+            _ => self.binary.clone(),
+        };
+
+        Self::start(session_id, binary, message_handler, cx).await
+    }
+
     async fn handle_receive_messages(
         client_id: SessionId,
         server_rx: Receiver<Message>,

@@ -8,7 +8,7 @@ use super::{
     // },
     session::{self, Session},
 };
-use crate::{debugger, ProjectEnvironment, ProjectPath};
+use crate::{debugger, worktree_store::WorktreeStore, ProjectEnvironment, ProjectPath};
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
@@ -201,6 +201,7 @@ pub struct DapStore {
     mode: DapStoreMode,
     downstream_client: Option<(AnyProtoClient, u64)>,
     breakpoint_store: Entity<BreakpointStore>,
+    worktree_store: Entity<WorktreeStore>,
     active_debug_line: Option<(SessionId, ProjectPath, u32)>,
     sessions: BTreeMap<SessionId, Entity<Session>>,
 }
@@ -240,6 +241,7 @@ impl DapStore {
         environment: Entity<ProjectEnvironment>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         breakpoint_store: Entity<BreakpointStore>,
+        worktree_store: Entity<WorktreeStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.on_app_quit(Self::shutdown_sessions).detach();
@@ -251,13 +253,39 @@ impl DapStore {
             while let Some((session_id, message)) = message_rx.next().await {
                 match message {
                     Message::Request(request) => {
-                        this.update(&mut cx, |this, cx| {
+                        let _ = this.update(&mut cx, |this, cx| {
                             if request.command == StartDebugging::COMMAND {
-                                // this.sessions.get(1).update(|session, cx| {
-                                //     session.child(session_id, cx);
-                                // });
+                                let Some(parent_session) = this.session_by_id(session_id) else {
+                                    return;
+                                };
 
-                                // this.new_session(config, worktree, cx)
+                                let args =
+                                    serde_json::from_value::<StartDebuggingRequestArguments>(
+                                        request.arguments.unwrap_or_default(),
+                                    )
+                                    .expect("To parse StartDebuggingRequestArguments");
+
+                                let worktree = this
+                                    .worktree_store
+                                    .update(cx, |this, _| this.worktrees().next())
+                                    .expect("worktree-less project");
+
+                                let config = parent_session.read(cx).configuration();
+                                this.new_session(
+                                    DebugAdapterConfig {
+                                        label: config.label,
+                                        kind: config.kind,
+                                        request: config.request,
+                                        program: config.program,
+                                        cwd: config.cwd,
+                                        initialize_args: Some(args.configuration),
+                                        supports_attach: config.supports_attach,
+                                    },
+                                    &worktree,
+                                    Some(parent_session),
+                                    cx,
+                                )
+                                .detach_and_log_err(cx);
                             } else if request.command == RunInTerminal::COMMAND {
                                 // spawn terminal
                             }
@@ -282,6 +310,7 @@ impl DapStore {
             downstream_client: None,
             active_debug_line: None,
             breakpoint_store,
+            worktree_store,
             sessions: Default::default(),
         }
     }
@@ -290,6 +319,7 @@ impl DapStore {
         project_id: u64,
         upstream_client: AnyProtoClient,
         breakpoint_store: Entity<BreakpointStore>,
+        worktree_store: Entity<WorktreeStore>,
     ) -> Self {
         Self {
             mode: DapStoreMode::Remote(RemoteDapStore {
@@ -300,6 +330,7 @@ impl DapStore {
             downstream_client: None,
             active_debug_line: None,
             breakpoint_store,
+            worktree_store,
             sessions: Default::default(),
         }
     }
@@ -485,6 +516,7 @@ impl DapStore {
         &mut self,
         config: DebugAdapterConfig,
         worktree: &Entity<Worktree>,
+        parent_session: Option<Entity<Session>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
         let Some(local_store) = self.as_local() else {
@@ -508,6 +540,7 @@ impl DapStore {
         let start_client_task = Session::local(
             self.breakpoint_store.clone(),
             session_id,
+            parent_session,
             delegate,
             config,
             local_store.start_debugging_tx.clone(),

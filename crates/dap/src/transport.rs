@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use dap_types::{
     messages::{Message, Response},
     ErrorResponse,
@@ -66,7 +66,7 @@ impl TransportPipe {
 type Requests = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Response>>>>>;
 type LogHandlers = Arc<parking_lot::Mutex<SmallVec<[(LogKind, IoHandler); 2]>>>;
 
-enum Transport {
+pub enum Transport {
     Stdio(StdioTransport),
     Tcp(TcpTransport),
     #[cfg(any(test, feature = "test-support"))]
@@ -520,9 +520,8 @@ impl TransportDelegate {
         self.transport.has_adapter_logs()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn transport(&self) -> Arc<&FakeTransport> {
-        Arc::new(self.transport.as_fake())
+    pub fn transport(&self) -> &Transport {
+        &self.transport
     }
 
     pub fn add_log_handler<F>(&self, f: F, kind: LogKind)
@@ -535,9 +534,9 @@ impl TransportDelegate {
 }
 
 pub struct TcpTransport {
-    port: u16,
-    host: Ipv4Addr,
-    timeout: u64,
+    pub port: u16,
+    pub host: Ipv4Addr,
+    pub timeout: u64,
     process: Mutex<Child>,
 }
 
@@ -553,7 +552,8 @@ impl TcpTransport {
                 .port())
         }
     }
-    async fn port_for_host(host: Ipv4Addr) -> Result<u16> {
+
+    async fn open_port_for_host(host: Ipv4Addr) -> Result<u16> {
         Ok(TcpListener::bind(SocketAddrV4::new(host, 0))
             .await?
             .local_addr()?
@@ -568,16 +568,7 @@ impl TcpTransport {
         let port = if let Some(port) = connection_args.port {
             port
         } else {
-            TcpListener::bind(SocketAddrV4::new(host, 0))
-                .await
-                .with_context(|| {
-                    format!(
-                        "Failed to connect to debug adapter over tcp. host: {}",
-                        host
-                    )
-                })?
-                .local_addr()?
-                .port()
+            Self::open_port_for_host(host).await?
         };
 
         let mut command = util::command::new_smol_command(&binary.command);
@@ -731,10 +722,6 @@ impl StdioTransport {
         false
     }
 
-    async fn reconnect(&self, _: AsyncApp) -> Result<TransportPipe> {
-        bail!("Cannot reconnect to adapter")
-    }
-
     async fn kill(&self) -> Result<()> {
         self.process.lock().await.kill()?;
         Ok(())
@@ -806,10 +793,6 @@ impl FakeTransport {
             .lock()
             .await
             .insert(R::COMMAND, Box::new(handler));
-    }
-
-    async fn reconnect(&self, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
-        FakeTransport::start(cx).await
     }
 
     async fn start(cx: AsyncApp) -> Result<(TransportPipe, Self)> {

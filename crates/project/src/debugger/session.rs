@@ -11,6 +11,7 @@ use super::dap_command::{
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
 use collections::{HashMap, IndexMap};
+use dap::adapters::{DebugAdapter, DebugAdapterBinary};
 use dap::{
     adapters::{DapDelegate, DapStatus, DebugAdapterName},
     client::{DebugAdapterClient, SessionId},
@@ -19,6 +20,7 @@ use dap::{
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, SetBreakpointsArguments,
     Source, SourceBreakpoint, SteppingGranularity, StoppedEvent,
 };
+use dap::{DebugAdapterKind, StartDebuggingRequestArguments};
 use dap_adapters::build_adapter;
 use futures::channel::oneshot;
 use futures::{future::join_all, future::Shared, FutureExt};
@@ -188,6 +190,7 @@ fn client_source(abs_path: &Path) -> dap::Source {
 impl LocalMode {
     fn new(
         session_id: SessionId,
+        parent_session: Option<Entity<Session>>,
         breakpoints: Entity<BreakpointStore>,
         disposition: DebugAdapterConfig,
         delegate: DapAdapterDelegate,
@@ -195,40 +198,8 @@ impl LocalMode {
         cx: AsyncApp,
     ) -> Task<Result<(Self, Capabilities)>> {
         cx.spawn(move |mut cx| async move {
-            let adapter = build_adapter(&disposition.kind).await?;
-
-            let binary = cx.update(|cx| {
-                ProjectSettings::get_global(cx)
-                    .dap
-                    .get(&adapter.name())
-                    .and_then(|s| s.binary.as_ref().map(PathBuf::from))
-            })?;
-
-            let binary = match adapter
-                .get_binary(&delegate, &disposition, binary, &mut cx)
-                .await
-            {
-                Err(error) => {
-                    delegate.update_status(
-                        adapter.name(),
-                        DapStatus::Failed {
-                            error: error.to_string(),
-                        },
-                    );
-
-                    return Err(error);
-                }
-                Ok(mut binary) => {
-                    delegate.update_status(adapter.name(), DapStatus::None);
-
-                    let shell_env = delegate.shell_env().await;
-                    let mut envs = binary.envs.unwrap_or_default();
-                    envs.extend(shell_env);
-                    binary.envs = Some(envs);
-
-                    binary
-                }
-            };
+            let (adapter, binary) =
+                Self::get_adapter_binary(&disposition, delegate, &mut cx).await?;
 
             let (initialized_tx, initialized_rx) = oneshot::channel();
             let mut initialized_tx = Some(initialized_tx);
@@ -238,69 +209,145 @@ impl LocalMode {
                     return;
                 };
                 if let Events::Initialized(_) = **event {
-                    initialized_tx
-                        .take()
-                        .expect("To receive just one Initialized event")
-                        .send(())
-                        .ok();
+                    if let Some(tx) = initialized_tx.take() {
+                        tx.send(()).ok();
+                    }
                 } else {
                     messages_tx.unbounded_send(message).ok();
                 }
             });
+
             let client = Arc::new(
-                DebugAdapterClient::start(session_id, binary, message_handler, cx.clone()).await?,
+                if let Some(client) = parent_session
+                    .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
+                    .flatten()
+                {
+                    client
+                        .reconnect(session_id, binary, message_handler, cx.clone())
+                        .await?
+                } else {
+                    DebugAdapterClient::start(session_id, binary, message_handler, cx.clone())
+                        .await?
+                },
             );
-            let this = Self { client };
-            let capabilities = this
-                .request(
-                    Initialize {
-                        adapter_id: adapter.name().to_string().to_owned(),
-                    },
-                    cx.background_executor().clone(),
-                )
-                .await?;
+            let session = Self { client };
 
-            let mut raw = adapter.request_args(&disposition);
-            merge_json_value_into(disposition.initialize_args.unwrap_or(json!({})), &mut raw);
-
-            // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
-            let launch = this.request(Launch { raw }, cx.background_executor().clone());
-            let that = this.clone();
-            let breakpoints =
-                breakpoints.update(&mut cx, |this, cx| this.all_breakpoints(true, cx))?;
-            let caps = &capabilities;
-            let configuration_sequence = async move {
-                let _ = initialized_rx.await?;
-
-                let mut breakpoint_tasks = Vec::new();
-
-                for (path, breakpoints) in breakpoints {
-                    breakpoint_tasks.push(
-                        that.request(
-                            dap_command::SetBreakpoints {
-                                source: client_source(&path),
-                                breakpoints: breakpoints
-                                    .iter()
-                                    .map(|breakpoint| breakpoint.to_source_breakpoint())
-                                    .collect(),
-                            },
-                            cx.background_executor().clone(),
-                        ),
-                    );
-                }
-                let _ = futures::future::join_all(breakpoint_tasks).await;
-
-                if ConfigurationDone::is_supported(caps) {
-                    that.request(ConfigurationDone, cx.background_executor().clone())
-                        .await?;
-                }
-
-                anyhow::Result::<_, anyhow::Error>::Ok(())
-            };
-            let _ = futures::future::join(configuration_sequence, launch).await;
-
-            Ok((this, capabilities))
+            Self::initialize(
+                session,
+                adapter,
+                &disposition,
+                breakpoints,
+                initialized_rx,
+                &mut cx,
+            )
+            .await
         })
+    }
+
+    async fn get_adapter_binary(
+        disposition: &DebugAdapterConfig,
+        delegate: DapAdapterDelegate,
+        cx: &mut AsyncApp,
+    ) -> Result<(Arc<dyn DebugAdapter>, DebugAdapterBinary)> {
+        let adapter = build_adapter(&disposition.kind).await?;
+
+        let binary = cx.update(|cx| {
+            ProjectSettings::get_global(cx)
+                .dap
+                .get(&adapter.name())
+                .and_then(|s| s.binary.as_ref().map(PathBuf::from))
+        })?;
+
+        let binary = match adapter
+            .get_binary(&delegate, &disposition, binary, cx)
+            .await
+        {
+            Err(error) => {
+                delegate.update_status(
+                    adapter.name(),
+                    DapStatus::Failed {
+                        error: error.to_string(),
+                    },
+                );
+
+                return Err(error);
+            }
+            Ok(mut binary) => {
+                delegate.update_status(adapter.name(), DapStatus::None);
+
+                let shell_env = delegate.shell_env().await;
+                let mut envs = binary.envs.unwrap_or_default();
+                envs.extend(shell_env);
+                binary.envs = Some(envs);
+
+                binary
+            }
+        };
+
+        Ok((adapter, binary))
+    }
+
+    async fn initialize(
+        this: Self,
+        adapter: Arc<dyn DebugAdapter>,
+        disposition: &DebugAdapterConfig,
+        breakpoints: Entity<BreakpointStore>,
+        initialized_rx: oneshot::Receiver<()>,
+        cx: &mut AsyncApp,
+    ) -> Result<(Self, Capabilities)> {
+        let capabilities = this
+            .request(
+                Initialize {
+                    adapter_id: adapter.name().to_string().to_owned(),
+                },
+                cx.background_executor().clone(),
+            )
+            .await?;
+
+        let mut raw = adapter.request_args(disposition);
+        merge_json_value_into(
+            disposition.initialize_args.clone().unwrap_or(json!({})),
+            &mut raw,
+        );
+
+        // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
+        let launch = this.request(Launch { raw }, cx.background_executor().clone());
+        let that = this.clone();
+        let breakpoints = breakpoints.update(cx, |this, cx| this.all_breakpoints(true, cx))?;
+
+        let configuration_done_supported = ConfigurationDone::is_supported(&capabilities);
+        let configuration_sequence = async move {
+            let _ = initialized_rx.await?;
+
+            let mut breakpoint_tasks = Vec::new();
+
+            for (path, breakpoints) in breakpoints.iter() {
+                breakpoint_tasks.push(
+                    that.request(
+                        dap_command::SetBreakpoints {
+                            source: client_source(&path),
+                            breakpoints: breakpoints
+                                .iter()
+                                .map(|breakpoint| breakpoint.to_source_breakpoint())
+                                .collect(),
+                        },
+                        cx.background_executor().clone(),
+                    ),
+                );
+            }
+            let _ = futures::future::join_all(breakpoint_tasks).await;
+
+            if configuration_done_supported {
+                that.request(ConfigurationDone, cx.background_executor().clone())
+                    .await?;
+            }
+
+            anyhow::Result::<_, anyhow::Error>::Ok(())
+        };
+
+        let _ = futures::future::join(configuration_sequence, launch).await;
+
+        Ok((this, capabilities))
     }
 
     fn request<R: LocalDapCommand>(
@@ -410,6 +457,7 @@ pub struct Session {
     config: DebugAdapterConfig,
     pub(super) capabilities: Capabilities,
     id: SessionId,
+    parent_id: Option<SessionId>,
     breakpoint_store: Entity<BreakpointStore>,
     ignore_breakpoints: bool,
     modules: Vec<dap::Module>,
@@ -505,6 +553,7 @@ impl Session {
     pub(crate) fn local(
         breakpoints: Entity<BreakpointStore>,
         session_id: SessionId,
+        parent_session: Option<Entity<Session>>,
         delegate: DapAdapterDelegate,
         config: DebugAdapterConfig,
         start_debugging_requests_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
@@ -515,6 +564,7 @@ impl Session {
         cx.spawn(move |mut cx| async move {
             let (mode, capabilities) = LocalMode::new(
                 session_id,
+                parent_session.clone(),
                 breakpoints.clone(),
                 config.clone(),
                 delegate,
@@ -546,6 +596,7 @@ impl Session {
                 Self {
                     mode: Mode::Local(mode),
                     id: session_id,
+                    parent_id: parent_session.map(|session| session.read(cx).id),
                     breakpoint_store: breakpoints,
                     variables: Default::default(),
                     config,
@@ -578,6 +629,7 @@ impl Session {
                 upstream_project_id,
             }),
             id: session_id,
+            parent_id: None,
             capabilities: Capabilities::default(),
             breakpoint_store,
             ignore_breakpoints,
