@@ -621,6 +621,10 @@ impl GitPanel {
         }
     }
 
+    pub(crate) fn editor_focus_handle(&self, cx: &mut Context<Self>) -> FocusHandle {
+        self.commit_editor.focus_handle(cx).clone()
+    }
+
     fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
         self.commit_editor.update(cx, |editor, cx| {
             window.focus(&editor.focus_handle(cx));
@@ -1382,14 +1386,14 @@ impl GitPanel {
             };
 
             let mut current_remotes: Vec<Remote> = repo
-                .update(&mut cx, |repo, cx| {
+                .update(&mut cx, |repo, _| {
                     let Some(current_branch) = repo.current_branch() else {
                         return Err(anyhow::anyhow!("No active branch"));
                     };
 
-                    Ok(repo.get_remotes(Some(current_branch.name.to_string()), cx))
+                    Ok(repo.get_remotes(Some(current_branch.name.to_string())))
                 })??
-                .await?;
+                .await??;
 
             if current_remotes.len() == 0 {
                 return Err(anyhow::anyhow!("No active remote"));
@@ -2353,7 +2357,9 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return Task::ready(Err(anyhow::anyhow!("no active repo")));
         };
-        repo.update(cx, |repo, cx| repo.show(sha, cx))
+
+        let show = repo.read(cx).show(sha);
+        cx.spawn(|_, _| async move { show.await? })
     }
 
     fn deploy_entry_context_menu(

@@ -458,6 +458,12 @@ impl AssistantPanel {
     pub(crate) fn active_context_editor(&self) -> Option<Entity<ContextEditor>> {
         self.context_editor.clone()
     }
+
+    pub(crate) fn delete_context(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.context_store
+            .update(cx, |this, cx| this.delete_local_context(path, cx))
+            .detach_and_log_err(cx);
+    }
 }
 
 impl Focusable for AssistantPanel {

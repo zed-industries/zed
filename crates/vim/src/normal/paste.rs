@@ -943,6 +943,22 @@ mod test {
                 "},
             Mode::Normal,
         );
+        cx.simulate_keystrokes("g r r");
+        cx.assert_state(
+            indoc! {"
+                fisˇh
+                two three
+                "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("j w g r $");
+        cx.assert_state(
+            indoc! {"
+                fish
+                two fisˇh
+            "},
+            Mode::Normal,
+        );
         let clipboard: Register = cx.read_from_clipboard().unwrap().into();
         assert_eq!(clipboard.text, "fish");
     }
