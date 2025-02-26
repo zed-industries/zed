@@ -3126,17 +3126,18 @@ impl Editor {
             this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
             linked_editing_ranges::refresh_linked_ranges(this, window, cx);
             this.refresh_inline_completion(true, false, window, cx);
-            this.handle_auto_edit_behavior(buffer_edits_subscriptions_map, cx);
+            this.handle_auto_edit_behavior(buffer_edits_subscriptions_map, window, cx);
         });
     }
 
     fn handle_auto_edit_behavior(
         &mut self,
         buffer_edits_subscriptions_map: HashMap<BufferId, text::Subscription>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         // dbg!(&buffer_edits_subscriptions_map);
-        let buf = self.buffer.read(cx).snapshot(cx);
+        // let buf = self.buffer.read(cx).snapshot(cx);
 
         let mut buffer_edit_ranges_map = HashMap::<
             (BufferId, Arc<language::Language>),
@@ -3190,7 +3191,7 @@ impl Editor {
                 )
             };
 
-            cx.spawn( |this, mut cx| async move {
+            cx.spawn_in(window,|this, mut cx| async move {
                 let _unsubscribe_from_subscription = defer(|| drop(subscription));
                 reparsed_rx.await?;
 
@@ -3219,27 +3220,99 @@ impl Editor {
                 };
 
                 let Some(edit_behavior_state) = edit_behavior_provider.boxed_should_auto_edit(&buffer_snapshot, &edited_ranges) else {
-                    let should_auto_edit = false;
-                    // dbg!(should_auto_edit);
                     return Ok(());
                 };
 
-                let edits = cx.background_executor().spawn(async move {
-                    edit_behavior_provider.boxed_auto_edit(buffer_snapshot, &edited_ranges, edit_behavior_state)
-                }).await;
+                let edits = cx.background_executor().spawn({
+                    // todo! make edit_behavior_provider.boxed_auto_edit take reference to buffer_snapshot
+                    let buffer_snapshot = buffer_snapshot.clone();
+                    async move {
 
-                // dbg!(&edits);
-                if let Ok(edits) = edits {
-                    let selection = this.read_with(&cx, |this, cx| {
-                        this.selections.newest_anchor().clone()
+                    edit_behavior_provider.boxed_auto_edit(buffer_snapshot, &edited_ranges, edit_behavior_state)
+                }}).await;
+                let edits = edits?;
+
+                let multi_buffer_snapshot = this.read_with(&cx, |this, cx| {
+                    this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
+                })?;
+
+                let mut base_selections = Vec::new();
+                let mut buffer_selection_map = HashMap::default();
+
+                {
+                    let selections = this.read_with(&cx, |this, _| {
+                        this.selections.disjoint_anchors().clone()
                         // this.selections.disjoint_anchors().iter().filter(|selection| selection.head().buffer_id == selection.tail().buffer_id && selection.head().buffer_id == Some(buffer_id)).cloned().collect::<Vec<_>>()
-                    }).unwrap();
-                    // dbg!(selection);
-                    buffer.update(&mut cx, |buffer, cx| {
-                        // todo! autoindent mode
-                        buffer.edit(edits, None, cx);
-                    });
+                    })?;
+                    for selection in selections.iter() {
+                        let Some(selection_buffer_offset_head) = multi_buffer_snapshot.point_to_buffer_offset(selection.head()) else {
+                            base_selections.push(selection.clone());
+                            continue;
+                        };
+                        let Some(selection_buffer_offset_tail) = multi_buffer_snapshot.point_to_buffer_offset(selection.tail()) else {
+                            base_selections.push(selection.clone());
+                            continue;
+                        };
+
+                        let is_entirely_in_buffer = selection_buffer_offset_head.0.remote_id() == buffer_id && selection_buffer_offset_tail.0.remote_id() == buffer_id;
+                        if !is_entirely_in_buffer {
+                            base_selections.push(selection.clone());
+                            continue;
+                        }
+
+                        let selection_buffer_offset_head = selection_buffer_offset_head.1;
+                        let selection_buffer_offset_tail = selection_buffer_offset_tail.1;
+                        buffer_selection_map.insert(
+                            (selection_buffer_offset_head, selection_buffer_offset_tail),
+                            (selection.clone(), None)
+                        );
+
+                    }
                 }
+
+
+                for edit in &edits {
+                    let edit_range_offset = edit.0.to_offset(&buffer_snapshot);
+                    if edit_range_offset.start != edit_range_offset.end {
+                        continue;
+                    }
+                    if let Some(selection) = buffer_selection_map.get_mut(&(edit_range_offset.start, edit_range_offset.end)) {
+                        if selection.0.head().bias() != Bias::Right || selection.0.tail().bias() != Bias::Right {
+                            continue;
+                        }
+                        if selection.1.is_none() {
+                            selection.1 = Some(
+                                selection.0.clone().map(|anchor| multi_buffer_snapshot.anchor_before(anchor))
+                            );
+                        }
+                    }
+                }
+                // dbg!(selection);
+                buffer.update(&mut cx, |buffer, cx| {
+                    // todo! autoindent mode
+                    buffer.edit(edits, None, cx);
+                })?;
+                let multi_buffer_snapshot = this.read_with(&cx, |this, cx| {
+                    this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
+                })?;
+                base_selections.extend(buffer_selection_map.values().map(|selection| {
+                    match &selection.1 {
+                        Some(left_biased_selection) => left_biased_selection.clone(),
+                        None => selection.0.clone(),
+                    }
+                }));
+
+                let base_selections = base_selections.into_iter().map(|selection| selection.map(|anchor| anchor.to_offset(&multi_buffer_snapshot))).collect::<Vec<_>>();
+                // this.read_with(&cx, |this, cx| {
+                //     this.buffer.read_with(cx, |buffer, cx| {
+                //     })
+                // })
+                // multi_buffer_snapshot.
+                this.update_in(&mut cx, |this, window, cx| {
+                    this.change_selections_inner(None, false, window, cx, |s| {
+                        s.select(base_selections);
+                    });
+                })?;
 
                 // let Ok(edits) = edits else {
                 //     dbg!(edits);
