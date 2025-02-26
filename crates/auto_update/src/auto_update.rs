@@ -815,3 +815,18 @@ async fn install_release_macos(
 
     Ok(running_app_path)
 }
+
+pub fn check_pending_installation() -> bool {
+    let Some(installer_path) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.join("updates")))
+    else {
+        return false;
+    };
+    let installer_exe = installer_path.join("Installer.exe");
+    if !installer_exe.exists() {
+        return false;
+    }
+    let _ = Command::new(installer_exe).arg("--install").spawn();
+    true
+}

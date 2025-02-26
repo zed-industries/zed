@@ -170,6 +170,14 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 }
 
 fn main() {
+    // Check if there is a pending installer
+    // If there is, run the installer and exit
+    #[cfg(target_os = "windows")]
+    {
+        if auto_update::check_pending_installation() {
+            return;
+        }
+    }
     let args = Args::parse();
 
     #[cfg(all(not(debug_assertions), target_os = "windows"))]
