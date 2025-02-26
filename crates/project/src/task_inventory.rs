@@ -56,7 +56,7 @@ pub enum TaskSourceKind {
     Language { name: SharedString },
 }
 
-/// A collection of task contexts, applicable to the current state of the workspace.
+/// A collection of task contexts, derived from the current state of the workspace.
 /// Only contains worktrees that are visible and with their root being a directory.
 #[derive(Debug, Default)]
 pub struct TaskContexts {
@@ -65,7 +65,7 @@ pub struct TaskContexts {
     pub active_item_context: Option<(Option<WorktreeId>, TaskContext)>,
     /// A worktree that corresponds to the active item, or the only worktree in the workspace.
     pub active_worktree_context: Option<(WorktreeId, TaskContext)>,
-    /// If there are more than one worktree in the workspace, all non-active ones are included here.
+    /// If there are multiple worktrees in the workspace, all non-active ones are included here.
     pub other_worktree_contexts: Vec<(WorktreeId, TaskContext)>,
 }
 

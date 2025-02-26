@@ -241,18 +241,11 @@ fn active_item_selection_properties(
         .and_then(|item| item.project_path(cx))
         .map(|path| path.worktree_id)
         .filter(|worktree_id| {
-            let Some(worktree) = workspace
+            workspace
                 .project()
                 .read(cx)
                 .worktree_for_id(*worktree_id, cx)
-            else {
-                return false;
-            };
-            let worktree = worktree.read(cx);
-            let Some(root_entry) = worktree.root_entry() else {
-                return false;
-            };
-            worktree.is_visible() && root_entry.is_dir()
+                .map_or(false, |worktree| is_visible_directory(&worktree, cx))
         });
     let location = active_item
         .and_then(|active_item| active_item.act_as::<Editor>(cx))
@@ -276,9 +269,6 @@ fn active_item_selection_properties(
 
 fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Task<TaskContexts> {
     let active_item = workspace.active_item(cx);
-    let active_editor = active_item
-        .as_ref()
-        .and_then(|item| item.act_as::<Editor>(cx));
     let active_worktree = active_item
         .as_ref()
         .and_then(|item| item.project_path(cx))
@@ -291,11 +281,12 @@ fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Ta
                 .map_or(false, |worktree| is_visible_directory(&worktree, cx))
         });
 
-    let editor_context_task = if let Some(editor) = active_editor {
-        Some(editor.update(cx, |editor, cx| editor.task_context(window, cx)))
-    } else {
-        None
-    };
+    let editor_context_task =
+        active_item
+            .and_then(|item| item.act_as::<Editor>(cx))
+            .map(|active_editor| {
+                active_editor.update(cx, |editor, cx| editor.task_context(window, cx))
+            });
 
     let mut worktree_abs_paths = workspace
         .worktrees(cx)
@@ -379,17 +370,17 @@ mod tests {
             json!({
                 ".zed": {
                     "tasks.json": r#"[
-                                {
-                                    "label": "example task",
-                                    "command": "echo",
-                                    "args": ["4"]
-                                },
-                                {
-                                    "label": "another one",
-                                    "command": "echo",
-                                    "args": ["55"]
-                                },
-                            ]"#,
+                            {
+                                "label": "example task",
+                                "command": "echo",
+                                "args": ["4"]
+                            },
+                            {
+                                "label": "another one",
+                                "command": "echo",
+                                "args": ["55"]
+                            },
+                        ]"#,
                 },
                 "a.ts": "function this_is_a_test() { }",
                 "rust": {
@@ -408,8 +399,8 @@ mod tests {
             )
             .with_outline_query(
                 r#"(function_item
-                "fn" @context
-                name: (_) @name) @item"#,
+            "fn" @context
+            name: (_) @name) @item"#,
             )
             .unwrap()
             .with_context_provider(Some(Arc::new(BasicContextProvider::new(
@@ -424,12 +415,12 @@ mod tests {
             )
             .with_outline_query(
                 r#"(function_declaration
-                        "async"? @context
-                        "function" @context
-                        name: (_) @name
-                        parameters: (formal_parameters
-                          "(" @context
-                          ")" @context)) @item"#,
+                    "async"? @context
+                    "function" @context
+                    name: (_) @name
+                    parameters: (formal_parameters
+                        "(" @context
+                        ")" @context)) @item"#,
             )
             .unwrap()
             .with_context_provider(Some(Arc::new(BasicContextProvider::new(
