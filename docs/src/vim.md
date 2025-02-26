@@ -411,10 +411,10 @@ In non-modal text editors, cursor navigation typically wraps when moving past li
 {
   "context": "VimControl && !menu",
   "bindings": {
-    "h": "vim::WrappingLeft",
-    "l": "vim::WrappingRight",
     "left": "vim::WrappingLeft",
-    "right": "vim::WrappingRight"
+    "right": "vim::WrappingRight",
+    "h": "vim::WrappingLeft",
+    "l": "vim::WrappingRight"
   }
 }
 ```
