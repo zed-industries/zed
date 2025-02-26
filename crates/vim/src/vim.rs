@@ -1061,12 +1061,14 @@ impl Vim {
     }
 
     pub fn extend_key_context(&self, context: &mut KeyContext, cx: &App) {
-        // if self.mode.is_visual() then mode = "visual"
-        let mut mode = if self.mode.is_visual() {
-            Mode::Visual.to_string()
-        } else {
-            self.mode.to_string()
-        };
+        let mut mode = match self.mode {
+            Mode::Normal => "normal",
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
+            Mode::Insert => "insert",
+            Mode::Replace => "replace",
+            Mode::HelixNormal => "helix_normal",
+        }
+        .to_string();
 
         let mut operator_id = "none";
 
@@ -1658,7 +1660,34 @@ struct VimSettingsContent {
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
-    pub default_mode: Option<Mode>,
+    pub default_mode: Option<ModeContent>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModeContent {
+    #[default]
+    Normal,
+    Insert,
+    Replace,
+    Visual,
+    VisualLine,
+    VisualBlock,
+    HelixNormal,
+}
+
+impl From<ModeContent> for Mode {
+    fn from(mode: ModeContent) -> Self {
+        match mode {
+            ModeContent::Normal => Self::Normal,
+            ModeContent::Insert => Self::Insert,
+            ModeContent::Replace => Self::Replace,
+            ModeContent::Visual => Self::Visual,
+            ModeContent::VisualLine => Self::VisualLine,
+            ModeContent::VisualBlock => Self::VisualBlock,
+            ModeContent::HelixNormal => Self::HelixNormal,
+        }
+    }
 }
 
 impl Settings for VimSettings {
@@ -1667,6 +1696,29 @@ impl Settings for VimSettings {
     type FileContent = VimSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
+        let settings: VimSettingsContent = sources.json_merge()?;
+
+        Ok(Self {
+            toggle_relative_line_numbers: settings
+                .toggle_relative_line_numbers
+                .ok_or_else(Self::missing_default)?,
+            use_system_clipboard: settings
+                .use_system_clipboard
+                .ok_or_else(Self::missing_default)?,
+            use_multiline_find: settings
+                .use_multiline_find
+                .ok_or_else(Self::missing_default)?,
+            use_smartcase_find: settings
+                .use_smartcase_find
+                .ok_or_else(Self::missing_default)?,
+            custom_digraphs: settings.custom_digraphs.ok_or_else(Self::missing_default)?,
+            highlight_on_yank_duration: settings
+                .highlight_on_yank_duration
+                .ok_or_else(Self::missing_default)?,
+            default_mode: settings
+                .default_mode
+                .ok_or_else(Self::missing_default)?
+                .into(),
+        })
     }
 }

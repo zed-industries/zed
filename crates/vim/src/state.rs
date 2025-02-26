@@ -2,7 +2,7 @@ use crate::command::command_interceptor;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
-use crate::{JsonSchema, UseSystemClipboard, Vim, VimSettings};
+use crate::{UseSystemClipboard, Vim, VimSettings};
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{Anchor, ClipboardSelection, Editor};
@@ -10,17 +10,15 @@ use gpui::{
     Action, App, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, Global, WeakEntity,
 };
 use language::Point;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
 use std::fmt::Display;
-use std::str::FromStr;
 use std::{ops::Range, sync::Arc};
 use ui::{Context, KeyBinding, SharedString};
 use workspace::searchable::Direction;
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
     Normal,
     Insert,
@@ -31,60 +29,16 @@ pub enum Mode {
     HelixNormal,
 }
 
-// to maintain consistency with `vim_mode == normal` etc. in the keybind
-// context, Mode should deserialize from snake_case, but it previously
-// serialized to the default, PascalCase. So to be safe we convert from
-// PascalCase to snake_case in the deserializer.
-impl<'de> Deserialize<'de> for Mode {
-    fn deserialize<D>(deserializer: D) -> Result<Mode, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-
-        let mut result = String::new();
-        for (i, c) in s.chars().enumerate() {
-            if c.is_uppercase() {
-                if i > 0 {
-                    result.push('_');
-                }
-                result.push(c.to_ascii_lowercase());
-            } else {
-                result.push(c);
-            }
-        }
-
-        Mode::from_str(result.as_str()).map_err(serde::de::Error::custom)
-    }
-}
-
 impl Display for Mode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Mode::Normal => write!(f, "normal"),
-            Mode::Insert => write!(f, "insert"),
-            Mode::Replace => write!(f, "replace"),
-            Mode::Visual => write!(f, "visual"),
-            Mode::VisualLine => write!(f, "visual_line"),
-            Mode::VisualBlock => write!(f, "visual_block"),
-            Mode::HelixNormal => write!(f, "helix_normal"),
-        }
-    }
-}
-
-impl FromStr for Mode {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "normal" => Ok(Mode::Normal),
-            "insert" => Ok(Mode::Insert),
-            "replace" => Ok(Mode::Replace),
-            "visual" => Ok(Mode::Visual),
-            "visual_line" => Ok(Mode::VisualLine),
-            "visual_block" => Ok(Mode::VisualBlock),
-            "helix_normal" => Ok(Mode::HelixNormal),
-            _ => Err(format!("Unknown vim mode: {s}")),
+            Mode::Normal => write!(f, "NORMAL"),
+            Mode::Insert => write!(f, "INSERT"),
+            Mode::Replace => write!(f, "REPLACE"),
+            Mode::Visual => write!(f, "VISUAL"),
+            Mode::VisualLine => write!(f, "VISUAL LINE"),
+            Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
+            Mode::HelixNormal => write!(f, "HELIX NORMAL"),
         }
     }
 }
@@ -94,18 +48,6 @@ impl Mode {
         match self {
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => true,
             Mode::Normal | Mode::Insert | Mode::Replace | Mode::HelixNormal => false,
-        }
-    }
-
-    pub fn mode_indicator_str(&self) -> &'static str {
-        match self {
-            Mode::Normal => "NORMAL",
-            Mode::Insert => "INSERT",
-            Mode::Replace => "REPLACE",
-            Mode::Visual => "VISUAL",
-            Mode::VisualLine => "VISUAL LINE",
-            Mode::VisualBlock => "VISUAL BLOCK",
-            Mode::HelixNormal => "HELIX NORMAL",
         }
     }
 }

@@ -101,9 +101,9 @@ impl Render for ModeIndicator {
             label
         } else {
             let mode = if vim_readable.temp_mode {
-                format!("(insert) {}", vim_readable.mode.mode_indicator_str())
+                format!("(insert) {}", vim_readable.mode)
             } else {
-                vim_readable.mode.mode_indicator_str().to_string()
+                vim_readable.mode.to_string()
             };
 
             let current_operators_description = self.current_operators_description(vim.clone(), cx);
