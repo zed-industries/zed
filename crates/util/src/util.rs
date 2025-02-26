@@ -418,25 +418,15 @@ pub fn iterate_expanded_and_wrapped_usize_range(
 
 #[cfg(target_os = "windows")]
 pub fn retrieve_system_shell() -> String {
-    use std::os::windows::process::CommandExt;
-
     static SYSTEM_SHELL: LazyLock<String> = LazyLock::new(|| {
-        std::thread::sleep(std::time::Duration::from_secs(5));
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000_u32;
-        let Ok(detect_pwsh) = std::process::Command::new("cmd.exe")
-            .creation_flags(CREATE_NO_WINDOW)
-            .arg("/C")
-            .arg("pwsh.exe --version")
-            .output()
-        else {
-            return "powershell.exe".to_string();
-        };
-        if detect_pwsh.status.success() {
-            "pwsh.exe"
+        let start = Instant::now();
+        let ret = if std::env::var("Path").is_ok_and(|env| env.contains("PowerShell\\7\\")) {
+            "pwsh.exe".to_string()
         } else {
-            "powershell.exe"
-        }
-        .to_string()
+            "powershell.exe".to_string()
+        };
+        println!("retrieved system shell in {:?}", start.elapsed());
+        ret
     });
 
     (*SYSTEM_SHELL).clone()
