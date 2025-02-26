@@ -618,10 +618,9 @@ impl GitRepository for RealGitRepository {
                 "Failed to push:\n{}",
                 String::from_utf8_lossy(&output.stderr)
             ));
+        } else {
+            Ok(())
         }
-
-        // TODO: Get remote response out of this and show it to the user
-        Ok(())
     }
 
     fn pull(&self, branch_name: &str, remote_name: &str) -> Result<()> {
@@ -639,10 +638,9 @@ impl GitRepository for RealGitRepository {
                 "Failed to pull:\n{}",
                 String::from_utf8_lossy(&output.stderr)
             ));
+        } else {
+            return Ok(());
         }
-
-        // TODO: Get remote response out of this and show it to the user
-        Ok(())
     }
 
     fn fetch(&self) -> Result<()> {
@@ -658,10 +656,9 @@ impl GitRepository for RealGitRepository {
                 "Failed to fetch:\n{}",
                 String::from_utf8_lossy(&output.stderr)
             ));
+        } else {
+            return Ok(());
         }
-
-        // TODO: Get remote response out of this and show it to the user
-        Ok(())
     }
 
     fn get_remotes(&self, branch_name: Option<&str>) -> Result<Vec<Remote>> {
