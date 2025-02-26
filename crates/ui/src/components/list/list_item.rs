@@ -37,6 +37,7 @@ pub struct ListItem {
     on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
     selectable: bool,
+    always_show_disclosure_icon: bool,
     outlined: bool,
     overflow_x: bool,
     focused: Option<bool>,
@@ -62,6 +63,7 @@ impl ListItem {
             tooltip: None,
             children: SmallVec::new(),
             selectable: true,
+            always_show_disclosure_icon: false,
             outlined: false,
             overflow_x: false,
             focused: None,
@@ -75,6 +77,11 @@ impl ListItem {
 
     pub fn selectable(mut self, has_hover: bool) -> Self {
         self.selectable = has_hover;
+        self
+    }
+
+    pub fn always_show_disclosure_icon(mut self, show: bool) -> Self {
+        self.always_show_disclosure_icon = show;
         self
     }
 
@@ -275,7 +282,9 @@ impl RenderOnce for ListItem {
                             .flex()
                             .absolute()
                             .left(rems(-1.))
-                            .when(is_open, |this| this.visible_on_hover(""))
+                            .when(is_open && !self.always_show_disclosure_icon, |this| {
+                                this.visible_on_hover("")
+                            })
                             .child(Disclosure::new("toggle", is_open).on_toggle(self.on_toggle))
                     }))
                     .child(

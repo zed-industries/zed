@@ -7,8 +7,7 @@ use gpui::{
     EventEmitter, InteractiveElement as _, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement, Styled, Transformation, Window,
 };
-use language::{LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId};
-use lsp::LanguageServerName;
+use language::{BinaryStatus, LanguageRegistry, LanguageServerId};
 use project::{EnvironmentErrorMessage, LanguageServerProgress, Project, WorktreeId};
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc, time::Duration};
@@ -20,21 +19,21 @@ actions!(activity_indicator, [ShowErrorMessage]);
 
 pub enum Event {
     ShowError {
-        lsp_name: LanguageServerName,
+        server_name: SharedString,
         error: String,
     },
 }
 
 pub struct ActivityIndicator {
-    statuses: Vec<LspStatus>,
+    statuses: Vec<ServerStatus>,
     project: Entity<Project>,
     auto_updater: Option<Entity<AutoUpdater>>,
     context_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
-struct LspStatus {
-    name: LanguageServerName,
-    status: LanguageServerBinaryStatus,
+struct ServerStatus {
+    name: SharedString,
+    status: BinaryStatus,
 }
 
 struct PendingWork<'a> {
@@ -65,7 +64,20 @@ impl ActivityIndicator {
                 while let Some((name, status)) = status_events.next().await {
                     this.update(&mut cx, |this: &mut ActivityIndicator, cx| {
                         this.statuses.retain(|s| s.name != name);
-                        this.statuses.push(LspStatus { name, status });
+                        this.statuses.push(ServerStatus { name, status });
+                        cx.notify();
+                    })?;
+                }
+                anyhow::Ok(())
+            })
+            .detach();
+
+            let mut status_events = languages.dap_server_binary_statuses();
+            cx.spawn(|this, mut cx| async move {
+                while let Some((name, status)) = status_events.next().await {
+                    this.update(&mut cx, |this, cx| {
+                        this.statuses.retain(|s| s.name != name);
+                        this.statuses.push(ServerStatus { name, status });
                         cx.notify();
                     })?;
                 }
@@ -88,18 +100,18 @@ impl ActivityIndicator {
         });
 
         cx.subscribe_in(&this, window, move |_, _, event, window, cx| match event {
-            Event::ShowError { lsp_name, error } => {
+            Event::ShowError { server_name, error } => {
                 let create_buffer = project.update(cx, |project, cx| project.create_buffer(cx));
                 let project = project.clone();
                 let error = error.clone();
-                let lsp_name = lsp_name.clone();
+                let server_name = server_name.clone();
                 cx.spawn_in(window, |workspace, mut cx| async move {
                     let buffer = create_buffer.await?;
                     buffer.update(&mut cx, |buffer, cx| {
                         buffer.edit(
                             [(
                                 0..0,
-                                format!("Language server error: {}\n\n{}", lsp_name, error),
+                                format!("Language server error: {}\n\n{}", server_name, error),
                             )],
                             None,
                             cx,
@@ -129,9 +141,9 @@ impl ActivityIndicator {
 
     fn show_error_message(&mut self, _: &ShowErrorMessage, _: &mut Window, cx: &mut Context<Self>) {
         self.statuses.retain(|status| {
-            if let LanguageServerBinaryStatus::Failed { error } = &status.status {
+            if let BinaryStatus::Failed { error } = &status.status {
                 cx.emit(Event::ShowError {
-                    lsp_name: status.name.clone(),
+                    server_name: status.name.clone(),
                     error: error.clone(),
                 });
                 false
@@ -260,12 +272,10 @@ impl ActivityIndicator {
         let mut failed = SmallVec::<[_; 3]>::new();
         for status in &self.statuses {
             match status.status {
-                LanguageServerBinaryStatus::CheckingForUpdate => {
-                    checking_for_update.push(status.name.clone())
-                }
-                LanguageServerBinaryStatus::Downloading => downloading.push(status.name.clone()),
-                LanguageServerBinaryStatus::Failed { .. } => failed.push(status.name.clone()),
-                LanguageServerBinaryStatus::None => {}
+                BinaryStatus::CheckingForUpdate => checking_for_update.push(status.name.clone()),
+                BinaryStatus::Downloading => downloading.push(status.name.clone()),
+                BinaryStatus::Failed { .. } => failed.push(status.name.clone()),
+                BinaryStatus::None => {}
             }
         }
 
@@ -278,7 +288,7 @@ impl ActivityIndicator {
                 ),
                 message: format!(
                     "Downloading {}...",
-                    downloading.iter().map(|name| name.0.as_ref()).fold(
+                    downloading.iter().map(|name| name.as_ref()).fold(
                         String::new(),
                         |mut acc, s| {
                             if !acc.is_empty() {
@@ -306,7 +316,7 @@ impl ActivityIndicator {
                 ),
                 message: format!(
                     "Checking for updates to {}...",
-                    checking_for_update.iter().map(|name| name.0.as_ref()).fold(
+                    checking_for_update.iter().map(|name| name.as_ref()).fold(
                         String::new(),
                         |mut acc, s| {
                             if !acc.is_empty() {
@@ -336,7 +346,7 @@ impl ActivityIndicator {
                     "Failed to run {}. Click to show error.",
                     failed
                         .iter()
-                        .map(|name| name.0.as_ref())
+                        .map(|name| name.as_ref())
                         .fold(String::new(), |mut acc, s| {
                             if !acc.is_empty() {
                                 acc.push_str(", ");

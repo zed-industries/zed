@@ -1,5 +1,6 @@
 use crate::{
     buffer_store::{BufferStore, BufferStoreEvent},
+    debugger::dap_store::DapStore,
     deserialize_code_actions,
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -37,10 +38,10 @@ use language::{
     },
     point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel,
-    Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language, LanguageRegistry,
-    LanguageServerBinaryStatus, LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate,
-    Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, range_to_lsp, Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter,
+    CodeLabel, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language,
+    LanguageRegistry, LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch,
+    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
     notification::DidRenameFiles, CodeActionKind, CompletionContext, DiagnosticSeverity,
@@ -150,6 +151,7 @@ pub struct LocalLspStore {
         HashMap<LanguageServerId, HashMap<String, Vec<FileSystemWatcher>>>,
     supplementary_language_servers:
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
+    dap_store: Entity<DapStore>,
     prettier_store: Entity<PrettierStore>,
     next_diagnostic_group_id: usize,
     diagnostics: HashMap<
@@ -358,7 +360,7 @@ impl LocalLspStore {
                         let log = stderr_capture.lock().take().unwrap_or_default();
                         delegate.update_status(
                             adapter.name(),
-                            LanguageServerBinaryStatus::Failed {
+                            BinaryStatus::Failed {
                                 error: format!("{err}\n-- stderr--\n{}", log),
                             },
                         );
@@ -434,7 +436,7 @@ impl LocalLspStore {
                 )
                 .await;
 
-            delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
+            delegate.update_status(adapter.name.clone(), BinaryStatus::None);
 
             let mut binary = binary_result?;
             if let Some(arguments) = settings.and_then(|b| b.arguments) {
@@ -2966,6 +2968,7 @@ impl LspStore {
     pub fn new_local(
         buffer_store: Entity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
+        dap_store: Entity<DapStore>,
         prettier_store: Entity<PrettierStore>,
         toolchain_store: Entity<ToolchainStore>,
         environment: Entity<ProjectEnvironment>,
@@ -3010,6 +3013,7 @@ impl LspStore {
                 buffers_being_formatted: Default::default(),
                 buffer_snapshots: Default::default(),
                 prettier_store,
+                dap_store,
                 environment,
                 http_client,
                 fs,
@@ -3126,6 +3130,7 @@ impl LspStore {
                 }
             }
             BufferStoreEvent::BufferDropped(_) => {}
+            BufferStoreEvent::BufferOpened { .. } => {}
         }
     }
 
@@ -3239,6 +3244,14 @@ impl LspStore {
         self.detect_language_for_buffer(buffer, cx);
         if let Some(local) = self.as_local_mut() {
             local.initialize_buffer(buffer, cx);
+
+            local.dap_store.update(cx, |dap_store, cx| {
+                dap_store
+                    .breakpoint_store()
+                    .update(cx, |breakpoint_store, cx| {
+                        breakpoint_store.sync_open_breakpoints_to_closed_breakpoints(buffer, cx);
+                    });
+            });
         }
 
         Ok(())
@@ -8784,11 +8797,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         ))
     }
 
-    fn update_status(
-        &self,
-        server_name: LanguageServerName,
-        status: language::LanguageServerBinaryStatus,
-    ) {
+    fn update_status(&self, server_name: LanguageServerName, status: language::BinaryStatus) {
         self.language_registry
             .update_lsp_status(server_name, status);
     }

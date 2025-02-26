@@ -693,7 +693,7 @@ impl TerminalPanel {
         })
     }
 
-    fn add_terminal(
+    pub fn add_terminal(
         &mut self,
         kind: TerminalKind,
         reveal_strategy: RevealStrategy,
