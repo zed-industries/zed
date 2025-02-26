@@ -1073,7 +1073,10 @@ pub enum CodegenEvent {
 
 impl EventEmitter<CodegenEvent> for Codegen {}
 
+#[cfg(not(target_os = "windows"))]
 const CLEAR_INPUT: &str = "\x15";
+#[cfg(target_os = "windows")]
+const CLEAR_INPUT: &str = "\x03";
 const CARRIAGE_RETURN: &str = "\x0d";
 
 struct TerminalTransaction {
