@@ -619,7 +619,7 @@ impl GitRepository for RealGitRepository {
                 String::from_utf8_lossy(&output.stderr)
             ));
         } else {
-            Ok(get_remote_output(&output.stdout))
+            Ok(())
         }
     }
 
@@ -639,7 +639,7 @@ impl GitRepository for RealGitRepository {
                 String::from_utf8_lossy(&output.stderr)
             ));
         } else {
-            return Ok(get_remote_output(&output.stdout));
+            return Ok(());
         }
     }
 
@@ -657,7 +657,7 @@ impl GitRepository for RealGitRepository {
                 String::from_utf8_lossy(&output.stderr)
             ));
         } else {
-            return Ok(get_remote_output(&output.stdout));
+            return Ok(());
         }
     }
 
@@ -701,20 +701,6 @@ impl GitRepository for RealGitRepository {
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
-    }
-}
-
-fn get_remote_output(output: &[u8]) -> Option<String> {
-    let remote_output = String::from_utf8_lossy(output);
-    let remote_output = remote_output
-        .lines()
-        .filter_map(|line| line.strip_prefix("remote:"))
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
-    if remote_output.is_empty() {
-        return None;
-    } else {
-        return Some(remote_output.join("\n"));
     }
 }
 
