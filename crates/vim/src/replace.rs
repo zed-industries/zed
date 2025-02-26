@@ -95,7 +95,7 @@ impl Vim {
                     .into_iter()
                     .filter_map(|selection| {
                         let end = selection.head();
-                        let start = motion::backspace(
+                        let start = motion::wrapping_left(
                             &map,
                             end.to_display_point(&map),
                             maybe_times.unwrap_or(1),
