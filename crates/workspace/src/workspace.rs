@@ -2805,6 +2805,7 @@ impl Workspace {
         self.open_path_preview(path, pane, focus_item, false, true, window, cx)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn open_path_preview(
         &mut self,
         path: impl Into<ProjectPath>,
