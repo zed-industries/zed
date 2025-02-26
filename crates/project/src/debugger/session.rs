@@ -20,7 +20,7 @@ use dap::{
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, SetBreakpointsArguments,
     Source, SourceBreakpoint, SteppingGranularity, StoppedEvent,
 };
-use dap::{DebugAdapterKind, StartDebuggingRequestArguments};
+use dap::{DebugAdapterKind, OutputEventCategory, StartDebuggingRequestArguments};
 use dap_adapters::build_adapter;
 use futures::channel::oneshot;
 use futures::{future::join_all, future::Shared, FutureExt};
@@ -30,6 +30,7 @@ use serde_json::{json, Value};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::path::PathBuf;
+use std::time::Duration;
 use std::u64;
 use std::{
     any::Any,
@@ -753,6 +754,13 @@ impl Session {
                 self.invalidate_state(&ThreadsCommand.into());
             }
             Events::Output(event) => {
+                if event
+                    .category
+                    .is_some_and(|category| category == OutputEventCategory::Telemetry)
+                {
+                    return;
+                }
+
                 self.output.push(event);
             }
             Events::Breakpoint(_) => {}
@@ -1209,7 +1217,6 @@ impl Session {
         cx: &mut Context<Self>,
     ) {
         self.invalidate_state(&LoadedSourcesCommand.into());
-        cx.notify();
     }
 
     pub fn stack_frames(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) -> Vec<StackFrame> {
