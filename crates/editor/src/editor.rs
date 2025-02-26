@@ -3021,9 +3021,7 @@ impl Editor {
         drop(snapshot);
 
         self.transact(window, cx, |this, window, cx| {
-            let mut buffer_edits_subscriptions_map =
-                HashMap::<BufferId, text::Subscription>::default();
-
+            let mut initial_buffer_versions_map = HashMap::<BufferId, clock::Global>::default();
             // todo! don't do this unless we have to / be smarter about only doing it for
             // buffers / ranges where edit behavior impls will run
             for (edit_range, _) in &edits {
@@ -3034,9 +3032,9 @@ impl Editor {
                     .excerpt_containing(edit_range.end, cx)
                     .map(|e| e.1);
                 if let Some(buffer) = edit_range_buffer {
-                    let (buffer_id, subscription) =
-                        buffer.update(cx, |buffer, _| (buffer.remote_id(), buffer.subscribe()));
-                    buffer_edits_subscriptions_map.insert(buffer_id, subscription);
+                    let (buffer_id, buffer_version) = buffer
+                        .read_with(cx, |buffer, _| (buffer.remote_id(), buffer.version.clone()));
+                    initial_buffer_versions_map.insert(buffer_id, buffer_version);
                 }
             }
 
@@ -3127,13 +3125,13 @@ impl Editor {
             this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
             linked_editing_ranges::refresh_linked_ranges(this, window, cx);
             this.refresh_inline_completion(true, false, window, cx);
-            this.handle_auto_edit_behavior(buffer_edits_subscriptions_map, window, cx);
+            this.handle_auto_edit_behavior(initial_buffer_versions_map, window, cx);
         });
     }
 
     fn handle_auto_edit_behavior(
         &mut self,
-        buffer_edits_subscriptions_map: HashMap<BufferId, text::Subscription>,
+        initial_buffer_versions_map: HashMap<BufferId, clock::Global>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3142,15 +3140,15 @@ impl Editor {
 
         let mut buffer_edit_ranges_map = HashMap::<
             (BufferId, Arc<language::Language>),
-            (WeakEntity<Buffer>, text::Patch<usize>),
+            (WeakEntity<Buffer>, Vec<Range<usize>>),
         >::default();
 
-        for (buffer_id, subscription) in buffer_edits_subscriptions_map {
+        for (buffer_id, buffer_version_initial) in initial_buffer_versions_map {
             let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
                 continue;
             };
             let snapshot = buffer.read(cx).snapshot();
-            for edit in subscription.consume() {
+            for edit in buffer.read(cx).edits_since(&buffer_version_initial) {
                 // todo! determine whether we need to ensure language is set by the time we're here
                 let Some(language) = snapshot.language_at(edit.new.end) else {
                     continue;
@@ -3162,16 +3160,13 @@ impl Editor {
                 // todo! if !langauge.is_edit_behavior_enabled() { continue; }
                 buffer_edit_ranges_map
                     .entry((snapshot.remote_id(), language.clone()))
-                    .or_insert((buffer.downgrade(), text::Patch::default()))
+                    .or_insert((buffer.downgrade(), vec![]))
                     .1
-                    .push(edit);
+                    .push(edit.new);
             }
         }
 
         for ((buffer_id, language), (buffer, edited_ranges)) in buffer_edit_ranges_map {
-            let edited_ranges: Vec<Range<usize>> =
-                edited_ranges.into_iter().map(|edit| edit.new).collect();
-
             let Ok((mut excerpt_buffer_parse_status_rx, buffer_version_initial)) =
                 buffer.read_with(cx, |buffer, _| (buffer.parse_status(), buffer.version()))
             else {
@@ -3194,24 +3189,6 @@ impl Editor {
             cx.spawn_in(window,|this, mut cx| async move {
                 let _unsubscribe_from_subscription = defer(|| drop(subscription));
                 reparsed_rx.await?;
-
-                // todo! remove this loop, is unecessary
-                loop {
-                    let status = excerpt_buffer_parse_status_rx.recv().await;
-                    match status {
-                        Ok(status) => match dbg!(status) {
-                            language::ParseStatus::Idle => {
-                                break;
-                            }
-                            language::ParseStatus::Parsing => {
-                                continue;
-                            }
-                        },
-                        Err(err) => {
-                            return Err(anyhow!("Auto Edit Operation Failed: Buffer Failed to Parse: {}", err));
-                        }
-                    }
-                }
 
                 let Ok(buffer_snapshot) = buffer.read_with(&cx, |buf, _| buf.snapshot()) else {
                     return Err(anyhow!("Auto Edit Operation Failed: Buffer Failed to Read"));
