@@ -15,7 +15,7 @@ use theme::ThemeSettings;
 use ui::prelude::*;
 use workspace::Workspace;
 
-use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent};
+use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent, ToolUse};
 use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
 
@@ -276,6 +276,7 @@ impl ActiveThread {
         };
 
         let context = self.thread.read(cx).context_for_message(message_id);
+        let tool_uses = self.thread.read(cx).tool_uses_for_message(message_id);
         let colors = cx.theme().colors();
 
         let message_content = v_flex()
@@ -332,7 +333,22 @@ impl ActiveThread {
                         )
                         .child(message_content),
                 ),
-            Role::Assistant => div().id(("message-container", ix)).child(message_content),
+            Role::Assistant => div()
+                .id(("message-container", ix))
+                .child(message_content)
+                .map(|parent| {
+                    if tool_uses.is_empty() {
+                        return parent;
+                    }
+
+                    parent.child(
+                        v_flex().children(
+                            tool_uses
+                                .into_iter()
+                                .map(|tool_use| self.render_tool_use(tool_use, cx)),
+                        ),
+                    )
+                }),
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
@@ -342,6 +358,15 @@ impl ActiveThread {
         };
 
         styled_message.into_any()
+    }
+
+    fn render_tool_use(&self, tool_use: ToolUse, _cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .gap_1()
+            .child(Label::new(tool_use.name))
+            .child(Label::new(
+                serde_json::to_string_pretty(&tool_use.input).unwrap_or_default(),
+            ))
     }
 }
 
