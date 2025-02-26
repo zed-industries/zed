@@ -13,6 +13,7 @@ mod channel_message_tests;
 mod channel_tests;
 mod editor_tests;
 mod following_tests;
+mod git_tests;
 mod integration_tests;
 mod notification_tests;
 mod random_channel_buffer_tests;

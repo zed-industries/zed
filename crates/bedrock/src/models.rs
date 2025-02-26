@@ -7,8 +7,10 @@ use strum::EnumIter;
 pub enum Model {
     // Anthropic models (already included)
     #[default]
-    #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-latest")]
+    #[serde(rename = "claude-3-5-sonnet-v2", alias = "claude-3-5-sonnet-latest")]
     Claude3_5Sonnet,
+    #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
+    Claude3_7Sonnet,
     #[serde(rename = "claude-3-opus", alias = "claude-3-opus-latest")]
     Claude3Opus,
     #[serde(rename = "claude-3-sonnet", alias = "claude-3-sonnet-latest")]
@@ -64,7 +66,7 @@ pub enum Model {
 
 impl Model {
     pub fn from_id(id: &str) -> anyhow::Result<Self> {
-        if id.starts_with("claude-3-5-sonnet") {
+        if id.starts_with("claude-3-5-sonnet-v2") {
             Ok(Self::Claude3_5Sonnet)
         } else if id.starts_with("claude-3-opus") {
             Ok(Self::Claude3Opus)
@@ -72,6 +74,8 @@ impl Model {
             Ok(Self::Claude3Sonnet)
         } else if id.starts_with("claude-3-5-haiku") {
             Ok(Self::Claude3_5Haiku)
+        } else if id.starts_with("claude-3-7-sonnet") {
+            Ok(Self::Claude3_7Sonnet)
         } else {
             Err(anyhow!("invalid model id"))
         }
@@ -83,6 +87,7 @@ impl Model {
             Model::Claude3Opus => "us.anthropic.claude-3-opus-20240229-v1:0",
             Model::Claude3Sonnet => "us.anthropic.claude-3-sonnet-20240229-v1:0",
             Model::Claude3_5Haiku => "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+            Model::Claude3_7Sonnet => "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
             Model::AmazonNovaLite => "us.amazon.nova-lite-v1:0",
             Model::AmazonNovaMicro => "us.amazon.nova-micro-v1:0",
             Model::AmazonNovaPro => "us.amazon.nova-pro-v1:0",
@@ -120,10 +125,11 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
+            Self::Claude3_5Sonnet => "Claude 3.5 Sonnet v2",
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3_5Haiku => "Claude 3.5 Haiku",
+            Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
             Self::AmazonNovaLite => "Amazon Nova Lite",
             Self::AmazonNovaMicro => "Amazon Nova Micro",
             Self::AmazonNovaPro => "Amazon Nova Pro",
@@ -166,7 +172,8 @@ impl Model {
             Self::Claude3_5Sonnet
             | Self::Claude3Opus
             | Self::Claude3Sonnet
-            | Self::Claude3_5Haiku => 200_000,
+            | Self::Claude3_5Haiku
+            | Self::Claude3_7Sonnet => 200_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
             _ => 200_000,
         }
@@ -188,7 +195,8 @@ impl Model {
             Self::Claude3_5Sonnet
             | Self::Claude3Opus
             | Self::Claude3Sonnet
-            | Self::Claude3_5Haiku => 1.0,
+            | Self::Claude3_5Haiku
+            | Self::Claude3_7Sonnet => 1.0,
             Self::Custom {
                 default_temperature,
                 ..

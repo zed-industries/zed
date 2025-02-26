@@ -52,7 +52,7 @@ pub use actions::{AcceptEditPrediction, OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
-use buffer_diff::DiffHunkSecondaryStatus;
+use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus};
 use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -102,9 +102,9 @@ use language::{
         self, all_language_settings, language_settings, InlayHintSettings, RewrapBehavior,
     },
     point_from_lsp, text_diff_with_options, AutoindentMode, BracketMatch, BracketPair, Buffer,
-    Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, DiskState,
-    EditPredictionsMode, EditPreview, HighlightedText, IndentKind, IndentSize, Language,
-    OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, EditPredictionsMode,
+    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
+    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -132,7 +132,7 @@ pub use multi_buffer::{
 };
 use multi_buffer::{
     ExcerptInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
-    ToOffsetUtf16,
+    MultiOrSingleBufferOffsetRange, ToOffsetUtf16,
 };
 use project::{
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
@@ -251,6 +251,19 @@ impl Navigated {
             Navigated::No
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DisplayDiffHunk {
+    Folded {
+        display_row: DisplayRow,
+    },
+    Unfolded {
+        diff_base_byte_range: Range<usize>,
+        display_row_range: Range<DisplayRow>,
+        multi_buffer_range: Range<Anchor>,
+        status: DiffHunkStatus,
+    },
 }
 
 pub fn init_settings(cx: &mut App) {
@@ -10738,7 +10751,10 @@ impl Editor {
                 while let Some((node, containing_range)) = buffer.syntax_ancestor(new_range.clone())
                 {
                     new_node = Some(node);
-                    new_range = containing_range;
+                    new_range = match containing_range {
+                        MultiOrSingleBufferOffsetRange::Single(_) => break,
+                        MultiOrSingleBufferOffsetRange::Multi(range) => range,
+                    };
                     if !display_map.intersects_fold(new_range.start)
                         && !display_map.intersects_fold(new_range.end)
                     {
@@ -13467,13 +13483,16 @@ impl Editor {
         buffer_id: BufferId,
         hunks: impl Iterator<Item = MultiBufferDiffHunk>,
         snapshot: &MultiBufferSnapshot,
-        cx: &mut Context<Self>,
+        cx: &mut App,
     ) {
         let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
             log::debug!("no buffer for id");
             return;
         };
         let buffer_snapshot = buffer.read(cx).snapshot();
+        let file_exists = buffer_snapshot
+            .file()
+            .is_some_and(|file| file.disk_state().exists());
         let Some((repo, path)) = project
             .read(cx)
             .repository_and_path_for_buffer_id(buffer_id, cx)
@@ -13486,40 +13505,33 @@ impl Editor {
             return;
         };
 
-        let Some(new_index_text) = diff.new_secondary_text_for_stage_or_unstage(
-            stage,
-            hunks.filter_map(|hunk| {
-                if stage && hunk.secondary_status == DiffHunkSecondaryStatus::None {
-                    return None;
-                } else if !stage
-                    && hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk
-                {
-                    return None;
-                }
-                Some((hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone()))
-            }),
-            &buffer_snapshot,
-            cx,
-        ) else {
-            log::debug!("missing secondary diff or index text");
-            return;
-        };
-        let new_index_text = if new_index_text.is_empty()
-            && !stage
-            && (diff.is_single_insertion
-                || buffer_snapshot
-                    .file()
-                    .map_or(false, |file| file.disk_state() == DiskState::New))
-        {
+        let new_index_text = if !stage && diff.is_single_insertion || stage && !file_exists {
             log::debug!("removing from index");
             None
         } else {
-            Some(new_index_text)
+            diff.new_secondary_text_for_stage_or_unstage(
+                stage,
+                hunks.filter_map(|hunk| {
+                    if stage && hunk.secondary_status == DiffHunkSecondaryStatus::None {
+                        return None;
+                    } else if !stage
+                        && hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk
+                    {
+                        return None;
+                    }
+                    Some((hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone()))
+                }),
+                &buffer_snapshot,
+                cx,
+            )
         };
-        let buffer_store = project.read(cx).buffer_store().clone();
-        buffer_store
-            .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
-            .detach_and_log_err(cx);
+
+        if file_exists {
+            let buffer_store = project.read(cx).buffer_store().clone();
+            buffer_store
+                .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
+                .detach_and_log_err(cx);
+        }
 
         cx.background_spawn(
             repo.read(cx)
@@ -16910,6 +16922,52 @@ impl EditorSnapshot {
         }
 
         hunks
+    }
+
+    fn display_diff_hunks_for_rows<'a>(
+        &'a self,
+        display_rows: Range<DisplayRow>,
+        folded_buffers: &'a HashSet<BufferId>,
+    ) -> impl 'a + Iterator<Item = DisplayDiffHunk> {
+        let buffer_start = DisplayPoint::new(display_rows.start, 0).to_point(self);
+        let buffer_end = DisplayPoint::new(display_rows.end, 0).to_point(self);
+
+        self.buffer_snapshot
+            .diff_hunks_in_range(buffer_start..buffer_end)
+            .filter_map(|hunk| {
+                if folded_buffers.contains(&hunk.buffer_id) {
+                    return None;
+                }
+
+                let hunk_start_point = Point::new(hunk.row_range.start.0, 0);
+                let hunk_end_point = Point::new(hunk.row_range.end.0, 0);
+
+                let hunk_display_start = self.point_to_display_point(hunk_start_point, Bias::Left);
+                let hunk_display_end = self.point_to_display_point(hunk_end_point, Bias::Right);
+
+                let display_hunk = if hunk_display_start.column() != 0 {
+                    DisplayDiffHunk::Folded {
+                        display_row: hunk_display_start.row(),
+                    }
+                } else {
+                    let mut end_row = hunk_display_end.row();
+                    if hunk_display_end.column() > 0 {
+                        end_row.0 += 1;
+                    }
+                    DisplayDiffHunk::Unfolded {
+                        status: hunk.status(),
+                        diff_base_byte_range: hunk.diff_base_byte_range,
+                        display_row_range: hunk_display_start.row()..end_row,
+                        multi_buffer_range: Anchor::range_in_buffer(
+                            hunk.excerpt_id,
+                            hunk.buffer_id,
+                            hunk.buffer_range,
+                        ),
+                    }
+                };
+
+                Some(display_hunk)
+            })
     }
 
     pub fn language_at<T: ToOffset>(&self, position: T) -> Option<&Arc<Language>> {

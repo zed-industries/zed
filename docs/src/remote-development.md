@@ -42,7 +42,7 @@ The list of remote servers is stored in your settings file {#kb zed::OpenSetting
   "ssh_connections": [
     {
       "host": "192.168.1.10",
-      "projects": ["~/code/zed/zed"]
+      "projects": [{ "paths": ["~/code/zed/zed"] }]
     }
   ]
 }
@@ -55,7 +55,7 @@ Zed shells out to the `ssh` on your path, and so it will inherit any configurati
   "ssh_connections": [
     {
       "host": "192.168.1.10",
-      "projects": ["~/code/zed/zed"],
+      "projects": [{ "paths": ["~/code/zed/zed"] }],
       // any argument to pass to the ssh master process
       "args": ["-i", "~/.ssh/work_id_file"],
       "port": 22, // defaults to 22
@@ -73,7 +73,7 @@ There are two additional Zed-specific options per connection, `upload_binary_ove
   "ssh_connections": [
     {
       "host": "192.168.1.10",
-      "projects": ["~/code/zed/zed"],
+      "projects": [{ "paths": ["~/code/zed/zed"] }],
       // by default Zed will download the server binary from the internet on the remote.
       // When this is true, it'll be downloaded to your laptop and uploaded over SSH.
       // This is useful when your remote server has restricted internet access.

@@ -177,7 +177,7 @@ impl LabelCommon for Label {
     }
 
     fn single_line(mut self) -> Self {
-        self.label = SharedString::from(self.label.replace('\n', "␤"));
+        self.label = SharedString::from(self.label.replace('\n', "⏎"));
         self.base = self.base.single_line();
         self
     }

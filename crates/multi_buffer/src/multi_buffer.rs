@@ -79,6 +79,12 @@ pub struct MultiBuffer {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MultiOrSingleBufferOffsetRange {
+    Single(Range<usize>),
+    Multi(Range<usize>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     ExcerptsAdded {
         buffer: Entity<Buffer>,
@@ -158,6 +164,10 @@ pub struct PathKey {
 impl PathKey {
     pub fn namespaced(namespace: &'static str, path: Arc<Path>) -> Self {
         Self { namespace, path }
+    }
+
+    pub fn path(&self) -> &Arc<Path> {
+        &self.path
     }
 }
 
@@ -1447,6 +1457,11 @@ impl MultiBuffer {
             excerpt.range.context.start,
         ))
     }
+
+    pub fn excerpt_paths(&self) -> impl Iterator<Item = &PathKey> {
+        self.buffers_by_path.keys()
+    }
+
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
     pub fn set_excerpts_for_path(
         &mut self,
@@ -5682,13 +5697,19 @@ impl MultiBufferSnapshot {
     pub fn syntax_ancestor<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> Option<(tree_sitter::Node, Range<usize>)> {
+    ) -> Option<(tree_sitter::Node, MultiOrSingleBufferOffsetRange)> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut excerpt = self.excerpt_containing(range.clone())?;
         let node = excerpt
             .buffer()
             .syntax_ancestor(excerpt.map_range_to_buffer(range))?;
-        Some((node, excerpt.map_range_from_buffer(node.byte_range())))
+        let node_range = node.byte_range();
+        let range = if excerpt.contains_buffer_range(node_range.clone()) {
+            MultiOrSingleBufferOffsetRange::Multi(excerpt.map_range_from_buffer(node_range))
+        } else {
+            MultiOrSingleBufferOffsetRange::Single(node_range)
+        };
+        Some((node, range))
     }
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
@@ -6134,6 +6155,16 @@ where
                     || self.diff_transforms.item().is_none()
                 {
                     self.excerpts.next(&());
+                } else if let Some(DiffTransform::DeletedHunk { hunk_info, .. }) =
+                    self.diff_transforms.item()
+                {
+                    if self
+                        .excerpts
+                        .item()
+                        .map_or(false, |excerpt| excerpt.id != hunk_info.excerpt_id)
+                    {
+                        self.excerpts.next(&());
+                    }
                 }
             }
         }
@@ -6171,12 +6202,13 @@ where
             return true;
         }
 
-        self.diff_transforms.next(&());
-        let next_transform = self.diff_transforms.item();
-        self.diff_transforms.prev(&());
-
-        next_transform.map_or(true, |next_transform| {
-            matches!(next_transform, DiffTransform::BufferContent { .. })
+        let next_transform = self.diff_transforms.next_item();
+        next_transform.map_or(true, |next_transform| match next_transform {
+            DiffTransform::BufferContent { .. } => true,
+            DiffTransform::DeletedHunk { hunk_info, .. } => self
+                .excerpts
+                .item()
+                .map_or(false, |excerpt| excerpt.id != hunk_info.excerpt_id),
         })
     }
 
@@ -6660,9 +6692,17 @@ impl<'a> MultiBufferExcerpt<'a> {
 
     /// Map a range within the [`Buffer`] to a range within the [`MultiBuffer`]
     pub fn map_range_from_buffer(&mut self, buffer_range: Range<usize>) -> Range<usize> {
+        if buffer_range.start < self.buffer_offset {
+            log::warn!("Attempting to map a range from a buffer offset that starts before the current buffer offset");
+            return buffer_range;
+        }
         let overshoot = buffer_range.start - self.buffer_offset;
         let excerpt_offset = ExcerptDimension(self.excerpt_offset.0 + overshoot);
         self.diff_transforms.seek(&excerpt_offset, Bias::Right, &());
+        if excerpt_offset.0 < self.diff_transforms.start().1 .0 {
+            log::warn!("Attempting to map a range from a buffer offset that starts before the current buffer offset");
+            return buffer_range;
+        }
         let overshoot = excerpt_offset.0 - self.diff_transforms.start().1 .0;
         let start = self.diff_transforms.start().0 .0 + overshoot;
 

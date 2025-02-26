@@ -298,6 +298,15 @@ impl EditorTestContext {
         self.cx.run_until_parked();
     }
 
+    pub fn clear_index_text(&mut self) {
+        self.cx.run_until_parked();
+        let fs = self.update_editor(|editor, _, cx| {
+            editor.project.as_ref().unwrap().read(cx).fs().as_fake()
+        });
+        fs.set_index_for_repo(&Self::root_path().join(".git"), &[]);
+        self.cx.run_until_parked();
+    }
+
     pub fn set_index_text(&mut self, diff_base: &str) {
         self.cx.run_until_parked();
         let fs = self.update_editor(|editor, _, cx| {

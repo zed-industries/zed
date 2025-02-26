@@ -184,17 +184,31 @@ impl BufferDiffSnapshot {
         cx: &mut App,
     ) -> Option<Rope> {
         let secondary_diff = self.secondary_diff()?;
-        let index_base = if let Some(index_base) = secondary_diff.base_text() {
-            index_base.text.as_rope().clone()
-        } else if stage {
-            Rope::from("")
-        } else {
-            return None;
+        let head_text = self.base_text().map(|text| text.as_rope().clone());
+        let index_text = secondary_diff
+            .base_text()
+            .map(|text| text.as_rope().clone());
+        let (index_text, head_text) = match (index_text, head_text) {
+            (Some(index_text), Some(head_text)) => (index_text, head_text),
+            // file is deleted in both index and head
+            (None, None) => return None,
+            // file is deleted in index
+            (None, Some(head_text)) => {
+                return if stage {
+                    Some(buffer.as_rope().clone())
+                } else {
+                    Some(head_text)
+                }
+            }
+            // file exists in the index, but is deleted in head
+            (Some(_), None) => {
+                return if stage {
+                    Some(buffer.as_rope().clone())
+                } else {
+                    None
+                }
+            }
         };
-        let head_base = self.base_text().map_or_else(
-            || Rope::from(""),
-            |snapshot| snapshot.text.as_rope().clone(),
-        );
 
         let mut secondary_cursor = secondary_diff.inner.hunks.cursor::<DiffHunkSummary>(buffer);
         secondary_cursor.next(buffer);
@@ -251,7 +265,7 @@ impl BufferDiffSnapshot {
                     .collect::<String>()
             } else {
                 log::debug!("unstaging");
-                head_base
+                head_text
                     .chunks_in_range(diff_base_byte_range.clone())
                     .collect::<String>()
             };
@@ -259,7 +273,7 @@ impl BufferDiffSnapshot {
         }
 
         let buffer = cx.new(|cx| {
-            language::Buffer::local_normalized(index_base, text::LineEnding::default(), cx)
+            language::Buffer::local_normalized(index_text, text::LineEnding::default(), cx)
         });
         let new_text = buffer.update(cx, |buffer, cx| {
             buffer.edit(edits, None, cx);
