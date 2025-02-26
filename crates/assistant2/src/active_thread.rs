@@ -15,7 +15,7 @@ use theme::ThemeSettings;
 use ui::prelude::*;
 use workspace::Workspace;
 
-use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent, ToolUse};
+use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent, ToolUse, ToolUseStatus};
 use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
 
@@ -363,7 +363,17 @@ impl ActiveThread {
     fn render_tool_use(&self, tool_use: ToolUse, _cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .gap_1()
-            .child(Label::new(tool_use.name))
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(Label::new(tool_use.name))
+                    .child(Label::new(match tool_use.status {
+                        ToolUseStatus::Pending => "Pending",
+                        ToolUseStatus::Running => "Running",
+                        ToolUseStatus::Finished(_) => "Finished",
+                        ToolUseStatus::Error(_) => "Error",
+                    })),
+            )
             .child(Label::new(
                 serde_json::to_string_pretty(&tool_use.input).unwrap_or_default(),
             ))

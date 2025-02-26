@@ -213,10 +213,14 @@ impl Thread {
             return Vec::new();
         };
 
+        // The tool use was requested by an Assistant message, so we need to
+        // look for the tool results on the next user message.
+        let next_user_message = MessageId(id.0 + 1);
+
         let empty = Vec::new();
         let tool_results_for_message = self
             .tool_results_by_message
-            .get(&id)
+            .get(&next_user_message)
             .unwrap_or_else(|| &empty);
 
         let mut tool_uses = Vec::new();
@@ -604,6 +608,7 @@ impl Thread {
                                     content: output,
                                     is_error: false,
                                 });
+                                thread.pending_tool_uses_by_id.remove(&tool_use_id);
 
                                 cx.emit(ThreadEvent::ToolFinished { tool_use_id });
                             }
