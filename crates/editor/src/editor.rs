@@ -102,9 +102,9 @@ use language::{
         self, all_language_settings, language_settings, InlayHintSettings, RewrapBehavior,
     },
     point_from_lsp, text_diff_with_options, AutoindentMode, BracketMatch, BracketPair, Buffer,
-    Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, DiskState,
-    EditPredictionsMode, EditPreview, HighlightedText, IndentKind, IndentSize, Language,
-    OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, EditPredictionsMode,
+    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
+    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -494,11 +494,31 @@ pub enum MenuInlineCompletionsPolicy {
 
 pub enum EditPredictionPreview {
     /// Modifier is not pressed
-    Inactive,
+    Inactive { released_too_fast: bool },
     /// Modifier pressed
     Active {
+        since: Instant,
         previous_scroll_position: Option<ScrollAnchor>,
     },
+}
+
+impl EditPredictionPreview {
+    pub fn released_too_fast(&self) -> bool {
+        match self {
+            EditPredictionPreview::Inactive { released_too_fast } => *released_too_fast,
+            EditPredictionPreview::Active { .. } => false,
+        }
+    }
+
+    pub fn set_previous_scroll_position(&mut self, scroll_position: Option<ScrollAnchor>) {
+        if let EditPredictionPreview::Active {
+            previous_scroll_position,
+            ..
+        } = self
+        {
+            *previous_scroll_position = scroll_position;
+        }
+    }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Default)]
@@ -1395,7 +1415,9 @@ impl Editor {
             edit_prediction_provider: None,
             active_inline_completion: None,
             stale_inline_completion_in_menu: None,
-            edit_prediction_preview: EditPredictionPreview::Inactive,
+            edit_prediction_preview: EditPredictionPreview::Inactive {
+                released_too_fast: false,
+            },
             inline_diagnostics_enabled: mode == EditorMode::Full,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
@@ -5123,13 +5145,14 @@ impl Editor {
                         );
                         self.clear_row_highlights::<EditPredictionPreview>();
 
-                        self.edit_prediction_preview = EditPredictionPreview::Active {
-                            previous_scroll_position: None,
-                        };
+                        self.edit_prediction_preview
+                            .set_previous_scroll_position(None);
                     } else {
-                        self.edit_prediction_preview = EditPredictionPreview::Active {
-                            previous_scroll_position: Some(position_map.snapshot.scroll_anchor),
-                        };
+                        self.edit_prediction_preview
+                            .set_previous_scroll_position(Some(
+                                position_map.snapshot.scroll_anchor,
+                            ));
+
                         self.highlight_rows::<EditPredictionPreview>(
                             target..target,
                             cx.theme().colors().editor_highlighted_line_background,
@@ -5389,10 +5412,11 @@ impl Editor {
         if &accept_keystroke.modifiers == modifiers && accept_keystroke.modifiers.modified() {
             if matches!(
                 self.edit_prediction_preview,
-                EditPredictionPreview::Inactive
+                EditPredictionPreview::Inactive { .. }
             ) {
                 self.edit_prediction_preview = EditPredictionPreview::Active {
                     previous_scroll_position: None,
+                    since: Instant::now(),
                 };
 
                 self.update_visible_inline_completion(window, cx);
@@ -5400,6 +5424,7 @@ impl Editor {
             }
         } else if let EditPredictionPreview::Active {
             previous_scroll_position,
+            since,
         } = self.edit_prediction_preview
         {
             if let (Some(previous_scroll_position), Some(position_map)) =
@@ -5413,7 +5438,9 @@ impl Editor {
                 );
             }
 
-            self.edit_prediction_preview = EditPredictionPreview::Inactive;
+            self.edit_prediction_preview = EditPredictionPreview::Inactive {
+                released_too_fast: since.elapsed() < Duration::from_millis(200),
+            };
             self.clear_row_highlights::<EditPredictionPreview>();
             self.update_visible_inline_completion(window, cx);
             cx.notify();
@@ -5983,24 +6010,6 @@ impl Editor {
 
         const POLE_WIDTH: Pixels = px(2.);
 
-        let mut element = v_flex()
-            .items_end()
-            .child(
-                self.render_edit_prediction_line_popover("Jump", None, window, cx)?
-                    .rounded_br(px(0.))
-                    .rounded_tr(px(0.))
-                    .border_r_2(),
-            )
-            .child(
-                div()
-                    .w(POLE_WIDTH)
-                    .bg(Editor::edit_prediction_callout_popover_border_color(cx))
-                    .h(line_height),
-            )
-            .into_any();
-
-        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-
         let line_layout =
             line_layouts.get(target_display_point.row().minus(visible_row_range.start) as usize)?;
         let target_column = target_display_point.column() as usize;
@@ -6009,8 +6018,41 @@ impl Editor {
         let target_y =
             (target_display_point.row().as_f32() * line_height) - scroll_pixel_position.y;
 
+        let flag_on_right = target_x < text_bounds.size.width / 2.;
+
+        let mut border_color = Self::edit_prediction_callout_popover_border_color(cx);
+        border_color.l += 0.001;
+
+        let mut element = v_flex()
+            .items_end()
+            .when(flag_on_right, |el| el.items_start())
+            .child(if flag_on_right {
+                self.render_edit_prediction_line_popover("Jump", None, window, cx)?
+                    .rounded_bl(px(0.))
+                    .rounded_tl(px(0.))
+                    .border_l_2()
+                    .border_color(border_color)
+            } else {
+                self.render_edit_prediction_line_popover("Jump", None, window, cx)?
+                    .rounded_br(px(0.))
+                    .rounded_tr(px(0.))
+                    .border_r_2()
+                    .border_color(border_color)
+            })
+            .child(div().w(POLE_WIDTH).bg(border_color).h(line_height))
+            .into_any();
+
+        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+
         let mut origin = scrolled_content_origin + point(target_x, target_y)
-            - point(size.width - POLE_WIDTH, size.height - line_height);
+            - point(
+                if flag_on_right {
+                    POLE_WIDTH
+                } else {
+                    size.width - POLE_WIDTH
+                },
+                size.height - line_height,
+            );
 
         origin.x = origin.x.max(content_origin.x);
 
@@ -6499,46 +6541,66 @@ impl Editor {
         }
 
         let completion = match &self.active_inline_completion {
-            Some(completion) => match &completion.completion {
-                InlineCompletion::Move {
-                    target, snapshot, ..
-                } if !self.has_visible_completions_menu() => {
-                    use text::ToPoint as _;
+            Some(prediction) => {
+                if !self.has_visible_completions_menu() {
+                    const RADIUS: Pixels = px(6.);
+                    const BORDER_WIDTH: Pixels = px(1.);
 
                     return Some(
                         h_flex()
-                            .px_2()
-                            .py_1()
-                            .gap_2()
                             .elevation_2(cx)
+                            .border(BORDER_WIDTH)
                             .border_color(cx.theme().colors().border)
-                            .rounded(px(6.))
+                            .rounded(RADIUS)
                             .rounded_tl(px(0.))
+                            .overflow_hidden()
+                            .child(div().px_1p5().child(match &prediction.completion {
+                                InlineCompletion::Move { target, snapshot } => {
+                                    use text::ToPoint as _;
+                                    if target.text_anchor.to_point(&snapshot).row > cursor_point.row
+                                    {
+                                        Icon::new(IconName::ZedPredictDown)
+                                    } else {
+                                        Icon::new(IconName::ZedPredictUp)
+                                    }
+                                }
+                                InlineCompletion::Edit { .. } => Icon::new(IconName::ZedPredict),
+                            }))
                             .child(
-                                if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
-                                    Icon::new(IconName::ZedPredictDown)
-                                } else {
-                                    Icon::new(IconName::ZedPredictUp)
-                                },
+                                h_flex()
+                                    .gap_1()
+                                    .py_1()
+                                    .px_2()
+                                    .rounded_r(RADIUS - BORDER_WIDTH)
+                                    .border_l_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(Self::edit_prediction_line_popover_bg_color(cx))
+                                    .when(self.edit_prediction_preview.released_too_fast(), |el| {
+                                        el.child(
+                                            Label::new("Hold")
+                                                .size(LabelSize::Small)
+                                                .line_height_style(LineHeightStyle::UiLabel),
+                                        )
+                                    })
+                                    .child(h_flex().children(ui::render_modifiers(
+                                        &accept_keystroke?.modifiers,
+                                        PlatformStyle::platform(),
+                                        Some(Color::Default),
+                                        Some(IconSize::XSmall.rems().into()),
+                                        false,
+                                    ))),
                             )
-                            .child(Label::new("Hold").size(LabelSize::Small))
-                            .child(h_flex().children(ui::render_modifiers(
-                                &accept_keystroke?.modifiers,
-                                PlatformStyle::platform(),
-                                Some(Color::Default),
-                                Some(IconSize::Small.rems().into()),
-                                false,
-                            )))
                             .into_any(),
                     );
                 }
-                _ => self.render_edit_prediction_cursor_popover_preview(
-                    completion,
+
+                self.render_edit_prediction_cursor_popover_preview(
+                    prediction,
                     cursor_point,
                     style,
                     cx,
-                )?,
-            },
+                )?
+            }
 
             None if is_refreshing => match &self.stale_inline_completion_in_menu {
                 Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
@@ -13493,13 +13555,16 @@ impl Editor {
         hunks: impl Iterator<Item = MultiBufferDiffHunk>,
         snapshot: &MultiBufferSnapshot,
         window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut App,
     ) {
         let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
             log::debug!("no buffer for id");
             return;
         };
         let buffer_snapshot = buffer.read(cx).snapshot();
+        let file_exists = buffer_snapshot
+            .file()
+            .is_some_and(|file| file.disk_state().exists());
         let Some((repo, path)) = project
             .read(cx)
             .repository_and_path_for_buffer_id(buffer_id, cx)
@@ -13512,40 +13577,32 @@ impl Editor {
             return;
         };
 
-        let Some(new_index_text) = diff.new_secondary_text_for_stage_or_unstage(
-            stage,
-            hunks.filter_map(|hunk| {
-                if stage && hunk.secondary_status == DiffHunkSecondaryStatus::None {
-                    return None;
-                } else if !stage
-                    && hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk
-                {
-                    return None;
-                }
-                Some((hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone()))
-            }),
-            &buffer_snapshot,
-            cx,
-        ) else {
-            log::debug!("missing secondary diff or index text");
-            return;
-        };
-        let new_index_text = if new_index_text.is_empty()
-            && !stage
-            && (diff.is_single_insertion
-                || buffer_snapshot
-                    .file()
-                    .map_or(false, |file| file.disk_state() == DiskState::New))
-        {
+        let new_index_text = if !stage && diff.is_single_insertion || stage && !file_exists {
             log::debug!("removing from index");
             None
         } else {
-            Some(new_index_text)
+            diff.new_secondary_text_for_stage_or_unstage(
+                stage,
+                hunks.filter_map(|hunk| {
+                    if stage && hunk.secondary_status == DiffHunkSecondaryStatus::None {
+                        return None;
+                    } else if !stage
+                        && hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk
+                    {
+                        return None;
+                    }
+                    Some((hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone()))
+                }),
+                &buffer_snapshot,
+                cx,
+            )
         };
-        let buffer_store = project.read(cx).buffer_store().clone();
-        buffer_store
-            .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
-            .detach_and_log_err(cx);
+        if file_exists {
+            let buffer_store = project.read(cx).buffer_store().clone();
+            buffer_store
+                .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
+                .detach_and_log_err(cx);
+        }
         let recv = repo
             .read(cx)
             .set_index_text(&path, new_index_text.map(|rope| rope.to_string()));

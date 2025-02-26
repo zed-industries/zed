@@ -16510,6 +16510,7 @@ fn assert_hunk_revert(
 ) {
     cx.set_state(not_reverted_text_with_selections);
     cx.set_head_text(base_text);
+    cx.clear_index_text();
     cx.executor().run_until_parked();
 
     let actual_hunk_statuses_before = cx.update_editor(|editor, window, cx| {
