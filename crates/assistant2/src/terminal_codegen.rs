@@ -161,7 +161,10 @@ const CARRIAGE_RETURN: &str = "\x0d";
 
 pub fn clear_input(terminal: &mut Terminal) {
     if let Some(process) = terminal.pty_info.current.as_ref() {
-        if process.name.ends_with("cmd.exe") || process.name.ends_with("pwsh.exe") {
+        if process.name.ends_with("cmd.exe")
+            || process.name.ends_with("pwsh.exe")
+            || process.name.ends_with("powershell.exe")
+        {
             terminal.input(CLEAR_WINDOWS_INPUT.to_string());
         } else {
             terminal.input(CLEAR_INPUT.to_string());
