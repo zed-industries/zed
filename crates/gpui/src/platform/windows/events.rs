@@ -1121,19 +1121,7 @@ fn handle_nc_mouse_up_msg(
 }
 
 fn handle_cursor_changed(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let mut state = state_ptr.state.borrow_mut();
-    let had_cursor = state.current_cursor.is_some();
-
-    state.current_cursor = if lparam.0 == 0 {
-        None
-    } else {
-        Some(HCURSOR(lparam.0 as _))
-    };
-
-    if had_cursor != state.current_cursor.is_some() {
-        unsafe { SetCursor(state.current_cursor.as_ref()) };
-    }
-
+    state_ptr.state.borrow_mut().current_cursor = HCURSOR(lparam.0 as _);
     Some(0)
 }
 
@@ -1144,9 +1132,7 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
     ) {
         return None;
     }
-    unsafe {
-        SetCursor(state_ptr.state.borrow().current_cursor.as_ref());
-    };
+    unsafe { SetCursor(state_ptr.state.borrow().current_cursor) };
     Some(1)
 }
 
@@ -1249,6 +1235,7 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
         VK_DELETE => "delete",
+        VK_APPS => "menu",
         _ => {
             let basic_key = basic_vkcode_to_string(vk_code, modifiers);
             if basic_key.is_some() {
@@ -1303,6 +1290,7 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
         VK_DELETE => "delete",
+        VK_APPS => "menu",
         _ => {
             if is_modifier(VIRTUAL_KEY(vk_code)) {
                 return Some(KeystrokeOrModifier::Modifier(modifiers));

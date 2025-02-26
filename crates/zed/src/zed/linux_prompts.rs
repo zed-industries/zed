@@ -39,7 +39,7 @@ pub fn fallback_prompt_renderer(
                     let mut base_text_style = window.text_style();
                     base_text_style.refine(&TextStyleRefinement {
                         font_family: Some(settings.ui_font.family.clone()),
-                        font_size: Some(settings.ui_font_size.into()),
+                        font_size: Some(settings.ui_font_size(cx).into()),
                         color: Some(ui::Color::Muted.color(cx)),
                         ..Default::default()
                     });

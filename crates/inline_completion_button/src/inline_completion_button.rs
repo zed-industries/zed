@@ -399,31 +399,50 @@ impl InlineCompletionButton {
         })
     }
 
-    pub fn build_language_settings_menu(&self, mut menu: ContextMenu, cx: &mut App) -> ContextMenu {
+    pub fn build_language_settings_menu(
+        &self,
+        mut menu: ContextMenu,
+        window: &Window,
+        cx: &mut App,
+    ) -> ContextMenu {
         let fs = self.fs.clone();
+        let line_height = window.line_height();
 
         menu = menu.header("Show Edit Predictions For");
 
+        let language_state = self.language.as_ref().map(|language| {
+            (
+                language.clone(),
+                language_settings::language_settings(Some(language.name()), None, cx)
+                    .show_edit_predictions,
+            )
+        });
+
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
-            menu = menu.toggleable_entry(
-                "This Buffer",
-                self.editor_show_predictions,
-                IconPosition::Start,
-                Some(Box::new(ToggleEditPrediction)),
-                {
-                    let editor_focus_handle = editor_focus_handle.clone();
-                    move |window, cx| {
-                        editor_focus_handle.dispatch_action(&ToggleEditPrediction, window, cx);
-                    }
-                },
-            );
+            let entry = ContextMenuEntry::new("This Buffer")
+                .toggleable(IconPosition::Start, self.editor_show_predictions)
+                .action(Box::new(ToggleEditPrediction))
+                .handler(move |window, cx| {
+                    editor_focus_handle.dispatch_action(&ToggleEditPrediction, window, cx);
+                });
+
+            match language_state.clone() {
+                Some((language, false)) => {
+                    menu = menu.item(
+                        entry
+                            .disabled(true)
+                            .documentation_aside(move |_cx| {
+                                Label::new(format!("Edit predictions cannot be toggled for this buffer because they are disabled for {}", language.name()))
+                                    .into_any_element()
+                            })
+                    );
+                }
+                Some(_) | None => menu = menu.item(entry),
+            }
         }
 
-        if let Some(language) = self.language.clone() {
+        if let Some((language, language_enabled)) = language_state {
             let fs = fs.clone();
-            let language_enabled =
-                language_settings::language_settings(Some(language.name()), None, cx)
-                    .show_edit_predictions;
 
             menu = menu.toggleable_entry(
                 language.name(),
@@ -499,12 +518,14 @@ impl InlineCompletionButton {
                                 )
                                 .child(
                                     h_flex()
+                                        .items_start()
                                         .pt_2()
+                                        .flex_1()
                                         .gap_1p5()
                                         .border_t_1()
                                         .border_color(cx.theme().colors().border_variant)
-                                        .child(Icon::new(icon_name).size(IconSize::XSmall).color(icon_color))
-                                        .child(div().child(Label::new(msg).size(LabelSize::Small).color(label_color)))
+                                        .child(h_flex().flex_shrink_0().h(line_height).child(Icon::new(icon_name).size(IconSize::XSmall).color(icon_color)))
+                                        .child(div().child(msg).w_full().text_sm().text_color(label_color.color(cx)))
                                 )
                                 .into_any_element()
                         })
@@ -631,8 +652,8 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, _, cx| {
-            self.build_language_settings_menu(menu, cx)
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            self.build_language_settings_menu(menu, window, cx)
                 .separator()
                 .link(
                     "Go to Copilot Settings",
@@ -650,8 +671,8 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, _, cx| {
-            self.build_language_settings_menu(menu, cx)
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            self.build_language_settings_menu(menu, window, cx)
                 .separator()
                 .action("Sign Out", supermaven::SignOut.boxed_clone())
         })
@@ -662,8 +683,8 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, _window, cx| {
-            self.build_language_settings_menu(menu, cx).when(
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            self.build_language_settings_menu(menu, window, cx).when(
                 cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>(),
                 |this| this.action("Rate Completions", RateCompletions.boxed_clone()),
             )

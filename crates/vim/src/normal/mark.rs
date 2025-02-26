@@ -105,7 +105,7 @@ impl Vim {
             _ => self.marks.get(&*text).cloned(),
         };
 
-        let Some(anchors) = anchors else { return };
+        let Some(mut anchors) = anchors else { return };
 
         let is_active_operator = self.active_operator().is_some();
         if is_active_operator {
@@ -120,6 +120,12 @@ impl Vim {
                 )
             }
         } else {
+            // Save the last anchor so as to jump to it later.
+            let anchor: Option<Anchor> = anchors.last_mut().map(|anchor| *anchor);
+            let should_jump = self.mode == Mode::Visual
+                || self.mode == Mode::VisualLine
+                || self.mode == Mode::VisualBlock;
+
             self.update_editor(window, cx, |_, editor, window, cx| {
                 let map = editor.snapshot(window, cx);
                 let mut ranges: Vec<Range<Anchor>> = Vec::new();
@@ -132,14 +138,24 @@ impl Vim {
                             .buffer_snapshot
                             .anchor_before(point.to_point(&map.display_snapshot));
                     }
+
                     if ranges.last() != Some(&(anchor..anchor)) {
                         ranges.push(anchor..anchor);
                     }
                 }
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.select_anchor_ranges(ranges)
-                })
+
+                if !should_jump {
+                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                        s.select_anchor_ranges(ranges)
+                    });
+                }
             });
+
+            if should_jump {
+                if let Some(anchor) = anchor {
+                    self.motion(Motion::Jump { anchor, line }, window, cx)
+                }
+            }
         }
     }
 }

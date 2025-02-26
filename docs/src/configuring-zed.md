@@ -533,16 +533,6 @@ List of `string` values
 "cursor_shape": "hollow"
 ```
 
-## Hide Mouse While Typing
-
-- Description: Determines whether the mouse cursor should be hidden while typing in an editor or input box.
-- Setting: `hide_mouse_while_typing`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
 ## Editor Scrollbar
 
 - Description: Whether or not to show the editor scrollbar and various elements in it.
@@ -1200,6 +1190,112 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "C++": ["c"],
     "TOML": ["MyLockFile"],
     "Dockerfile": ["Dockerfile*"]
+  }
+}
+```
+
+## Diagnostics
+
+- Description: Configuration for diagnostics-related features.
+- Setting: `diagnostics`
+- Default:
+
+```json
+{
+  "diagnostics": {
+    "include_warnings": true,
+    "inline": {
+      "enabled": false
+    }
+    "update_with_cursor": false,
+    "primary_only": false,
+    "use_rendered": false,
+  }
+}
+```
+
+### Inline Diagnostics
+
+- Description: Whether or not to show diagnostics information inline.
+- Setting: `inline`
+- Default:
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": false,
+      "update_debounce_ms": 150,
+      "padding": 4,
+      "min_column": 0,
+      "max_severity": null
+    }
+  }
+}
+```
+
+**Options**
+
+1. Enable inline diagnostics.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true
+    }
+  }
+}
+```
+
+2. Delay diagnostic updates until some time after the last diagnostic update.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "update_debounce_ms": 150
+    }
+  }
+}
+```
+
+3. Set padding between the end of the source line and the start of the diagnostic.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "padding": 4
+    }
+  }
+}
+```
+
+4. Horizontally align inline diagnostics at the given column.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "min_column": 80
+    }
+  }
+}
+```
+
+5. Show only warning and error diagnostics.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "max_severity": "warning"
+    }
   }
 }
 ```

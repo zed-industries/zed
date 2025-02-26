@@ -395,7 +395,6 @@ dependencies = [
  "language",
  "language_model",
  "language_model_selector",
- "language_models",
  "languages",
  "log",
  "lsp",
@@ -463,7 +462,6 @@ dependencies = [
  "language",
  "language_model",
  "language_model_selector",
- "language_models",
  "log",
  "lsp",
  "markdown",
@@ -518,7 +516,6 @@ dependencies = [
  "language",
  "language_model",
  "language_model_selector",
- "language_models",
  "languages",
  "log",
  "multi_buffer",
@@ -1270,6 +1267,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-bedrockruntime"
+version = "1.74.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6938541d1948a543bca23303fec4cff9c36bf0e63b8fa3ae1b337bcb9d5b81af"
+dependencies = [
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-eventstream",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes 1.10.0",
+ "fastrand 2.3.0",
+ "http 0.2.12",
+ "once_cell",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-kinesis"
 version = "1.61.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1599,6 +1620,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws_http_client"
+version = "0.1.0"
+dependencies = [
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "futures 0.3.31",
+ "http_client",
+ "tokio",
+]
+
+[[package]]
 name = "axum"
 version = "0.6.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1728,6 +1760,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
 
 [[package]]
+name = "bedrock"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "aws-sdk-bedrockruntime",
+ "aws-smithy-types",
+ "futures 0.3.31",
+ "schemars",
+ "serde",
+ "serde_json",
+ "strum",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "bigdecimal"
 version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1759,7 +1807,7 @@ dependencies = [
  "bitflags 2.8.0",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "lazy_static",
  "lazycell",
  "log",
@@ -1782,7 +1830,7 @@ dependencies = [
  "bitflags 2.8.0",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2785,6 +2833,7 @@ dependencies = [
  "futures 0.3.31",
  "git",
  "git_hosting_providers",
+ "git_ui",
  "google_ai",
  "gpui",
  "hex",
@@ -3113,7 +3162,9 @@ dependencies = [
  "clock",
  "collections",
  "command_palette_hooks",
+ "ctor",
  "editor",
+ "env_logger 0.11.6",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -3121,6 +3172,7 @@ dependencies = [
  "indoc",
  "inline_completion",
  "language",
+ "log",
  "lsp",
  "menu",
  "node_runtime",
@@ -3612,9 +3664,18 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "0.3.1"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bba74424191d99c617a172ef126d429f62fe54aba1002c4d36e49403ce4b00a2"
+checksum = "21d960ecacd0a1bf55e73144b72de745e7bf275c7952c50e36e8af0a0cb7ab1f"
+dependencies = [
+ "ctor-proc-macro",
+]
+
+[[package]]
+name = "ctor-proc-macro"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c426d2ba3e525b39c1f0a9ba41b9fe61878dee11fa4e4a76b6ab440f46c5db5d"
 
 [[package]]
 name = "ctrlc"
@@ -3852,7 +3913,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rand 0.8.5",
- "schemars",
  "serde",
  "serde_json",
  "settings",
@@ -5288,6 +5348,7 @@ dependencies = [
  "pretty_assertions",
  "regex",
  "rope",
+ "schemars",
  "serde",
  "serde_json",
  "smol",
@@ -6952,17 +7013,14 @@ dependencies = [
  "anthropic",
  "anyhow",
  "base64 0.22.1",
+ "client",
  "collections",
- "deepseek",
  "futures 0.3.31",
  "google_ai",
  "gpui",
  "http_client",
  "image",
- "lmstudio",
  "log",
- "mistral",
- "ollama",
  "open_ai",
  "parking_lot",
  "proto",
@@ -6971,6 +7029,7 @@ dependencies = [
  "serde_json",
  "smol",
  "strum",
+ "telemetry_events",
  "thiserror 1.0.69",
  "ui",
  "util",
@@ -6997,6 +7056,10 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "aws-config",
+ "aws-credential-types",
+ "aws_http_client",
+ "bedrock",
  "client",
  "collections",
  "copilot",
@@ -7008,6 +7071,7 @@ dependencies = [
  "futures 0.3.31",
  "google_ai",
  "gpui",
+ "gpui_tokio",
  "http_client",
  "language_model",
  "lmstudio",
@@ -7023,10 +7087,9 @@ dependencies = [
  "settings",
  "smol",
  "strum",
- "telemetry_events",
  "theme",
- "thiserror 1.0.69",
  "tiktoken-rs",
+ "tokio",
  "ui",
  "util",
 ]
@@ -7208,7 +7271,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -9264,7 +9327,7 @@ name = "perplexity"
 version = "0.1.0"
 dependencies = [
  "serde",
- "zed_extension_api 0.2.0",
+ "zed_extension_api 0.3.0",
 ]
 
 [[package]]
@@ -10318,8 +10381,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes 1.10.0",
- "heck 0.4.1",
- "itertools 0.10.5",
+ "heck 0.5.0",
+ "itertools 0.12.1",
  "log",
  "multimap 0.10.0",
  "once_cell",
@@ -10352,7 +10415,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.90",
@@ -15689,7 +15752,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -16823,7 +16886,7 @@ dependencies = [
 name = "zed_elixir"
 version = "0.1.4"
 dependencies = [
- "zed_extension_api 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zed_extension_api 0.2.0",
 ]
 
 [[package]]
@@ -16854,6 +16917,8 @@ dependencies = [
 [[package]]
 name = "zed_extension_api"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fd16b8b30a9dc920fc1678ff852f696b5bdf5b5843bc745a128be0aac29859e"
 dependencies = [
  "serde",
  "serde_json",
@@ -16862,9 +16927,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fd16b8b30a9dc920fc1678ff852f696b5bdf5b5843bc745a128be0aac29859e"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -16950,7 +17013,7 @@ dependencies = [
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.2.0",
+ "zed_extension_api 0.3.0",
 ]
 
 [[package]]
@@ -17132,7 +17195,7 @@ dependencies = [
  "indoc",
  "inline_completion",
  "language",
- "language_models",
+ "language_model",
  "log",
  "menu",
  "migrator",

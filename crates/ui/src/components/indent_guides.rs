@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use std::{cmp::Ordering, ops::Range, rc::Rc};
 
 use gpui::{
