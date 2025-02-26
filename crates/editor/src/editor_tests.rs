@@ -16276,6 +16276,15 @@ mod autoclose_tags {
                     continue;
                 }
 
+                if jsx_open_tag_node.has_error() {
+                    let mut chars = buffer
+                        .text_for_range(jsx_open_tag_node.byte_range())
+                        .flat_map(|chunk| chunk.chars());
+                    if chars.next() == Some('<') && chars.next() == Some('/') {
+                        continue;
+                    }
+                }
+
                 to_auto_edit.push(JsxTagCompletionState {
                     edit_index: index,
                     open_tag_range: jsx_open_tag_node.byte_range(),
@@ -16455,6 +16464,31 @@ mod autoclose_tags {
     check!(
         basic_ignore_already_closed,
         "<div><divˇ</div></div>" + ">" => "<div><div>ˇ</div></div>"
+    );
+
+    check!(
+        doesnt_autoclose_closing_tag,
+        "</divˇ" + ">" => "</div>ˇ"
+    );
+
+    check!(
+        jsx_attr,
+        "<div attr={</div>}ˇ" + ">" => "<div attr={</div>}>ˇ</div>"
+    );
+
+    check!(
+        ignores_closing_tags_in_expr_block,
+        "<div><divˇ{</div>}</div>" + ">" => "<div><div>ˇ</div>{</div>}</div>"
+    );
+
+    check!(
+        doesnt_autoclose_on_gt_in_expr,
+        "<div attr={1 ˇ" + ">" => "<div attr={1 >ˇ"
+    );
+
+    check!(
+        ignores_closing_tags_with_different_tag_names,
+        "<div><divˇ</div></span>" + ">" => "<div><div>ˇ</div></div></span>"
     );
 }
 
