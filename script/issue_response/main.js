@@ -7,9 +7,12 @@ import { IncomingWebhook } from "@slack/webhook";
  * [Slack Docs](https://api.slack.com/reference/block-kit/blocks#section)
  */
 const SECTION_BLOCK_TEXT_LIMIT = 3000;
+const GITHUB_ISSUES_URL = "https://github.com/zed-industries/zed/issues";
 
 async function main() {
-  const octokit = new Octokit({ auth: process.env["GITHUB_TOKEN"] });
+  const octokit = new Octokit({
+    auth: process.env["ISSUE_RESPONSE_GITHUB_TOKEN"],
+  });
 
   if (!process.env["SLACK_ISSUE_RESPONSE_WEBHOOK_URL"]) {
     throw new Error("SLACK_ISSUE_RESPONSE_WEBHOOK_URL is not set");
@@ -21,13 +24,28 @@ async function main() {
 
   const owner = "zed-industries";
   const repo = "zed";
-  const staff = await octokit.paginate(octokit.rest.orgs.listMembers, {
-    org: owner,
-    per_page: 100,
-  });
-  let staffHandles = staff.map((member) => member.login);
-  let commenterFilters = staffHandles.map((name) => `-commenter:${name}`);
-  let authorFilters = staffHandles.map((name) => `-author:${name}`);
+  const teams = ["staff", "triagers"];
+  const githubHandleSet = new Set();
+
+  for (const team of teams) {
+    const teamMembers = await octokit.paginate(
+      octokit.rest.teams.listMembersInOrg,
+      {
+        org: owner,
+        team_slug: team,
+        per_page: 100,
+      },
+    );
+
+    for (const teamMember of teamMembers) {
+      githubHandleSet.add(teamMember.login);
+    }
+  }
+
+  const githubHandles = Array.from(githubHandleSet);
+  githubHandles.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  const commenterFilters = githubHandles.map((name) => `-commenter:${name}`);
+  const authorFilters = githubHandles.map((name) => `-author:${name}`);
 
   const q = [
     `repo:${owner}/${repo}`,
@@ -44,8 +62,8 @@ async function main() {
     per_page: 100,
   });
 
-  let issues = response.data.items;
-  let issueLines = issues.map((issue, index) => {
+  const issues = response.data.items;
+  const issueLines = issues.map((issue, index) => {
     const formattedDate = new Date(issue.created_at).toLocaleDateString(
       "en-US",
       {
@@ -89,6 +107,16 @@ async function main() {
       text: section.join("").trimEnd(),
     },
   }));
+
+  const issuesUrl = `${GITHUB_ISSUES_URL}?q=${encodeURIComponent(q.join(" "))}`;
+
+  blocks.push({
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: `<${issuesUrl}|View on GitHub>`,
+    },
+  });
 
   await webhook.send({ blocks });
 }

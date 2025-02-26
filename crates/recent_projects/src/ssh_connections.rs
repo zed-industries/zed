@@ -186,7 +186,7 @@ impl SshPrompt {
         let refinement = TextStyleRefinement {
             font_family: Some(theme.buffer_font.family.clone()),
             font_features: Some(FontFeatures::disable_ligatures()),
-            font_size: Some(theme.buffer_font_size.into()),
+            font_size: Some(theme.buffer_font_size(cx).into()),
             color: Some(cx.theme().colors().editor_foreground),
             background_color: Some(gpui::transparent_black()),
             ..Default::default()
@@ -207,8 +207,7 @@ impl SshPrompt {
             selection_background_color: cx.theme().players().local().selection,
             ..Default::default()
         };
-        let markdown =
-            cx.new(|cx| Markdown::new_text(prompt, markdown_style, None, None, window, cx));
+        let markdown = cx.new(|cx| Markdown::new_text(prompt.into(), markdown_style, cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();
         window.focus(&self.editor.focus_handle(cx));

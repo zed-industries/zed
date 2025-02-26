@@ -218,8 +218,7 @@ impl PickerDelegate for PromptPickerDelegate {
         let prev_prompt_id = self.matches.get(self.selected_index).map(|mat| mat.id);
         cx.spawn_in(window, |this, mut cx| async move {
             let (matches, selected_index) = cx
-                .background_executor()
-                .spawn(async move {
+                .background_spawn(async move {
                     let matches = search.await;
 
                     let selected_index = prev_prompt_id

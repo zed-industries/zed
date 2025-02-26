@@ -15,7 +15,7 @@ use std::{
 };
 
 use collections::{HashMap, IndexMap};
-use gpui::{App, AppContext, Entity, Subscription};
+use gpui::{App, AppContext as _, Entity, Subscription};
 use itertools::Itertools;
 use language::{
     language_settings::AllLanguageSettings, Attach, LanguageName, LanguageRegistry,

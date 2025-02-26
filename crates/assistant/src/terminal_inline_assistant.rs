@@ -16,10 +16,10 @@ use gpui::{
 };
 use language::Buffer;
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    report_assistant_event, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
-use language_models::report_assistant_event;
 use prompt_library::PromptBuilder;
 use settings::{update_settings_file, Settings};
 use std::{
@@ -662,6 +662,7 @@ impl Render for PromptEditor {
                                 cx,
                             )
                         },
+                        gpui::Corner::TopRight,
                     ))
                     .children(
                         if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
@@ -1048,7 +1049,7 @@ impl PromptEditor {
             },
             font_family: settings.buffer_font.family.clone(),
             font_fallbacks: settings.buffer_font.fallbacks.clone(),
-            font_size: settings.buffer_font_size.into(),
+            font_size: settings.buffer_font_size(cx).into(),
             font_weight: settings.buffer_font.weight,
             line_height: relative(settings.buffer_line_height.value()),
             ..Default::default()
@@ -1150,7 +1151,7 @@ impl Codegen {
 
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
 
-                let task = cx.background_executor().spawn({
+                let task = cx.background_spawn({
                     let message_id = message_id.clone();
                     let executor = cx.background_executor().clone();
                     async move {

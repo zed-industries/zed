@@ -29,5 +29,5 @@ jobs:
       - name: Run Issue Response
         run: pnpm run --dir script/issue_response start
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_RESPONSE_GITHUB_TOKEN: ${{ secrets.ISSUE_RESPONSE_GITHUB_TOKEN }}
           SLACK_ISSUE_RESPONSE_WEBHOOK_URL: ${{ secrets.SLACK_ISSUE_RESPONSE_WEBHOOK_URL }}

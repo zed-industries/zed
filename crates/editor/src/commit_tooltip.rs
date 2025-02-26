@@ -2,10 +2,10 @@ use futures::Future;
 use git::blame::BlameEntry;
 use git::PullRequest;
 use gpui::{
-    App, Asset, ClipboardItem, Element, ParentElement, Render, ScrollHandle,
-    StatefulInteractiveElement, WeakEntity,
+    App, Asset, ClipboardItem, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
+    StatefulInteractiveElement,
 };
-use language::ParsedMarkdown;
+use markdown::Markdown;
 use settings::Settings;
 use std::hash::Hash;
 use theme::ThemeSettings;
@@ -13,10 +13,9 @@ use time::{OffsetDateTime, UtcOffset};
 use time_format::format_local_timestamp;
 use ui::{prelude::*, tooltip_container, Avatar, Divider, IconButtonShape};
 use url::Url;
-use workspace::Workspace;
 
 use crate::git::blame::GitRemote;
-use crate::EditorStyle;
+use crate::hover_popover::hover_markdown_style;
 
 #[derive(Clone, Debug)]
 pub struct CommitDetails {
@@ -30,7 +29,6 @@ pub struct CommitDetails {
 #[derive(Clone, Debug, Default)]
 pub struct ParsedCommitMessage {
     pub message: SharedString,
-    pub parsed_message: ParsedMarkdown,
     pub permalink: Option<Url>,
     pub pull_request: Option<PullRequest>,
     pub remote: Option<GitRemote>,
@@ -115,48 +113,65 @@ impl Asset for CommitAvatarAsset {
 
 pub struct CommitTooltip {
     commit: CommitDetails,
-    editor_style: EditorStyle,
-    workspace: Option<WeakEntity<Workspace>>,
     scroll_handle: ScrollHandle,
+    markdown: Entity<Markdown>,
 }
 
 impl CommitTooltip {
     pub fn blame_entry(
-        blame: BlameEntry,
+        blame: &BlameEntry,
         details: Option<ParsedCommitMessage>,
-        style: EditorStyle,
-        workspace: Option<WeakEntity<Workspace>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
         let commit_time = blame
             .committer_time
             .and_then(|t| OffsetDateTime::from_unix_timestamp(t).ok())
             .unwrap_or(OffsetDateTime::now_utc());
+
         Self::new(
             CommitDetails {
                 sha: blame.sha.to_string().into(),
                 commit_time,
                 committer_name: blame
                     .committer_name
+                    .clone()
                     .unwrap_or("<no name>".to_string())
                     .into(),
-                committer_email: blame.committer_email.unwrap_or("".to_string()).into(),
+                committer_email: blame
+                    .committer_email
+                    .clone()
+                    .unwrap_or("".to_string())
+                    .into(),
                 message: details,
             },
-            style,
-            workspace,
+            window,
+            cx,
         )
     }
 
-    pub fn new(
-        commit: CommitDetails,
-        editor_style: EditorStyle,
-        workspace: Option<WeakEntity<Workspace>>,
-    ) -> Self {
+    pub fn new(commit: CommitDetails, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut style = hover_markdown_style(window, cx);
+        if let Some(code_block) = &style.code_block.text {
+            style.base_text_style.refine(code_block);
+        }
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                commit
+                    .message
+                    .as_ref()
+                    .map(|message| message.message.clone())
+                    .unwrap_or_default(),
+                style,
+                None,
+                None,
+                cx,
+            )
+        });
         Self {
-            editor_style,
             commit,
-            workspace,
             scroll_handle: ScrollHandle::new(),
+            markdown,
         }
     }
 }
@@ -186,16 +201,7 @@ impl Render for CommitTooltip {
             .commit
             .message
             .as_ref()
-            .map(|details| {
-                crate::render_parsed_markdown(
-                    "blame-message",
-                    &details.parsed_message,
-                    &self.editor_style,
-                    self.workspace.clone(),
-                    cx,
-                )
-                .into_any()
-            })
+            .map(|_| self.markdown.clone().into_any_element())
             .unwrap_or("<no commit message>".into_any());
 
         let pull_request = self
@@ -204,12 +210,13 @@ impl Render for CommitTooltip {
             .as_ref()
             .and_then(|details| details.pull_request.clone());
 
-        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let message_max_height = window.line_height() * 12 + (ui_font_size / 0.4);
 
         tooltip_container(window, cx, move |this, _, cx| {
             this.occlude()
                 .on_mouse_move(|_, _, cx| cx.stop_propagation())
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .child(
                     v_flex()
                         .w(gpui::rems(30.))
@@ -235,7 +242,6 @@ impl Render for CommitTooltip {
                         .child(
                             div()
                                 .id("inline-blame-commit-message")
-                                .occlude()
                                 .child(message)
                                 .max_h(message_max_height)
                                 .overflow_y_scroll()

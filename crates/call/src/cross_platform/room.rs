@@ -13,7 +13,7 @@ use client::{
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::{FutureExt, StreamExt};
-use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::LanguageRegistry;
 #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 use livekit::{
@@ -255,7 +255,7 @@ impl Room {
     fn app_will_quit(&mut self, cx: &mut Context<Self>) -> impl Future<Output = ()> {
         let task = if self.status.is_online() {
             let leave = self.leave_internal(cx);
-            Some(cx.background_executor().spawn(async move {
+            Some(cx.background_spawn(async move {
                 leave.await.log_err();
             }))
         } else {
@@ -322,7 +322,7 @@ impl Room {
         self.clear_state(cx);
 
         let leave_room = self.client.request(proto::LeaveRoom {});
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             leave_room.await?;
             anyhow::Ok(())
         })
@@ -1248,7 +1248,7 @@ impl Room {
         };
 
         cx.notify();
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             client
                 .request(proto::UpdateParticipantLocation {
                     room_id,
@@ -1373,11 +1373,10 @@ impl Room {
                 match publication {
                     Ok(publication) => {
                         if canceled {
-                            cx.background_executor()
-                                .spawn(async move {
-                                    participant.unpublish_track(&publication.sid()).await
-                                })
-                                .detach_and_log_err(cx)
+                            cx.background_spawn(async move {
+                                participant.unpublish_track(&publication.sid()).await
+                            })
+                            .detach_and_log_err(cx)
                         } else {
                             if live_kit.muted_by_user || live_kit.deafened {
                                 publication.mute();
@@ -1465,11 +1464,10 @@ impl Room {
                 match publication {
                     Ok(publication) => {
                         if canceled {
-                            cx.background_executor()
-                                .spawn(async move {
-                                    participant.unpublish_track(&publication.sid()).await
-                                })
-                                .detach()
+                            cx.background_spawn(async move {
+                                participant.unpublish_track(&publication.sid()).await
+                            })
+                            .detach()
                         } else {
                             live_kit.screen_track = LocalTrack::Published {
                                 track_publication: publication,
@@ -1561,9 +1559,10 @@ impl Room {
                 {
                     let local_participant = live_kit.room.local_participant();
                     let sid = track_publication.sid();
-                    cx.background_executor()
-                        .spawn(async move { local_participant.unpublish_track(&sid).await })
-                        .detach_and_log_err(cx);
+                    cx.background_spawn(
+                        async move { local_participant.unpublish_track(&sid).await },
+                    )
+                    .detach_and_log_err(cx);
                     cx.notify();
                 }
 
@@ -1722,13 +1721,12 @@ impl LiveKitRoom {
         }
 
         let participant = self.room.local_participant();
-        cx.background_executor()
-            .spawn(async move {
-                for sid in tracks_to_unpublish {
-                    participant.unpublish_track(&sid).await.log_err();
-                }
-            })
-            .detach();
+        cx.background_spawn(async move {
+            for sid in tracks_to_unpublish {
+                participant.unpublish_track(&sid).await.log_err();
+            }
+        })
+        .detach();
     }
 }
 

@@ -74,7 +74,7 @@ Collected data is stored in Snowflake, a private database where we track other m
 
 ### Model Output
 
-We then use this training dataset to fine-tune [Qwen2.5-Coder-7B](https://huggingface.co/Qwen/Qwen2.5-Coder-7B) and make the resulting model available here at [github.com/zed-industries/zeta](https://github.com/zed-industries/zeta) and [huggingface.co/zed-industries/zeta](https://huggingface.co/zed-industries/zeta).
+We then use this training dataset to fine-tune [Qwen2.5-Coder-7B](https://huggingface.co/Qwen/Qwen2.5-Coder-7B) and make the resulting model available at [huggingface.co/zed-industries/zeta](https://huggingface.co/zed-industries/zeta).
 
 ## Applicable terms
 

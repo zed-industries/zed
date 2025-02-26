@@ -486,13 +486,66 @@ impl Hsla {
         self.a *= 1.0 - factor.clamp(0., 1.);
     }
 
-    /// Returns a new HSLA color with the same hue, saturation, and lightness, but with a modified alpha value.
+    /// Multiplies the alpha value of the color by a given factor
+    /// and returns a new HSLA color.
+    ///
+    /// Useful for transforming colors with dynamic opacity,
+    /// like a color from an external source.
+    ///
+    /// Example:
+    /// ```
+    /// let color = gpui::red();
+    /// let faded_color = color.opacity(0.5);
+    /// assert_eq!(faded_color.a, 0.5);
+    /// ```
+    ///
+    /// This will return a red color with half the opacity.
+    ///
+    /// Example:
+    /// ```
+    /// let color = hlsa(0.7, 1.0, 0.5, 0.7); // A saturated blue
+    /// let faded_color = color.opacity(0.16);
+    /// assert_eq!(faded_color.a, 0.112);
+    /// ```
+    ///
+    /// This will return a blue color with around ~10% opacity,
+    /// suitable for an element's hover or selected state.
+    ///
     pub fn opacity(&self, factor: f32) -> Self {
         Hsla {
             h: self.h,
             s: self.s,
             l: self.l,
             a: self.a * factor.clamp(0., 1.),
+        }
+    }
+
+    /// Returns a new HSLA color with the same hue, saturation,
+    /// and lightness, but with a new alpha value.
+    ///
+    /// Example:
+    /// ```
+    /// let color = gpui::red();
+    /// let red_color = color.alpha(0.25);
+    /// assert_eq!(red_color.a, 0.25);
+    /// ```
+    ///
+    /// This will return a red color with half the opacity.
+    ///
+    /// Example:
+    /// ```
+    /// let color = hsla(0.7, 1.0, 0.5, 0.7); // A saturated blue
+    /// let faded_color = color.alpha(0.25);
+    /// assert_eq!(faded_color.a, 0.25);
+    /// ```
+    ///
+    /// This will return a blue color with 25% opacity.
+    pub fn alpha(&self, a: f32) -> Self {
+        Hsla {
+            h: self.h,
+            s: self.s,
+            l: self.l,
+            a: a.clamp(0., 1.),
         }
     }
 }
@@ -604,25 +657,6 @@ impl Default for Background {
             colors: [LinearColorStop::default(), LinearColorStop::default()],
             pad: 0,
         }
-    }
-}
-
-impl Background {
-    /// Gets the color of the background if there is one.
-    pub fn color(&self) -> Option<Hsla> {
-        match self.tag {
-            BackgroundTag::Solid => Some(self.solid),
-            BackgroundTag::LinearGradient => None,
-            BackgroundTag::PatternSlash => Some(self.solid),
-        }
-    }
-}
-
-/// Creates a background with a solid color
-pub fn solid_color(color: impl Into<Hsla>) -> Background {
-    Background {
-        solid: color.into(),
-        ..Default::default()
     }
 }
 

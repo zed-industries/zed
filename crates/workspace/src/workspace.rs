@@ -4338,8 +4338,7 @@ impl Workspace {
             self.update_active_view_for_followers(window, cx);
 
             if let Some(database_id) = self.database_id {
-                cx.background_executor()
-                    .spawn(persistence::DB.update_timestamp(database_id))
+                cx.background_spawn(persistence::DB.update_timestamp(database_id))
                     .detach();
             }
         } else {
@@ -4384,6 +4383,10 @@ impl Workspace {
 
     pub fn database_id(&self) -> Option<WorkspaceId> {
         self.database_id
+    }
+
+    pub fn session_id(&self) -> Option<String> {
+        self.session_id.clone()
     }
 
     fn local_paths(&self, cx: &App) -> Option<Vec<Arc<Path>>> {
@@ -4627,8 +4630,7 @@ impl Workspace {
                 if let Ok(Some(task)) = this.update_in(cx, |workspace, window, cx| {
                     item.serialize(workspace, false, window, cx)
                 }) {
-                    cx.background_executor()
-                        .spawn(async move { task.await.log_err() })
+                    cx.background_spawn(async move { task.await.log_err() })
                         .detach();
                 }
             }
@@ -4966,8 +4968,7 @@ impl Workspace {
     ) {
         self.centered_layout = !self.centered_layout;
         if let Some(database_id) = self.database_id() {
-            cx.background_executor()
-                .spawn(DB.set_centered_layout(database_id, self.centered_layout))
+            cx.background_spawn(DB.set_centered_layout(database_id, self.centered_layout))
                 .detach_and_log_err(cx);
         }
         cx.notify();
@@ -6224,7 +6225,7 @@ fn serialize_ssh_project(
         Option<SerializedWorkspace>,
     )>,
 > {
-    cx.background_executor().spawn(async move {
+    cx.background_spawn(async move {
         let serialized_ssh_project = persistence::DB
             .get_or_create_ssh_project(
                 connection_options.host.clone(),

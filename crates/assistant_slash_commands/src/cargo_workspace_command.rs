@@ -132,7 +132,7 @@ impl SlashCommand for CargoWorkspaceSlashCommand {
             let project = workspace.project().clone();
             let fs = workspace.project().read(cx).fs().clone();
             let path = Self::path_to_cargo_toml(project, cx);
-            let output = cx.background_executor().spawn(async move {
+            let output = cx.background_spawn(async move {
                 let path = path.with_context(|| "Cargo.toml not found")?;
                 Self::build_message(fs, &path).await
             });

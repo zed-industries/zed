@@ -2,7 +2,7 @@
 
 Python support is available natively in Zed.
 
-- Tree Sitter: [tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python)
+- Tree-sitter: [tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python)
 - Language Server: [microsoft/pyright](https://github.com/microsoft/pyright)
 
 ## Configuration

@@ -483,7 +483,7 @@ List of `string` values
 - Description: The debounce delay before querying highlights based on the selected text.
 
 - Setting: `selection_highlight_debounce`
-- Default: `75`
+- Default: `50`
 
 ## LSP Highlight Debounce
 
@@ -1190,6 +1190,112 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "C++": ["c"],
     "TOML": ["MyLockFile"],
     "Dockerfile": ["Dockerfile*"]
+  }
+}
+```
+
+## Diagnostics
+
+- Description: Configuration for diagnostics-related features.
+- Setting: `diagnostics`
+- Default:
+
+```json
+{
+  "diagnostics": {
+    "include_warnings": true,
+    "inline": {
+      "enabled": false
+    }
+    "update_with_cursor": false,
+    "primary_only": false,
+    "use_rendered": false,
+  }
+}
+```
+
+### Inline Diagnostics
+
+- Description: Whether or not to show diagnostics information inline.
+- Setting: `inline`
+- Default:
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": false,
+      "update_debounce_ms": 150,
+      "padding": 4,
+      "min_column": 0,
+      "max_severity": null
+    }
+  }
+}
+```
+
+**Options**
+
+1. Enable inline diagnostics.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true
+    }
+  }
+}
+```
+
+2. Delay diagnostic updates until some time after the last diagnostic update.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "update_debounce_ms": 150
+    }
+  }
+}
+```
+
+3. Set padding between the end of the source line and the start of the diagnostic.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "padding": 4
+    }
+  }
+}
+```
+
+4. Horizontally align inline diagnostics at the given column.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "min_column": 80
+    }
+  }
+}
+```
+
+5. Show only warning and error diagnostics.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "max_severity": "warning"
+    }
   }
 }
 ```

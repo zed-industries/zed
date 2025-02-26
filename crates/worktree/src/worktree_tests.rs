@@ -11,7 +11,7 @@ use git::{
     },
     GITIGNORE,
 };
-use gpui::{BorrowAppContext, Context, Task, TestAppContext};
+use gpui::{AppContext as _, BorrowAppContext, Context, Task, TestAppContext};
 use parking_lot::Mutex;
 use postage::stream::Stream;
 use pretty_assertions::assert_eq;
@@ -26,7 +26,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use util::{test::TempTree, ResultExt};
+use util::{path, test::TempTree, ResultExt};
 
 #[gpui::test]
 async fn test_traversal(cx: &mut TestAppContext) {
@@ -1650,7 +1650,7 @@ async fn test_random_worktree_operations_during_initial_scan(
         .map(|o| o.parse().unwrap())
         .unwrap_or(20);
 
-    let root_dir = Path::new("/test");
+    let root_dir = Path::new(path!("/test"));
     let fs = FakeFs::new(cx.background_executor.clone()) as Arc<dyn Fs>;
     fs.as_fake().insert_tree(root_dir, json!({})).await;
     for _ in 0..initial_entries {
@@ -1741,7 +1741,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         .map(|o| o.parse().unwrap())
         .unwrap_or(20);
 
-    let root_dir = Path::new("/test");
+    let root_dir = Path::new(path!("/test"));
     let fs = FakeFs::new(cx.background_executor.clone()) as Arc<dyn Fs>;
     fs.as_fake().insert_tree(root_dir, json!({})).await;
     for _ in 0..initial_entries {
@@ -1954,7 +1954,7 @@ fn randomly_mutate_worktree(
                 new_path
             );
             let task = worktree.rename_entry(entry.id, new_path, cx);
-            cx.background_executor().spawn(async move {
+            cx.background_spawn(async move {
                 task.await?.to_included().unwrap();
                 Ok(())
             })
@@ -1969,7 +1969,7 @@ fn randomly_mutate_worktree(
                     child_path,
                 );
                 let task = worktree.create_entry(child_path, is_dir, cx);
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     task.await?;
                     Ok(())
                 })
@@ -1977,7 +1977,7 @@ fn randomly_mutate_worktree(
                 log::info!("overwriting file {:?} ({})", entry.path, entry.id.0);
                 let task =
                     worktree.write_file(entry.path.clone(), "".into(), Default::default(), cx);
-                cx.background_executor().spawn(async move {
+                cx.background_spawn(async move {
                     task.await?;
                     Ok(())
                 })

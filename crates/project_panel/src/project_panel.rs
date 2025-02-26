@@ -18,7 +18,7 @@ use file_icons::FileIcons;
 use git::status::GitSummary;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
-    AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
+    AnyElement, App, ArcCow, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
     DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton,
     MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
@@ -265,7 +265,7 @@ struct ItemColors {
     default: Hsla,
     hover: Hsla,
     drag_over: Hsla,
-    marked_active: Hsla,
+    marked: Hsla,
     focused: Hsla,
 }
 
@@ -274,10 +274,10 @@ fn get_item_color(cx: &App) -> ItemColors {
 
     ItemColors {
         default: colors.panel_background,
-        hover: colors.ghost_element_hover,
-        drag_over: colors.drop_target_background,
-        marked_active: colors.element_selected,
+        hover: colors.element_hover,
+        marked: colors.element_selected,
         focused: colors.panel_focused_border,
+        drag_over: colors.drop_target_background,
     }
 }
 
@@ -301,6 +301,9 @@ impl ProjectPanel {
                     if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
                         this.reveal_entry(project.clone(), *entry_id, true, cx);
                     }
+                }
+                project::Event::ActiveEntryChanged(None) => {
+                    this.marked_entries.clear();
                 }
                 project::Event::RevealInProjectPanel(entry_id) => {
                     this.reveal_entry(project.clone(), *entry_id, false, cx);
@@ -544,8 +547,7 @@ impl ProjectPanel {
         mut cx: AsyncWindowContext,
     ) -> Result<Entity<Self>> {
         let serialized_panel = cx
-            .background_executor()
-            .spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
+            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
             .await
             .map_err(|e| anyhow!("Failed to load project panel: {}", e))
             .log_err()
@@ -627,7 +629,7 @@ impl ProjectPanel {
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
-        self.pending_serialization = cx.background_executor().spawn(
+        self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
@@ -1032,6 +1034,7 @@ impl ProjectPanel {
                     editor.move_to_beginning_of_line(
                         &editor::actions::MoveToBeginningOfLine {
                             stop_at_soft_wraps: false,
+                            stop_at_indent: false,
                         },
                         window,
                         cx,
@@ -1093,6 +1096,7 @@ impl ProjectPanel {
         if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
                 self.open_entry(entry.id, focus_opened_item, allow_preview, cx);
+                cx.notify();
             } else {
                 self.toggle_expanded(entry.id, window, cx);
             }
@@ -1943,19 +1947,19 @@ impl ProjectPanel {
     }
 
     fn select_last(&mut self, _: &SelectLast, _: &mut Window, cx: &mut Context<Self>) {
-        let worktree = self.visible_entries.last().and_then(|(worktree_id, _, _)| {
-            self.project.read(cx).worktree_for_id(*worktree_id, cx)
-        });
-        if let Some(worktree) = worktree {
-            let worktree = worktree.read(cx);
-            let worktree_id = worktree.id();
-            if let Some(last_entry) = worktree.entries(true, 0).last() {
-                self.selection = Some(SelectedEntry {
-                    worktree_id,
-                    entry_id: last_entry.id,
-                });
-                self.autoscroll(cx);
-                cx.notify();
+        if let Some((worktree_id, visible_worktree_entries, _)) = self.visible_entries.last() {
+            let worktree = self.project.read(cx).worktree_for_id(*worktree_id, cx);
+            if let (Some(worktree), Some(entry)) = (worktree, visible_worktree_entries.last()) {
+                let worktree = worktree.read(cx);
+                if let Some(entry) = worktree.entry_for_id(entry.id) {
+                    let selection = SelectedEntry {
+                        worktree_id: *worktree_id,
+                        entry_id: entry.id,
+                    };
+                    self.selection = Some(selection);
+                    self.autoscroll(cx);
+                    cx.notify();
+                }
             }
         }
     }
@@ -2106,12 +2110,12 @@ impl ProjectPanel {
                     match task {
                         PasteTask::Rename(task) => {
                             if let Some(CreatedEntry::Included(entry)) = task.await.log_err() {
-                                last_succeed = Some(entry.id);
+                                last_succeed = Some(entry);
                             }
                         }
                         PasteTask::Copy(task) => {
                             if let Some(Some(entry)) = task.await.log_err() {
-                                last_succeed = Some(entry.id);
+                                last_succeed = Some(entry);
                                 if need_delete {
                                     need_delete_ids.push(entry_id);
                                 }
@@ -2131,17 +2135,31 @@ impl ProjectPanel {
                         .await?;
                 }
                 // update selection
-                if let Some(entry_id) = last_succeed {
+                if let Some(entry) = last_succeed {
                     project_panel
                         .update_in(&mut cx, |project_panel, window, cx| {
                             project_panel.selection = Some(SelectedEntry {
                                 worktree_id,
-                                entry_id,
+                                entry_id: entry.id,
                             });
 
-                            // if only one entry was pasted and it was disambiguated, open the rename editor
-                            if item_count == 1 && disambiguation_range.is_some() {
-                                project_panel.rename_impl(disambiguation_range, window, cx);
+                            if item_count == 1 {
+                                // open entry if not dir, and only focus if rename is not pending
+                                if !entry.is_dir() {
+                                    project_panel.open_entry(
+                                        entry.id,
+                                        disambiguation_range.is_none(),
+                                        false,
+                                        cx,
+                                    );
+                                }
+
+                                // if only one entry was pasted and it was disambiguated, open the rename editor
+                                if disambiguation_range.is_some() {
+                                    cx.defer_in(window, |this, window, cx| {
+                                        this.rename_impl(disambiguation_range, window, cx);
+                                    });
+                                }
                             }
                         })
                         .ok();
@@ -2698,7 +2716,7 @@ impl ProjectPanel {
                     else {
                         continue;
                     };
-                    let path = Arc::from(Path::new(path_name));
+                    let path = ArcCow::Borrowed(Path::new(path_name));
                     let depth = 0;
                     (depth, path)
                 } else if entry.is_file() {
@@ -2710,7 +2728,7 @@ impl ProjectPanel {
                     else {
                         continue;
                     };
-                    let path = Arc::from(Path::new(path_name));
+                    let path = ArcCow::Borrowed(Path::new(path_name));
                     let depth = entry.path.ancestors().count() - 1;
                     (depth, path)
                 } else {
@@ -2730,11 +2748,11 @@ impl ProjectPanel {
                                 .ok()
                                 .and_then(|suffix| {
                                     let full_path = Path::new(root_folded_entry.file_name()?);
-                                    Some(Arc::<Path>::from(full_path.join(suffix)))
+                                    Some(ArcCow::Owned(Arc::<Path>::from(full_path.join(suffix))))
                                 })
                         })
-                        .or_else(|| entry.path.file_name().map(Path::new).map(Arc::from))
-                        .unwrap_or_else(|| entry.path.clone());
+                        .or_else(|| entry.path.file_name().map(Path::new).map(ArcCow::Borrowed))
+                        .unwrap_or_else(|| ArcCow::Owned(entry.path.clone()));
                     let depth = path.components().count();
                     (depth, path)
                 };
@@ -3547,18 +3565,16 @@ impl ProjectPanel {
             marked_selections: selections,
         };
 
-        let bg_color = if is_marked || is_active {
-            item_colors.marked_active
+        let bg_color = if is_marked {
+            item_colors.marked
         } else {
             item_colors.default
         };
 
-        let bg_hover_color = if self.mouse_down || is_marked || is_active {
-            item_colors.marked_active
-        } else if !is_active {
-            item_colors.hover
+        let bg_hover_color = if is_marked {
+            item_colors.marked
         } else {
-            item_colors.default
+            item_colors.hover
         };
 
         let border_color =
@@ -4236,16 +4252,11 @@ impl ProjectPanel {
             let worktree_id = worktree.id();
             self.expand_entry(worktree_id, entry_id, cx);
             self.update_visible_entries(Some((worktree_id, entry_id)), cx);
-
-            if self.marked_entries.len() == 1
-                && self
-                    .marked_entries
-                    .first()
-                    .filter(|entry| entry.entry_id == entry_id)
-                    .is_none()
-            {
-                self.marked_entries.clear();
-            }
+            self.marked_entries.clear();
+            self.marked_entries.insert(SelectedEntry {
+                worktree_id,
+                entry_id,
+            });
             self.autoscroll(cx);
             cx.notify();
         }
@@ -5882,7 +5893,7 @@ mod tests {
                 //
                 "v root1",
                 "      one.txt",
-                "      [EDITOR: 'one copy.txt']  <== selected",
+                "      [EDITOR: 'one copy.txt']  <== selected  <== marked",
                 "      one.two.txt",
             ]
         );
@@ -5910,7 +5921,7 @@ mod tests {
                 "v root1",
                 "      one.txt",
                 "      one copy.txt",
-                "      [EDITOR: 'one copy 1.txt']  <== selected",
+                "      [EDITOR: 'one copy 1.txt']  <== selected  <== marked",
                 "      one.two.txt",
             ]
         );
@@ -5983,7 +5994,7 @@ mod tests {
                 "    > b",
                 "      four.txt",
                 "      one.txt",
-                "      three.txt  <== selected",
+                "      three.txt  <== selected  <== marked",
                 "      two.txt",
             ]
         );
@@ -6011,7 +6022,7 @@ mod tests {
                 "    > b",
                 "      four.txt",
                 "      one.txt",
-                "      three.txt",
+                "      three.txt  <== marked",
                 "      two.txt",
             ]
         );
@@ -6081,7 +6092,7 @@ mod tests {
                 "    > b",
                 "      four.txt",
                 "      one.txt",
-                "      three.txt  <== selected",
+                "      three.txt  <== selected  <== marked",
                 "      two.txt",
             ]
         );
@@ -6111,7 +6122,7 @@ mod tests {
                 "      four.txt",
                 "      one.txt",
                 "      three.txt",
-                "      [EDITOR: 'three copy.txt']  <== selected",
+                "      [EDITOR: 'three copy.txt']  <== selected  <== marked",
                 "      two.txt",
             ]
         );
@@ -7125,6 +7136,76 @@ mod tests {
             ]
         );
     }
+    #[gpui::test]
+    async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/project_root",
+            json!({
+                "dir_1": {
+                    "nested_dir": {
+                        "file_a.py": "# File contents",
+                    }
+                },
+                "file_1.py": "# File contents",
+                "file_2.py": "# File contents",
+                "zdir_2": {
+                    "nested_dir2": {
+                        "file_b.py": "# File contents",
+                    }
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    > dir_1",
+                "    > zdir_2",
+                "      file_1.py",
+                "      file_2.py",
+            ]
+        );
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_first(&SelectFirst, window, cx)
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root  <== selected",
+                "    > dir_1",
+                "    > zdir_2",
+                "      file_1.py",
+                "      file_2.py",
+            ]
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_last(&SelectLast, window, cx)
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v project_root",
+                "    > dir_1",
+                "    > zdir_2",
+                "      file_1.py",
+                "      file_2.py  <== selected",
+            ]
+        );
+    }
 
     #[gpui::test]
     async fn test_dir_toggle_collapse(cx: &mut gpui::TestAppContext) {
@@ -7264,7 +7345,7 @@ mod tests {
         select_path(&panel, "root/new", cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
-            &["v root", "      new  <== selected"]
+            &["v root", "      new  <== selected  <== marked"]
         );
         panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
         panel.update_in(cx, |panel, window, cx| {
@@ -7698,7 +7779,7 @@ mod tests {
                 "    > .git",
                 "    v dir_1",
                 "        > gitignored_dir",
-                "          file_1.py  <== selected",
+                "          file_1.py  <== selected  <== marked",
                 "          file_2.py",
                 "          file_3.py",
                 "    > dir_2",
@@ -7724,7 +7805,7 @@ mod tests {
                 "          file_2.py",
                 "          file_3.py",
                 "    v dir_2",
-                "          file_1.py  <== selected",
+                "          file_1.py  <== selected  <== marked",
                 "          file_2.py",
                 "          file_3.py",
                 "      .gitignore",
@@ -7751,7 +7832,7 @@ mod tests {
                 "          file_2.py",
                 "          file_3.py",
                 "    v dir_2",
-                "          file_1.py  <== selected",
+                "          file_1.py  <== selected  <== marked",
                 "          file_2.py",
                 "          file_3.py",
                 "      .gitignore",
@@ -7772,7 +7853,7 @@ mod tests {
                 "    > .git",
                 "    v dir_1",
                 "        v gitignored_dir",
-                "              file_a.py  <== selected",
+                "              file_a.py  <== selected  <== marked",
                 "              file_b.py",
                 "              file_c.py",
                 "          file_1.py",
@@ -7927,7 +8008,7 @@ mod tests {
                 "    > .git",
                 "    v dir_1",
                 "        > gitignored_dir",
-                "          file_1.py  <== selected",
+                "          file_1.py  <== selected  <== marked",
                 "          file_2.py",
                 "          file_3.py",
                 "    > dir_2",
@@ -7953,7 +8034,7 @@ mod tests {
                 "          file_2.py",
                 "          file_3.py",
                 "    v dir_2",
-                "          file_1.py  <== selected",
+                "          file_1.py  <== selected  <== marked",
                 "          file_2.py",
                 "          file_3.py",
                 "      .gitignore",
@@ -7974,7 +8055,7 @@ mod tests {
                 "    > .git",
                 "    v dir_1",
                 "        v gitignored_dir",
-                "              file_a.py  <== selected",
+                "              file_a.py  <== selected  <== marked",
                 "              file_b.py",
                 "              file_c.py",
                 "          file_1.py",
