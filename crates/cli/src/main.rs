@@ -521,7 +521,6 @@ mod flatpak {
     }
 }
 
-// todo("windows")
 #[cfg(target_os = "windows")]
 mod windows {
     use anyhow::Context;
