@@ -1326,12 +1326,11 @@ impl FakeFs {
         self.recalculate_git_status(dot_git);
     }
 
-    fn recalculate_git_status(&self, dot_git: &Path) {
+    pub fn recalculate_git_status(&self, dot_git: &Path) {
         let git_files: HashMap<_, _> = self
             .files()
             .iter()
             .filter_map(|path| {
-                dbg!(&path, &dot_git);
                 let repo_path =
                     RepoPath::new(path.strip_prefix(dot_git.parent().unwrap()).ok()?.into());
                 let content = self
@@ -1341,7 +1340,7 @@ impl FakeFs {
                 Some((repo_path, content?))
             })
             .collect();
-        self.with_git_state(dot_git, true, |state| {
+        self.with_git_state(dot_git, false, |state| {
             state.statuses.clear();
             let mut paths: HashSet<_> = state.head_contents.keys().collect();
             paths.extend(state.index_contents.keys());
