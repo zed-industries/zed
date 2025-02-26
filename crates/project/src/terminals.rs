@@ -1,7 +1,9 @@
 use crate::Project;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, Task, WeakEntity};
+use gpui::{
+    AnyWindowHandle, App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity,
+};
 use itertools::Itertools;
 use language::LanguageName;
 use settings::{Settings, SettingsLocation};
@@ -16,7 +18,7 @@ use std::{
 use task::{Shell, ShellBuilder, SpawnInTerminal};
 use terminal::{
     terminal_settings::{self, TerminalSettings, VenvSettings},
-    TaskState, TaskStatus, Terminal, TerminalBuilder,
+    TaskState, TaskStatus, Terminal, TerminalBuilder, TerminalRunLocation,
 };
 use util::ResultExt;
 
@@ -233,6 +235,7 @@ impl Project {
 
         let mut python_venv_activate_command = None;
         let is_local_shell = matches!(kind, TerminalKind::LocalShell(_));
+        let mut terminal_title_override = None;
 
         let (spawn_task, shell) = match kind {
             TerminalKind::Shell(_) => {
@@ -255,19 +258,21 @@ impl Project {
                         let (program, args) =
                             wrap_for_ssh(&ssh_command, None, path.as_deref(), env, None);
                         env = HashMap::default();
+                        terminal_title_override =
+                            Some(SharedString::new(format!("{} — Terminal", host)));
                         (
                             Option::<TaskState>::None,
-                            Shell::WithArguments {
-                                program,
-                                args,
-                                title_override: Some(format!("{} — Terminal", host).into()),
-                            },
+                            Shell::WithArguments { program, args },
                         )
                     }
                     None => (None, settings.shell.clone()),
                 }
             }
-            TerminalKind::LocalShell(_) => (None, settings.shell.clone()),
+            TerminalKind::LocalShell(_) => {
+                terminal_title_override =
+                    Some(SharedString::new("Host Machine - Terminal".to_string()));
+                (None, settings.shell.clone())
+            }
             TerminalKind::Task(spawn_task) => {
                 let task_state = Some(TaskState {
                     id: spawn_task.id,
@@ -303,14 +308,9 @@ impl Project {
                             python_venv_directory.as_deref(),
                         );
                         env = HashMap::default();
-                        (
-                            task_state,
-                            Shell::WithArguments {
-                                program,
-                                args,
-                                title_override: Some(format!("{} — Terminal", host).into()),
-                            },
-                        )
+                        terminal_title_override =
+                            Some(SharedString::new(format!("{} — Terminal", host)));
+                        (task_state, Shell::WithArguments { program, args })
                     }
                     None => {
                         if let Some(venv_path) = &python_venv_directory {
@@ -322,13 +322,19 @@ impl Project {
                             Shell::WithArguments {
                                 program: spawn_task.command,
                                 args: spawn_task.args,
-                                title_override: None,
                             },
                         )
                     }
                 }
             }
         };
+
+        let location = if ssh_details.is_some() && !is_local_shell {
+            TerminalRunLocation::Remote
+        } else {
+            TerminalRunLocation::Host
+        };
+
         TerminalBuilder::new(
             local_path.map(|path| path.to_path_buf()),
             python_venv_directory,
@@ -338,7 +344,8 @@ impl Project {
             settings.cursor_shape.unwrap_or_default(),
             settings.alternate_scroll,
             settings.max_scroll_history_lines,
-            ssh_details.is_some() && !is_local_shell,
+            terminal_title_override,
+            location,
             window,
             completion_tx,
             cx,

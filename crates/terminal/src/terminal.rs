@@ -282,16 +282,8 @@ impl TerminalError {
         match &self.shell {
             Shell::System => "<system defined shell>".to_string(),
             Shell::Program(s) => s.to_string(),
-            Shell::WithArguments {
-                program,
-                args,
-                title_override,
-            } => {
-                if let Some(title_override) = title_override {
-                    format!("{} {} ({})", program, args.join(" "), title_override)
-                } else {
-                    format!("{} {}", program, args.join(" "))
-                }
+            Shell::WithArguments { program, args } => {
+                format!("{} {}", program, args.join(" "))
             }
         }
     }
@@ -308,6 +300,11 @@ impl Display for TerminalError {
             dir_string, shell, self.source
         )
     }
+}
+
+pub enum TerminalRunLocation {
+    Host,
+    Remote,
 }
 
 // https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
@@ -335,7 +332,8 @@ impl TerminalBuilder {
         cursor_shape: CursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
-        is_ssh_terminal: bool,
+        terminal_title_override: Option<SharedString>,
+        run_location: TerminalRunLocation,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
         cx: &App,
@@ -357,20 +355,13 @@ impl TerminalBuilder {
             release_channel::AppVersion::global(cx).to_string(),
         );
 
-        let mut terminal_title_override = None;
-
         let pty_options = {
             let alac_shell = match shell.clone() {
                 Shell::System => None,
                 Shell::Program(program) => {
                     Some(alacritty_terminal::tty::Shell::new(program, Vec::new()))
                 }
-                Shell::WithArguments {
-                    program,
-                    args,
-                    title_override,
-                } => {
-                    terminal_title_override = title_override;
+                Shell::WithArguments { program, args } => {
                     Some(alacritty_terminal::tty::Shell::new(program, args))
                 }
             };
@@ -474,7 +465,7 @@ impl TerminalBuilder {
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
             word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
             vi_mode_enabled: false,
-            is_ssh_terminal,
+            run_location,
             python_venv_directory,
         };
 
@@ -630,7 +621,7 @@ pub struct Terminal {
     word_regex: RegexSearch,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
-    is_ssh_terminal: bool,
+    run_location: TerminalRunLocation,
 }
 
 pub struct TaskState {
@@ -1655,13 +1646,9 @@ impl Terminal {
     }
 
     pub fn working_directory(&self) -> Option<PathBuf> {
-        if self.is_ssh_terminal {
-            // We can't yet reliably detect the working directory of a shell on the
-            // SSH host. Until we can do that, it doesn't make sense to display
-            // the working directory on the client and persist that.
-            None
-        } else {
-            self.client_side_working_directory()
+        match self.run_location {
+            TerminalRunLocation::Host => self.client_side_working_directory(),
+            TerminalRunLocation::Remote => None,
         }
     }
 

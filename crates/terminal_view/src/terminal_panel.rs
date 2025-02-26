@@ -156,32 +156,31 @@ impl TerminalPanel {
                             .menu(move |window, cx| {
                                 let focus_handle = focus_handle.clone();
                                 let menu = ContextMenu::build(window, cx, |menu, _, cx| {
-                                    let context_menu = menu
-                                        .context(focus_handle.clone())
-                                        .action(
-                                            "New Terminal",
-                                            workspace::NewTerminal.boxed_clone(),
-                                        )
-                                        // We want the focus to go back to terminal panel once task modal is dismissed,
-                                        // hence we focus that first. Otherwise, we'd end up without a focused element, as
-                                        // context menu will be gone the moment we spawn the modal.
-                                        .action(
-                                            "Spawn task",
-                                            zed_actions::Spawn::modal().boxed_clone(),
-                                        );
+                                    let mut menu = menu.context(focus_handle.clone()).action(
+                                        "New Terminal",
+                                        workspace::NewTerminal.boxed_clone(),
+                                    );
+
                                     if workspace
                                         .read_with(cx, |workspace, cx| {
                                             workspace.project().read(cx).is_via_ssh()
                                         })
                                         .is_ok_and(|f| f)
                                     {
-                                        context_menu.action(
+                                        menu = menu.context(focus_handle.clone()).action(
                                             "New Local Terminal",
                                             workspace::NewLocalTerminal.boxed_clone(),
-                                        )
-                                    } else {
-                                        context_menu
+                                        );
                                     }
+                                    // We want the focus to go back to terminal panel once task modal is dismissed,
+                                    // hence we focus that first. Otherwise, we'd end up without a focused element, as
+                                    // context menu will be gone the moment we spawn the modal.
+                                    menu = menu.context(focus_handle.clone()).action(
+                                        "Spawn Task",
+                                        zed_actions::Spawn::modal().boxed_clone(),
+                                    );
+
+                                    menu
                                 });
 
                                 Some(menu)
