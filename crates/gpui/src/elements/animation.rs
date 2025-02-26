@@ -1,6 +1,9 @@
 use std::time::{Duration, Instant};
 
-use crate::{AnyElement, App, Element, ElementId, GlobalElementId, IntoElement, Window};
+use crate::{
+    AnyElement, App, Element, ElementId, GlobalElementId, InteractiveElement, Interactivity,
+    IntoElement, StyleRefinement, Styled, Window,
+};
 
 pub use easing::*;
 
@@ -150,6 +153,24 @@ impl<E> AnimationElement<E> {
     }
 }
 
+impl<E> Styled for AnimationElement<E>
+where
+    E: Styled,
+{
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.element.as_mut().unwrap().style()
+    }
+}
+
+impl<E> InteractiveElement for AnimationElement<E>
+where
+    E: InteractiveElement,
+{
+    fn interactivity(&mut self) -> &mut Interactivity {
+        self.element.as_mut().unwrap().interactivity()
+    }
+}
+
 impl<E: IntoElement + 'static> IntoElement for AnimationElement<E> {
     type Element = AnimationElement<E>;
 
@@ -249,6 +270,24 @@ impl<E> TransitionElement<E> {
     pub fn map_element(mut self, f: impl FnOnce(E) -> E) -> TransitionElement<E> {
         self.element = self.element.map(f);
         self
+    }
+}
+
+impl<E> Styled for TransitionElement<E>
+where
+    E: Styled,
+{
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.element.as_mut().unwrap().style()
+    }
+}
+
+impl<E> InteractiveElement for TransitionElement<E>
+where
+    E: InteractiveElement,
+{
+    fn interactivity(&mut self) -> &mut Interactivity {
+        self.element.as_mut().unwrap().interactivity()
     }
 }
 

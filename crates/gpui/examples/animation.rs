@@ -81,9 +81,7 @@ impl Render for AnimationExample {
                                 TransitionAnimation::new(Duration::from_millis(1000))
                                     .backward(Some(Duration::from_millis(500)))
                                     .with_easing(ease_in_out),
-                                |svg, _forward, delta| {
-                                    svg.map_element(|svg| svg.size(px(32.0 + delta * 32.0)))
-                                },
+                                |svg, _forward, delta| svg.size(px(32.0 + delta * 32.0)),
                             ),
                     ),
             ),
