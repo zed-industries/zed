@@ -380,6 +380,7 @@ dependencies = [
  "async-watch",
  "client",
  "collections",
+ "combobox",
  "command_palette_hooks",
  "context_server",
  "ctor",
@@ -444,6 +445,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "combobox",
  "command_palette_hooks",
  "context_server",
  "db",
@@ -506,6 +508,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "combobox",
  "context_server",
  "editor",
  "fs",
@@ -7049,6 +7052,7 @@ dependencies = [
 name = "language_model_selector"
 version = "0.1.0"
 dependencies = [
+ "combobox",
  "feature_flags",
  "gpui",
  "language_model",

@@ -1,17 +1,27 @@
 use std::sync::Arc;
 
+use combobox::{Combobox, ComboboxSelector};
 use feature_flags::ZedPro;
 use gpui::{
-    Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Subscription, Task, WeakEntity,
+    action_with_deprecated_aliases, Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelAvailability, LanguageModelRegistry,
 };
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
-use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
+use ui::{
+    prelude::*, ButtonLike, IconButtonShape, ListItem, ListItemSpacing, PopoverMenu,
+    PopoverMenuHandle, PopoverTrigger, Tooltip,
+};
 use workspace::ShowConfiguration;
+
+action_with_deprecated_aliases!(
+    assistant,
+    ToggleModelSelector,
+    ["assistant2::ToggleModelSelector"]
+);
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 
@@ -22,6 +32,7 @@ pub struct LanguageModelSelector {
     /// The task used to update the picker's matches when there is a change to
     /// the language model registry.
     update_matches_task: Option<Task<()>>,
+    popover_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     _authenticate_all_providers_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -53,6 +64,7 @@ impl LanguageModelSelector {
         LanguageModelSelector {
             picker,
             update_matches_task: None,
+            popover_menu_handle: PopoverMenuHandle::default(),
             _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
             _subscriptions: vec![cx.subscribe_in(
                 &LanguageModelRegistry::global(cx),
@@ -60,6 +72,15 @@ impl LanguageModelSelector {
                 Self::handle_language_model_registry_event,
             )],
         }
+    }
+
+    pub fn toggle_model_selector(
+        &mut self,
+        _: &ToggleModelSelector,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.popover_menu_handle.toggle(window, cx);
     }
 
     fn handle_language_model_registry_event(
@@ -178,6 +199,16 @@ impl Focusable for LanguageModelSelector {
 impl Render for LanguageModelSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.picker.clone()
+    }
+}
+
+impl ComboboxSelector for LanguageModelSelector {
+    fn menu_handle(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> PopoverMenuHandle<Self> {
+        self.popover_menu_handle.clone()
     }
 }
 
@@ -519,5 +550,100 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 )
                 .into_any(),
         )
+    }
+}
+
+pub struct InlineLanguageModelSelector {
+    selector: Entity<LanguageModelSelector>,
+}
+
+impl InlineLanguageModelSelector {
+    pub fn new(selector: Entity<LanguageModelSelector>) -> Self {
+        Self { selector }
+    }
+}
+
+impl RenderOnce for InlineLanguageModelSelector {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        Combobox::new(
+            self.selector,
+            gpui::Corner::TopRight,
+            IconButton::new("context", IconName::SettingsAlt)
+                .shape(IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted),
+            move |window, cx| {
+                Tooltip::with_meta(
+                    format!(
+                        "Using {}",
+                        LanguageModelRegistry::read_global(cx)
+                            .active_model()
+                            .map(|model| model.name().0)
+                            .unwrap_or_else(|| "No model selected".into()),
+                    ),
+                    None,
+                    "Change Model",
+                    window,
+                    cx,
+                )
+            },
+        )
+        .render(window, cx)
+    }
+}
+
+pub struct AssistantLanguageModelSelector {
+    focus_handle: FocusHandle,
+    selector: Entity<LanguageModelSelector>,
+}
+
+impl AssistantLanguageModelSelector {
+    pub fn new(focus_handle: FocusHandle, selector: Entity<LanguageModelSelector>) -> Self {
+        Self {
+            focus_handle,
+            selector,
+        }
+    }
+}
+
+impl RenderOnce for AssistantLanguageModelSelector {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+        let focus_handle = self.focus_handle.clone();
+        let model_name = match active_model {
+            Some(model) => model.name().0,
+            _ => SharedString::from("No model selected"),
+        };
+
+        combobox::Combobox::new(
+            self.selector.clone(),
+            Corner::BottomRight,
+            ButtonLike::new("active-model")
+                .style(ButtonStyle::Subtle)
+                .child(
+                    h_flex()
+                        .gap_0p5()
+                        .child(
+                            Label::new(model_name)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Icon::new(IconName::ChevronDown)
+                                .color(Color::Muted)
+                                .size(IconSize::XSmall),
+                        ),
+                ),
+            move |window, cx| {
+                Tooltip::for_action_in(
+                    "Change Model",
+                    &ToggleModelSelector,
+                    &focus_handle,
+                    window,
+                    cx,
+                )
+            },
+        )
+        .render(window, cx)
     }
 }

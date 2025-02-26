@@ -1,5 +1,6 @@
 #![allow(unused, dead_code)]
 
+use crate::branch_picker::BranchListDelegate;
 use crate::git_panel::{commit_message_editor, GitPanel};
 use crate::repository_selector::RepositorySelector;
 use anyhow::Result;
@@ -160,10 +161,10 @@ impl CommitModal {
         })
         .detach();
 
-        cx.spawn_in(window, |window, cx| {
-            cx.emit(DismissEvent);
-        })
-        .detach();
+        // cx.spawn_in(window, |window, cx| {
+        //     cx.emit(DismissEvent);
+        // })
+        // .detach();
 
         Self {
             git_panel,
@@ -171,6 +172,7 @@ impl CommitModal {
             restore_dock,
             current_suggestion: None,
             suggested_messages: vec![],
+            branch_list_delegate: todo!(),
         }
     }
 

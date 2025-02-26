@@ -1,17 +1,16 @@
 use anyhow::{anyhow, Context as _, Result};
-use combobox::{Combobox, ComboboxPopover};
 use fuzzy::{StringMatch, StringMatchCandidate};
 
 use git::repository::Branch;
 use gpui::{
-    rems, AnyView, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, WeakEntity, Window,
+    rems, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
+    Task, WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::ProjectPath;
 use std::sync::Arc;
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing, Tooltip};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -357,17 +356,17 @@ impl PickerDelegate for BranchListDelegate {
     }
 }
 
-pub fn branch_picker_combobox(
-    delegate: BranchListDelegate,
-    window: &mut Window,
-    cx: &mut App,
-) -> Combobox<Button, impl Fn(&mut Window, &mut App) -> AnyView, BranchListDelegate> {
-    // let branch_picker = cx.new(|cx| BranchList::new(delegate, 34., window, cx));
+// pub fn branch_picker_combobox(
+//     delegate: BranchListDelegate,
+//     window: &mut Window,
+//     cx: &mut App,
+// ) -> Combobox<Button, impl Fn(&mut Window, &mut App) -> AnyView, BranchListDelegate> {
+//     // let branch_picker = cx.new(|cx| BranchList::new(delegate, 34., window, cx));
 
-    let trigger = Button::new("branch-picker-trigger", "Branch");
-    let tooltip = Tooltip::text("Branch Picker");
+//     let trigger = Button::new("branch-picker-trigger", "Branch");
+//     let tooltip = Tooltip::text("Branch Picker");
 
-    let combobox_popover = cx.new(|cx| ComboboxPopover::new(delegate, window, cx));
+//     let combobox_popover = cx.new(|cx| ComboboxPopover::new(delegate, window, cx));
 
-    Combobox::new("branch-picker-combobox", combobox_popover, trigger, tooltip)
-}
+//     Combobox::new("branch-picker-combobox", combobox_popover, trigger, tooltip)
+// }
