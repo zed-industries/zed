@@ -46,6 +46,7 @@ Name: "addcontextmenufiles"; Description: "{cm:AddContextMenuFiles,{#AppDisplayN
 Name: "addcontextmenufolders"; Description: "{cm:AddContextMenuFolders,{#AppDisplayName}}"; GroupDescription: "{cm:Other}"; Flags: unchecked; Check: not IsWindows11OrLater
 Name: "associatewithfiles"; Description: "{cm:AssociateWithFiles,{#AppDisplayName}}"; GroupDescription: "{cm:Other}"
 Name: "addtopath"; Description: "{cm:AddToPath}"; GroupDescription: "{cm:Other}"
+Name: "runcode"; Description: "{cm:RunAfter,{#AppDisplayName}}"; GroupDescription: "{cm:Other}"; Check: WizardSilent
 
 [Dirs]
 Name: "{app}"; AfterInstall: DisableAppDirInheritance
@@ -61,6 +62,7 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}.exe"; Tasks: de
 
 [Run]
 Filename: "{app}\{#AppExeName}.exe"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall; Check: WizardNotSilent
+Filename: "{app}\{#AppExeName}.exe"; Description: "{cm:LaunchProgram,{#AppName}}"; Tasks: runcode; Flags: nowait postinstall; Check: WizardSilent
 
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "Invoke-Command -ScriptBlock {{Remove-AppxPackage -Package ""{#AppxFullName}""}"; Check: IsWindows11OrLater; Flags: shellexec waituntilterminated runhidden
@@ -1365,5 +1367,24 @@ begin
   ShellExec('', 'powershell.exe', '-Command ' + AddQuotes('Remove-AppxPackage -Package ''{#AppxFullName}'''), '', SW_HIDE, ewWaitUntilTerminated, RemoveAppxPackageResultCode);
   if not WizardIsTaskSelected('addcontextmenufiles') then begin
     RegDeleteKeyIncludingSubkeys(HKA, 'Software\Classes\{#RegValueName}ContextMenu');
+  end;
+end;
+
+function SwitchHasValue(Name: string; Value: string): Boolean;
+begin
+  Result := CompareText(ExpandConstant('{param:' + Name + '}'), Value) = 0;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  UpdateResultCode: Integer;
+	StartServiceResultCode: Integer;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    if WizardSilent() then
+    begin
+      SaveStringToFile(ExpandConstant('{app}\updates\versions.txt'), '{#Version}' + #13#10, True);
+    end
   end;
 end;
