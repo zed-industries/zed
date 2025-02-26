@@ -271,6 +271,7 @@ impl AutoUpdater {
             let result = Self::update(this.upgrade()?, cx.clone()).await;
             this.update(cx, |this, cx| {
                 this.pending_poll = None;
+                println!("Polling for updates: {:?}", result);
                 if let Err(error) = result {
                     log::error!("auto-update failed: error:{:?}", error);
                     this.status = AutoUpdateStatus::Errored;
@@ -434,27 +435,28 @@ impl AutoUpdater {
     }
 
     async fn update(this: Entity<Self>, mut cx: AsyncApp) -> Result<()> {
-        let (client, current_version, release_channel) = this.update(&mut cx, |this, cx| {
-            this.status = AutoUpdateStatus::Checking;
-            cx.notify();
-            (
-                this.http_client.clone(),
-                this.current_version,
-                ReleaseChannel::try_global(cx),
-            )
-        })?;
+        // let (client, current_version, release_channel) = this.update(&mut cx, |this, cx| {
+        //     this.status = AutoUpdateStatus::Checking;
+        //     cx.notify();
+        //     (
+        //         this.http_client.clone(),
+        //         this.current_version,
+        //         ReleaseChannel::try_global(cx),
+        //     )
+        // })?;
 
-        let release =
-            Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
+        // let release =
+        //     Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
 
-        let should_download = match *RELEASE_CHANNEL {
-            ReleaseChannel::Nightly => cx
-                .update(|cx| AppCommitSha::try_global(cx).map(|sha| release.version != sha.0))
-                .ok()
-                .flatten()
-                .unwrap_or(true),
-            _ => release.version.parse::<SemanticVersion>()? > current_version,
-        };
+        // let should_download = match *RELEASE_CHANNEL {
+        //     ReleaseChannel::Nightly => cx
+        //         .update(|cx| AppCommitSha::try_global(cx).map(|sha| release.version != sha.0))
+        //         .ok()
+        //         .flatten()
+        //         .unwrap_or(true),
+        //     _ => release.version.parse::<SemanticVersion>()? > current_version,
+        // };
+        let should_download = true;
 
         if !should_download {
             this.update(&mut cx, |this, cx| {
@@ -485,7 +487,11 @@ impl AutoUpdater {
         );
 
         let downloaded_asset = temp_dir.path().join(filename);
-        download_release(&downloaded_asset, release, client, &cx).await?;
+        // download_release(&downloaded_asset, release, client, &cx).await?;
+        println!(
+            "--> Downloading new release in {}",
+            downloaded_asset.display()
+        );
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Installing;
