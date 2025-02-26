@@ -392,11 +392,11 @@ impl PickerDelegate for BranchListDelegate {
                                     OffsetDateTime::now_utc(),
                                     time_format::TimestampFormat::Relative,
                                 );
-                                (commit.sha[..7].to_string(), formatted_time, commit_message)
+                                (commit.short_sha(), formatted_time, commit_message)
                             })
                             .unwrap_or_else(|| {
                                 (
-                                    "No Commit SHA".to_string(),
+                                    "No Commit SHA".into(),
                                     "Unknown Date".to_string(),
                                     SharedString::from("No commit message available"),
                                 )

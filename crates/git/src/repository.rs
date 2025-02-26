@@ -1,6 +1,6 @@
 use crate::status::FileStatus;
-use crate::GitHostingProviderRegistry;
 use crate::{blame::Blame, status::GitStatus};
+use crate::{GitHostingProviderRegistry, SHORT_SHA_LENGTH};
 use anyhow::{anyhow, Context, Result};
 use collections::{HashMap, HashSet};
 use git2::BranchType;
@@ -95,6 +95,12 @@ pub struct CommitDetails {
     pub commit_timestamp: i64,
     pub committer_email: SharedString,
     pub committer_name: SharedString,
+}
+
+impl CommitDetails {
+    pub fn short_sha(&self) -> SharedString {
+        self.sha[..SHORT_SHA_LENGTH].to_string().into()
+    }
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
