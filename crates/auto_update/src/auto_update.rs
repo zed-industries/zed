@@ -512,6 +512,15 @@ impl AutoUpdater {
 
     #[cfg(target_os = "windows")]
     async fn update(this: Entity<Self>, mut cx: AsyncApp) -> Result<()> {
+        // If updated, show a notification.
+        // For example, ```if updated...```
+        this.update(&mut cx, |this, cx| {
+            this.set_should_show_update_notification(true, cx)
+                .detach_and_log_err(cx);
+            // this.status = AutoUpdateStatus::Updated { binary_path };
+            cx.notify();
+        })?;
+
         // let (client, current_version, release_channel) = this.update(&mut cx, |this, cx| {
         //     this.status = AutoUpdateStatus::Checking;
         //     cx.notify();
@@ -562,13 +571,6 @@ impl AutoUpdater {
         })?;
 
         // Notify the user that the update is ready to install, and provide a button to restart then install it.
-
-        this.update(&mut cx, |this, cx| {
-            this.set_should_show_update_notification(true, cx)
-                .detach_and_log_err(cx);
-            this.status = AutoUpdateStatus::Updated { binary_path };
-            cx.notify();
-        })?;
 
         Ok(())
     }
