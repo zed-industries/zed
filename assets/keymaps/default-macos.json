@@ -21,7 +21,6 @@
       "ctrl-enter": "menu::SecondaryConfirm",
       "cmd-enter": "menu::SecondaryConfirm",
       "ctrl-escape": "menu::Cancel",
-      "cmd-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
       "escape": "menu::Cancel",
       "alt-shift-enter": "menu::Restart",

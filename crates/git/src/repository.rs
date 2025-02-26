@@ -74,9 +74,15 @@ impl UpstreamTracking {
     }
 }
 
-impl From<UpstreamTrackingStatus> for UpstreamTracking {
-    fn from(status: UpstreamTrackingStatus) -> Self {
-        UpstreamTracking::Tracked(status)
+#[derive(Debug)]
+pub struct RemoteCommandOutput {
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl RemoteCommandOutput {
+    pub fn is_empty(&self) -> bool {
+        self.stdout.is_empty() && self.stderr.is_empty()
     }
 }
 
@@ -185,10 +191,10 @@ pub trait GitRepository: Send + Sync {
         branch_name: &str,
         upstream_name: &str,
         options: Option<PushOptions>,
-    ) -> Result<Option<String>>;
-    fn pull(&self, branch_name: &str, upstream_name: &str) -> Result<Option<String>>;
+    ) -> Result<RemoteCommandOutput>;
+    fn pull(&self, branch_name: &str, upstream_name: &str) -> Result<RemoteCommandOutput>;
     fn get_remotes(&self, branch_name: Option<&str>) -> Result<Vec<Remote>>;
-    fn fetch(&self) -> Result<Option<String>>;
+    fn fetch(&self) -> Result<RemoteCommandOutput>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -611,12 +617,12 @@ impl GitRepository for RealGitRepository {
         branch_name: &str,
         remote_name: &str,
         options: Option<PushOptions>,
-    ) -> Result<Option<String>> {
+    ) -> Result<RemoteCommandOutput> {
         let working_directory = self.working_directory()?;
 
         let output = new_std_command(&self.git_binary_path)
             .current_dir(&working_directory)
-            .args(["push", "--quiet"])
+            .args(["push"])
             .args(options.map(|option| match option {
                 PushOptions::SetUpstream => "--set-upstream",
                 PushOptions::Force => "--force-with-lease",
@@ -631,16 +637,19 @@ impl GitRepository for RealGitRepository {
                 String::from_utf8_lossy(&output.stderr)
             ));
         } else {
-            Ok(get_remote_output(&output.stdout))
+            return Ok(RemoteCommandOutput {
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            });
         }
     }
 
-    fn pull(&self, branch_name: &str, remote_name: &str) -> Result<Option<String>> {
+    fn pull(&self, branch_name: &str, remote_name: &str) -> Result<RemoteCommandOutput> {
         let working_directory = self.working_directory()?;
 
         let output = new_std_command(&self.git_binary_path)
             .current_dir(&working_directory)
-            .args(["pull", "--quiet"])
+            .args(["pull"])
             .arg(remote_name)
             .arg(branch_name)
             .output()?;
@@ -651,16 +660,19 @@ impl GitRepository for RealGitRepository {
                 String::from_utf8_lossy(&output.stderr)
             ));
         } else {
-            return Ok(get_remote_output(&output.stdout));
+            return Ok(RemoteCommandOutput {
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            });
         }
     }
 
-    fn fetch(&self) -> Result<Option<String>> {
+    fn fetch(&self) -> Result<RemoteCommandOutput> {
         let working_directory = self.working_directory()?;
 
         let output = new_std_command(&self.git_binary_path)
             .current_dir(&working_directory)
-            .args(["fetch", "--quiet", "--all"])
+            .args(["fetch", "--all"])
             .output()?;
 
         if !output.status.success() {
@@ -669,7 +681,10 @@ impl GitRepository for RealGitRepository {
                 String::from_utf8_lossy(&output.stderr)
             ));
         } else {
-            return Ok(get_remote_output(&output.stdout));
+            return Ok(RemoteCommandOutput {
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            });
         }
     }
 
@@ -713,20 +728,6 @@ impl GitRepository for RealGitRepository {
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
-    }
-}
-
-fn get_remote_output(output: &[u8]) -> Option<String> {
-    let remote_output = String::from_utf8_lossy(output);
-    let remote_output = remote_output
-        .lines()
-        .filter_map(|line| line.strip_prefix("remote:"))
-        .map(|line| line.trim())
-        .collect::<Vec<_>>();
-    if remote_output.is_empty() {
-        return None;
-    } else {
-        return Some(remote_output.join("\n"));
     }
 }
 
@@ -918,15 +919,15 @@ impl GitRepository for FakeGitRepository {
         _branch: &str,
         _remote: &str,
         _options: Option<PushOptions>,
-    ) -> Result<Option<String>> {
+    ) -> Result<RemoteCommandOutput> {
         unimplemented!()
     }
 
-    fn pull(&self, _branch: &str, _remote: &str) -> Result<Option<String>> {
+    fn pull(&self, _branch: &str, _remote: &str) -> Result<RemoteCommandOutput> {
         unimplemented!()
     }
 
-    fn fetch(&self) -> Result<Option<String>> {
+    fn fetch(&self) -> Result<RemoteCommandOutput> {
         unimplemented!()
     }
 

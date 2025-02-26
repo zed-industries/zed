@@ -1,5 +1,7 @@
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel_settings::StatusStyle;
+use crate::project_diff::Diff;
+use crate::remote_output_toast::{RemoteAction, RemoteOutputToast};
 use crate::repository_selector::RepositorySelectorPopoverMenu;
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
@@ -43,6 +45,7 @@ use ui::{
     PopoverButton, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
+
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotificationId},
@@ -1330,9 +1333,14 @@ impl GitPanel {
         };
         let guard = self.start_remote_operation();
         let fetch = repo.read(cx).fetch();
-        cx.spawn(|_, _| async move {
-            fetch.await??;
+        cx.spawn(|this, mut cx| async move {
+            let remote_message = fetch.await??;
             drop(guard);
+            this.update(&mut cx, |this, cx| {
+                // TODO: remove this
+                this.show_remote_output(RemoteAction::Fetch, remote_message, cx);
+            })
+            .ok();
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -1344,20 +1352,27 @@ impl GitPanel {
         cx.spawn(move |this, mut cx| async move {
             let remote = remote.await?;
 
-            this.update(&mut cx, |this, cx| {
-                let Some(repo) = this.active_repository.clone() else {
-                    return Err(anyhow::anyhow!("No active repository"));
-                };
+            let remote_message = this
+                .update(&mut cx, |this, cx| {
+                    let Some(repo) = this.active_repository.clone() else {
+                        return Err(anyhow::anyhow!("No active repository"));
+                    };
 
-                let Some(branch) = repo.read(cx).current_branch() else {
-                    return Err(anyhow::anyhow!("No active branch"));
-                };
+                    let Some(branch) = repo.read(cx).current_branch() else {
+                        return Err(anyhow::anyhow!("No active branch"));
+                    };
 
-                Ok(repo.read(cx).pull(branch.name.clone(), remote.name))
-            })??
-            .await??;
+                    Ok(repo.read(cx).pull(branch.name.clone(), remote.name.clone()))
+                })??
+                .await??;
 
             drop(guard);
+
+            this.update(&mut cx, |this, cx| {
+                this.show_remote_output(RemoteAction::Pull, remote_message, cx);
+            })
+            .ok();
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -1370,22 +1385,29 @@ impl GitPanel {
         cx.spawn(move |this, mut cx| async move {
             let remote = remote.await?;
 
-            this.update(&mut cx, |this, cx| {
-                let Some(repo) = this.active_repository.clone() else {
-                    return Err(anyhow::anyhow!("No active repository"));
-                };
+            let remote_message = this
+                .update(&mut cx, |this, cx| {
+                    let Some(repo) = this.active_repository.clone() else {
+                        return Err(anyhow::anyhow!("No active repository"));
+                    };
 
-                let Some(branch) = repo.read(cx).current_branch() else {
-                    return Err(anyhow::anyhow!("No active branch"));
-                };
+                    let Some(branch) = repo.read(cx).current_branch() else {
+                        return Err(anyhow::anyhow!("No active branch"));
+                    };
 
-                Ok(repo
-                    .read(cx)
-                    .push(branch.name.clone(), remote.name, options))
-            })??
-            .await??;
+                    Ok(repo
+                        .read(cx)
+                        .push(branch.name.clone(), remote.name.clone(), options))
+                })??
+                .await??;
 
             drop(guard);
+
+            this.update(&mut cx, |this, cx| {
+                this.show_remote_output(RemoteAction::Push(remote), remote_message, cx);
+            })
+            .ok();
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
@@ -1798,7 +1820,103 @@ impl GitPanel {
         });
     }
 
-    fn render_spinner(&self) -> Option<impl IntoElement> {
+    fn show_remote_output(&self, action: RemoteAction, info: RemoteCommandOutput, cx: &mut App) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let notification_id = NotificationId::Named("git-remote-info".into());
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_notification(notification_id.clone(), cx, |cx| {
+                let workspace = cx.weak_entity();
+                cx.new(|cx| RemoteOutputToast::new(action, info, notification_id, workspace, cx))
+            });
+        });
+    }
+
+    pub fn panel_button(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+    ) -> Button {
+        let id = id.into().clone();
+        let label = label.into().clone();
+
+        Button::new(id, label)
+            .label_size(LabelSize::Small)
+            .layer(ElevationIndex::ElevatedSurface)
+            .size(ButtonSize::Compact)
+            .style(ButtonStyle::Filled)
+    }
+
+    pub fn indent_size(&self, window: &Window, cx: &mut Context<Self>) -> Pixels {
+        Checkbox::container_size(cx).to_pixels(window.rem_size())
+    }
+
+    pub fn render_divider(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .items_center()
+            .h(px(8.))
+            .child(Divider::horizontal_dashed().color(DividerColor::Border))
+    }
+
+    pub fn render_panel_header(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        let all_repositories = self
+            .project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .all_repositories();
+
+        let has_repo_above = all_repositories.iter().any(|repo| {
+            repo.read(cx)
+                .repository_entry
+                .work_directory
+                .is_above_project()
+        });
+
+        let has_visible_repo = all_repositories.len() > 0 || has_repo_above;
+
+        if has_visible_repo {
+            Some(
+                self.panel_header_container(window, cx)
+                    .child(
+                        Label::new("Repository")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(self.render_repository_selector(cx))
+                    .child(div().flex_grow()) // spacer
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_1()
+                            .children(self.render_spinner(cx))
+                            .children(self.render_sync_button(cx))
+                            .children(self.render_pull_button(cx))
+                            .child(
+                                Button::new("diff", "+/-")
+                                    .tooltip(Tooltip::for_action_title("Open diff", &Diff))
+                                    .on_click(|_, _, cx| {
+                                        cx.defer(|cx| {
+                                            cx.dispatch_action(&Diff);
+                                        })
+                                    }),
+                            )
+                            .child(self.render_overflow_menu()),
+                    ),
+            )
+        } else {
+            None
+        }
+    }
+
+    pub fn render_spinner(&self, _cx: &mut Context<Self>) -> Option<impl IntoElement> {
         (!self.pending_remote_operations.borrow().is_empty()).then(|| {
             Icon::new(IconName::ArrowCircle)
                 .size(IconSize::XSmall)
@@ -2253,9 +2371,10 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return Task::ready(Err(anyhow::anyhow!("no active repo")));
         };
-
-        let show = repo.read(cx).show(sha);
-        cx.spawn(|_, _| async move { show.await? })
+        repo.update(cx, |repo, cx| {
+            let show = repo.show(sha);
+            cx.spawn(|_, _| async move { show.await? })
+        })
     }
 
     fn deploy_entry_context_menu(

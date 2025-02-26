@@ -330,7 +330,9 @@ message Envelope {
         Pull pull = 308;
 
         ApplyCodeActionKind apply_code_action_kind = 309;
-        ApplyCodeActionKindResponse apply_code_action_kind_response = 310; // current max
+        ApplyCodeActionKindResponse apply_code_action_kind_response = 310;
+
+        RemoteMessageResponse remote_message_response = 311; // current max
     }
 
     reserved 87 to 88;
@@ -2833,4 +2835,9 @@ message Pull {
     uint64 work_directory_id = 3;
     string remote_name = 4;
     string branch_name = 5;
+}
+
+message RemoteMessageResponse {
+    string stdout = 1;
+    string stderr = 2;
 }
