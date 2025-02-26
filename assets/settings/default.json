@@ -1296,13 +1296,13 @@
   },
   // Vim settings
   "vim": {
+    "default_mode": "normal",
     "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_multiline_find": false,
     "use_smartcase_find": false,
     "highlight_on_yank_duration": 200,
-    "custom_digraphs": {},
-    "default_mode": "normal"
+    "custom_digraphs": {}
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.

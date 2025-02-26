@@ -1643,24 +1643,24 @@ pub enum UseSystemClipboard {
 
 #[derive(Deserialize)]
 struct VimSettings {
+    pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: UseSystemClipboard,
     pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
-    pub default_mode: Mode,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 struct VimSettingsContent {
+    pub default_mode: Option<ModeContent>,
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_multiline_find: Option<bool>,
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
-    pub default_mode: Option<ModeContent>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1699,6 +1699,10 @@ impl Settings for VimSettings {
         let settings: VimSettingsContent = sources.json_merge()?;
 
         Ok(Self {
+            default_mode: settings
+                .default_mode
+                .ok_or_else(Self::missing_default)?
+                .into(),
             toggle_relative_line_numbers: settings
                 .toggle_relative_line_numbers
                 .ok_or_else(Self::missing_default)?,
@@ -1715,10 +1719,6 @@ impl Settings for VimSettings {
             highlight_on_yank_duration: settings
                 .highlight_on_yank_duration
                 .ok_or_else(Self::missing_default)?,
-            default_mode: settings
-                .default_mode
-                .ok_or_else(Self::missing_default)?
-                .into(),
         })
     }
 }

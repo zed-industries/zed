@@ -13,8 +13,7 @@ use language::Point;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
-use std::fmt::Display;
-use std::{ops::Range, sync::Arc};
+use std::{fmt::Display, ops::Range, sync::Arc};
 use ui::{Context, KeyBinding, SharedString};
 use workspace::searchable::Direction;
 
@@ -46,8 +45,9 @@ impl Display for Mode {
 impl Mode {
     pub fn is_visual(&self) -> bool {
         match self {
+            Mode::Normal | Mode::Insert | Mode::Replace => false,
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => true,
-            Mode::Normal | Mode::Insert | Mode::Replace | Mode::HelixNormal => false,
+            Mode::HelixNormal => false,
         }
     }
 }
