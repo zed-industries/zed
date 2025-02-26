@@ -25,7 +25,7 @@ use dap::{
     Source, StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
 };
 use fs::Fs;
-use futures::future::Shared;
+use futures::future::{join_all, Shared};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
 use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};
@@ -738,22 +738,31 @@ impl DapStore {
                     session_id: session_id.to_proto(),
                 });
 
-                return cx
-                    .background_executor()
-                    .spawn(async move { future.await.map(|_| ()) });
+                return cx.background_spawn(async move { future.await.map(|_| ()) });
             }
 
             return Task::ready(Err(anyhow!("Cannot shutdown session on remote side")));
         };
-        let Some(client) = self.sessions.remove(session_id) else {
+
+        let Some(session) = self.sessions.remove(session_id) else {
             return Task::ready(Err(anyhow!("Could not find session: {:?}", session_id)));
         };
 
-        client.update(cx, |this, cx| {
-            this.shutdown(cx);
-        });
+        let shutdown_parent_task = session
+            .read(cx)
+            .parent_id()
+            .map(|parent_id| self.shutdown_session(&parent_id, cx));
+        let shutdown_task = session.update(cx, |this, cx| this.shutdown(cx));
 
-        Task::ready(Ok(()))
+        cx.background_spawn(async move {
+            shutdown_task.await;
+
+            if let Some(parent_task) = shutdown_parent_task {
+                parent_task.await?;
+            }
+
+            Ok(())
+        })
     }
 
     // async fn _handle_dap_command_2<T: DapCommand + PartialEq + Eq + Hash>(
@@ -847,14 +856,16 @@ impl DapStore {
         this.update(&mut cx, |dap_store, cx| {
             let session_id = SessionId::from_proto(envelope.payload.session_id);
 
-            dap_store.session_by_id(session_id).map(|state| {
-                state.update(cx, |state, cx| {
-                    state.shutdown(cx);
-                })
-            });
+            let shutdown_task = dap_store.shutdown_session(&session_id, cx);
+            cx.spawn(|this, mut cx| async move {
+                let _ = shutdown_task.await.log_err();
 
-            cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
-            cx.notify();
+                this.update(&mut cx, |_, cx| {
+                    cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
+                    cx.notify();
+                })
+            })
+            .detach();
         })
     }
 

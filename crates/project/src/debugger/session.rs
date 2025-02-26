@@ -672,6 +672,10 @@ impl Session {
         self.id
     }
 
+    pub fn parent_id(&self) -> Option<SessionId> {
+        self.parent_id
+    }
+
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
@@ -1036,8 +1040,8 @@ impl Session {
         }
     }
 
-    pub(super) fn shutdown(&mut self, cx: &mut Context<Self>) {
-        if self
+    pub(super) fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let task = if self
             .capabilities
             .supports_terminate_request
             .unwrap_or_default()
@@ -1049,7 +1053,6 @@ impl Session {
                 Self::empty_response,
                 cx,
             )
-            .detach();
         } else {
             self.request(
                 DisconnectCommand {
@@ -1060,8 +1063,11 @@ impl Session {
                 Self::empty_response,
                 cx,
             )
-            .detach();
-        }
+        };
+
+        cx.background_spawn(async move {
+            let _ = task.await;
+        })
     }
 
     pub fn completions(
