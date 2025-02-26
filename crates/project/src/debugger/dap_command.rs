@@ -33,13 +33,15 @@ pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
 
 pub(crate) trait DapCommand: LocalDapCommand {
     type ProtoRequest: 'static + Send + proto::RequestMessage;
-
+    #[allow(dead_code)]
     fn client_id_from_proto(request: &Self::ProtoRequest) -> SessionId;
 
+    #[allow(dead_code)]
     fn from_proto(request: &Self::ProtoRequest) -> Self;
 
     fn to_proto(&self, debug_client_id: SessionId, upstream_project_id: u64) -> Self::ProtoRequest;
 
+    #[allow(dead_code)]
     fn response_to_proto(
         debug_client_id: SessionId,
         message: Self::Response,

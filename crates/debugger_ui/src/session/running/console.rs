@@ -7,7 +7,6 @@ use editor::{
     display_map::{Crease, CreaseId},
     Anchor, CompletionProvider, Editor, EditorElement, EditorStyle, FoldPlaceholder,
 };
-use fuzzy::StringMatchCandidate;
 use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
 use language::{Buffer, CodeLabel, LanguageServerId};
 use menu::Confirm;
@@ -16,7 +15,7 @@ use project::{
     Completion,
 };
 use settings::Settings;
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc, usize};
+use std::{cell::RefCell, rc::Rc, sync::Arc, usize};
 use theme::ThemeSettings;
 use ui::{prelude::*, ButtonLike, Disclosure, ElevationIndex};
 
@@ -34,7 +33,7 @@ pub struct Console {
     query_bar: Entity<Editor>,
     session: Entity<Session>,
     _subscriptions: Vec<Subscription>,
-    variable_list: Entity<VariableList>,
+    _variable_list: Entity<VariableList>,
     stack_frame_list: Entity<StackFrameList>,
 }
 
@@ -80,7 +79,7 @@ impl Console {
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
             cx.observe_in(&session, window, |console, session, window, cx| {
-                let (output, last_processed_ix) = session.update(cx, |session, cx| {
+                let (output, last_processed_ix) = session.update(cx, |session, _cx| {
                     (session.output(), session.last_processed_output())
                 });
 
@@ -89,7 +88,7 @@ impl Console {
                         console.add_message(event.clone(), window, cx);
                     }
 
-                    session.update(cx, |session, cx| {
+                    session.update(cx, |session, _cx| {
                         session.set_last_processed_output(output.len());
                     });
                 }
@@ -100,7 +99,7 @@ impl Console {
             session,
             console,
             query_bar,
-            variable_list,
+            _variable_list: variable_list,
             _subscriptions,
             stack_frame_list,
             groups: Vec::default(),
@@ -129,7 +128,6 @@ impl Console {
     ) {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged(_) => cx.notify(),
-            StackFrameListEvent::StackFramesUpdated => {}
         }
     }
 

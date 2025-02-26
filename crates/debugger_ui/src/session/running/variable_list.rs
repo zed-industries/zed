@@ -1,21 +1,17 @@
 use super::stack_frame_list::{StackFrameList, StackFrameListEvent};
-use anyhow::{anyhow, Result};
-use collections::IndexMap;
-use dap::{ScopeId, StackFrameId, VariableReference};
-use editor::{actions::SelectAll, Editor, EditorEvent};
+use dap::StackFrameId;
+use editor::{Editor, EditorEvent};
 use gpui::{
-    actions, anchored, deferred, list, AnyElement, ClipboardItem, Context, DismissEvent, Entity,
-    FocusHandle, Focusable, Hsla, ListState, MouseDownEvent, Point, Subscription, Task,
+    actions, anchored, deferred, list, AnyElement, Context, Entity, FocusHandle, Focusable, Hsla,
+    ListState, MouseDownEvent, Point, Subscription,
 };
-use menu::Confirm;
-use project::debugger::session::{self, Scope, Session};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use project::debugger::session::{Scope, Session};
+use std::collections::HashMap;
 use ui::{prelude::*, ContextMenu, ListItem};
-use util::debug_panic;
 
 actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
 
-type IsToggled = bool;
+type _IsToggled = bool;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Variable {
@@ -33,16 +29,16 @@ struct ScopeState {
 }
 
 enum VariableListEntry {
-    Scope(ScopeState),
-    Variable(Variable),
+    _Scope(ScopeState),
+    _Variable(Variable),
 }
 
 pub struct VariableList {
-    scopes: HashMap<StackFrameId, Vec<ScopeState>>,
-    selected_stack_frame_id: Option<StackFrameId>,
+    _scopes: HashMap<StackFrameId, Vec<ScopeState>>,
+    _selected_stack_frame_id: Option<StackFrameId>,
     list: ListState,
-    session: Entity<Session>,
-    selection: Option<VariableListEntry>,
+    _session: Entity<Session>,
+    _selection: Option<VariableListEntry>,
     open_context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -87,24 +83,24 @@ impl VariableList {
 
         Self {
             list,
-            session,
+            _session: session,
             focus_handle,
             _subscriptions,
-            selected_stack_frame_id: None,
-            selection: None,
+            _selected_stack_frame_id: None,
+            _selection: None,
             open_context_menu: None,
-            scopes: Default::default(),
+            _scopes: Default::default(),
         }
     }
 
-    fn build_entries(
+    fn _build_entries(
         &mut self,
         stack_frame_id: StackFrameId,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> Vec<VariableListEntry> {
-        let mut ret = vec![];
+        let ret = vec![];
 
-        let Some(scopes) = self.scopes.get_mut(&stack_frame_id) else {
+        let Some(_scopes) = self._scopes.get_mut(&stack_frame_id) else {
             // self.session
             //     .update(cx, |session, cx| session.scopes(stack_frame_id, cx));
             return ret;
@@ -137,14 +133,13 @@ impl VariableList {
             StackFrameListEvent::SelectedStackFrameChanged(stack_frame_id) => {
                 self.handle_selected_stack_frame_changed(*stack_frame_id, cx);
             }
-            StackFrameListEvent::StackFramesUpdated => {}
         }
     }
 
     fn handle_selected_stack_frame_changed(
         &mut self,
-        stack_frame_id: StackFrameId,
-        cx: &mut Context<Self>,
+        _stack_frame_id: StackFrameId,
+        _cx: &mut Context<Self>,
     ) {
         // if self.scopes.contains_key(&stack_frame_id) {
         //     return self.build_entries(true, cx);
@@ -187,7 +182,7 @@ impl VariableList {
     //         .collect()
     // }
 
-    fn render_entry(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_entry(&mut self, _ix: usize, _cx: &mut Context<Self>) -> AnyElement {
         // let Some(entry) = self.entries.get(ix) else {
         //     debug_panic!("Trying to render entry in variable list that has an out of bounds index");
         //     return div().into_any_element();
@@ -204,12 +199,12 @@ impl VariableList {
         // }
     }
 
-    pub fn toggle_variable(
+    fn _toggle_variable(
         &mut self,
-        scope: &Scope,
-        variable: &Variable,
-        depth: usize,
-        cx: &mut Context<Self>,
+        _scope: &Scope,
+        _variable: &Variable,
+        _depth: usize,
+        _cx: &mut Context<Self>,
     ) {
     }
 
@@ -257,11 +252,11 @@ impl VariableList {
     //     }
     // }
 
-    fn collapse_selected_entry(
+    fn _collapse_selected_entry(
         &mut self,
         _: &CollapseSelectedEntry,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) {
         // if let Some(selection) = &self.selection {
         //     match selection {
@@ -299,12 +294,13 @@ impl VariableList {
         // }
     }
 
-    fn expand_selected_entry(
+    fn _expand_selected_entry(
         &mut self,
         _: &ExpandSelectedEntry,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) {
+
         // todo(debugger) Implement expand_selected_entry
         // if let Some(selection) = &self.selection {
         //     match selection {
@@ -409,7 +405,7 @@ impl VariableList {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn render_variable(
+    fn _render_variable(
         &self,
         variable: &Variable,
         is_selected: bool,
@@ -417,7 +413,7 @@ impl VariableList {
     ) -> AnyElement {
         let disclosed = variable.is_expanded;
 
-        let colors = get_entry_color(cx);
+        let colors = _get_entry_color(cx);
         let bg_hover_color = if !is_selected {
             colors.hover
         } else {
@@ -444,7 +440,7 @@ impl VariableList {
             .on_click(cx.listener({
                 // let scope = scope.clone();
                 // let variable = variable.clone();
-                move |this, _, _window, cx| {
+                move |_this, _, _window, _cx| {
                     // this.selection = Some(VariableListEntry::Variable {
                     //     depth,
                     //     has_children,
@@ -482,7 +478,8 @@ impl VariableList {
                 .on_secondary_mouse_down(cx.listener({
                     // let scope = scope.clone();
                     // let variable = variable.clone();
-                    move |this, event: &MouseDownEvent, window, cx| {
+                    move |_this, _event: &MouseDownEvent, _window, _cx| {
+
                         // todo(debugger): Get this working
                         // this.deploy_variable_context_menu(
                         //     container_reference,
@@ -510,7 +507,7 @@ impl VariableList {
             .into_any()
     }
 
-    fn render_scope(
+    fn _render_scope(
         &self,
         scope: &ScopeState,
         is_selected: bool,
@@ -521,7 +518,7 @@ impl VariableList {
         // todo(debugger) set this based on the scope being toggled or not
         let disclosed = true;
 
-        let colors = get_entry_color(cx);
+        let colors = _get_entry_color(cx);
         let bg_hover_color = if !is_selected {
             colors.hover
         } else {
@@ -544,7 +541,7 @@ impl VariableList {
             .h_full()
             .hover(|style| style.bg(bg_hover_color))
             .on_click(cx.listener({
-                move |this, _, _window, cx| {
+                move |_this, _, _window, cx| {
                     cx.notify();
                 }
             }))
@@ -587,8 +584,10 @@ impl Render for VariableList {
             // .on_action(cx.listener(Self::select_next))
             // .on_action(cx.listener(Self::expand_selected_entry))
             // .on_action(cx.listener(Self::collapse_selected_entry))
+            //
             .on_action(
-                cx.listener(|this, _: &editor::actions::Cancel, _window, cx| {
+                cx.listener(|_this, _: &editor::actions::Cancel, _window, _cx| {
+
                     // this.cancel_set_variable_value(cx)
                 }),
             )
@@ -605,16 +604,16 @@ impl Render for VariableList {
     }
 }
 
-struct EntryColors {
+struct _EntryColors {
     default: Hsla,
     hover: Hsla,
     marked_active: Hsla,
 }
 
-fn get_entry_color(cx: &Context<VariableList>) -> EntryColors {
+fn _get_entry_color(cx: &Context<VariableList>) -> _EntryColors {
     let colors = cx.theme().colors();
 
-    EntryColors {
+    _EntryColors {
         default: colors.panel_background,
         hover: colors.ghost_element_hover,
         marked_active: colors.ghost_element_selected,

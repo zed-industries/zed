@@ -535,9 +535,9 @@ impl TransportDelegate {
 }
 
 pub struct TcpTransport {
-    port: u16,
-    host: Ipv4Addr,
-    timeout: u64,
+    _port: u16,
+    _host: Ipv4Addr,
+    _timeout: u64,
     process: Mutex<Child>,
 }
 
@@ -553,7 +553,7 @@ impl TcpTransport {
                 .port())
         }
     }
-    async fn port_for_host(host: Ipv4Addr) -> Result<u16> {
+    async fn _port_for_host(host: Ipv4Addr) -> Result<u16> {
         Ok(TcpListener::bind(SocketAddrV4::new(host, 0))
             .await?
             .local_addr()?
@@ -635,10 +635,10 @@ impl TcpTransport {
         let stderr = process.stderr.take();
 
         let this = Self {
-            port,
-            host,
+            _port: port,
+            _host: host,
             process: Mutex::new(process),
-            timeout,
+            _timeout: timeout,
         };
 
         let pipe = TransportPipe::new(
@@ -731,7 +731,7 @@ impl StdioTransport {
         false
     }
 
-    async fn reconnect(&self, _: AsyncApp) -> Result<TransportPipe> {
+    async fn _reconnect(&self, _: AsyncApp) -> Result<TransportPipe> {
         bail!("Cannot reconnect to adapter")
     }
 

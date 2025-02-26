@@ -7,7 +7,7 @@ use crate::*;
 pub(crate) struct GoDebugAdapter {
     port: u16,
     host: Ipv4Addr,
-    timeout: Option<u64>,
+    _timeout: Option<u64>,
 }
 
 impl GoDebugAdapter {
@@ -17,7 +17,7 @@ impl GoDebugAdapter {
         Ok(GoDebugAdapter {
             port: TcpTransport::port(host).await?,
             host: host.host(),
-            timeout: host.timeout,
+            _timeout: host.timeout,
         })
     }
 }

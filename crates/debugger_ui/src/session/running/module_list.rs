@@ -1,4 +1,3 @@
-use dap::ModuleEvent;
 use gpui::{list, AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, Subscription};
 use project::debugger::session::Session;
 use ui::prelude::*;

@@ -127,8 +127,9 @@ impl LocalDapStore {
         };
 
         cx.spawn(|this, mut cx| async move {
-            let (success, body) = {
-                let reconnect_task = this.update(&mut cx, |store, cx| {
+            let (_success, _body) = {
+                let reconnect_task = this.update(&mut cx, |_store, _cx| {
+                    #[allow(unreachable_code)]
                     if !unimplemented!("client.adapter().supports_attach()")
                         && matches!(new_config.request, DebugRequestType::Attach(_))
                     {
@@ -177,7 +178,6 @@ impl LocalDapStore {
                 }
             };
             unimplemented!();
-            Ok(())
             /*client
             .send_message(Message::Response(Response {
                 seq,
@@ -248,10 +248,10 @@ impl DapStore {
             futures::channel::mpsc::unbounded::<(SessionId, Message)>();
 
         let _start_debugging_task = cx.spawn(move |this, mut cx| async move {
-            while let Some((session_id, message)) = message_rx.next().await {
+            while let Some((_session_id, message)) = message_rx.next().await {
                 match message {
                     Message::Request(request) => {
-                        this.update(&mut cx, |this, cx| {
+                        this.update(&mut cx, |_this, _cx| {
                             if request.command == StartDebugging::COMMAND {
                                 // this.sessions.get(1).update(|session, cx| {
                                 //     session.child(session_id, cx);
@@ -261,7 +261,8 @@ impl DapStore {
                             } else if request.command == RunInTerminal::COMMAND {
                                 // spawn terminal
                             }
-                        });
+                        })
+                        .log_err();
                     }
                     _ => {}
                 }
@@ -404,7 +405,7 @@ impl DapStore {
         cx: &mut Context<Self>,
     ) {
         if let Some(client) = self.session_by_id(session_id) {
-            client.update(cx, |this, cx| {
+            client.update(cx, |this, _cx| {
                 this.capabilities = this.capabilities.merge(capabilities.clone());
             });
         }

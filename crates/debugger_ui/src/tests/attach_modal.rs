@@ -1,5 +1,5 @@
 use crate::*;
-use attach_modal::AttachModal;
+use attach_modal::_AttachModal;
 use dap::requests::{Attach, Disconnect, Initialize};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::{Cancel, Confirm};
@@ -72,7 +72,7 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
     // assert we didn't show the attach modal
     workspace
         .update(cx, |workspace, _window, cx| {
-            assert!(workspace.active_modal::<AttachModal>(cx).is_none());
+            assert!(workspace.active_modal::<_AttachModal>(cx).is_none());
         })
         .unwrap();
 
@@ -151,7 +151,7 @@ async fn test_show_attach_modal_and_select_process(
     // assert we show the attach modal
     workspace
         .update(cx, |workspace, _window, cx| {
-            let attach_modal = workspace.active_modal::<AttachModal>(cx).unwrap();
+            let attach_modal = workspace.active_modal::<_AttachModal>(cx).unwrap();
 
             let names = attach_modal.update(cx, |modal, cx| attach_modal::procss_names(&modal, cx));
 
@@ -168,7 +168,7 @@ async fn test_show_attach_modal_and_select_process(
     // assert attach modal was dismissed
     workspace
         .update(cx, |workspace, _window, cx| {
-            assert!(workspace.active_modal::<AttachModal>(cx).is_none());
+            assert!(workspace.active_modal::<_AttachModal>(cx).is_none());
         })
         .unwrap();
 
@@ -242,7 +242,7 @@ async fn test_shutdown_session_when_modal_is_dismissed(
     // assert we show the attach modal
     workspace
         .update(cx, |workspace, _window, cx| {
-            let attach_modal = workspace.active_modal::<AttachModal>(cx).unwrap();
+            let attach_modal = workspace.active_modal::<_AttachModal>(cx).unwrap();
 
             let names = attach_modal.update(cx, |modal, cx| attach_modal::procss_names(&modal, cx));
 
@@ -259,7 +259,7 @@ async fn test_shutdown_session_when_modal_is_dismissed(
     // assert attach modal was dismissed
     workspace
         .update(cx, |workspace, _window, cx| {
-            assert!(workspace.active_modal::<AttachModal>(cx).is_none());
+            assert!(workspace.active_modal::<_AttachModal>(cx).is_none());
         })
         .unwrap();
 

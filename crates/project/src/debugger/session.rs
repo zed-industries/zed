@@ -1,6 +1,6 @@
 use crate::project_settings::ProjectSettings;
 
-use super::breakpoint_store::{BreakpointStore, BreakpointStoreEvent};
+use super::breakpoint_store::BreakpointStore;
 use super::dap_command::{
     self, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand,
     Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, ModulesCommand, NextCommand,
@@ -12,13 +12,11 @@ use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, IndexMap};
 use dap::{
-    adapters::{DapDelegate, DapStatus, DebugAdapterName},
+    adapters::{DapDelegate, DapStatus},
     client::{DebugAdapterClient, SessionId},
     messages::{self, Events, Message},
-    requests::SetBreakpoints,
-    Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, ScopeId,
-    SetBreakpointsArguments, Source, SourceBreakpoint, StackFrameId, SteppingGranularity,
-    StoppedEvent, VariableReference,
+    Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, StackFrameId,
+    SteppingGranularity, StoppedEvent,
 };
 use dap_adapters::build_adapter;
 use futures::channel::oneshot;
@@ -107,7 +105,7 @@ pub enum ThreadStatus {
 pub struct Thread {
     dap: dap::Thread,
     stack_frame_ids: HashSet<StackFrameId>,
-    has_stopped: bool,
+    _has_stopped: bool,
 }
 
 impl From<dap::Thread> for Thread {
@@ -115,7 +113,7 @@ impl From<dap::Thread> for Thread {
         Self {
             dap,
             stack_frame_ids: Default::default(),
-            has_stopped: false,
+            _has_stopped: false,
         }
     }
 }
@@ -165,7 +163,7 @@ struct LocalMode {
     client: Arc<DebugAdapterClient>,
 }
 
-enum ReverseRequest {
+enum _ReverseRequest {
     RunInTerminal(),
 }
 
@@ -567,34 +565,35 @@ impl Session {
     }
 
     pub(crate) fn remote(
-        session_id: SessionId,
-        client: AnyProtoClient,
-        upstream_project_id: u64,
-        breakpoint_store: Entity<BreakpointStore>,
-        ignore_breakpoints: bool,
+        _session_id: SessionId,
+        _client: AnyProtoClient,
+        _upstream_project_id: u64,
+        _breakpoint_store: Entity<BreakpointStore>,
+        _ignore_breakpoints: bool,
     ) -> Self {
-        Self {
-            mode: Mode::Remote(RemoteConnection {
-                client,
-                upstream_project_id,
-            }),
-            id: session_id,
-            capabilities: Capabilities::default(),
-            breakpoint_store,
-            ignore_breakpoints,
-            variables: Default::default(),
-            stack_frames: IndexMap::default(),
-            thread_states: ThreadStates::default(),
-            last_processed_output: 0,
-            output: Vec::default(),
-            requests: HashMap::default(),
-            modules: Vec::default(),
-            loaded_sources: Vec::default(),
-            threads: IndexMap::default(),
-            _background_tasks: Vec::default(),
-            config: todo!(),
-            is_session_terminated: false,
-        }
+        // Self {
+        //     mode: Mode::Remote(RemoteConnection {
+        //         client,
+        //         upstream_project_id,
+        //     }),
+        //     id: session_id,
+        //     capabilities: Capabilities::default(),
+        //     breakpoint_store,
+        //     ignore_breakpoints,
+        //     variables: Default::default(),
+        //     stack_frames: IndexMap::default(),
+        //     thread_states: ThreadStates::default(),
+        //     last_processed_output: 0,
+        //     output: Vec::default(),
+        //     requests: HashMap::default(),
+        //     modules: Vec::default(),
+        //     loaded_sources: Vec::default(),
+        //     threads: IndexMap::default(),
+        //     _background_tasks: Vec::default(),
+        //     is_session_terminated: false,
+        //     config: todo!(),
+        // }
+        todo!()
     }
 
     pub fn session_id(&self) -> SessionId {
@@ -867,14 +866,14 @@ impl Session {
         // todo(debugger): We need to propagate this change to downstream sessions and send a message to upstream sessions
 
         self.ignore_breakpoints = ignore;
-        let mut tasks: Vec<Task<()>> = Vec::new();
+        let tasks: Vec<Task<()>> = Vec::new();
 
-        for (abs_path, serialized_breakpoints) in self
+        for (_abs_path, serialized_breakpoints) in self
             .breakpoint_store
             .read_with(cx, |store, cx| store.all_breakpoints(true, cx))
             .into_iter()
         {
-            let source_breakpoints = if self.ignore_breakpoints {
+            let _source_breakpoints = if self.ignore_breakpoints {
                 serialized_breakpoints
                     .iter()
                     .map(|bp| bp.to_source_breakpoint())

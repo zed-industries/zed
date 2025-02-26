@@ -15,7 +15,6 @@ use workspace::Workspace;
 #[derive(Debug)]
 pub enum StackFrameListEvent {
     SelectedStackFrameChanged(StackFrameId),
-    StackFramesUpdated,
 }
 
 pub struct StackFrameList {
@@ -59,7 +58,7 @@ impl StackFrameList {
             },
         );
 
-        let _subscription = cx.observe(&session, |stack_frame_list, state, cx| {
+        let _subscription = cx.observe(&session, |stack_frame_list, _state, cx| {
             stack_frame_list.build_entries(cx);
         });
 
@@ -103,7 +102,7 @@ impl StackFrameList {
             .collect()
     }
 
-    pub fn get_main_stack_frame_id(&self, cx: &mut Context<Self>) -> u64 {
+    pub fn _get_main_stack_frame_id(&self, cx: &mut Context<Self>) -> u64 {
         self.stack_frames(cx)
             .first()
             .map(|stack_frame| stack_frame.dap.id)
@@ -114,7 +113,7 @@ impl StackFrameList {
         self.current_stack_frame_id
     }
 
-    pub fn current_thread_id(&self) -> Option<ThreadId> {
+    pub fn _current_thread_id(&self) -> Option<ThreadId> {
         self.thread_id
     }
 
