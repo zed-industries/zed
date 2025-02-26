@@ -571,6 +571,7 @@ impl AutoUpdater {
         })?;
 
         // Notify the user that the update is ready to install, and provide a button to restart then install it.
+        // Installer.exe
 
         Ok(())
     }
@@ -827,6 +828,18 @@ pub fn check_pending_installation() -> bool {
     if !installer_exe.exists() {
         return false;
     }
-    let _ = Command::new(installer_exe).arg("--install").spawn();
+    let flag_file = installer_path.join("versions.txt");
+    if flag_file.exists() {
+        if let Some(_last_line) = std::fs::read_to_string(&flag_file)
+            .ok()
+            .and_then(|s| s.lines().last().map(|s| s.to_string()))
+        {
+            // todo(windows)
+            // Check version here
+            std::fs::remove_dir_all(installer_path).ok();
+            return false;
+        }
+    }
+    let _ = Command::new(installer_exe).arg("/SILENT").spawn();
     true
 }
