@@ -302,6 +302,7 @@ impl Display for TerminalError {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum TerminalRunLocation {
     Host,
     Remote,

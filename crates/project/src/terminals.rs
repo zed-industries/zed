@@ -270,7 +270,7 @@ impl Project {
             }
             TerminalKind::LocalShell(_) => {
                 terminal_title_override =
-                    Some(SharedString::new("Host Machine - Terminal".to_string()));
+                    Some(SharedString::new("Host Machine — Terminal".to_string()));
                 (None, settings.shell.clone())
             }
             TerminalKind::Task(spawn_task) => {
@@ -373,6 +373,10 @@ impl Project {
 
             if let Some(activate_command) = python_venv_activate_command {
                 this.activate_python_virtual_environment(activate_command, &terminal_handle, cx);
+            }
+
+            if is_local_shell && ssh_details.is_some() {
+                this.print_local_terminal_warning(&terminal_handle, cx);
             }
             terminal_handle
         })
@@ -519,6 +523,19 @@ impl Project {
         cx: &mut App,
     ) {
         terminal_handle.update(cx, |terminal, _| terminal.input_bytes(command.into_bytes()));
+    }
+
+    fn print_local_terminal_warning(&self, terminal_handle: &Entity<Terminal>, cx: &mut App) {
+        let line_ending = match std::env::consts::OS {
+            "windows" => "\r",
+            _ => "\n",
+        };
+
+        let warning = format!(
+            "clear; echo \"WARNING: This terminal is running on your local host, not the remote host.\" {line_ending}",
+        );
+
+        terminal_handle.update(cx, |terminal, _| terminal.input(warning));
     }
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakEntity<terminal::Terminal>> {
