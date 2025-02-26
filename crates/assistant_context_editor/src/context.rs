@@ -2220,7 +2220,7 @@ impl AssistantContext {
                     let request_start = Instant::now();
                     let mut events = stream.await?;
                     let mut stop_reason = StopReason::EndTurn;
-
+                    
                     while let Some(event) = events.next().await {
                         if response_latency.is_none() {
                             response_latency = Some(request_start.elapsed());
@@ -2246,14 +2246,18 @@ impl AssistantContext {
                                         stop_reason = reason;
                                     }
                                     LanguageModelCompletionEvent::Text(chunk) => {
+                                        // First, apply the chunk as-is to maintain streaming experience
                                         buffer.edit(
-                                            [(
-                                                message_old_end_offset..message_old_end_offset,
-                                                chunk,
-                                            )],
+                                            [(message_old_end_offset..message_old_end_offset, chunk.clone())],
                                             None,
                                             cx,
                                         );
+                                        
+                                        // Then check if we've just completed a shell code block 
+                                        // and format it if needed
+                                        if chunk.contains("```") {
+                                            format_shell_code_blocks(buffer, cx);
+                                        }
                                     }
                                     LanguageModelCompletionEvent::ToolUse(_) => {}
                                 }
@@ -2265,6 +2269,7 @@ impl AssistantContext {
                         })?;
                         smol::future::yield_now().await;
                     }
+
                     this.update(&mut cx, |this, cx| {
                         this.pending_completions
                             .retain(|completion| completion.id != pending_completion_id);
@@ -3368,4 +3373,46 @@ pub struct SavedContextMetadata {
     pub title: String,
     pub path: PathBuf,
     pub mtime: chrono::DateTime<chrono::Local>,
+}
+
+// Add this helper function outside the completion handler
+fn format_shell_code_blocks(buffer: &mut Buffer, cx: &mut Context<Buffer>) {
+    // Store the text once to avoid temporary value issues
+    let text = buffer.text();
+    
+    let mut blocks = Vec::new();
+    let mut pos = 0;
+    
+    while let Some(start_idx) = find_next_pattern(&text[pos..], &["```sh", "```bash", "``` sh", "``` bash"]) {
+        let block_start = pos + start_idx;
+        
+        if let Some(line_end) = text[block_start..].find('\n') {
+            let content_start = block_start + line_end + 1;
+            
+            if let Some(end_marker) = text[content_start..].find("```") {
+                let content_end = content_start + end_marker;
+                let block_end = content_end + 3;
+                
+                let command = text[content_start..content_end].trim();
+                blocks.push((block_start, block_end, command.to_string()));
+                pos = block_end;
+            } else {
+                pos = block_start + 4;
+            }
+        } else {
+            pos = block_start + 4;
+        }
+    }
+    
+    for (start, end, command) in blocks.iter().rev() {
+        let formatted = format!("\n┌─────────────┐\n│ {} ▶ │\n└─────────────┘\n", command);
+        buffer.edit([(*start..*end, formatted)], None, cx);
+    }
+}
+
+// Helper to find the next occurrence of any pattern from a list
+fn find_next_pattern(text: &str, patterns: &[&str]) -> Option<usize> {
+    patterns.iter()
+        .filter_map(|pat| text.find(pat))
+        .min()
 }
