@@ -2641,7 +2641,6 @@ impl Snapshot {
             update.updated_entries.len(),
             update.removed_entries.len()
         );
-        dbg!(&update);
         self.update_abs_path(
             SanitizedPath::from(PathBuf::from_proto(update.abs_path)),
             update.root_name,
