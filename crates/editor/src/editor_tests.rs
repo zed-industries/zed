@@ -16383,6 +16383,12 @@ mod autoclose_tags {
                                 unclosed_open_tag_count -= 1;
                             }
                             continue;
+                        } else if node.kind() == "jsx_self_closing_element" {
+                            // don't recurse into jsx self-closing elements
+                            continue;
+                        } else if node.kind() == "jsx_expression" {
+                            // don't recurse into jsx expressions (it forms a new scope)
+                            continue;
                         }
 
                         stack.extend(node.children(&mut cursor));
@@ -16489,6 +16495,21 @@ mod autoclose_tags {
     check!(
         ignores_closing_tags_with_different_tag_names,
         "<div><divˇ</div></span>" + ">" => "<div><div>ˇ</div></div></span>"
+    );
+
+    check!(
+        autocloses_in_jsx_expression,
+        "<div>{<divˇ}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
+    );
+
+    check!(
+        doesnt_autoclose_already_closed_in_jsx_expression,
+        "<div>{<divˇ</div>}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
+    );
+
+    check!(
+        does_not_include_type_argument_in_autoclose_tag_name,
+        "<Component<T> attr={boolean_value}ˇ" + ">" => "<Component<T> attr={boolean_value}>ˇ</Component>"
     );
 }
 
