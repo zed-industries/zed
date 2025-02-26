@@ -774,7 +774,8 @@ struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    const PLACEHOLDER_TEXT: &'static str = "XXXXXXXXXXXXXXXXXXX";
+    const PLACEHOLDER_ACCESS_KEY_ID_TEXT: &'static str = "<YOUR ACCESS KEY ID HERE>";
+    const PLACEHOLDER_SECRET_ACCESS_KEY_TEXT: &'static str = "<YOUR SECRET ACCESS KEY HERE>";
     const PLACEHOLDER_REGION: &'static str = "us-east-1";
 
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -804,12 +805,12 @@ impl ConfigurationView {
         Self {
             access_key_id_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_ACCESS_KEY_ID_TEXT, cx);
                 editor
             }),
             secret_access_key_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT, cx);
                 editor
             }),
             region_editor: cx.new(|cx| {
@@ -955,16 +956,27 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         const IAM_CONSOLE_URL: &str = "https://us-east-1.console.aws.amazon.com/iam/home";
-        const INSTRUCTIONS: [&str; 3] = [
+        const BEDROCK_DOCS_URL: &str = "https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html";
+        const BEDROCK_MODEL_CATALOG: &str = "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess";
+        const INSTRUCTIONS: [&str; 5] = [
             "To use Zed's assistant with Bedrock, you need to add the Access Key ID, Secret Access Key and AWS Region. Follow these steps:",
-            "- Create a pair at:",
+            "- Create your credentials at:",
+            "- Grant that user permissions according to this documentation:",
+            "- Go to the Bedrock console and select the models you would like access to: ",
             "- Paste your Access Key ID, Secret Key, and Region below and hit enter to use the assistant:",
         ];
+        const BEDROCK_MODEL_CATALOG_LABEL: &str = "Bedrock Model Catalog";
+        const BEDROCK_IAM_DOCS: &str = "Prerequisites";
+        const ACCESS_KEY_ID: &str = "Access Key ID:";
+        const SECRET_ACCESS_KEY: &str = "Secret Access Key:";
+        const REGION: &str = "Region:";
+
         let env_var_set = self.state.read(cx).credentials_from_env;
 
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials...")).into_any()
         } else if self.should_render_editor(cx) {
+
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_credentials))
@@ -978,13 +990,29 @@ impl Render for ConfigurationView {
                         .on_click(move |_, _window, cx| cx.open_url(IAM_CONSOLE_URL))
                 )
                 )
-                .child(Label::new(INSTRUCTIONS[2]))
+                .child(h_flex().child(Label::new(INSTRUCTIONS[2])).child(
+                    Button::new("bedrock_iam_docs", BEDROCK_IAM_DOCS)
+                        .style(ButtonStyle::Subtle)
+                        .icon(IconName::ExternalLink)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .on_click(move |_, _window, cx| cx.open_url(BEDROCK_DOCS_URL))
+                ))
+                .child(h_flex().child(Label::new(INSTRUCTIONS[3])).child(
+                    Button::new("bedrock_model_catalog", BEDROCK_MODEL_CATALOG_LABEL)
+                        .style(ButtonStyle::Subtle)
+                        .icon(IconName::ExternalLink)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .on_click(move |_, _window, cx| cx.open_url(BEDROCK_MODEL_CATALOG))
+                ))
+                .child(Label::new(INSTRUCTIONS[4]))
                 .child(
-                    h_flex()
+                    v_flex()
                         .gap_1()
-                        .child(self.render_aa_id_editor(cx))
-                        .child(self.render_sk_editor(cx))
-                        .child(self.render_region_editor(cx))
+                        .child(h_flex().gap_2().child(Label::new(ACCESS_KEY_ID)).child(self.render_aa_id_editor(cx)))
+                        .child(h_flex().gap_2().child(Label::new(SECRET_ACCESS_KEY)).child(self.render_sk_editor(cx)))
+                        .child(h_flex().gap_2().child(Label::new(REGION)).child(self.render_region_editor(cx)))
                 )
                 .child(
                     Label::new(
