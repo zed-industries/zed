@@ -393,78 +393,78 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
 impl ConsoleQueryBarCompletionProvider {
     fn variable_list_completions(
         &self,
-        console: &Entity<Console>,
-        buffer: &Entity<Buffer>,
-        buffer_position: language::Anchor,
-        cx: &mut Context<Editor>,
+        _console: &Entity<Console>,
+        _buffer: &Entity<Buffer>,
+        _buffer_position: language::Anchor,
+        _cx: &mut Context<Editor>,
     ) -> gpui::Task<gpui::Result<Vec<project::Completion>>> {
-        let (variables, string_matches) = console.update(cx, |console, cx| {
-            let mut variables = HashMap::new();
-            let mut string_matches = Vec::new();
+        unimplemented!("Need to fix this for the refactor");
+        //     let (variables, string_matches) = console.update(cx, |console, cx| {
+        //         let mut variables = HashMap::new();
+        //         let mut string_matches = Vec::new();
 
-            for variable in console.variable_list.update(cx, |variable_list, cx| {
-                // variable_list.completion_variables(cx)
-                todo!()
-            }) {
-                if let Some(evaluate_name) = &variable.variable.dap.evaluate_name {
-                    variables.insert(evaluate_name.clone(), variable.variable.dap.value.clone());
-                    string_matches.push(StringMatchCandidate {
-                        id: 0,
-                        string: evaluate_name.clone(),
-                        char_bag: evaluate_name.chars().collect(),
-                    });
-                }
+        //         for variable in console.variable_list.update(cx, |variable_list, cx| {
+        //             variable_list.completion_variables(cx)
+        //         }) {
+        //             if let Some(evaluate_name) = &variable.variable.dap.evaluate_name {
+        //                 variables.insert(evaluate_name.clone(), variable.variable.dap.value.clone());
+        //                 string_matches.push(StringMatchCandidate {
+        //                     id: 0,
+        //                     string: evaluate_name.clone(),
+        //                     char_bag: evaluate_name.chars().collect(),
+        //                 });
+        //             }
 
-                variables.insert(
-                    variable.variable.dap.name.clone(),
-                    variable.variable.dap.value.clone(),
-                );
+        //             variables.insert(
+        //                 variable.variable.dap.name.clone(),
+        //                 variable.variable.dap.value.clone(),
+        //             );
 
-                string_matches.push(StringMatchCandidate {
-                    id: 0,
-                    string: variable.variable.dap.name.clone(),
-                    char_bag: variable.variable.dap.name.chars().collect(),
-                });
-            }
+        //             string_matches.push(StringMatchCandidate {
+        //                 id: 0,
+        //                 string: variable.variable.dap.name.clone(),
+        //                 char_bag: variable.variable.dap.name.chars().collect(),
+        //             });
+        //         }
 
-            (variables, string_matches)
-        });
+        //         (variables, string_matches)
+        //     });
 
-        let query = buffer.read(cx).text();
+        //     let query = buffer.read(cx).text();
 
-        cx.spawn(|_, cx| async move {
-            let matches = fuzzy::match_strings(
-                &string_matches,
-                &query,
-                true,
-                10,
-                &Default::default(),
-                cx.background_executor().clone(),
-            )
-            .await;
+        //     cx.spawn(|_, cx| async move {
+        //         let matches = fuzzy::match_strings(
+        //             &string_matches,
+        //             &query,
+        //             true,
+        //             10,
+        //             &Default::default(),
+        //             cx.background_executor().clone(),
+        //         )
+        //         .await;
 
-            Ok(matches
-                .iter()
-                .filter_map(|string_match| {
-                    let variable_value = variables.get(&string_match.string)?;
+        //         Ok(matches
+        //             .iter()
+        //             .filter_map(|string_match| {
+        //                 let variable_value = variables.get(&string_match.string)?;
 
-                    Some(project::Completion {
-                        old_range: buffer_position..buffer_position,
-                        new_text: string_match.string.clone(),
-                        label: CodeLabel {
-                            filter_range: 0..string_match.string.len(),
-                            text: format!("{} {}", string_match.string.clone(), variable_value),
-                            runs: Vec::new(),
-                        },
-                        server_id: LanguageServerId(usize::MAX),
-                        documentation: None,
-                        lsp_completion: Default::default(),
-                        confirm: None,
-                        resolved: true,
-                    })
-                })
-                .collect())
-        })
+        //                 Some(project::Completion {
+        //                     old_range: buffer_position..buffer_position,
+        //                     new_text: string_match.string.clone(),
+        //                     label: CodeLabel {
+        //                         filter_range: 0..string_match.string.len(),
+        //                         text: format!("{} {}", string_match.string.clone(), variable_value),
+        //                         runs: Vec::new(),
+        //                     },
+        //                     server_id: LanguageServerId(usize::MAX),
+        //                     documentation: None,
+        //                     lsp_completion: Default::default(),
+        //                     confirm: None,
+        //                     resolved: true,
+        //                 })
+        //             })
+        //             .collect())
+        //     })
     }
 
     fn client_completions(

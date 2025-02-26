@@ -1,12 +1,12 @@
-use super::stack_frame_list::{StackFrameId, StackFrameList, StackFrameListEvent};
+use super::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use anyhow::{anyhow, Result};
 use collections::IndexMap;
+use dap::{ScopeId, StackFrameId, VariableReference};
 use editor::{actions::SelectAll, Editor, EditorEvent};
 use gpui::{
     actions, anchored, deferred, list, AnyElement, ClipboardItem, Context, DismissEvent, Entity,
     FocusHandle, Focusable, Hsla, ListState, MouseDownEvent, Point, Subscription, Task,
 };
-use dap::{VariableReference, StackFrameId, ScopeId};
 use menu::Confirm;
 use project::debugger::session::{self, Scope, Session};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -99,32 +99,30 @@ impl VariableList {
 
     fn build_entries(
         &mut self,
-        stack_frame_id: &StackFrameId,
+        stack_frame_id: StackFrameId,
         cx: &mut Context<Self>,
     ) -> Vec<VariableListEntry> {
         let mut ret = vec![];
 
-        let Some(scopes) = self.scopes.get_mut(stack_frame_id) else {
-            self.session.update(cx, |session, cx| session.scopes(thread_id, stack_frame_id, cx))
+        let Some(scopes) = self.scopes.get_mut(&stack_frame_id) else {
+            // self.session
+            //     .update(cx, |session, cx| session.scopes(stack_frame_id, cx));
             return ret;
         };
 
         fn inner(
-            this: &mut VariableList,
-            variable_reference: u64,
-            entries: &mut Vec<VariableListEntry>,
-            cx: &mut Context<VariableList>,
+            _this: &mut VariableList,
+            _variable_reference: u64,
+            _entries: &mut Vec<VariableListEntry>,
+            _cx: &mut Context<VariableList>,
         ) {
         }
 
-        for scope in scopes {
-            for variable in scope.variables {
-                ret.push(VariableListEntry::new(
-                    variable.name.clone(),
-                    variable.value.clone(),
-                ));
-            }
-        }
+        // for scope in scopes {
+        //     for variable in scope.variables {
+        //         ret.push(VariableListEntry::Variable(variable));
+        //     }
+        // }
 
         todo!()
     }
@@ -190,10 +188,10 @@ impl VariableList {
     // }
 
     fn render_entry(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let Some(entry) = self.entries.get(ix) else {
-            debug_panic!("Trying to render entry in variable list that has an out of bounds index");
-            return div().into_any_element();
-        };
+        // let Some(entry) = self.entries.get(ix) else {
+        //     debug_panic!("Trying to render entry in variable list that has an out of bounds index");
+        //     return div().into_any_element();
+        // };
 
         return div().into_any_element();
 

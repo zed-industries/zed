@@ -82,7 +82,7 @@ impl From<dap::Scope> for Scope {
 #[derive(Clone, Debug)]
 pub struct StackFrame {
     pub dap: dap::StackFrame,
-    pub scopes: Vec<Scope>,
+    pub scopes: Vec<dap::Scope>,
 }
 
 impl From<dap::StackFrame> for StackFrame {
@@ -416,11 +416,11 @@ pub struct Session {
     last_processed_output: usize,
     output: Vec<dap::OutputEvent>,
     threads: IndexMap<ThreadId, Thread>,
-    requests: HashMap<RequestSlot, Shared<Task<Option<()>>>>,
     variables: HashMap<VariablesReference, Vec<Variable>>,
     stack_frames: IndexMap<StackFrameId, StackFrame>,
     thread_states: ThreadStates,
     is_session_terminated: bool,
+    requests: HashMap<RequestSlot, Shared<Task<Option<()>>>>,
     _background_tasks: Vec<Task<()>>,
 }
 
@@ -1145,12 +1145,17 @@ impl Session {
                 },
                 move |this, stack_frames, cx| {
                     let entry = this.threads.entry(thread_id).and_modify(|thread| {
-                        thread.stack_frames = stack_frames
-                            .iter()
-                            .cloned()
-                            .map(|frame| (frame.id, frame.into()))
-                            .collect();
+                        thread.stack_frame_ids =
+                            stack_frames.iter().map(|frame| frame.id).collect();
                     });
+
+                    this.stack_frames.extend(
+                        stack_frames
+                            .into_iter()
+                            .cloned()
+                            .map(|frame| (frame.id, StackFrame::from(frame))),
+                    );
+
                     debug_assert!(
                         matches!(entry, indexmap::map::Entry::Occupied(_)),
                         "Sent request for thread_id that doesn't exist"
@@ -1164,31 +1169,39 @@ impl Session {
 
         self.threads
             .get(&thread_id)
-            .map(|thread| thread.stack_frames.values().cloned().collect())
+            .map(|thread| {
+                thread
+                    .stack_frame_ids
+                    .iter()
+                    .filter_map(|id| self.stack_frames.get(id))
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
-    pub fn scopes(&mut self, stack_frame_id: u64, cx: &mut Context<Self>) -> Vec<Scope> {
+    pub fn scopes(&mut self, stack_frame_id: u64, cx: &mut Context<Self>) -> &[dap::Scope] {
         self.fetch(
             ScopesCommand { stack_frame_id },
-            move |this, scopes, cx| {
-                this.threads.entry(thread_id).and_modify(|thread| {
-                    if let Some(stack_frame) = thread.stack_frames.get_mut(&stack_frame_id) {
-                        stack_frame.scopes = scopes.iter().cloned().map(From::from).collect();
-                        cx.notify();
-                    }
-                });
+            move |this, scopes, _cx| {
+                let entry = this
+                    .stack_frames
+                    .entry(stack_frame_id)
+                    .and_modify(|stack_frame| {
+                        stack_frame.scopes = scopes.clone();
+                    });
+
+                debug_assert!(
+                    matches!(entry, indexmap::map::Entry::Occupied(_)),
+                    "Sent scopes request for stack_frame_id that doesn't exist or hasn't been fetched"
+                );
             },
             cx,
         );
-        self.threads
-            .get(&thread_id)
-            .and_then(|thread| {
-                thread
-                    .stack_frames
-                    .get(&stack_frame_id)
-                    .map(|stack_frame| stack_frame.scopes.clone())
-            })
+
+        self.stack_frames
+            .get(&stack_frame_id)
+            .map(|frame| frame.scopes.as_slice())
             .unwrap_or_default()
     }
 

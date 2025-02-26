@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use anyhow::{anyhow, Result};
+use dap::StackFrameId;
 use gpui::{
     list, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, Subscription, Task,
     WeakEntity,
@@ -10,8 +11,6 @@ use project::debugger::session::{Session, StackFrame, ThreadId};
 use project::ProjectPath;
 use ui::{prelude::*, Tooltip};
 use workspace::Workspace;
-
-pub type StackFrameId = u64;
 
 #[derive(Debug)]
 pub enum StackFrameListEvent {
