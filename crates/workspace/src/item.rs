@@ -486,6 +486,7 @@ pub trait ItemHandle: 'static + Send {
     ) -> gpui::Subscription;
     fn tab_description(&self, detail: usize, cx: &App) -> Option<SharedString>;
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement;
+    fn tab_content_text(&self, window: &Window, cx: &App) -> Option<SharedString>;
     fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon>;
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString>;
     fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent>;
@@ -614,6 +615,9 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement {
         self.read(cx).tab_content(params, window, cx)
+    }
+    fn tab_content_text(&self, window: &Window, cx: &App) -> Option<SharedString> {
+        self.read(cx).tab_content_text(window, cx)
     }
 
     fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon> {
