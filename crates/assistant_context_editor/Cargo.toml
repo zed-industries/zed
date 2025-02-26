@@ -20,7 +20,6 @@ chrono.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
-combobox.workspace = true
 context_server.workspace = true
 editor.workspace = true
 fs.workspace = true

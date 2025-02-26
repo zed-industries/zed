@@ -1,6 +1,6 @@
 #![allow(unused, dead_code)]
 
-use crate::branch_picker::BranchListDelegate;
+use crate::branch_picker::{self, BranchList, BranchListDelegate};
 use crate::git_panel::{commit_message_editor, GitPanel};
 use crate::repository_selector::RepositorySelector;
 use anyhow::Result;
@@ -36,9 +36,9 @@ pub fn init(cx: &mut App) {
 }
 
 pub struct CommitModal {
+    branch_list: Entity<BranchList>,
     git_panel: Entity<GitPanel>,
     commit_editor: Entity<Editor>,
-    branch_list_delegate: BranchListDelegate,
     restore_dock: RestoreDock,
     current_suggestion: Option<usize>,
     suggested_messages: Vec<SharedString>,
@@ -111,10 +111,10 @@ impl CommitModal {
                 active_index,
             };
 
-            let weak_workspace = cx.entity().downgrade();
+            let project = workspace.project().clone();
             workspace.open_panel::<GitPanel>(window, cx);
             workspace.toggle_modal(window, cx, move |window, cx| {
-                CommitModal::new(git_panel, restore_dock_position, weak_workspace, window, cx)
+                CommitModal::new(git_panel, restore_dock_position, project, window, cx)
             })
         });
     }
@@ -122,7 +122,7 @@ impl CommitModal {
     fn new(
         git_panel: Entity<GitPanel>,
         restore_dock: RestoreDock,
-        workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -157,22 +157,23 @@ impl CommitModal {
         let focus_handle = commit_editor.focus_handle(cx);
 
         cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
-            cx.emit(DismissEvent);
+            if !this
+                .branch_list
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+            {
+                cx.emit(DismissEvent);
+            }
         })
         .detach();
 
-        // cx.spawn_in(window, |window, cx| {
-        //     cx.emit(DismissEvent);
-        // })
-        // .detach();
-
         Self {
+            branch_list: branch_picker::popover(project.clone(), window, cx),
             git_panel,
             commit_editor,
             restore_dock,
             current_suggestion: None,
             suggested_messages: vec![],
-            branch_list_delegate: todo!(),
         }
     }
 
@@ -323,20 +324,23 @@ impl CommitModal {
                 (branch, tooltip, title, co_authors)
             });
 
-        let branch_picker = panel_button(branch)
+        let branch_picker_button = panel_button(branch)
             .icon(IconName::GitBranch)
             .icon_size(IconSize::Small)
             .icon_color(Color::Placeholder)
             .color(Color::Muted)
             .icon_position(IconPosition::Start)
-            .tooltip(Tooltip::for_action_title(
-                "Switch Branch",
-                &zed_actions::git::Branch,
-            ))
             .on_click(cx.listener(|_, _, window, cx| {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
             }))
             .style(ButtonStyle::Transparent);
+
+        let branch_picker = popover_button::PopoverButton::new(
+            self.branch_list.clone(),
+            Corner::BottomLeft,
+            branch_picker_button,
+            Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),
+        );
 
         let changes_count = self.git_panel.read(cx).total_staged_count();
 
@@ -403,7 +407,12 @@ impl CommitModal {
                     .pt_2()
                     .pb_0p5()
                     .gap_1()
-                    .child(h_flex().gap_1().child(branch_picker).children(co_authors))
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(branch_picker.render(window, cx))
+                            .children(co_authors),
+                    )
                     .child(div().flex_1())
                     .child(
                         h_flex()

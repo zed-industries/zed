@@ -1,19 +1,18 @@
 use std::sync::Arc;
 
-use combobox::{Combobox, ComboboxSelector};
 use feature_flags::ZedPro;
 use gpui::{
-    action_with_deprecated_aliases, Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity,
+    action_with_deprecated_aliases, Action, AnyElement, App, Corner, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelAvailability, LanguageModelRegistry,
 };
 use picker::{Picker, PickerDelegate};
+use popover_button::{PopoverButton, TriggerablePopover};
 use proto::Plan;
 use ui::{
-    prelude::*, ButtonLike, IconButtonShape, ListItem, ListItemSpacing, PopoverMenu,
-    PopoverMenuHandle, PopoverTrigger, Tooltip,
+    prelude::*, ButtonLike, IconButtonShape, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip,
 };
 use workspace::ShowConfiguration;
 
@@ -202,72 +201,13 @@ impl Render for LanguageModelSelector {
     }
 }
 
-impl ComboboxSelector for LanguageModelSelector {
+impl TriggerablePopover for LanguageModelSelector {
     fn menu_handle(
         &mut self,
         _window: &mut Window,
         _cx: &mut gpui::Context<Self>,
     ) -> PopoverMenuHandle<Self> {
         self.popover_menu_handle.clone()
-    }
-}
-
-#[derive(IntoElement)]
-pub struct LanguageModelSelectorPopoverMenu<T, TT>
-where
-    T: PopoverTrigger + ButtonCommon,
-    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
-{
-    language_model_selector: Entity<LanguageModelSelector>,
-    trigger: T,
-    tooltip: TT,
-    handle: Option<PopoverMenuHandle<LanguageModelSelector>>,
-    anchor: Corner,
-}
-
-impl<T, TT> LanguageModelSelectorPopoverMenu<T, TT>
-where
-    T: PopoverTrigger + ButtonCommon,
-    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
-{
-    pub fn new(
-        language_model_selector: Entity<LanguageModelSelector>,
-        trigger: T,
-        tooltip: TT,
-        anchor: Corner,
-    ) -> Self {
-        Self {
-            language_model_selector,
-            trigger,
-            tooltip,
-            handle: None,
-            anchor,
-        }
-    }
-
-    pub fn with_handle(mut self, handle: PopoverMenuHandle<LanguageModelSelector>) -> Self {
-        self.handle = Some(handle);
-        self
-    }
-}
-
-impl<T, TT> RenderOnce for LanguageModelSelectorPopoverMenu<T, TT>
-where
-    T: PopoverTrigger + ButtonCommon,
-    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
-{
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let language_model_selector = self.language_model_selector.clone();
-
-        PopoverMenu::new("model-switcher")
-            .menu(move |_window, _cx| Some(language_model_selector.clone()))
-            .trigger_with_tooltip(self.trigger, self.tooltip)
-            .anchor(self.anchor)
-            .when_some(self.handle.clone(), |menu, handle| menu.with_handle(handle))
-            .offset(gpui::Point {
-                x: px(0.0),
-                y: px(-2.0),
-            })
     }
 }
 
@@ -565,7 +505,7 @@ impl InlineLanguageModelSelector {
 
 impl RenderOnce for InlineLanguageModelSelector {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        Combobox::new(
+        PopoverButton::new(
             self.selector,
             gpui::Corner::TopRight,
             IconButton::new("context", IconName::SettingsAlt)
@@ -615,7 +555,7 @@ impl RenderOnce for AssistantLanguageModelSelector {
             _ => SharedString::from("No model selected"),
         };
 
-        combobox::Combobox::new(
+        popover_button::PopoverButton::new(
             self.selector.clone(),
             Corner::BottomRight,
             ButtonLike::new("active-model")

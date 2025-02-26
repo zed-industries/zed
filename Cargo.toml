@@ -27,7 +27,7 @@ members = [
     "crates/collab",
     "crates/collab_ui",
     "crates/collections",
-    "crates/combobox",
+    "crates/popover_button",
     "crates/command_palette",
     "crates/command_palette_hooks",
     "crates/component",
@@ -232,7 +232,7 @@ clock = { path = "crates/clock" }
 collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
-combobox = { path = "crates/combobox" }
+popover_button = { path = "crates/popover_button" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
