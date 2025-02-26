@@ -21,7 +21,7 @@ mod json;
 mod python;
 mod rust;
 mod tailwind;
-mod tsx;
+pub mod tsx;
 mod typescript;
 mod vtsls;
 mod yaml;
@@ -240,7 +240,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         ],
         context => context_provider!(typescript_task_context()),
         toolchain => toolchain_provider!(),
-        edit_behavior => edit_behavior_provider!(tsx::JsxEditBehaviorProvider)
+        edit_behavior => edit_behavior_provider!(tsx::TsxEditBehaviorProvider)
     );
     register_language!(
         "typescript",
