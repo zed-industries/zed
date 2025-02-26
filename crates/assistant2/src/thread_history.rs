@@ -361,7 +361,7 @@ impl RenderOnce for PastContext {
                     IconButton::new("delete", IconName::TrashAlt)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
-                        .tooltip(Tooltip::text("Delete Context"))
+                        .tooltip(Tooltip::text("Delete Prompt Editor"))
                         .on_click({
                             let assistant_panel = self.assistant_panel.clone();
                             let path = self.context.path.clone();
