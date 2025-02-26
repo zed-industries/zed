@@ -247,7 +247,8 @@ pub enum EditPredictionsMode {
     Stealth,
     /// Display inline when there are no language server completions available.
     #[default]
-    EagerPreview,
+    #[serde(alias = "eager_preview")]
+    Eager,
 }
 
 #[derive(Clone, Debug, Default)]
