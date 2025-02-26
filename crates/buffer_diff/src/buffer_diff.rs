@@ -20,13 +20,13 @@ pub struct BufferDiff {
 pub struct BufferDiffSnapshot {
     inner: BufferDiffInner,
     secondary_diff: Option<Box<BufferDiffSnapshot>>,
-    pub is_single_insertion: bool,
 }
 
 #[derive(Clone)]
 struct BufferDiffInner {
     hunks: SumTree<InternalDiffHunk>,
     base_text: Option<language::BufferSnapshot>,
+    is_single_insertion: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -183,12 +183,27 @@ impl BufferDiffSnapshot {
         buffer: &text::BufferSnapshot,
     ) -> Option<Rope> {
         let unstaged_diff = self.secondary_diff()?;
+        self.inner
+            .stage_or_unstage_hunks(&unstaged_diff.inner, stage, hunks, buffer)
+    }
+}
+
+impl BufferDiffInner {
+    fn stage_or_unstage_hunks(
+        &self,
+        unstaged_diff: &Self,
+        stage: bool,
+        hunks: impl Iterator<Item = (Range<Anchor>, Range<usize>)>,
+        buffer: &text::BufferSnapshot,
+    ) -> Option<Rope> {
         let head_text = self
-            .base_text()
+            .base_text
+            .as_ref()
             .map(|text| text.as_rope().clone())
             .filter(|_| !self.is_single_insertion);
         let index_text = unstaged_diff
-            .base_text()
+            .base_text
+            .as_ref()
             .map(|text| text.as_rope().clone())
             .filter(|_| !unstaged_diff.is_single_insertion);
 
@@ -205,7 +220,7 @@ impl BufferDiffSnapshot {
             }
         };
 
-        let mut unstaged_hunk_cursor = unstaged_diff.inner.hunks.cursor::<DiffHunkSummary>(buffer);
+        let mut unstaged_hunk_cursor = unstaged_diff.hunks.cursor::<DiffHunkSummary>(buffer);
         unstaged_hunk_cursor.next(buffer);
         let mut edits = Vec::new();
         let mut prev_unstaged_hunk_buffer_offset = 0;
@@ -275,9 +290,7 @@ impl BufferDiffSnapshot {
         new_index_text.append(index_cursor.suffix());
         Some(new_index_text)
     }
-}
 
-impl BufferDiffInner {
     fn hunks_intersecting_range<'a>(
         &'a self,
         range: Range<Anchor>,
@@ -649,7 +662,11 @@ impl BufferDiff {
 
         async move {
             let (base_text, hunks) = futures::join!(base_text_snapshot, hunks);
-            BufferDiffInner { base_text, hunks }
+            BufferDiffInner {
+                base_text,
+                hunks,
+                is_single_insertion: false,
+            }
         }
     }
 
@@ -668,6 +685,7 @@ impl BufferDiff {
             BufferDiffInner {
                 hunks: compute_hunks(diff_base, buffer),
                 base_text: diff_base_buffer,
+                is_single_insertion: false,
             }
         })
     }
@@ -676,6 +694,7 @@ impl BufferDiff {
         BufferDiffInner {
             hunks: SumTree::new(buffer),
             base_text: None,
+            is_single_insertion: false,
         }
     }
 
@@ -696,6 +715,7 @@ impl BufferDiff {
             inner: BufferDiffInner {
                 hunks: hunks.clone(),
                 base_text: Some(base_text.clone()),
+                is_single_insertion: true,
             },
             secondary_diff: Some(Box::new(BufferDiffSnapshot {
                 inner: BufferDiffInner {
@@ -709,11 +729,10 @@ impl BufferDiff {
                     } else {
                         buffer
                     }),
+                    is_single_insertion: true,
                 },
                 secondary_diff: None,
-                is_single_insertion: true,
             })),
-            is_single_insertion: true,
         }
     }
 
@@ -818,7 +837,6 @@ impl BufferDiff {
                 .secondary_diff
                 .as_ref()
                 .map(|diff| Box::new(diff.read(cx).snapshot(cx))),
-            is_single_insertion: false,
         }
     }
 
@@ -1437,10 +1455,8 @@ mod tests {
                 inner: uncommitted_diff,
                 secondary_diff: Some(Box::new(BufferDiffSnapshot {
                     inner: unstaged_diff,
-                    is_single_insertion: false,
                     secondary_diff: None,
                 })),
-                is_single_insertion: false,
             };
 
             let range = buffer.anchor_before(ranges[0].start)..buffer.anchor_before(ranges[0].end);
