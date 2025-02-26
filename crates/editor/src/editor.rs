@@ -102,9 +102,9 @@ use language::{
         self, all_language_settings, language_settings, InlayHintSettings, RewrapBehavior,
     },
     point_from_lsp, text_diff_with_options, AutoindentMode, BracketMatch, BracketPair, Buffer,
-    Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, DiskState,
-    EditPredictionsMode, EditPreview, HighlightedText, IndentKind, IndentSize, Language,
-    OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, EditPredictionsMode,
+    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
+    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -13483,13 +13483,16 @@ impl Editor {
         buffer_id: BufferId,
         hunks: impl Iterator<Item = MultiBufferDiffHunk>,
         snapshot: &MultiBufferSnapshot,
-        cx: &mut Context<Self>,
+        cx: &mut App,
     ) {
         let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
             log::debug!("no buffer for id");
             return;
         };
         let buffer_snapshot = buffer.read(cx).snapshot();
+        let file_exists = buffer_snapshot
+            .file()
+            .is_some_and(|file| file.disk_state().exists());
         let Some((repo, path)) = project
             .read(cx)
             .repository_and_path_for_buffer_id(buffer_id, cx)
@@ -13502,40 +13505,33 @@ impl Editor {
             return;
         };
 
-        let Some(new_index_text) = diff.new_secondary_text_for_stage_or_unstage(
-            stage,
-            hunks.filter_map(|hunk| {
-                if stage && hunk.secondary_status == DiffHunkSecondaryStatus::None {
-                    return None;
-                } else if !stage
-                    && hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk
-                {
-                    return None;
-                }
-                Some((hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone()))
-            }),
-            &buffer_snapshot,
-            cx,
-        ) else {
-            log::debug!("missing secondary diff or index text");
-            return;
-        };
-        let new_index_text = if new_index_text.is_empty()
-            && !stage
-            && (diff.is_single_insertion
-                || buffer_snapshot
-                    .file()
-                    .map_or(false, |file| file.disk_state() == DiskState::New))
-        {
+        let new_index_text = if !stage && diff.is_single_insertion || stage && !file_exists {
             log::debug!("removing from index");
             None
         } else {
-            Some(new_index_text)
+            diff.new_secondary_text_for_stage_or_unstage(
+                stage,
+                hunks.filter_map(|hunk| {
+                    if stage && hunk.secondary_status == DiffHunkSecondaryStatus::None {
+                        return None;
+                    } else if !stage
+                        && hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk
+                    {
+                        return None;
+                    }
+                    Some((hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone()))
+                }),
+                &buffer_snapshot,
+                cx,
+            )
         };
-        let buffer_store = project.read(cx).buffer_store().clone();
-        buffer_store
-            .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
-            .detach_and_log_err(cx);
+
+        if file_exists {
+            let buffer_store = project.read(cx).buffer_store().clone();
+            buffer_store
+                .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
+                .detach_and_log_err(cx);
+        }
 
         cx.background_spawn(
             repo.read(cx)
