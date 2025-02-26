@@ -270,6 +270,8 @@ pub struct App {
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
+    /// Represents the application identifier, which can be set via a command-line argument.
+    pub app_id: Option<String>,
 }
 
 impl App {
@@ -334,6 +336,7 @@ impl App {
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
+                app_id: None,
             }),
         });
 
