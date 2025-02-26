@@ -4410,9 +4410,10 @@ impl Editor {
         match action {
             CodeActionsItem::Task(task_source_kind, resolved_task) => {
                 workspace.update(cx, |workspace, cx| {
-                    workspace::tasks::schedule_resolved_task(
+                    workspace::tasks::schedule_resolved_tasks(
                         workspace,
                         task_source_kind,
+                        vec![],
                         resolved_task,
                         false,
                         cx,
@@ -5741,9 +5742,10 @@ impl Editor {
 
             workspace
                 .update(&mut cx, |workspace, cx| {
-                    workspace::tasks::schedule_resolved_task(
+                    workspace::tasks::schedule_resolved_tasks(
                         workspace,
                         task_source_kind,
+                        vec![],
                         resolved_task,
                         false,
                         cx,

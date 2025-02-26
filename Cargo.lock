@@ -8247,6 +8247,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "nohash-hasher"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
+
+[[package]]
 name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10196,6 +10202,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "nohash-hasher",
  "parking_lot",
  "pathdiff",
  "paths",
@@ -13355,6 +13362,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "hex",
+ "itertools 0.14.0",
  "parking_lot",
  "schemars",
  "serde",
@@ -13374,6 +13382,7 @@ dependencies = [
  "file_icons",
  "fuzzy",
  "gpui",
+ "itertools 0.14.0",
  "language",
  "menu",
  "picker",
@@ -14885,6 +14894,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
+ "smol",
  "task",
  "theme",
  "tokio",
@@ -16407,6 +16417,7 @@ dependencies = [
  "session",
  "settings",
  "smallvec",
+ "smol",
  "sqlez",
  "strum",
  "task",

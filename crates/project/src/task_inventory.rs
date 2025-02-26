@@ -8,11 +8,12 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, LanguageToolchainStore, Location};
+use nohash_hasher::BuildNoHashHasher;
 use settings::{parse_json_with_comments, SettingsLocation};
 use task::{
     ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables, VariableName,
@@ -21,7 +22,10 @@ use text::{Point, ToPoint};
 use util::{paths::PathExt as _, post_inc, NumericPrefixWithSuffix, ResultExt as _};
 use worktree::WorktreeId;
 
-use crate::worktree_store::WorktreeStore;
+use crate::{
+    graph::{self, Graph},
+    worktree_store::WorktreeStore,
+};
 
 /// Inventory tracks available tasks for a given project.
 #[derive(Debug, Default)]
@@ -104,6 +108,120 @@ impl Inventory {
         self.worktree_templates_from_settings(worktree)
             .chain(language_tasks)
             .collect()
+    }
+
+    /// Topological sort of the dependency graph of `base_task`, not including the original task
+    pub fn resolve_file_based_task_queue(
+        &self,
+        base_task: &ResolvedTask,
+        task_source: &TaskSourceKind,
+        task_context: &TaskContext,
+    ) -> anyhow::Result<Vec<(TaskSourceKind, ResolvedTask)>> {
+        if base_task.resolved_pre_labels.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let worktree = match task_source {
+            TaskSourceKind::Worktree { id, .. } => Some(*id),
+            TaskSourceKind::AbsPath { .. } => None,
+            _ => return Ok(vec![]),
+        };
+
+        let tasks_in_scope = self
+            .worktree_templates_from_settings(worktree)
+            .chain(self.global_templates_from_settings())
+            .filter_map(|(kind, task)| {
+                let base_id = kind.to_id_base();
+                task.resolve_task(&base_id, task_context)
+                    .map(|task| (kind, task))
+            })
+            .unique_by(|(kind, task)| (kind.clone(), task.resolved_label.clone()))
+            .collect_vec();
+
+        if let None = tasks_in_scope.iter().find(|(source, task)| {
+            task.resolved_label == base_task.resolved_label && source == task_source
+        }) {
+            return Err(anyhow::anyhow!(
+                "Couldn't find task with label '{}' in tasks",
+                base_task.resolved_label
+            ));
+        }
+
+        // map task labels to their dep graph node idx, source, and dependencies
+        let nodes = tasks_in_scope
+            .iter()
+            .enumerate()
+            .map(|(idx, (source, task))| {
+                (
+                    (source, task.resolved_label.as_str()),
+                    (
+                        idx as u32,
+                        source,
+                        task.resolved_pre_labels
+                            .iter()
+                            .map(|s| s.as_str())
+                            .unique()
+                            .collect_vec(),
+                        task,
+                    ),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        // map node idxs to task labels for retrieval if a cycle is found
+        let indexes = nodes
+            .iter()
+            .map(|(label, (idx, _, _, _))| (*idx, *label))
+            .collect::<std::collections::HashMap<_, _, BuildNoHashHasher<u32>>>();
+
+        let mut dep_graph = Graph::new();
+
+        let global_source = Self::global_task_source();
+
+        for ((source, _), (node_idx, _, pre, _)) in &nodes {
+            dep_graph.add_node(*node_idx);
+
+            for pre_label in pre {
+                if let Some(node) = nodes.get(&(*source, *pre_label)) {
+                    dep_graph.add_edge(*node_idx, node.0);
+                } else if let Some(node) = nodes.get(&(&global_source, *pre_label)) {
+                    dep_graph.add_edge(*node_idx, node.0)
+                }
+            }
+        }
+
+        let base_task_node = nodes
+            .get(&(task_source, base_task.resolved_label.as_str()))
+            .unwrap()
+            .0;
+
+        let tasks_sorted = dep_graph
+            .subgraph(base_task_node)
+            .and_then(|g| g.topo_sort());
+
+        let tasks_sorted = match tasks_sorted {
+            Ok(tasks) => tasks,
+            Err(graph::Error::Cycle { src_node, dst_node }) => {
+                let src_task = indexes.get(&src_node).map_or("", |task| task.1);
+                let dst_task = indexes.get(&dst_node).map_or("", |task| task.1);
+
+                return Err(anyhow!(
+                    "Cycle found in the pre-task graph between labels '{src_task}' and '{dst_task}'"
+                ));
+            }
+
+            Err(node_not_found) => unreachable!("{node_not_found:?}"),
+        };
+
+        Ok(tasks_sorted
+            .iter()
+            .rev()
+            .take(tasks_sorted.len() - 1)
+            .filter_map(|idx| {
+                let task = nodes.get(indexes.get(idx)?)?;
+                Some((task.1.clone(), task.3.clone()))
+            })
+            .collect_vec())
     }
 
     /// Pulls its task sources relevant to the worktree and the language given and resolves them with the [`TaskContext`] given.
@@ -249,15 +367,14 @@ impl Inventory {
             .global
             .clone()
             .into_iter()
-            .map(|template| {
-                (
-                    TaskSourceKind::AbsPath {
-                        id_base: Cow::Borrowed("global tasks.json"),
-                        abs_path: paths::tasks_file().clone(),
-                    },
-                    template,
-                )
-            })
+            .map(|template| (Self::global_task_source(), template))
+    }
+
+    fn global_task_source() -> TaskSourceKind {
+        TaskSourceKind::AbsPath {
+            id_base: Cow::Borrowed("global tasks.json"),
+            abs_path: paths::tasks_file().clone(),
+        }
     }
 
     fn worktree_templates_from_settings(
@@ -324,6 +441,7 @@ impl Inventory {
             }
             None => parsed_templates.global = new_templates.collect(),
         }
+
         Ok(())
     }
 }
@@ -562,13 +680,210 @@ impl ContextProvider for ContextProviderWithTasks {
 #[cfg(test)]
 mod tests {
     use gpui::TestAppContext;
-    use pretty_assertions::assert_eq;
+    use pretty_assertions::{assert_eq, assert_matches};
     use serde_json::json;
 
     use crate::task_store::TaskStore;
 
     use super::test_inventory::*;
     use super::*;
+
+    #[gpui::test]
+    async fn test_pre_task_graph_sorted_correctly(cx: &mut TestAppContext) {
+        init_test(cx);
+        let inventory = cx.update(Inventory::new);
+
+        let common_source = Inventory::global_task_source();
+
+        let tasks: [(_, _, &[_]); 4] = [
+            (common_source.clone(), "task 1", &["task 2", "task 4"]),
+            (common_source.clone(), "task 2", &["task 4"]),
+            (common_source.clone(), "task 3", &["task 1", "task 2"]),
+            (common_source.clone(), "task 4", &[]),
+        ];
+
+        let tasks_json = serde_json::to_string(&serde_json::Value::Array(
+            tasks
+                .iter()
+                .map(|(_, label, pre)| {
+                    json!({
+                        "label": label,
+                        "command": "echo",
+                        "args": vec![label],
+                        "prerequisite": pre
+                    })
+                })
+                .collect_vec(),
+        ))
+        .unwrap();
+
+        cx.run_until_parked();
+
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(None, Some(&tasks_json))
+                .unwrap();
+        });
+
+        let task_cx = TaskContext::default();
+
+        let base_task = inventory.update(cx, |inventory, cx| {
+            inventory
+                .list_tasks(None, None, None, cx)
+                .iter()
+                .filter(|(_, task)| task.label.as_str() == tasks[2].1)
+                .map(|(kind, task)| {
+                    (
+                        kind.clone(),
+                        task.resolve_task(&kind.to_id_base(), &task_cx).unwrap(),
+                    )
+                })
+                .collect_vec()
+                .last()
+                .unwrap()
+                .clone()
+        });
+
+        let pre_task_list = inventory.update(cx, |inventory, _| {
+            inventory
+                .resolve_file_based_task_queue(&base_task.1, &base_task.0, &task_cx)
+                .unwrap()
+        });
+
+        let mut sorted_labels = pre_task_list
+            .iter()
+            .map(|(_, task)| task.original_task().label.as_str())
+            .collect_vec();
+
+        sorted_labels.push(base_task.1.original_task().label.as_str());
+
+        assert_matches!(
+            sorted_labels.as_slice(),
+            ["task 4", "task 2", "task 1", "task 3"]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_resolves_label_collision_from_worktree_first(cx: &mut TestAppContext) {
+        init_test(cx);
+        let inventory = cx.update(Inventory::new);
+
+        let global_task_source = Inventory::global_task_source();
+
+        let global_tasks: [(_, _, &[&str]); 2] = [
+            (global_task_source.clone(), "task 1", &[]),
+            (global_task_source.clone(), "task 5", &[]),
+        ];
+
+        let global_task_json = serde_json::to_string(&serde_json::Value::Array(
+            global_tasks
+                .iter()
+                .map(|(_, label, pre)| {
+                    json!({
+                        "label": label,
+                        "command": "echo",
+                        "prerequisite": pre,
+                        "args": vec![label],
+                    })
+                })
+                .collect_vec(),
+        ))
+        .unwrap();
+
+        let worktree_id = WorktreeId::from_usize(1);
+        let worktree_path = PathBuf::from(".zed");
+
+        let worktree_task_source = TaskSourceKind::Worktree {
+            id: worktree_id,
+            directory_in_worktree: worktree_path.clone(),
+            id_base: "local worktree tasks from directory \".zed\"".into(),
+        };
+
+        let worktree_tasks: [(_, _, &[_]); 4] = [
+            (worktree_task_source.clone(), "task 1", &["task 4"]),
+            (worktree_task_source.clone(), "task 2", &["task 5"]),
+            (
+                worktree_task_source.clone(),
+                "task 3",
+                &["task 1", "task 2"],
+            ),
+            (worktree_task_source.clone(), "task 4", &[]),
+        ];
+
+        let worktree_task_json = serde_json::to_string(&serde_json::Value::Array(
+            worktree_tasks
+                .iter()
+                .map(|(_, label, pre)| {
+                    json!({
+                        "label": label,
+                        "command": "echo",
+                        "prerequisite": pre,
+                        "args": vec![label],
+                    })
+                })
+                .collect_vec(),
+        ))
+        .unwrap();
+
+        cx.run_until_parked();
+
+        inventory.update(cx, |inventory, _| {
+            let worktree_location = SettingsLocation {
+                worktree_id,
+                path: &worktree_path,
+            };
+
+            inventory
+                .update_file_based_tasks(Some(worktree_location), Some(&worktree_task_json))
+                .unwrap();
+
+            inventory
+                .update_file_based_tasks(None, Some(&global_task_json))
+                .unwrap();
+        });
+
+        let task_cx = TaskContext::default();
+
+        let base_task = inventory.update(cx, |inventory, cx| {
+            inventory
+                .list_tasks(None, None, Some(worktree_id), cx)
+                .iter()
+                .filter(|(_, task)| task.label.as_str() == worktree_tasks[2].1)
+                .map(|(kind, task)| {
+                    (
+                        kind.clone(),
+                        task.resolve_task(&kind.to_id_base(), &task_cx).unwrap(),
+                    )
+                })
+                .collect_vec()
+                .last()
+                .unwrap()
+                .clone()
+        });
+
+        let pre_task_list = inventory.update(cx, |inventory, _| {
+            inventory
+                .resolve_file_based_task_queue(&base_task.1, &base_task.0, &task_cx)
+                .unwrap()
+        });
+
+        let mut sorted_labels = pre_task_list
+            .iter()
+            .map(|(kind, task)| (kind.clone(), task.original_task().label.as_str()))
+            .collect_vec();
+
+        sorted_labels.push((
+            base_task.0.clone(),
+            base_task.1.original_task().label.as_str(),
+        ));
+
+        assert!(!sorted_labels.contains(&(global_task_source.clone(), "task 1")));
+        assert!(sorted_labels.contains(&(global_task_source.clone(), "task 5")));
+        assert!(sorted_labels.contains(&(worktree_task_source.clone(), "task 1")));
+        assert!(sorted_labels.contains(&(worktree_task_source.clone(), "task 2")));
+        assert!(sorted_labels.contains(&(worktree_task_source.clone(), "task 3")));
+        assert!(sorted_labels.contains(&(worktree_task_source.clone(), "task 4")));
+    }
 
     #[gpui::test]
     async fn test_task_list_sorting(cx: &mut TestAppContext) {

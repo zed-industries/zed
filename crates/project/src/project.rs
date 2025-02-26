@@ -3,6 +3,7 @@ mod color_extractor;
 pub mod connection_manager;
 pub mod debounced_delay;
 pub mod git;
+mod graph;
 pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_ext_command;
