@@ -2,7 +2,7 @@ use crate::{
     display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
     RowExt,
 };
-use buffer_diff::DiffHunkStatus;
+use buffer_diff::DiffHunkStatusKind;
 use collections::BTreeMap;
 use futures::Future;
 
@@ -285,7 +285,7 @@ impl EditorTestContext {
         snapshot.anchor_before(ranges[0].start)..snapshot.anchor_after(ranges[0].end)
     }
 
-    pub fn set_diff_base(&mut self, diff_base: &str) {
+    pub fn set_head_text(&mut self, diff_base: &str) {
         self.cx.run_until_parked();
         let fs = self.update_editor(|editor, _, cx| {
             editor.project.as_ref().unwrap().read(cx).fs().as_fake()
@@ -296,6 +296,41 @@ impl EditorTestContext {
             &[(path.into(), diff_base.to_string())],
         );
         self.cx.run_until_parked();
+    }
+
+    pub fn clear_index_text(&mut self) {
+        self.cx.run_until_parked();
+        let fs = self.update_editor(|editor, _, cx| {
+            editor.project.as_ref().unwrap().read(cx).fs().as_fake()
+        });
+        fs.set_index_for_repo(&Self::root_path().join(".git"), &[]);
+        self.cx.run_until_parked();
+    }
+
+    pub fn set_index_text(&mut self, diff_base: &str) {
+        self.cx.run_until_parked();
+        let fs = self.update_editor(|editor, _, cx| {
+            editor.project.as_ref().unwrap().read(cx).fs().as_fake()
+        });
+        let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
+        fs.set_index_for_repo(
+            &Self::root_path().join(".git"),
+            &[(path.into(), diff_base.to_string())],
+        );
+        self.cx.run_until_parked();
+    }
+
+    #[track_caller]
+    pub fn assert_index_text(&mut self, expected: Option<&str>) {
+        let fs = self.update_editor(|editor, _, cx| {
+            editor.project.as_ref().unwrap().read(cx).fs().as_fake()
+        });
+        let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
+        let mut found = None;
+        fs.with_git_state(&Self::root_path().join(".git"), false, |git_state| {
+            found = git_state.index_contents.get(path.as_ref()).cloned();
+        });
+        assert_eq!(expected, found.as_deref());
     }
 
     /// Change the editor's text and selections using a string containing
@@ -458,10 +493,10 @@ pub fn assert_state_with_diff(
         .split('\n')
         .zip(line_infos)
         .map(|(line, info)| {
-            let mut marker = match info.diff_status {
-                Some(DiffHunkStatus::Added(_)) => "+ ",
-                Some(DiffHunkStatus::Removed(_)) => "- ",
-                Some(DiffHunkStatus::Modified(_)) => unreachable!(),
+            let mut marker = match info.diff_status.map(|status| status.kind) {
+                Some(DiffHunkStatusKind::Added) => "+ ",
+                Some(DiffHunkStatusKind::Deleted) => "- ",
+                Some(DiffHunkStatusKind::Modified) => unreachable!(),
                 None => {
                     if has_diff {
                         "  "

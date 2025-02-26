@@ -37,9 +37,9 @@
       "[ [": "vim::PreviousSectionStart",
       "[ ]": "vim::PreviousSectionEnd",
       "] m": "vim::NextMethodStart",
-      "] M": "vim::NextMethodEnd",
+      "] shift-m": "vim::NextMethodEnd",
       "[ m": "vim::PreviousMethodStart",
-      "[ M": "vim::PreviousMethodEnd",
+      "[ shift-m": "vim::PreviousMethodEnd",
       "[ *": "vim::PreviousComment",
       "[ /": "vim::PreviousComment",
       "] *": "vim::NextComment",
@@ -293,6 +293,7 @@
       "!": "vim::ShellCommand",
       "i": ["vim::PushObject", { "around": false }],
       "a": ["vim::PushObject", { "around": true }],
+      "g r": ["vim::Paste", { "preserve_clipboard": true }],
       "g c": "vim::ToggleComments",
       "g q": "vim::Rewrap",
       "\"": "vim::PushRegister",
@@ -436,6 +437,7 @@
     "context": "vim_operator == c",
     "bindings": {
       "c": "vim::CurrentLine",
+      "x": "vim::Exchange",
       "d": "editor::Rename", // zed specific
       "s": ["vim::PushChangeSurrounds", {}]
     }
@@ -446,7 +448,7 @@
       "d": "vim::CurrentLine",
       "s": "vim::PushDeleteSurrounds",
       "o": "editor::ToggleSelectedDiffHunks", // "d o"
-      "p": "editor::RevertSelectedHunks" // "d p"
+      "p": "git::Restore" // "d p"
     }
   },
   {
@@ -520,6 +522,19 @@
     "context": "vim_operator == gc",
     "bindings": {
       "c": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == gr",
+    "bindings": {
+      "r": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == cx",
+    "bindings": {
+      "x": "vim::CurrentLine",
+      "c": "vim::ClearExchange"
     }
   },
   {
@@ -631,7 +646,7 @@
     }
   },
   {
-    "context": "GitPanel || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || Welcome",
+    "context": "ChangesList || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || Welcome",
     "bindings": {
       ":": "command_palette::Toggle",
       "g /": "pane::DeploySearch"
@@ -696,7 +711,7 @@
     }
   },
   {
-    "context": "edit_prediction && !edit_prediction_requires_modifier",
+    "context": "Editor && edit_prediction",
     "bindings": {
       // This is identical to the binding in the base keymap, but the vim bindings above to
       // "vim::Tab" shadow it, so it needs to be bound again.
@@ -704,7 +719,7 @@
     }
   },
   {
-    "context": "os != macos && edit_prediction",
+    "context": "os != macos && Editor && edit_prediction_conflict",
     "bindings": {
       // alt-l is provided as an alternative to tab/alt-tab. and will be displayed in the UI. This
       // is because alt-tab may not be available, as it is often used for window switching on Linux

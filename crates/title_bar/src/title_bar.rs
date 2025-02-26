@@ -521,6 +521,7 @@ impl TitleBar {
         let branch_name = entry
             .as_ref()
             .and_then(|entry| entry.branch())
+            .map(|branch| branch.name.clone())
             .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
         Some(
             Button::new("project_branch_trigger", branch_name)

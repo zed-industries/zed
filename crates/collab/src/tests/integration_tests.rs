@@ -2618,7 +2618,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(1..2, "", "two\n", DiffHunkStatus::added())],
+            &[(1..2, "", "two\n", DiffHunkStatus::added_none())],
         );
     });
 
@@ -2646,7 +2646,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(1..2, "", "two\n", DiffHunkStatus::added())],
+            &[(1..2, "", "two\n", DiffHunkStatus::added_none())],
         );
     });
 
@@ -2672,7 +2672,7 @@ async fn test_git_diff_base_change(
                 1..2,
                 "TWO\n",
                 "two\n",
-                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::HasSecondaryHunk),
+                DiffHunkStatus::modified(DiffHunkSecondaryStatus::HasSecondaryHunk),
             )],
         );
     });
@@ -2699,7 +2699,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(2..3, "", "three\n", DiffHunkStatus::added())],
+            &[(2..3, "", "three\n", DiffHunkStatus::added_none())],
         );
     });
 
@@ -2713,7 +2713,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(2..3, "", "three\n", DiffHunkStatus::added())],
+            &[(2..3, "", "three\n", DiffHunkStatus::added_none())],
         );
     });
 
@@ -2731,7 +2731,7 @@ async fn test_git_diff_base_change(
                 1..2,
                 "TWO_HUNDRED\n",
                 "two\n",
-                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk),
+                DiffHunkStatus::modified(DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk),
             )],
         );
     });
@@ -2778,7 +2778,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &diff.base_text_string().unwrap(),
-            &[(1..2, "", "two\n", DiffHunkStatus::added())],
+            &[(1..2, "", "two\n", DiffHunkStatus::added_none())],
         );
     });
 
@@ -2805,7 +2805,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &staged_text,
-            &[(1..2, "", "two\n", DiffHunkStatus::added())],
+            &[(1..2, "", "two\n", DiffHunkStatus::added_none())],
         );
     });
 
@@ -2827,7 +2827,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &new_staged_text,
-            &[(2..3, "", "three\n", DiffHunkStatus::added())],
+            &[(2..3, "", "three\n", DiffHunkStatus::added_none())],
         );
     });
 
@@ -2841,7 +2841,7 @@ async fn test_git_diff_base_change(
             diff.hunks_in_row_range(0..4, buffer, cx),
             buffer,
             &new_staged_text,
-            &[(2..3, "", "three\n", DiffHunkStatus::added())],
+            &[(2..3, "", "three\n", DiffHunkStatus::added_none())],
         );
     });
 }
@@ -2895,7 +2895,10 @@ async fn test_git_branch_name(
         assert_eq!(worktrees.len(), 1);
         let worktree = worktrees[0].clone();
         let root_entry = worktree.read(cx).snapshot().root_git_entry().unwrap();
-        assert_eq!(root_entry.branch(), branch_name.map(Into::into));
+        assert_eq!(
+            root_entry.branch().map(|branch| branch.name.to_string()),
+            branch_name
+        );
     }
 
     // Smoke test branch reading
@@ -4435,15 +4438,14 @@ async fn test_formatting_buffer(
         .await
         .unwrap();
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
-    let lsp_store_b = project_b.update(cx_b, |p, _| p.lsp_store());
 
     let buffer_b = project_b
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
         .await
         .unwrap();
 
-    let _handle = lsp_store_b.update(cx_b, |lsp_store, cx| {
-        lsp_store.register_buffer_with_language_servers(&buffer_b, cx)
+    let _handle = project_b.update(cx_b, |project, cx| {
+        project.register_buffer_with_language_servers(&buffer_b, cx)
     });
     let fake_language_server = fake_language_servers.next().await.unwrap();
     fake_language_server.handle_request::<lsp::request::Formatting, _, _>(|_, _| async move {
@@ -6352,7 +6354,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     // Open item 1 as preview
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.open_path_preview(path_1.clone(), None, true, true, window, cx)
+            workspace.open_path_preview(path_1.clone(), None, true, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6373,7 +6375,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     // Open item 2 as preview
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, window, cx)
+            workspace.open_path_preview(path_2.clone(), None, true, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6505,7 +6507,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     // Open item 2 as preview in right pane
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, window, cx)
+            workspace.open_path_preview(path_2.clone(), None, true, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6543,7 +6545,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     // Open item 2 as preview in left pane
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, window, cx)
+            workspace.open_path_preview(path_2.clone(), None, true, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6783,7 +6785,7 @@ async fn test_remote_git_branches(
         })
     });
 
-    assert_eq!(host_branch.as_ref(), branches[2]);
+    assert_eq!(host_branch.name, branches[2]);
 
     // Also try creating a new branch
     cx_b.update(|cx| {
@@ -6804,5 +6806,5 @@ async fn test_remote_git_branches(
         })
     });
 
-    assert_eq!(host_branch.as_ref(), "totally-new-branch");
+    assert_eq!(host_branch.name, "totally-new-branch");
 }

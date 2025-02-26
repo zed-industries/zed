@@ -46,7 +46,6 @@ itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
 language_model_selector.workspace = true
-language_models.workspace = true
 log.workspace = true
 lsp.workspace = true
 markdown.workspace = true
@@ -62,7 +61,6 @@ rope.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-similar.workspace = true
 smol.workspace = true
 streaming_diff.workspace = true
 telemetry_events.workspace = true
@@ -79,5 +77,10 @@ workspace.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
+editor = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, "features" = ["test-support"] }
+language = { workspace = true, "features" = ["test-support"] }
+language_model = { workspace = true, "features" = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 indoc.workspace = true

@@ -56,7 +56,7 @@ impl<T: 'static> EventEmitter<PromptEditorEvent> for PromptEditor<T> {}
 
 impl<T: 'static> Render for PromptEditor<T> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let mut buttons = Vec::new();
 
         let left_gutter_width = match &self.mode {
@@ -271,7 +271,7 @@ impl<T: 'static> PromptEditor<T> {
         };
 
         let assistant_panel_keybinding =
-            ui::text_for_action(&zed_actions::assistant::ToggleFocus, window)
+            ui::text_for_action(&zed_actions::assistant::ToggleFocus, window, cx)
                 .map(|keybinding| format!("{keybinding} to chat ― "))
                 .unwrap_or_default();
 
@@ -618,12 +618,13 @@ impl<T: 'static> PromptEditor<T> {
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
-                            cx.new(|_| {
+                            cx.new(|cx| {
                                 let mut tooltip = Tooltip::new("Previous Alternative").key_binding(
                                     KeyBinding::for_action_in(
                                         &CyclePreviousInlineAssist,
                                         &focus_handle,
                                         window,
+                                        cx,
                                     ),
                                 );
                                 if !disabled && current_index != 0 {
@@ -659,12 +660,13 @@ impl<T: 'static> PromptEditor<T> {
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
-                            cx.new(|_| {
+                            cx.new(|cx| {
                                 let mut tooltip = Tooltip::new("Next Alternative").key_binding(
                                     KeyBinding::for_action_in(
                                         &CycleNextInlineAssist,
                                         &focus_handle,
                                         window,
+                                        cx,
                                     ),
                                 );
                                 if !disabled && current_index != total_models - 1 {

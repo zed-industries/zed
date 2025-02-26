@@ -40,7 +40,7 @@ google_ai.workspace = true
 hex.workspace = true
 http_client.workspace = true
 jsonwebtoken.workspace = true
-livekit_server.workspace = true
+livekit_api.workspace = true
 log.workspace = true
 nanoid.workspace = true
 open_ai.workspace = true
@@ -97,6 +97,7 @@ extension.workspace = true
 file_finder.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 git = { workspace = true, features = ["test-support"] }
+git_ui = { workspace = true, features = ["test-support"] }
 git_hosting_providers.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 hyper.workspace = true

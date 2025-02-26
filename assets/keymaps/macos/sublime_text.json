@@ -1,8 +1,8 @@
 [
   {
     "bindings": {
-      "cmd-shift-[": "pane::ActivatePrevItem",
-      "cmd-shift-]": "pane::ActivateNextItem",
+      "cmd-{": "pane::ActivatePrevItem",
+      "cmd-}": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-1": ["workspace::ActivatePane", 0],
@@ -14,15 +14,15 @@
       "ctrl-7": ["workspace::ActivatePane", 6],
       "ctrl-8": ["workspace::ActivatePane", 7],
       "ctrl-9": ["workspace::ActivatePane", 8],
-      "ctrl-shift-1": ["workspace::MoveItemToPane", { "destination": 0, "focus": true }],
-      "ctrl-shift-2": ["workspace::MoveItemToPane", { "destination": 1 }],
-      "ctrl-shift-3": ["workspace::MoveItemToPane", { "destination": 2 }],
-      "ctrl-shift-4": ["workspace::MoveItemToPane", { "destination": 3 }],
-      "ctrl-shift-5": ["workspace::MoveItemToPane", { "destination": 4 }],
-      "ctrl-shift-6": ["workspace::MoveItemToPane", { "destination": 5 }],
-      "ctrl-shift-7": ["workspace::MoveItemToPane", { "destination": 6 }],
-      "ctrl-shift-8": ["workspace::MoveItemToPane", { "destination": 7 }],
-      "ctrl-shift-9": ["workspace::MoveItemToPane", { "destination": 8 }]
+      "ctrl-!": ["workspace::MoveItemToPane", { "destination": 0, "focus": true }],
+      "ctrl-@": ["workspace::MoveItemToPane", { "destination": 1 }],
+      "ctrl-#": ["workspace::MoveItemToPane", { "destination": 2 }],
+      "ctrl-$": ["workspace::MoveItemToPane", { "destination": 3 }],
+      "ctrl-%": ["workspace::MoveItemToPane", { "destination": 4 }],
+      "ctrl-^": ["workspace::MoveItemToPane", { "destination": 5 }],
+      "ctrl-&": ["workspace::MoveItemToPane", { "destination": 6 }],
+      "ctrl-*": ["workspace::MoveItemToPane", { "destination": 7 }],
+      "ctrl-(": ["workspace::MoveItemToPane", { "destination": 8 }]
     }
   },
   {

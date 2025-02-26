@@ -5,7 +5,7 @@ use futures::{
     stream::{SelectAll, StreamExt},
     AsyncBufReadExt as _, SinkExt as _,
 };
-use gpui::{App, Entity, EntityId, Task, Window};
+use gpui::{App, AppContext as _, Entity, EntityId, Task, Window};
 use jupyter_protocol::{
     connection_info::{ConnectionInfo, Transport},
     ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent, KernelInfoReply,
@@ -211,7 +211,7 @@ impl NativeRunningKernel {
                 futures::channel::mpsc::channel(100);
             let (mut shell_request_tx, mut shell_request_rx) = futures::channel::mpsc::channel(100);
 
-            let routing_task = cx.background_executor().spawn({
+            let routing_task = cx.background_spawn({
                 async move {
                     while let Some(message) = request_rx.next().await {
                         match message.content {
@@ -229,7 +229,7 @@ impl NativeRunningKernel {
                 }
             });
 
-            let shell_task = cx.background_executor().spawn({
+            let shell_task = cx.background_spawn({
                 async move {
                     while let Some(message) = shell_request_rx.next().await {
                         shell_socket.send(message).await.ok();
@@ -240,7 +240,7 @@ impl NativeRunningKernel {
                 }
             });
 
-            let control_task = cx.background_executor().spawn({
+            let control_task = cx.background_spawn({
                 async move {
                     while let Some(message) = control_request_rx.next().await {
                         control_socket.send(message).await.ok();

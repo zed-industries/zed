@@ -2,6 +2,7 @@ use anyhow::Result;
 use db::sqlez::bindable::{Bind, Column, StaticColumnCount};
 use db::sqlez::statement::Statement;
 use fs::MTime;
+use itertools::Itertools as _;
 use std::path::PathBuf;
 
 use db::sqlez_macros::sql;
@@ -134,8 +135,25 @@ define_connection!(
             ALTER TABLE editors ADD COLUMN mtime_seconds INTEGER DEFAULT NULL;
             ALTER TABLE editors ADD COLUMN mtime_nanos INTEGER DEFAULT NULL;
         ),
+        sql! (
+            CREATE TABLE editor_selections (
+                item_id INTEGER NOT NULL,
+                editor_id INTEGER NOT NULL,
+                workspace_id INTEGER NOT NULL,
+                start INTEGER NOT NULL,
+                end INTEGER NOT NULL,
+                PRIMARY KEY(item_id),
+                FOREIGN KEY(editor_id, workspace_id) REFERENCES editors(item_id, workspace_id)
+                ON DELETE CASCADE
+            ) STRICT;
+        ),
     ];
 );
+
+// https://www.sqlite.org/limits.html
+// > <..> the maximum value of a host parameter number is SQLITE_MAX_VARIABLE_NUMBER,
+// > which defaults to <..> 32766 for SQLite versions after 3.32.0.
+const MAX_QUERY_PLACEHOLDERS: usize = 32000;
 
 impl EditorDb {
     query! {
@@ -186,6 +204,68 @@ impl EditorDb {
                 scroll_vertical_offset = ?5
             WHERE item_id = ?1 AND workspace_id = ?2
         }
+    }
+
+    query! {
+        pub fn get_editor_selections(
+            editor_id: ItemId,
+            workspace_id: WorkspaceId
+        ) -> Result<Vec<(usize, usize)>> {
+            SELECT start, end
+            FROM editor_selections
+            WHERE editor_id = ?1 AND workspace_id = ?2
+        }
+    }
+
+    pub async fn save_editor_selections(
+        &self,
+        editor_id: ItemId,
+        workspace_id: WorkspaceId,
+        selections: Vec<(usize, usize)>,
+    ) -> Result<()> {
+        let mut first_selection;
+        let mut last_selection = 0_usize;
+        for (count, placeholders) in std::iter::once("(?1, ?2, ?, ?)")
+            .cycle()
+            .take(selections.len())
+            .chunks(MAX_QUERY_PLACEHOLDERS / 4)
+            .into_iter()
+            .map(|chunk| {
+                let mut count = 0;
+                let placeholders = chunk
+                    .inspect(|_| {
+                        count += 1;
+                    })
+                    .join(", ");
+                (count, placeholders)
+            })
+            .collect::<Vec<_>>()
+        {
+            first_selection = last_selection;
+            last_selection = last_selection + count;
+            let query = format!(
+                r#"
+DELETE FROM editor_selections WHERE editor_id = ?1 AND workspace_id = ?2;
+
+INSERT OR IGNORE INTO editor_selections (editor_id, workspace_id, start, end)
+VALUES {placeholders};
+"#
+            );
+
+            let selections = selections[first_selection..last_selection].to_vec();
+            self.write(move |conn| {
+                let mut statement = Statement::prepare(conn, query)?;
+                statement.bind(&editor_id, 1)?;
+                let mut next_index = statement.bind(&workspace_id, 2)?;
+                for (start, end) in selections {
+                    next_index = statement.bind(&start, next_index)?;
+                    next_index = statement.bind(&end, next_index)?;
+                }
+                statement.exec()
+            })
+            .await?;
+        }
+        Ok(())
     }
 
     pub async fn delete_unloaded_items(

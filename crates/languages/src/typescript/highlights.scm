@@ -77,8 +77,8 @@
 
 ; Literals
 
-(this) @variable.special
-(super) @variable.special
+(this) @keyword
+(super) @keyword
 
 [
   (null)
@@ -110,6 +110,7 @@
 (escape_sequence) @string.escape
 
 (regex) @string.regex
+(regex_flags) @keyword.regex
 (number) @number
 
 ; Tokens
@@ -198,6 +199,8 @@
 (type_arguments
   "<" @punctuation.bracket
   ">" @punctuation.bracket)
+
+(decorator "@" @punctuation.special)
 
 ; Keywords
 
