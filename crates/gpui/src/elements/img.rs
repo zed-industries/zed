@@ -301,6 +301,8 @@ impl Element for Img {
                             }
 
                             let image_size = data.size(frame_index);
+                            style.aspect_ratio =
+                                Some(image_size.width.0 as f32 / image_size.height.0 as f32);
 
                             if let Length::Auto = style.size.width {
                                 style.size.width = match style.size.height {
