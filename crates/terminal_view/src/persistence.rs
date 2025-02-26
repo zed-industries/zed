@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_recursion::async_recursion;
 use collections::HashSet;
-use futures::{stream::FuturesUnordered, StreamExt as _};
+use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt as _};
 use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
 use project::{terminals::TerminalKind, Project};
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,7 @@ use workspace::{
 
 use crate::{
     default_working_directory,
+    diagnostics_view::DiagnosticsView,
     terminal_panel::{new_terminal_pane, TerminalPanel},
     TerminalView,
 };
@@ -60,14 +61,22 @@ fn serialize_pane(pane: &Entity<Pane>, active: bool, cx: &mut App) -> Serialized
     let children = pane
         .items()
         .filter_map(|item| {
-            let terminal_view = item.act_as::<TerminalView>(cx)?;
-            if terminal_view.read(cx).terminal().read(cx).task().is_some() {
-                None
-            } else {
-                let id = item.item_id().as_u64();
-                items_to_serialize.insert(id);
-                Some(id)
-            }
+            let pane_kind = match item.act_as::<TerminalView>(cx) {
+                Some(terminal_view) => {
+                    if terminal_view.read(cx).terminal().read(cx).task().is_some() {
+                        return None;
+                    }
+                    PaneKind::Terminal
+                }
+                None => {
+                    let _ = item.act_as::<DiagnosticsView>(cx)?;
+                    PaneKind::Diagnostics
+                }
+            };
+
+            let id = item.item_id().as_u64();
+            items_to_serialize.insert(id);
+            Some((id, pane_kind))
         })
         .collect::<Vec<_>>();
     let active_item = pane
@@ -101,18 +110,19 @@ pub(crate) fn deserialize_terminal_panel(
         })?;
         match &serialized_panel.items {
             SerializedItems::NoSplits(item_ids) => {
-                let items = deserialize_terminal_views(
+                let terminal_panes = deserialize_terminal_panes(
                     database_id,
-                    project,
-                    workspace,
+                    project.clone(),
+                    workspace.clone(),
                     item_ids.as_slice(),
                     &mut cx,
                 )
                 .await;
+
                 let active_item = serialized_panel.active_item_id;
                 terminal_panel.update_in(&mut cx, |terminal_panel, window, cx| {
                     terminal_panel.active_pane.update(cx, |pane, cx| {
-                        populate_pane_items(pane, items, active_item, window, cx);
+                        populate_pane_items(pane, terminal_panes, active_item, window, cx);
                     });
                 })?;
             }
@@ -142,7 +152,7 @@ pub(crate) fn deserialize_terminal_panel(
 
 fn populate_pane_items(
     pane: &mut Pane,
-    items: Vec<Entity<TerminalView>>,
+    items: Vec<Box<dyn ItemHandle>>,
     active_item: Option<u64>,
     window: &mut Window,
     cx: &mut Context<Pane>,
@@ -153,7 +163,7 @@ fn populate_pane_items(
         if Some(item.item_id().as_u64()) == active_item {
             active_item_index = Some(item_index);
         }
-        pane.add_item(Box::new(item), false, false, None, window, cx);
+        pane.add_item(item, false, false, None, window, cx);
         item_index += 1;
     }
     if let Some(index) = active_item_index {
@@ -209,7 +219,7 @@ async fn deserialize_pane_group(
         }
         SerializedPaneGroup::Pane(serialized_pane) => {
             let active = serialized_pane.active;
-            let new_items = deserialize_terminal_views(
+            let terminal_panes = deserialize_terminal_panes(
                 workspace_id,
                 project.clone(),
                 workspace.clone(),
@@ -233,7 +243,7 @@ async fn deserialize_pane_group(
 
             let terminal = pane
                 .update_in(cx, |pane, window, cx| {
-                    populate_pane_items(pane, new_items, active_item, window, cx);
+                    populate_pane_items(pane, terminal_panes, active_item, window, cx);
                     // Avoid blank panes in splits
                     if pane.items_len() == 0 {
                         let working_directory = workspace
@@ -275,19 +285,19 @@ async fn deserialize_pane_group(
     }
 }
 
-async fn deserialize_terminal_views(
+async fn deserialize_terminal_panes(
     workspace_id: WorkspaceId,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
-    item_ids: &[u64],
+    item_ids: &[(u64, PaneKind)],
     cx: &mut AsyncWindowContext,
-) -> Vec<Entity<TerminalView>> {
+) -> Vec<Box<dyn ItemHandle>> {
     let mut items = Vec::with_capacity(item_ids.len());
     let mut deserialized_items = item_ids
         .iter()
-        .map(|item_id| {
-            cx.update(|window, cx| {
-                TerminalView::deserialize(
+        .map(|(item_id, pane_kind)| {
+            cx.update(|window, cx| match pane_kind {
+                PaneKind::Terminal => TerminalView::deserialize(
                     project.clone(),
                     workspace.clone(),
                     workspace_id,
@@ -295,8 +305,20 @@ async fn deserialize_terminal_views(
                     window,
                     cx,
                 )
+                .map(|t| t.map(|t| Box::new(t) as Box<dyn ItemHandle>))
+                .boxed(),
+                PaneKind::Diagnostics => DiagnosticsView::deserialize(
+                    project.clone(),
+                    workspace.clone(),
+                    workspace_id,
+                    *item_id,
+                    window,
+                    cx,
+                )
+                .map(|t| t.map(|t| Box::new(t) as Box<dyn ItemHandle>))
+                .boxed(),
             })
-            .unwrap_or_else(|e| Task::ready(Err(e.context("no window present"))))
+            .unwrap_or_else(|e| async { Err(e.context("no window present")) }.boxed())
         })
         .collect::<FuturesUnordered<_>>();
     while let Some(item) = deserialized_items.next().await {
@@ -304,6 +326,43 @@ async fn deserialize_terminal_views(
             items.push(item);
         }
     }
+
+    items
+}
+
+async fn deserialize_diagnostics_views(
+    workspace_id: WorkspaceId,
+    project: Entity<Project>,
+    workspace: WeakEntity<Workspace>,
+    item_ids: &[(u64, PaneKind)],
+    cx: &mut AsyncWindowContext,
+) -> Vec<Entity<DiagnosticsView>> {
+    let mut items = Vec::with_capacity(item_ids.len());
+    let mut deserialized_items = item_ids
+        .iter()
+        .filter_map(|(item_id, pane_kind)| match pane_kind {
+            PaneKind::Diagnostics => Some(
+                cx.update(|window, cx| {
+                    DiagnosticsView::deserialize(
+                        project.clone(),
+                        workspace.clone(),
+                        workspace_id,
+                        *item_id,
+                        window,
+                        cx,
+                    )
+                })
+                .unwrap_or_else(|e| Task::ready(Err(e.context("no window present")))),
+            ),
+            PaneKind::Terminal => None,
+        })
+        .collect::<FuturesUnordered<_>>();
+    while let Some(item) = deserialized_items.next().await {
+        if let Some(item) = item.log_err() {
+            items.push(item);
+        }
+    }
+
     items
 }
 
@@ -320,7 +379,7 @@ pub(crate) struct SerializedTerminalPanel {
 #[serde(untagged)]
 pub(crate) enum SerializedItems {
     // The data stored before terminal splits were introduced.
-    NoSplits(Vec<u64>),
+    NoSplits(Vec<(u64, PaneKind)>),
     WithSplits(SerializedPaneGroup),
 }
 
@@ -335,9 +394,15 @@ pub(crate) enum SerializedPaneGroup {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub(crate) enum PaneKind {
+    Terminal,
+    Diagnostics,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct SerializedPane {
     pub active: bool,
-    pub children: Vec<u64>,
+    pub children: Vec<(u64, PaneKind)>,
     pub active_item: Option<u64>,
 }
 

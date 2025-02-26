@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::time::Duration;
 
 use collections::IndexMap;
@@ -7,7 +8,7 @@ use diagnostics::{IncludeWarnings, ProjectDiagnosticsSettings, ToggleWarnings};
 use editor::Editor;
 use gpui::{
     list, uniform_list, AppContext, Entity, EventEmitter, Flatten, FocusHandle, Focusable,
-    FontWeight, ListAlignment, ListState, StatefulInteractiveElement, Subscription, Task,
+    FontWeight, ListAlignment, ListState, Rgba, StatefulInteractiveElement, Subscription, Task,
     UniformListScrollHandle, WeakEntity,
 };
 use language::{
@@ -25,6 +26,7 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::item::TabContentParams;
+use workspace::SerializableItem;
 use workspace::{item::ItemEvent, searchable::SearchEvent, Event, Item, Workspace, WorkspaceId};
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
@@ -37,7 +39,6 @@ pub struct DiagnosticsView {
     _subscription: Subscription,
     update_diagnostics_task: Option<Task<anyhow::Result<()>>>,
     include_warnings: bool,
-    scroll_handle: UniformListScrollHandle,
     diagnostic_groups:
         IndexMap<ProjectPath, Vec<(Entity<Buffer>, LanguageServerId, DiagnosticEntry<Anchor>)>>,
     diagnostic_list: ListState,
@@ -77,28 +78,19 @@ impl DiagnosticsView {
                     project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
                         // log::debug!("disk based diagnostics finished for server {language_server_id}");
                         // this.update_diagnostics(window, cx);
-                        dbg!("hello");
                     }
                     project::Event::DiagnosticsUpdated {
                         language_server_id,
                         path,
                     } => {
-                        // this.paths_to_update
-                        //     .insert(dbg!((path.clone(), Some(*language_server_id))));
                         this.paths_to_update = project
                             .read(cx)
                             .diagnostic_summaries(false, cx)
                             .map(|(path, lsp_id, _)| (path, Some(lsp_id)))
                             .collect::<BTreeSet<_>>();
                         this.summary = project.read(cx).diagnostic_summary(false, cx);
-                        // cx.emit(EditorEvent::TitleChanged);
 
-                        // if this.editor.focus_handle(cx).contains_focused(window, cx) || this.focus_handle.contains_focused(window, cx) {
-                        //     log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. recording change");
-                        // } else {
-                        //     log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");
                         this.update_diagnostics(window, cx);
-                        // }
                     }
                     _ => {}
                 },
@@ -118,9 +110,9 @@ impl DiagnosticsView {
 
             let entity = cx.entity().downgrade();
             let diagnostic_list = ListState::new(
-                dbg!(paths_to_update.len()),
+                paths_to_update.len(),
                 ListAlignment::Top,
-                px(1000.),
+                px(100.),
                 move |ix, window, cx| {
                     entity
                         .upgrade()
@@ -142,7 +134,6 @@ impl DiagnosticsView {
                 update_diagnostics_task: None,
                 diagnostic_groups: IndexMap::default(),
                 include_warnings,
-                scroll_handle: UniformListScrollHandle::default(),
                 diagnostic_list,
             };
             diagnostics_view.update_diagnostics(window, cx);
@@ -216,7 +207,7 @@ impl DiagnosticsView {
 
                         diag_view
                             .diagnostic_list
-                            .reset(diag_view.diagnostic_groups.len());
+                            .splice(Range::default(), diag_view.diagnostic_groups.len());
                         cx.notify();
                     })?;
                 } else {
@@ -250,19 +241,6 @@ impl DiagnosticsView {
         let (project_path, diags) = self.diagnostic_groups.get_index(ix)?;
         let task_workspace = self.workspace.clone();
         let task_project_path = project_path.clone();
-
-        let tooltip = if self.include_warnings {
-            "Exclude Warnings"
-        } else {
-            "Include Warnings"
-        };
-
-        let warning_color = if self.include_warnings {
-            Color::Warning
-        } else {
-            Color::Muted
-        };
-        let focused = self.focus_handle.is_focused(window);
 
         if diags.is_empty() {
             return None;
@@ -350,21 +328,9 @@ impl DiagnosticsView {
             .collect();
 
         List::new()
-            .header(
-                ListHeader::new(project_path.path.to_string_lossy().to_string())
-                    .start_slot(Icon::new(IconName::File))
-                    .when(ix == 0, |this| {
-                        this.end_slot(
-                            IconButton::new("toggle-warnings", IconName::Warning)
-                                .tooltip(Tooltip::text(tooltip))
-                                .icon_color(warning_color)
-                                .shape(IconButtonShape::Square)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.toggle_warnings(&ToggleWarnings {}, window, cx);
-                                })),
-                        )
-                    }),
-            )
+            .header(ListHeader::new(
+                project_path.path.to_string_lossy().to_string(),
+            ))
             .children(diags_per_file)
             .into_any_element()
             .into()
@@ -374,9 +340,7 @@ impl DiagnosticsView {
 const DIAGNOSTICS_UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 impl Render for DiagnosticsView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let terminal_view_handle = cx.entity().clone();
-
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tooltip = if self.include_warnings {
             "Exclude Warnings"
         } else {
@@ -388,48 +352,23 @@ impl Render for DiagnosticsView {
         } else {
             Color::Muted
         };
-        let focused = self.focus_handle.is_focused(window);
-
         v_flex()
             .id("diagnostics-view")
             .size_full()
             .relative()
             .on_action(cx.listener(Self::toggle_warnings))
             .track_focus(&self.focus_handle(cx))
-            // .key_context(self.dispatch_context(cx))
-            // .on_action(cx.listener(TerminalView::send_text))
-            // .on_action(cx.listener(TerminalView::send_keystroke))
-            // .on_action(cx.listener(TerminalView::copy))
-            // .on_action(cx.listener(TerminalView::paste))
-            // .on_action(cx.listener(TerminalView::clear))
-            // .on_action(cx.listener(TerminalView::scroll_line_up))
-            // .on_action(cx.listener(TerminalView::scroll_line_down))
-            // .on_action(cx.listener(TerminalView::scroll_page_up))
-            // .on_action(cx.listener(TerminalView::scroll_page_down))
-            // .on_action(cx.listener(TerminalView::scroll_to_top))
-            // .on_action(cx.listener(TerminalView::scroll_to_bottom))
-            // .on_action(cx.listener(TerminalView::toggle_vi_mode))
-            // .on_action(cx.listener(TerminalView::show_character_palette))
-            // .on_action(cx.listener(TerminalView::select_all))
-            // .on_key_down(cx.listener(Self::key_down))
-            // .on_mouse_down(
-            //     MouseButton::Right,
-            //     cx.listener(|this, event: &MouseDownEvent, window, cx| {
-            //         if !this.terminal.read(cx).mouse_mode(event.modifiers.shift) {
-            //             this.deploy_context_menu(event.position, window, cx);
-            //             cx.notify();
-            //         }
-            //     }),
-            // )
-            // .on_hover(cx.listener(|this, hovered, window, cx| {
-            //     if *hovered {
-            //         this.show_scrollbar = true;
-            //         this.hide_scrollbar_task.take();
-            //         cx.notify();
-            //     } else if !this.focus_handle.contains_focused(window, cx) {
-            //         this.hide_scrollbar(cx);
-            //     }
-            // }))
+            .child(
+                h_flex().justify_end().child(
+                    IconButton::new("toggle-warnings", IconName::Warning)
+                        .tooltip(Tooltip::text(tooltip))
+                        .icon_color(warning_color)
+                        .shape(IconButtonShape::Square)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.toggle_warnings(&ToggleWarnings {}, window, cx);
+                        })),
+                ),
+            )
             .child(list(self.diagnostic_list.clone()).size_full().flex_grow())
             .flex_grow()
     }
@@ -439,9 +378,10 @@ impl Item for DiagnosticsView {
     type Event = ItemEvent;
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+        const DIAG_TITLE: &str = "Diagnostics ";
         let title = match (self.summary.error_count, self.summary.warning_count) {
             (0, 0) => h_flex().map(|this| {
-                this.child(
+                this.child(Label::new(DIAG_TITLE)).child(
                     Icon::new(IconName::Check)
                         .size(IconSize::Small)
                         .color(Color::Default),
@@ -449,6 +389,7 @@ impl Item for DiagnosticsView {
             }),
             (0, warning_count) => h_flex()
                 .gap_1()
+                .child(Label::new(DIAG_TITLE))
                 .child(
                     Icon::new(IconName::Warning)
                         .size(IconSize::Small)
@@ -457,6 +398,7 @@ impl Item for DiagnosticsView {
                 .child(Label::new(warning_count.to_string()).size(LabelSize::Small)),
             (error_count, 0) => h_flex()
                 .gap_1()
+                .child(Label::new(DIAG_TITLE))
                 .child(
                     Icon::new(IconName::XCircle)
                         .size(IconSize::Small)
@@ -465,6 +407,7 @@ impl Item for DiagnosticsView {
                 .child(Label::new(error_count.to_string()).size(LabelSize::Small)),
             (error_count, warning_count) => h_flex()
                 .gap_1()
+                .child(Label::new(DIAG_TITLE))
                 .child(
                     Icon::new(IconName::XCircle)
                         .size(IconSize::Small)
@@ -496,3 +439,53 @@ impl Focusable for DiagnosticsView {
 impl EventEmitter<Event> for DiagnosticsView {}
 impl EventEmitter<ItemEvent> for DiagnosticsView {}
 impl EventEmitter<SearchEvent> for DiagnosticsView {}
+
+impl SerializableItem for DiagnosticsView {
+    fn serialized_item_kind() -> &'static str {
+        "Diagnostics"
+    }
+
+    fn should_serialize(&self, event: &Self::Event) -> bool {
+        matches!(event, ItemEvent::UpdateTab)
+    }
+
+    fn deserialize(
+        project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
+        workspace_id: workspace::WorkspaceId,
+        _item_id: workspace::ItemId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<Entity<Self>>> {
+        let window_handle = window.window_handle();
+        let workspace_diag = workspace.clone();
+        let project = project.clone();
+        window.spawn(cx, |mut cx| async move {
+            gpui::Flatten::flatten(cx.update_window(window_handle, |_view, window, cx| {
+                workspace.update(cx, |_this, cx| {
+                    DiagnosticsView::new(workspace_diag, Some(workspace_id), project, window, cx)
+                })
+            }))
+        })
+    }
+
+    fn cleanup(
+        _workspace_id: WorkspaceId,
+        _alive_items: Vec<workspace::ItemId>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Task<gpui::Result<()>> {
+        Task::ready(Ok(()))
+    }
+
+    fn serialize(
+        &mut self,
+        _workspace: &mut Workspace,
+        _item_id: workspace::ItemId,
+        _closing: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Task<gpui::Result<()>>> {
+        Some(Task::ready(Ok(())))
+    }
+}
