@@ -622,7 +622,7 @@ pub struct Terminal {
     word_regex: RegexSearch,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
-    run_location: TerminalRunLocation,
+    pub run_location: TerminalRunLocation,
 }
 
 pub struct TaskState {

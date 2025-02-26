@@ -23,7 +23,7 @@ use terminal::{
     terminal_settings::{self, CursorShape, TerminalBlink, TerminalSettings, WorkingDirectory},
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown,
     ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskStatus, Terminal,
-    TerminalBounds, ToggleViMode,
+    TerminalBounds, TerminalRunLocation, ToggleViMode,
 };
 use terminal_element::{is_blank, TerminalElement};
 use terminal_panel::TerminalPanel;
@@ -1412,7 +1412,7 @@ impl SerializableItem for TerminalView {
 
     fn serialize(
         &mut self,
-        _workspace: &mut Workspace,
+        workspace: &mut Workspace,
         item_id: workspace::ItemId,
         _closing: bool,
         _: &mut Window,
@@ -1423,10 +1423,13 @@ impl SerializableItem for TerminalView {
             return None;
         }
 
+        let is_local_shell = workspace.project().read(cx).is_via_ssh()
+            && matches!(terminal.run_location, TerminalRunLocation::Host);
+
         if let Some((cwd, workspace_id)) = terminal.working_directory().zip(self.workspace_id) {
             Some(cx.background_spawn(async move {
                 TERMINAL_DB
-                    .save_working_directory(item_id, workspace_id, cwd)
+                    .save_terminal_view(item_id, workspace_id, cwd, is_local_shell)
                     .await
             }))
         } else {
@@ -1467,10 +1470,25 @@ impl SerializableItem for TerminalView {
                 })
                 .ok()
                 .flatten();
+            let is_local_shell = cx
+                .update(|_, _| {
+                    TERMINAL_DB
+                        .get_run_locally(item_id, workspace_id)
+                        .log_err()
+                        .flatten()
+                        .is_some_and(|f| f)
+                })
+                .ok()
+                .is_some_and(|f| f);
 
             let terminal = project
                 .update(&mut cx, |project, cx| {
-                    project.create_terminal(TerminalKind::Shell(cwd), window_handle, cx)
+                    let shell = if is_local_shell {
+                        TerminalKind::LocalShell(cwd)
+                    } else {
+                        TerminalKind::Shell(cwd)
+                    };
+                    project.create_terminal(shell, window_handle, cx)
                 })?
                 .await?;
             cx.update(|window, cx| {

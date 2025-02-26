@@ -403,7 +403,8 @@ define_connection! {
             DROP TABLE terminals;
 
             ALTER TABLE terminals2 RENAME TO terminals;
-        )];
+        ),
+        sql!(ALTER TABLE terminals ADD COLUMN is_local_shell INTEGER NOT NULL DEFAULT 0)];
 }
 
 impl TerminalDb {
@@ -420,19 +421,28 @@ impl TerminalDb {
     }
 
     query! {
-        pub async fn save_working_directory(
+        pub async fn save_terminal_view(
             item_id: ItemId,
             workspace_id: WorkspaceId,
-            working_directory: PathBuf
+            working_directory: PathBuf,
+            is_local_shell: bool
         ) -> Result<()> {
-            INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory)
-            VALUES (?, ?, ?)
+            INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory, is_local_shell)
+            VALUES (?, ?, ?, ?)
         }
     }
 
     query! {
         pub fn get_working_directory(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<PathBuf>> {
             SELECT working_directory
+            FROM terminals
+            WHERE item_id = ? AND workspace_id = ?
+        }
+    }
+
+    query! {
+        pub fn get_is_local_shell(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<bool>> {
+            SELECT is_local_shell
             FROM terminals
             WHERE item_id = ? AND workspace_id = ?
         }
