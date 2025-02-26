@@ -1910,7 +1910,6 @@ impl SshRemoteConnection {
                     .run_command(
                         "wget",
                         &[
-                            "--max-redirect=5",
                             "--method=GET",
                             "--header=Content-Type: application/json",
                             "--body-data",
