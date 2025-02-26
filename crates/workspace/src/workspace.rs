@@ -1499,6 +1499,7 @@ impl Workspace {
                                 project_entry_id,
                                 true,
                                 entry.is_preview,
+                                true,
                                 None,
                                 window, cx,
                                 build_item,
@@ -2801,7 +2802,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
-        self.open_path_preview(path, pane, focus_item, false, window, cx)
+        self.open_path_preview(path, pane, focus_item, false, true, window, cx)
     }
 
     pub fn open_path_preview(
@@ -2810,6 +2811,7 @@ impl Workspace {
         pane: Option<WeakEntity<Pane>>,
         focus_item: bool,
         allow_preview: bool,
+        activate: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
@@ -2830,6 +2832,7 @@ impl Workspace {
                     project_entry_id,
                     focus_item,
                     allow_preview,
+                    activate,
                     None,
                     window,
                     cx,
@@ -2888,6 +2891,7 @@ impl Workspace {
                         project_entry_id,
                         true,
                         allow_preview,
+                        true,
                         None,
                         window,
                         cx,
