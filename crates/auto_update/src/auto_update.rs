@@ -512,69 +512,56 @@ impl AutoUpdater {
 
     #[cfg(target_os = "windows")]
     async fn update(this: Entity<Self>, mut cx: AsyncApp) -> Result<()> {
-        let (client, current_version, release_channel) = this.update(&mut cx, |this, cx| {
-            this.status = AutoUpdateStatus::Checking;
-            cx.notify();
-            (
-                this.http_client.clone(),
-                this.current_version,
-                ReleaseChannel::try_global(cx),
-            )
-        })?;
+        // let (client, current_version, release_channel) = this.update(&mut cx, |this, cx| {
+        //     this.status = AutoUpdateStatus::Checking;
+        //     cx.notify();
+        //     (
+        //         this.http_client.clone(),
+        //         this.current_version,
+        //         ReleaseChannel::try_global(cx),
+        //     )
+        // })?;
 
-        let release =
-            Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
+        // let release =
+        //     Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
 
-        let should_download = match *RELEASE_CHANNEL {
-            ReleaseChannel::Nightly => cx
-                .update(|cx| AppCommitSha::try_global(cx).map(|sha| release.version != sha.0))
-                .ok()
-                .flatten()
-                .unwrap_or(true),
-            _ => release.version.parse::<SemanticVersion>()? > current_version,
-        };
+        // let should_download = match *RELEASE_CHANNEL {
+        //     ReleaseChannel::Nightly => cx
+        //         .update(|cx| AppCommitSha::try_global(cx).map(|sha| release.version != sha.0))
+        //         .ok()
+        //         .flatten()
+        //         .unwrap_or(true),
+        //     _ => release.version.parse::<SemanticVersion>()? > current_version,
+        // };
 
-        if !should_download {
-            this.update(&mut cx, |this, cx| {
-                this.status = AutoUpdateStatus::Idle;
-                cx.notify();
-            })?;
-            return Ok(());
-        }
+        // if !should_download {
+        //     this.update(&mut cx, |this, cx| {
+        //         this.status = AutoUpdateStatus::Idle;
+        //         cx.notify();
+        //     })?;
+        //     return Ok(());
+        // }
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Downloading;
             cx.notify();
         })?;
 
-        let temp_dir = tempfile::Builder::new()
-            .prefix("zed-auto-update")
-            .tempdir()?;
+        let installer_dir = std::env::current_exe()?
+            .parent()
+            .context("No parent dir")?
+            .join("updates");
+        std::fs::create_dir(&installer_dir).ok();
 
-        let filename = match OS {
-            "macos" => Ok("Zed.dmg"),
-            "linux" => Ok("zed.tar.gz"),
-            _ => Err(anyhow!("not supported: {:?}", OS)),
-        }?;
-
-        anyhow::ensure!(
-            which("rsync").is_ok(),
-            "Aborting. Could not find rsync which is required for auto-updates."
-        );
-
-        let downloaded_asset = temp_dir.path().join(filename);
-        download_release(&downloaded_asset, release, client, &cx).await?;
+        let downloaded_asset = installer_dir.join("Installer.exe");
+        // download_release(&downloaded_asset, release, client, &cx).await?;
 
         this.update(&mut cx, |this, cx| {
-            this.status = AutoUpdateStatus::Installing;
+            this.status = AutoUpdateStatus::Installing; // Ready to install
             cx.notify();
         })?;
 
-        let binary_path = match OS {
-            "macos" => install_release_macos(&temp_dir, downloaded_asset, &cx).await,
-            "linux" => install_release_linux(&temp_dir, downloaded_asset, &cx).await,
-            _ => Err(anyhow!("not supported: {:?}", OS)),
-        }?;
+        // Notify the user that the update is ready to install, and provide a button to restart then install it.
 
         this.update(&mut cx, |this, cx| {
             this.set_should_show_update_notification(true, cx)
