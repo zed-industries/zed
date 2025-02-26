@@ -3224,6 +3224,23 @@ impl Editor {
                     return Ok(());
                 };
 
+                {
+                    let has_edits_since_start = this.read_with(&cx, |this, cx| {
+                        this.buffer.read_with(cx, |buffer, cx|
+                            buffer.buffer(buffer_id).map_or(
+                                true,
+                                |buffer| buffer.read_with(cx,
+                                    |buffer, _| buffer.has_edits_since(&buffer_version_initial)
+                                )
+                            )
+                        )
+                    }).context("Auto Edit Operation Failed")?;
+
+                    if has_edits_since_start {
+                        return Err(anyhow!("Auto Edit Operation Failed - Buffer has edits since start"));
+                    }
+                }
+
                 let edits = cx.background_executor().spawn({
                     // todo! make edit_behavior_provider.boxed_auto_edit take reference to buffer_snapshot
                     let buffer_snapshot = buffer_snapshot.clone();
@@ -3247,7 +3264,7 @@ impl Editor {
                     }).context("Auto Edit Operation Failed")?;
 
                     if has_edits_since_start {
-                        return Err(anyhow!("Auto Edit Operation Failed, Buffer has edits since start"));
+                        return Err(anyhow!("Auto Edit Operation Failed - Buffer has edits since start"));
                     }
                 }
 
