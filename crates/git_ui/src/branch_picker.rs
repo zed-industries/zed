@@ -141,18 +141,16 @@ impl Render for BranchList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .w(rems(self.rem_width))
-            .when_some(self.picker.clone(), |div, picker| {
-                div.child(picker.clone()).on_mouse_down_out({
+            .map(|parent| match self.picker.as_ref() {
+                Some(picker) => parent.child(picker.clone()).on_mouse_down_out({
                     let picker = picker.clone();
                     cx.listener(move |_, _, window, cx| {
                         picker.update(cx, |this, cx| {
                             this.cancel(&Default::default(), window, cx);
                         })
                     })
-                })
-            })
-            .when_none(&self.picker, |div| {
-                div.child(
+                }),
+                None => parent.child(
                     h_flex()
                         .id("branch-picker-error")
                         .on_click(
@@ -160,7 +158,7 @@ impl Render for BranchList {
                         )
                         .child("Could not load branches.")
                         .child("Click to retry"),
-                )
+                ),
             })
     }
 }
