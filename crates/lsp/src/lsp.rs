@@ -1409,6 +1409,7 @@ impl FakeLanguageServer {
         let server_name = LanguageServerName(name.clone().into());
         let process_name = Arc::from(name.as_str());
         let root = Self::root_path();
+        let workspace_folders = Default::default();
         let mut server = LanguageServer::new_internal(
             server_id,
             server_name.clone(),
@@ -1420,6 +1421,7 @@ impl FakeLanguageServer {
             None,
             binary.clone(),
             root,
+            workspace_folders.clone(),
             cx.clone(),
             |_| {},
         );
@@ -1438,6 +1440,7 @@ impl FakeLanguageServer {
                     None,
                     binary,
                     Self::root_path(),
+                    workspace_folders,
                     cx.clone(),
                     move |msg| {
                         notifications_tx
