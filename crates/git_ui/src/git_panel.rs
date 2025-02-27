@@ -170,7 +170,7 @@ pub struct GitPanel {
     pending_remote_operations: RemoteOperations,
     pub(crate) active_repository: Option<Entity<Repository>>,
     commit_editor: Entity<Editor>,
-    suggested_commit_message: Option<String>,
+    pub(crate) suggested_commit_message: Option<String>,
     conflicted_count: usize,
     conflicted_staged_count: usize,
     current_modifiers: Modifiers,
@@ -212,6 +212,7 @@ impl Drop for RemoteOperationGuard {
 
 pub(crate) fn commit_message_editor(
     commit_message_buffer: Entity<Buffer>,
+    placeholder: Option<&str>,
     project: Entity<Project>,
     in_panel: bool,
     window: &mut Window,
@@ -232,7 +233,8 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_gutter(false, cx);
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
-    commit_editor.set_placeholder_text("Enter commit message", cx);
+    let placeholder = placeholder.unwrap_or("Enter commit message");
+    commit_editor.set_placeholder_text(placeholder, cx);
     commit_editor
 }
 
@@ -260,7 +262,7 @@ impl GitPanel {
             // Once the active git repo is set, this buffer will be replaced.
             let temporary_buffer = cx.new(|cx| Buffer::local("", cx));
             let commit_editor = cx.new(|cx| {
-                commit_message_editor(temporary_buffer, project.clone(), true, window, cx)
+                commit_message_editor(temporary_buffer, None, project.clone(), true, window, cx)
             });
             commit_editor.update(cx, |editor, cx| {
                 editor.clear(window, cx);
@@ -1293,13 +1295,13 @@ impl GitPanel {
 
     fn update_editor_placeholder(&mut self, cx: &mut Context<Self>) {
         let suggested_commit_message = self.suggest_commit_message();
-        self.suggested_commit_message = suggested_commit_message.clone();
+        let suggested_commit_message = suggested_commit_message
+            .as_deref()
+            .unwrap_or("Enter commit message");
 
-        if let Some(suggested_commit_message) = suggested_commit_message {
-            self.commit_editor.update(cx, |editor, cx| {
-                editor.set_placeholder_text(Arc::from(suggested_commit_message), cx)
-            });
-        }
+        self.commit_editor.update(cx, |editor, cx| {
+            editor.set_placeholder_text(Arc::from(suggested_commit_message), cx)
+        });
 
         cx.notify();
     }
@@ -1581,7 +1583,14 @@ impl GitPanel {
                     != Some(&buffer)
                 {
                     git_panel.commit_editor = cx.new(|cx| {
-                        commit_message_editor(buffer, git_panel.project.clone(), true, window, cx)
+                        commit_message_editor(
+                            buffer,
+                            git_panel.suggested_commit_message.as_deref(),
+                            git_panel.project.clone(),
+                            true,
+                            window,
+                            cx,
+                        )
                     });
                 }
             })
