@@ -329,6 +329,7 @@ impl lsp_types::notification::Notification for ServerStatus {
 
 impl LanguageServer {
     /// Starts a language server process.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         stderr_capture: Arc<Mutex<Option<String>>>,
         server_id: LanguageServerId,
@@ -1285,7 +1286,6 @@ impl LanguageServer {
 
         let removed: Vec<_> = old_workspace_folders
             .difference(&folders)
-            .into_iter()
             .map(|uri| WorkspaceFolder {
                 uri: uri.clone(),
                 name: String::default(),
