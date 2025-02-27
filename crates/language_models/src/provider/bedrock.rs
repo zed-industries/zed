@@ -731,7 +731,7 @@ pub fn map_to_language_model_completion_events(
                                                     Ok(LanguageModelCompletionEvent::ToolUse(
                                                         LanguageModelToolUse {
                                                             id: tool_use.id.into(),
-                                                            name: tool_use.name,
+                                                            name: tool_use.name.into(),
                                                             input: if tool_use.input_json.is_empty()
                                                             {
                                                                 Value::Null
