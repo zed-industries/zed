@@ -89,8 +89,8 @@ impl DebugAdapter for PhpDebugAdapter {
                 format!("--server={}", self.port).into(),
             ]),
             connection: Some(TcpArguments {
-                port: Some(self.port),
-                host: Ipv4Addr::LOCALHOST,
+                port: self.port,
+                host: self.host,
                 timeout: None,
             }),
             cwd: config.cwd.clone(),

@@ -123,7 +123,7 @@ impl DebugAdapter for PythonDebugAdapter {
             ]),
             connection: Some(adapters::TcpArguments {
                 host: self.host,
-                port: Some(self.port),
+                port: self.port,
                 timeout: self.timeout,
             }),
             cwd: config.cwd.clone(),

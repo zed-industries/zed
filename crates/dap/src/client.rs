@@ -103,7 +103,7 @@ impl DebugAdapterClient {
                 cwd: binary.cwd,
                 connection: Some(crate::adapters::TcpArguments {
                     host: tcp_transport.host,
-                    port: Some(tcp_transport.port),
+                    port: tcp_transport.port,
                     timeout: Some(tcp_transport.timeout),
                 }),
                 #[cfg(any(test, feature = "test-support"))]
@@ -319,11 +319,7 @@ mod tests {
                 command: "command".into(),
                 arguments: Default::default(),
                 envs: Default::default(),
-                connection: Some(crate::adapters::TcpArguments {
-                    host: Ipv4Addr::LOCALHOST,
-                    port: None,
-                    timeout: None,
-                }),
+                connection: None,
                 is_fake: true,
                 cwd: None,
             },

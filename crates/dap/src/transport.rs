@@ -564,12 +564,9 @@ impl TcpTransport {
         let Some(connection_args) = binary.connection.as_ref() else {
             return Err(anyhow!("No connection arguments provided"));
         };
+
         let host = connection_args.host;
-        let port = if let Some(port) = connection_args.port {
-            port
-        } else {
-            Self::open_port_for_host(host).await?
-        };
+        let port = connection_args.port;
 
         let mut command = util::command::new_smol_command(&binary.command);
 

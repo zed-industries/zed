@@ -98,7 +98,7 @@ impl DebugAdapter for JsDebugAdapter {
             is_fake: false,
             connection: Some(adapters::TcpArguments {
                 host: self.host,
-                port: Some(self.port),
+                port: self.port,
                 timeout: self.timeout,
             }),
         })
