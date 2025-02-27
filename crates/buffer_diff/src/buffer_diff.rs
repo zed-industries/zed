@@ -172,17 +172,6 @@ impl BufferDiffSnapshot {
             }
         }
     }
-
-    pub fn stage_or_unstage_hunks(
-        &mut self,
-        stage: bool,
-        hunks: impl Iterator<Item = DiffHunk>,
-        buffer: &text::BufferSnapshot,
-    ) -> Option<Rope> {
-        let secondary = &self.secondary_diff.as_ref()?.inner;
-        self.inner
-            .stage_or_unstage_hunks(secondary, stage, hunks, buffer)
-    }
 }
 
 impl BufferDiffInner {
@@ -1764,7 +1753,7 @@ mod tests {
             index_text: &Rope,
             head_text: String,
             cx: &mut TestAppContext,
-        ) -> BufferDiff {
+        ) -> Entity<BufferDiff> {
             let inner = BufferDiff::build_sync(working_copy.text.clone(), head_text, cx);
             let secondary = BufferDiff {
                 buffer_id: working_copy.remote_id(),
@@ -1776,11 +1765,11 @@ mod tests {
                 secondary_diff: None,
             };
             let secondary = cx.new(|_| secondary);
-            BufferDiff {
+            cx.new(|_| BufferDiff {
                 buffer_id: working_copy.remote_id(),
                 inner,
                 secondary_diff: Some(secondary),
-            }
+            })
         }
 
         let operations = std::env::var("OPERATIONS")
@@ -1808,7 +1797,7 @@ mod tests {
         };
 
         let mut diff = uncommitted_diff(&working_copy, &index_text, head_text.clone(), cx);
-        let mut hunks = cx.update(|cx| {
+        let mut hunks = diff.update(cx, |diff, cx| {
             diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &working_copy, cx)
                 .collect::<Vec<_>>()
         });
@@ -1819,6 +1808,7 @@ mod tests {
         for _ in 0..operations {
             let i = rng.gen_range(0..hunks.len());
             let hunk = &mut hunks[i];
+            let hunk_to_change = hunk.clone();
             let stage = match hunk.secondary_status {
                 DiffHunkSecondaryStatus::HasSecondaryHunk => {
                     hunk.secondary_status = DiffHunkSecondaryStatus::None;
@@ -1831,13 +1821,13 @@ mod tests {
                 _ => unreachable!(),
             };
 
-            let mut snapshot = cx.update(|cx| diff.snapshot(cx));
-            index_text = snapshot
-                .stage_or_unstage_hunks(stage, [hunk.clone()].into_iter(), &working_copy)
-                .unwrap();
+            index_text = diff.update(cx, |diff, cx| {
+                diff.stage_or_unstage_hunks(stage, [hunk_to_change].into_iter(), &working_copy, cx)
+                    .unwrap()
+            });
 
             diff = uncommitted_diff(&working_copy, &index_text, head_text.clone(), cx);
-            let found_hunks = cx.update(|cx| {
+            let found_hunks = diff.update(cx, |diff, cx| {
                 diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &working_copy, cx)
                     .collect::<Vec<_>>()
             });
