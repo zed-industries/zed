@@ -1,3 +1,4 @@
+use dap::transport::TcpTransport;
 use gpui::AsyncApp;
 use serde_json::Value;
 use std::{ffi::OsString, path::PathBuf};
@@ -34,7 +35,7 @@ impl DebugAdapter for CustomDebugAdapter {
         {
             Some(adapters::TcpArguments {
                 host: connection.host(),
-                port: connection.port,
+                port: TcpTransport::port(&connection).await?,
                 timeout: connection.timeout,
             })
         } else {
