@@ -3124,9 +3124,9 @@ checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
 
 [[package]]
 name = "convert_case"
-version = "0.7.1"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb402b8d4c85569410425650ce3eddc7d698ed96d39a73f941b08fb63082f1e7"
+checksum = "baaaa0ecca5b51987b9423ccdc971514dd8b0bb7b4060b983d3664dad3f1f89f"
 dependencies = [
  "unicode-segmentation",
 ]
@@ -4102,7 +4102,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "convert_case 0.7.1",
+ "convert_case 0.8.0",
  "ctor",
  "db",
  "emojis",
@@ -7946,7 +7946,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "convert_case 0.7.1",
+ "convert_case 0.8.0",
  "log",
  "pretty_assertions",
  "streaming-iterator",
@@ -14567,7 +14567,7 @@ dependencies = [
 name = "ui_macros"
 version = "0.1.0"
 dependencies = [
- "convert_case 0.7.1",
+ "convert_case 0.8.0",
  "linkme",
  "proc-macro2",
  "quote",
