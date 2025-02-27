@@ -85,8 +85,8 @@ use gpui::{
     ClipboardEntry, ClipboardItem, Context, DispatchPhase, Edges, Entity, EntityInputHandler,
     EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight, Global,
     HighlightStyle, Hsla, KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad,
-    ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText, Subscription, Task,
-    TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
+    ParentElement, Pixels, Render, SharedString, Size, Stateful, Styled, StyledText, Subscription,
+    Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
     WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
@@ -171,8 +171,8 @@ use theme::{
     ThemeColors, ThemeSettings,
 };
 use ui::{
-    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize, Key,
-    Tooltip,
+    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
+    IconWithIndicator, Indicator, Key, Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
@@ -6395,7 +6395,11 @@ impl Editor {
         }
     }
 
-    fn render_edit_prediction_accept_keybind(&self, window: &mut Window, cx: &App) -> Option<Div> {
+    fn render_edit_prediction_accept_keybind(
+        &self,
+        window: &mut Window,
+        cx: &App,
+    ) -> Option<AnyElement> {
         let accept_binding = self.accept_edit_prediction_keybind(window, cx);
         let accept_keystroke = accept_binding.keystroke()?;
 
@@ -6431,6 +6435,7 @@ impl Editor {
                     .size(Some(IconSize::XSmall.rems().into())),
                 )
             })
+            .into_any()
             .into()
     }
 
@@ -6440,10 +6445,14 @@ impl Editor {
         icon: Option<IconName>,
         window: &mut Window,
         cx: &App,
-    ) -> Option<Div> {
+    ) -> Option<Stateful<Div>> {
         let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
 
+        let keybind = self.render_edit_prediction_accept_keybind(window, cx);
+        let has_keybind = keybind.is_some();
+
         let result = h_flex()
+            .id("ep-line-popover")
             .py_0p5()
             .pl_1()
             .pr(padding_right)
@@ -6453,8 +6462,15 @@ impl Editor {
             .bg(Self::edit_prediction_line_popover_bg_color(cx))
             .border_color(Self::edit_prediction_callout_popover_border_color(cx))
             .shadow_sm()
-            .children(self.render_edit_prediction_accept_keybind(window, cx))
-            .child(Label::new(label).size(LabelSize::Small))
+            .when(!has_keybind, |el| missing_edit_prediction_keybind(el, cx))
+            .children(keybind)
+            .child(
+                Label::new(label)
+                    .size(LabelSize::Small)
+                    .when(!has_keybind, |el| {
+                        el.color(cx.theme().status().error.into())
+                    }),
+            )
             .when_some(icon, |element, icon| {
                 element.child(
                     div()
@@ -18202,4 +18218,42 @@ fn all_edits_insertions_or_deletions(
         }
     }
     all_insertions || all_deletions
+}
+
+fn missing_edit_prediction_keybind(div: Stateful<Div>, cx: &App) -> Stateful<Div> {
+    let status_colors = cx.theme().status();
+
+    div.bg(status_colors.error_background)
+        .border_color(status_colors.error_border)
+        .pl_2()
+        .child(Icon::new(IconName::ZedPredictDisabled).color(Color::Error))
+        .cursor_default()
+        .hoverable_tooltip(move |_window, cx| {
+            cx.new(|_| MissingEditPredictionKeybindingTooltip).into()
+        })
+}
+
+struct MissingEditPredictionKeybindingTooltip;
+
+impl Render for MissingEditPredictionKeybindingTooltip {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        ui::tooltip_container(window, cx, |container, _, cx| {
+            container
+                .flex_shrink_0()
+                .max_w_80()
+                .min_h(rems_from_px(116.))
+                .gap_0p5()
+                .child(Label::new("Missing accept keybinding"))
+                .text_ui_sm(cx)
+                .child("Your keymap overrides the default keybinding for a different action. Please define at least one keybinding for the `editor::AcceptEditPrediction` action.")
+                .child(div().flex_1())
+                .child(
+                    h_flex()
+                        .w_full()
+                        .items_end()
+                        .child(Button::new("open-keymap", "Open Keymap").size(ButtonSize::Compact))
+                        .child(Button::new("see-docs", "See documentation").size(ButtonSize::Compact)),
+                )
+        })
+    }
 }
