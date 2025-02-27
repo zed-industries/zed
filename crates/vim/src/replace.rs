@@ -483,4 +483,17 @@ mod test {
         cx.simulate_keystrokes("c x t r w c x i w");
         cx.assert_state("hello ˇworld", Mode::Normal);
     }
+
+    #[gpui::test]
+    async fn test_clear_exchange(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇhello world", Mode::Normal);
+        cx.simulate_keystrokes("c x i w c x c");
+
+        cx.update_editor(|editor, window, cx| {
+            let highlights = editor.all_text_background_highlights(window, cx);
+            assert_eq!(0, highlights.len());
+        });
+    }
 }
