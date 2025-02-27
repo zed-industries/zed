@@ -7,7 +7,7 @@ use collections::HashSet;
 use editor::{
     actions::{GoToHunk, GoToPrevHunk},
     scroll::Autoscroll,
-    Editor, EditorEvent, ToOffset, ToPoint,
+    Editor, EditorEvent, ToPoint,
 };
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
