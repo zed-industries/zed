@@ -222,6 +222,7 @@ impl PickerDelegate for OpenPathDelegate {
                         *m,
                     )
                 });
+                this.delegate.selected_index = 0;
                 cx.notify();
             })
             .ok();
