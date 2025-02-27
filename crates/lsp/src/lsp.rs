@@ -838,18 +838,21 @@ impl LanguageServer {
             const METHOD: &'static str = Initialize::METHOD;
         }
         let mut params = serde_json::to_value(params).unwrap();
-        merge_non_null_json_value_into(
-            serde_json::json!({
-                "capabilities": {
-                    "textDocument": {
-                        "inactiveRegionsCapabilities": {
-                            "inactiveRegions": true,
+
+        if self.name().0 == "clangd" {
+            merge_non_null_json_value_into(
+                serde_json::json!({
+                    "capabilities": {
+                        "textDocument": {
+                            "inactiveRegionsCapabilities": {
+                                "inactiveRegions": true,
+                            }
                         }
                     }
-                }
-            }),
-            &mut params,
-        );
+                }),
+                &mut params,
+            );
+        }
 
         cx.spawn(|_| async move {
             let response = self.request::<InitializeExtended>(params).await?;
