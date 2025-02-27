@@ -516,19 +516,19 @@ impl EditorElement {
                     if let Some(inlay_modifiers) =
                         inlay_hint_settings.toggle_on_modifiers_press.as_ref()
                     {
-                        if inlay_modifiers == &event.modifiers {
-                            editor.refresh_inlay_hints(
-                                InlayHintRefreshReason::Toggle(!editor.inlay_hints_enabled()),
-                                cx,
-                            );
-                            editor.inlay_hint_modifiers_toggled = true;
-                        } else if editor.inlay_hint_modifiers_toggled {
-                            editor.refresh_inlay_hints(
-                                InlayHintRefreshReason::Toggle(!editor.inlay_hints_enabled()),
-                                cx,
-                            );
-                            editor.inlay_hint_modifiers_toggled = false;
-                        }
+                        // if inlay_modifiers == &event.modifiers {
+                        //     editor.refresh_inlay_hints(
+                        //         InlayHintRefreshReason::Toggle(!editor.inlay_hints_enabled()),
+                        //         cx,
+                        //     );
+                        //     editor.inlay_hint_modifiers_toggled = true;
+                        // } else if editor.inlay_hint_modifiers_toggled {
+                        //     editor.refresh_inlay_hints(
+                        //         InlayHintRefreshReason::Toggle(!editor.inlay_hints_enabled()),
+                        //         cx,
+                        //     );
+                        //     editor.inlay_hint_modifiers_toggled = false;
+                        // }
                     }
 
                     if editor.hover_state.focused(window, cx) {
