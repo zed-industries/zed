@@ -1423,7 +1423,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_inline_completions_enabled_for_file(cx: &mut TestAppContext) {
+    fn test_edit_predictions_enabled_for_file(cx: &mut TestAppContext) {
         use crate::TestFile;
         use std::path::PathBuf;
 
