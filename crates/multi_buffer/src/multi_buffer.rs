@@ -4528,7 +4528,6 @@ impl MultiBufferSnapshot {
                     base_text_byte_range,
                     ..
                 }) => {
-                    let mut in_deleted_hunk = false;
                     if let Some(diff_base_anchor) = &anchor.diff_base_anchor {
                         if let Some(base_text) =
                             self.diffs.get(buffer_id).and_then(|diff| diff.base_text())
@@ -4543,16 +4542,12 @@ impl MultiBufferSnapshot {
                                             base_text_byte_range.start..base_text_offset,
                                         );
                                     position.add_assign(&position_in_hunk);
-                                    in_deleted_hunk = true;
                                 } else if at_transform_end {
                                     diff_transforms.next(&());
                                     continue;
                                 }
                             }
                         }
-                    }
-                    if !in_deleted_hunk {
-                        position = diff_transforms.end(&()).1 .0;
                     }
                 }
                 _ => {
