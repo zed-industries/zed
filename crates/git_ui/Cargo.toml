@@ -43,6 +43,8 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+component.workspace = true
+linkme.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
