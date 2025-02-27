@@ -29,6 +29,7 @@ use project::{
 };
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
+use smallvec::smallvec;
 use std::cell::RefCell;
 use std::future::Future;
 use std::rc::Rc;
@@ -36,8 +37,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    prelude::*, ButtonLike, Checkbox, ContextMenu, Divider, DividerColor, ElevationIndex, ListItem,
-    ListItemSpacing, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
+    prelude::*, vertical_divider, ButtonLike, Checkbox, ContextMenu, Divider, DividerColor,
+    ElevationIndex, ListItem, ListItemSpacing, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
 use workspace::{
@@ -3116,6 +3117,107 @@ impl Render for GitPanelMessageTooltip {
     }
 }
 
+#[derive(IntoElement)]
+struct SplitButton {
+    pub left: ButtonLike,
+    pub right: ButtonLike,
+}
+
+impl SplitButton {
+    fn new(
+        left_label: impl Into<SharedString>,
+        ahead_count: usize,
+        behind_count: usize,
+        left_icon: Option<IconName>,
+        left_on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        fn count(count: usize) -> impl IntoElement {
+            h_flex()
+                .ml_neg_px()
+                .h(rems(0.875))
+                .items_center()
+                .overflow_hidden()
+                .px_0p5()
+                .child(
+                    Label::new(count.to_string())
+                        .size(LabelSize::XSmall)
+                        .line_height_style(LineHeightStyle::UiLabel),
+                )
+        }
+
+        let should_render_counts = left_icon.is_none() && (ahead_count > 0 || behind_count > 0);
+
+        let left = ui::ButtonLike::new_rounded_left("split-button-left")
+            .layer(ui::ElevationIndex::ModalSurface)
+            .size(ui::ButtonSize::Compact)
+            .when(should_render_counts, |this| {
+                this.child(
+                    h_flex()
+                        .ml_neg_0p5()
+                        .mr_1()
+                        .when(behind_count > 0, |this| {
+                            this.child(Icon::new(IconName::ArrowDown).size(IconSize::XSmall))
+                                .child(count(behind_count))
+                        })
+                        .when(ahead_count > 0, |this| {
+                            this.child(Icon::new(IconName::ArrowUp).size(IconSize::XSmall))
+                                .child(count(ahead_count))
+                        }),
+                )
+            })
+            .when_some(left_icon, |this, left_icon| {
+                this.child(
+                    h_flex()
+                        .ml_neg_0p5()
+                        .mr_1()
+                        .child(Icon::new(left_icon).size(IconSize::XSmall)),
+                )
+            })
+            .child(
+                div()
+                    .child(Label::new(left_label).size(LabelSize::Small))
+                    .mr_0p5(),
+            )
+            .on_click(left_on_click);
+
+        let right = ui::ButtonLike::new_rounded_right("split-button-right")
+            .layer(ui::ElevationIndex::ModalSurface)
+            .size(ui::ButtonSize::None)
+            .child(
+                div()
+                    .px_1()
+                    .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
+            );
+        // .on_click(right_on_click);
+
+        Self { left, right }
+    }
+}
+
+impl RenderOnce for SplitButton {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        h_flex()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().colors().text_muted.alpha(0.12))
+            .child(self.left)
+            .child(
+                div()
+                    .h_full()
+                    .w_px()
+                    .bg(cx.theme().colors().text_muted.alpha(0.16)),
+            )
+            .child(self.right)
+            .bg(ElevationIndex::Surface.on_elevation_bg(cx))
+            .shadow(smallvec![BoxShadow {
+                color: hsla(0.0, 0.0, 0.0, 0.16),
+                offset: point(px(0.), px(1.)),
+                blur_radius: px(0.),
+                spread_radius: px(0.),
+            }])
+    }
+}
+
 // TODO:
 //
 // https://www.figma.com/design/sKk3aa7XPwBoE8fdlgp7E8/Git-integration?node-id=1624-3032&t=jki6SC8bshbAhpOa-11
@@ -3153,49 +3255,83 @@ impl PanelRepoHeader {
             .anchor(Corner::TopRight)
     }
 
-    fn render_pull_button(&self, remote_change_count: u32, _cx: &mut App) -> impl IntoElement {
-        let label = if remote_change_count > 0 {
-            format!("Pull ({})", remote_change_count)
-        } else {
-            "Pull".to_string()
-        };
-
-        panel_filled_button(label)
-            .icon(IconName::ArrowDown)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .icon_position(IconPosition::Start)
-    }
-
-    fn render_push_button(
-        &self,
-        local_change_count: u32,
-        remote_change_count: u32,
-        _cx: &mut App,
-    ) -> impl IntoElement {
-        let label = if local_change_count > 0 {
-            if remote_change_count > 0 {
-                format!("Push/Pull ({}/{})", local_change_count, remote_change_count)
-            } else {
-                format!("Push ({})", local_change_count)
+    fn render_relevant_button(&self, branch: &Branch, cx: &mut App) -> impl IntoElement {
+        let upstream = branch.upstream.as_ref();
+        match upstream {
+            Some(Upstream {
+                tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus { ahead, behind }),
+                ..
+            }) if *ahead > 0 && *behind == 0 => {
+                return SplitButton::new("Push", *ahead as usize, 0, None, |_, _, cx| {
+                    cx.dispatch_action(&git::Push { options: None })
+                })
             }
-        } else {
-            "Push".to_string()
-        };
+            Some(Upstream {
+                tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus { ahead, behind }),
+                ..
+            }) if *ahead > 0 => {
+                return SplitButton::new(
+                    "Pull",
+                    *ahead as usize,
+                    *behind as usize,
+                    None,
+                    |_, _, cx| cx.dispatch_action(&git::Pull),
+                )
+            }
+            Some(Upstream {
+                tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus { behind, .. }),
+                ..
+            }) if *behind > 0 => {
+                return SplitButton::new("Pull", 0, *behind as usize, None, |_, _, cx| {
+                    cx.dispatch_action(&git::Pull)
+                })
+            }
+            _ => {
+                return SplitButton::new("Sync", 0, 0, Some(IconName::ArrowCircle), |_, _, cx| {
+                    cx.dispatch_action(&git::Fetch)
+                })
+            }
+        }
+    }
 
-        panel_filled_button(label)
-            .icon(IconName::ArrowUp)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .icon_position(IconPosition::Start)
-    }
-    fn render_sync_button(&self, _cx: &mut App) -> impl IntoElement {
-        panel_filled_button("Sync")
-            .icon(IconName::ArrowCircle)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .icon_position(IconPosition::Start)
-    }
+    // fn render_pull_button(&self, remote_change_count: u32, _cx: &mut App) -> impl IntoElement {
+
+    //     panel_filled_button(label)
+    //         .icon(IconName::ArrowDown)
+    //         .icon_size(IconSize::Small)
+    //         .icon_color(Color::Muted)
+    //         .icon_position(IconPosition::Start)
+    // }
+
+    // fn render_push_button(
+    //     &self,
+    //     local_change_count: u32,
+    //     remote_change_count: u32,
+    //     _cx: &mut App,
+    // ) -> impl IntoElement {
+    //     let label = if local_change_count > 0 {
+    //         if remote_change_count > 0 {
+    //             format!("Push/Pull ({}/{})", local_change_count, remote_change_count)
+    //         } else {
+    //             format!("Push ({})", local_change_count)
+    //         }
+    //     } else {
+    //         "Push".to_string()
+    //     };
+
+    //     panel_filled_button(label)
+    //         .icon(IconName::ArrowUp)
+    //         .icon_size(IconSize::Small)
+    //         .icon_color(Color::Muted)
+    //         .icon_position(IconPosition::Start)
+    // }
+    // fn render_sync_button(&self, _cx: &mut App) -> impl IntoElement {
+    //     panel_filled_button("Sync")
+    //         .icon(IconName::ArrowCircle)
+    //         .icon_size(IconSize::Small)
+    //         .icon_color(Color::Muted)
+    //         .icon_position(IconPosition::Start)
+    // }
 }
 
 impl RenderOnce for PanelRepoHeader {
@@ -3236,6 +3372,7 @@ impl RenderOnce for PanelRepoHeader {
             });
 
         h_flex()
+            .w_full()
             .px_2()
             .h(px(32.))
             .justify_between()
@@ -3273,15 +3410,9 @@ impl RenderOnce for PanelRepoHeader {
                     .gap_1()
                     .child(self.render_overflow_menu(overflow_menu_id))
                     .when_some(branch, |this, branch| {
-                        let upstream = branch.upstream.as_ref();
-                        let child = match upstream {
-                            Some(Upstream { tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus { ahead, behind }), ..}) if *ahead > 0 => self.render_push_button(*ahead, *behind, cx).into_any_element(),
-                            Some(Upstream { tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus { behind, ..}), ..}) if *behind > 0 => self.render_pull_button(*behind, cx).into_any_element(),
-                            _ =>  self.render_sync_button(cx).into_any_element(),
-                        };
-                        this.child(child)
-                    })
-
+                        let button = self.render_relevant_button(&branch, cx);
+                        this.child(button)
+                    }),
             )
     }
 }
