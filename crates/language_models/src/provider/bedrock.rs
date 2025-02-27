@@ -772,7 +772,9 @@ struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    const PLACEHOLDER_TEXT: &'static str = "XXXXXXXXXXXXXXXXXXX";
+    const PLACEHOLDER_ACCESS_KEY_ID_TEXT: &'static str = "XXXXXXXXXXXXXXXX";
+    const PLACEHOLDER_SECRET_ACCESS_KEY_TEXT: &'static str =
+        "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
     const PLACEHOLDER_REGION: &'static str = "us-east-1";
 
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -802,12 +804,12 @@ impl ConfigurationView {
         Self {
             access_key_id_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_ACCESS_KEY_ID_TEXT, cx);
                 editor
             }),
             secret_access_key_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT, cx);
                 editor
             }),
             region_editor: cx.new(|cx| {
