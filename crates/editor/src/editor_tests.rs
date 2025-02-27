@@ -16473,11 +16473,6 @@ mod autoclose_tags {
         let mut cx = EditorTestContext::new(cx).await;
         cx.update_buffer(|buffer, cx| {
             let language = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
-            // let jsx_tag_auto_close = language.config().jsx_tag_auto_close.clone();
-            // let language = language.with_edit_behavior_provider(jsx_tag_auto_close.map(|config| {
-            //     Arc::new(languages::tsx::TsxEditBehaviorProvider::new(config))
-            //         as Arc<dyn EditBehaviorImplementation + 'static>
-            // }));
 
             buffer.set_language(Some(language), cx)
         });
@@ -16502,89 +16497,73 @@ mod autoclose_tags {
         };
     }
 
-    // #[gpui::test]
-    // async fn example(cx: &mut TestAppContext) {
-    //     init_test(cx, |_| {});
-
-    //     let mut cx = EditorTestContext::new(cx).await;
-    //     cx.update_buffer(|buffer, cx| {
-    //         let language =
-    //             Arc::try_unwrap(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()))
-    //                 .unwrap();
-    //         let language =
-    //             language.with_edit_behavior_provider(Some(Arc::new(ExampleJSXCompletion)));
-
-    //         buffer.set_language(Some(Arc::new(language)), cx)
-    //     });
-    // }
-
     check!(
-        basic,
+        test_basic,
         "<divˇ" + ">" => "<div>ˇ</div>"
     );
 
     check!(
-        basic_nested,
+        test_basic_nested,
         "<div><divˇ</div>" + ">" => "<div><div>ˇ</div></div>"
     );
 
     check!(
-        basic_ignore_already_closed,
+        test_basic_ignore_already_closed,
         "<div><divˇ</div></div>" + ">" => "<div><div>ˇ</div></div>"
     );
 
     check!(
-        doesnt_autoclose_closing_tag,
+        test_doesnt_autoclose_closing_tag,
         "</divˇ" + ">" => "</div>ˇ"
     );
 
     check!(
-        jsx_attr,
+        test_jsx_attr,
         "<div attr={</div>}ˇ" + ">" => "<div attr={</div>}>ˇ</div>"
     );
 
     check!(
-        ignores_closing_tags_in_expr_block,
+        test_ignores_closing_tags_in_expr_block,
         "<div><divˇ{</div>}</div>" + ">" => "<div><div>ˇ</div>{</div>}</div>"
     );
 
     check!(
-        doesnt_autoclose_on_gt_in_expr,
+        test_doesnt_autoclose_on_gt_in_expr,
         "<div attr={1 ˇ" + ">" => "<div attr={1 >ˇ"
     );
 
     check!(
-        ignores_closing_tags_with_different_tag_names,
+        test_ignores_closing_tags_with_different_tag_names,
         "<div><divˇ</div></span>" + ">" => "<div><div>ˇ</div></div></span>"
     );
 
     check!(
-        autocloses_in_jsx_expression,
+        test_autocloses_in_jsx_expression,
         "<div>{<divˇ}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
     );
 
     check!(
-        doesnt_autoclose_already_closed_in_jsx_expression,
+        test_doesnt_autoclose_already_closed_in_jsx_expression,
         "<div>{<divˇ</div>}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
     );
 
     check!(
-        does_not_include_type_argument_in_autoclose_tag_name,
+        test_does_not_include_type_argument_in_autoclose_tag_name,
         "<Component<T> attr={boolean_value}ˇ" + ">" => "<Component<T> attr={boolean_value}>ˇ</Component>"
     );
 
     check!(
-        does_not_autoclose_doctype,
+        test_does_not_autoclose_doctype,
         "<!DOCTYPE htmlˇ" + ">" => "<!DOCTYPE html>ˇ"
     );
 
     check!(
-        does_not_autoclose_comment,
+        test_does_not_autoclose_comment,
         "<!-- comment --ˇ" + ">" => "<!-- comment -->ˇ"
     );
 
     check!(
-        multi_cursor_autoclose_same_tag,
+        test_multi_cursor_autoclose_same_tag,
         r#"
         <divˇ
         <divˇ
@@ -16631,6 +16610,83 @@ mod autoclose_tags {
         >ˇ
         "#
     );
+
+    #[gpui::test]
+    async fn test_multibuffer(cx: &mut TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.jsx_tag_auto_close = Some(JsxTagAutoCloseSettings { enabled: true });
+        });
+
+        let buffer_a = cx.new(|cx| {
+            let mut buf = language::Buffer::local("<div", cx);
+            buf.set_language(
+                Some(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into())),
+                cx,
+            );
+            buf
+        });
+        let buffer_b = cx.new(|cx| {
+            let mut buf = language::Buffer::local("<pre", cx);
+            buf.set_language(
+                Some(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into())),
+                cx,
+            );
+            buf
+        });
+        let buffer_c = cx.new(|cx| {
+            let buf = language::Buffer::local("<span", cx);
+            buf
+        });
+        let buffer = cx.new(|cx| {
+            let mut buf = MultiBuffer::new(language::Capability::ReadWrite);
+            buf.push_excerpts(
+                buffer_a,
+                [ExcerptRange {
+                    context: text::Anchor::MIN..text::Anchor::MAX,
+                    primary: None,
+                }],
+                cx,
+            );
+            buf.push_excerpts(
+                buffer_b,
+                [ExcerptRange {
+                    context: text::Anchor::MIN..text::Anchor::MAX,
+                    primary: None,
+                }],
+                cx,
+            );
+            buf.push_excerpts(
+                buffer_c,
+                [ExcerptRange {
+                    context: text::Anchor::MIN..text::Anchor::MAX,
+                    primary: None,
+                }],
+                cx,
+            );
+            buf
+        });
+        let editor = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
+
+        let mut cx = EditorTestContext::for_editor(editor, cx).await;
+
+        cx.update_editor(|editor, window, cx| {
+            editor.change_selections(None, window, cx, |selections| {
+                selections.select(vec![
+                    Selection::from_offset(4),
+                    Selection::from_offset(9),
+                    Selection::from_offset(15),
+                ])
+            })
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            editor.handle_input(">", window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.assert_editor_state("<div>ˇ</div>\n<pre>ˇ</pre>\n<span>ˇ");
+    }
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
