@@ -3,8 +3,8 @@ use std::ops::{Deref, DerefMut};
 use collections::HashMap;
 use gpui::{div, prelude::*, px, AnyElement, App, IntoElement, RenderOnce, SharedString, Window};
 use linkme::distributed_slice;
-use once_cell::sync::Lazy;
 use parking_lot::RwLock;
+use std::sync::LazyLock;
 use theme::ActiveTheme;
 
 pub trait Component {
@@ -27,8 +27,8 @@ pub static __ALL_COMPONENTS: [fn()] = [..];
 #[distributed_slice]
 pub static __ALL_PREVIEWS: [fn()] = [..];
 
-pub static COMPONENT_DATA: Lazy<RwLock<ComponentRegistry>> =
-    Lazy::new(|| RwLock::new(ComponentRegistry::new()));
+pub static COMPONENT_DATA: LazyLock<RwLock<ComponentRegistry>> =
+    LazyLock::new(|| RwLock::new(ComponentRegistry::new()));
 
 pub struct ComponentRegistry {
     components: Vec<(Option<&'static str>, &'static str, Option<&'static str>)>,
