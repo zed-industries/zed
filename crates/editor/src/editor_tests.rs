@@ -16462,10 +16462,13 @@ async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
 
 mod autoclose_tags {
     use super::*;
+    use language::language_settings::JsxTagAutoCloseSettings;
     use languages::language;
-    
+
     async fn test_setup(cx: &mut TestAppContext) -> EditorTestContext {
-        init_test(cx, |_| {});
+        init_test(cx, |settings| {
+            settings.defaults.jsx_tag_auto_close = Some(JsxTagAutoCloseSettings { enabled: true });
+        });
 
         let mut cx = EditorTestContext::new(cx).await;
         cx.update_buffer(|buffer, cx| {

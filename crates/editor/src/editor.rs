@@ -3161,11 +3161,11 @@ impl Editor {
             this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
             linked_editing_ranges::refresh_linked_ranges(this, window, cx);
             this.refresh_inline_completion(true, false, window, cx);
-            this.handle_auto_edit_behavior(initial_buffer_versions_map, window, cx);
+            this.handle_jsx_tag_auto_closing(initial_buffer_versions_map, window, cx);
         });
     }
 
-    fn handle_auto_edit_behavior(
+    fn handle_jsx_tag_auto_closing(
         &mut self,
         initial_buffer_versions_map: HashMap<BufferId, clock::Global>,
         window: &mut Window,
@@ -3186,7 +3186,7 @@ impl Editor {
                 let Some(language) = snapshot.language_at(edit.new.end) else {
                     continue;
                 };
-                if language.edit_behavior_provider().is_none() {
+                if language.config().jsx_tag_auto_close.is_none() {
                     continue;
                 }
 
@@ -3227,13 +3227,13 @@ impl Editor {
                 reparsed_rx.await?;
 
                 let Ok(buffer_snapshot) = buffer.read_with(&cx, |buf, _| buf.snapshot()) else {
-                    return Err(anyhow!("Auto Edit Operation Failed: Buffer Failed to Read"));
+                    return Err(anyhow!("Auto-close Operation Failed: Buffer Failed to Read"));
                 };
-                let Some(edit_behavior_provider) = language.edit_behavior_provider() else {
-                    return Err(anyhow!("Auto Edit Operation Failed: Language does not support edit behavior provider"));
+                let Some(jsx_tag_auto_close) = language.config().jsx_tag_auto_close.clone() else {
+                    return Err(anyhow!("Auto-close Operation Failed: Language does not support JSX tag auto-closing"));
                 };
 
-                let Some(edit_behavior_state) = edit_behavior_provider.boxed_should_auto_edit(&buffer_snapshot, &edited_ranges) else {
+                let Some(edit_behavior_state) = language::jsx_tag_auto_close::should_auto_close(&buffer_snapshot, &edited_ranges, &jsx_tag_auto_close) else {
                     return Ok(());
                 };
 
@@ -3247,21 +3247,21 @@ impl Editor {
                                 )
                             )
                         )
-                    }).context("Auto Edit Operation Failed")?;
+                    }).context("Auto-close Operation Failed")?;
 
                     if has_edits_since_start {
-                        return Err(anyhow!("Auto Edit Operation Failed - Buffer has edits since start"));
+                        return Err(anyhow!("Auto-close Operation Failed - Buffer has edits since start"));
                     }
                 }
 
                 let edits = cx.background_executor().spawn({
                     let buffer_snapshot = buffer_snapshot.clone();
                     async move {
-                        edit_behavior_provider.boxed_auto_edit(&buffer_snapshot, &edited_ranges, edit_behavior_state)
+                        language::jsx_tag_auto_close::generate_auto_close_edits(&buffer_snapshot, &edited_ranges, &jsx_tag_auto_close, edit_behavior_state)
                     }
                 }).await;
 
-                let edits = edits.context("Auto Edit Operation Failed - Failed to compute edits")?;
+                let edits = edits.context("Auto-close Operation Failed - Failed to compute edits")?;
 
                 {
                     let has_edits_since_start = this.read_with(&cx, |this, cx| {
@@ -3273,16 +3273,16 @@ impl Editor {
                                 )
                             )
                         )
-                    }).context("Auto Edit Operation Failed")?;
+                    }).context("Auto-close Operation Failed")?;
 
                     if has_edits_since_start {
-                        return Err(anyhow!("Auto Edit Operation Failed - Buffer has edits since start"));
+                        return Err(anyhow!("Auto-close Operation Failed - Buffer has edits since start"));
                     }
                 }
 
                 let multi_buffer_snapshot = this.read_with(&cx, |this, cx| {
                     this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
-                }).context("Auto Edit Operation Failed - Failed to get buffer snapshot")?;
+                }).context("Auto-close Operation Failed - Failed to get buffer snapshot")?;
 
                 let mut base_selections = Vec::new();
                 let mut buffer_selection_map = HashMap::default();
@@ -3290,7 +3290,7 @@ impl Editor {
                 {
                     let selections = this.read_with(&cx, |this, _| {
                         this.selections.disjoint_anchors().clone()
-                    }).context("Auto Edit Operation Failed - Failed to get selections")?;
+                    }).context("Auto-close Operation Failed - Failed to get selections")?;
                     for selection in selections.iter() {
                         let Some(selection_buffer_offset_head) = multi_buffer_snapshot.point_to_buffer_offset(selection.head()) else {
                             base_selections.push(selection.clone());
@@ -3340,12 +3340,12 @@ impl Editor {
                 buffer.update(&mut cx, |buffer, cx| {
                     // todo! autoindent mode
                     buffer.edit(edits, None, cx);
-                }).context("Auto Edit Operation Failed - Failed to update buffer")?;
+                }).context("Auto-close Operation Failed - Failed to update buffer")?;
 
                 if any_selections_need_update {
                     let multi_buffer_snapshot = this.read_with(&cx, |this, cx| {
                         this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
-                    }).context("Auto Edit Operation Failed - Failed to get buffer snapshot")?;
+                    }).context("Auto-close Operation Failed - Failed to get buffer snapshot")?;
 
                     base_selections.extend(buffer_selection_map.values().map(|selection| {
                         match &selection.1 {
@@ -3359,7 +3359,7 @@ impl Editor {
                         this.change_selections_inner(None, false, window, cx, |s| {
                             s.select(base_selections);
                         });
-                    }).context("Auto Edit Operation Failed - Failed to update selections")?;
+                    }).context("Auto-close Operation Failed - Failed to update selections")?;
                 }
 
                 Ok(())

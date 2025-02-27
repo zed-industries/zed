@@ -8,8 +8,8 @@
 //! Notably we do *not* assign a single language to a single file; in real world a single file can consist of multiple programming languages - HTML is a good example of that - and `language` crate tends to reflect that status quo in its API.
 mod buffer;
 mod diagnostic_set;
-mod edit_behavior;
 mod highlight_map;
+pub mod jsx_tag_auto_close;
 mod language_registry;
 pub mod language_settings;
 mod outline;
@@ -27,7 +27,6 @@ use crate::language_settings::SoftWrap;
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
-pub use edit_behavior::{EditBehaviorImplementation, EditBehaviorProvider};
 use fs::Fs;
 use futures::Future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
@@ -916,7 +915,6 @@ pub struct Language {
     pub(crate) grammar: Option<Arc<Grammar>>,
     pub(crate) context_provider: Option<Arc<dyn ContextProvider>>,
     pub(crate) toolchain: Option<Arc<dyn ToolchainLister>>,
-    pub(crate) edit_behavior_provider: Option<Arc<dyn EditBehaviorImplementation>>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -1099,7 +1097,6 @@ impl Language {
             }),
             context_provider: None,
             toolchain: None,
-            edit_behavior_provider: None,
         }
     }
 
@@ -1110,14 +1107,6 @@ impl Language {
 
     pub fn with_toolchain_lister(mut self, provider: Option<Arc<dyn ToolchainLister>>) -> Self {
         self.toolchain = provider;
-        self
-    }
-
-    pub fn with_edit_behavior_provider(
-        mut self,
-        provider: Option<Arc<dyn EditBehaviorImplementation>>,
-    ) -> Self {
-        self.edit_behavior_provider = provider;
         self
     }
 
@@ -1561,10 +1550,6 @@ impl Language {
 
     pub fn toolchain_lister(&self) -> Option<Arc<dyn ToolchainLister>> {
         self.toolchain.clone()
-    }
-
-    pub fn edit_behavior_provider(&self) -> Option<Arc<dyn EditBehaviorImplementation>> {
-        self.edit_behavior_provider.clone()
     }
 
     pub fn highlight_text<'a>(

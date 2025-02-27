@@ -21,7 +21,6 @@ mod json;
 mod python;
 mod rust;
 mod tailwind;
-pub mod tsx;
 mod typescript;
 mod vtsls;
 mod yaml;
@@ -131,7 +130,6 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                         queries: load_queries($name),
                         context_provider: $context,
                         toolchain_provider: $toolchain,
-                        edit_behavior_provider: config.jsx_tag_auto_close.clone().map(|config| Arc::new(tsx::TsxEditBehaviorProvider::new(config)) as Arc<dyn EditBehaviorImplementation>),
                     })
                 }),
             );
@@ -345,16 +343,10 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn language(name: &str, grammar: tree_sitter::Language) -> Arc<Language> {
-    let config = load_config(name);
-    let jsx_tag_auto_close = config.jsx_tag_auto_close.clone();
     Arc::new(
-        Language::new(config, Some(grammar))
+        Language::new(load_config(name), Some(grammar))
             .with_queries(load_queries(name))
-            .unwrap()
-            .with_edit_behavior_provider(jsx_tag_auto_close.map(|config| {
-                Arc::new(tsx::TsxEditBehaviorProvider::new(config))
-                    as Arc<dyn EditBehaviorImplementation + 'static>
-            })),
+            .unwrap(),
     )
 }
 
