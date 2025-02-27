@@ -51,8 +51,6 @@ impl DebugAdapter for GdbDebugAdapter {
             arguments: Some(vec!["-i=dap".into()]),
             envs: None,
             cwd: config.cwd.clone(),
-            #[cfg(any(test, feature = "test-support"))]
-            is_fake: false,
             connection: None,
         })
     }

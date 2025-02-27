@@ -106,8 +106,6 @@ impl DebugAdapterClient {
                     port: tcp_transport.port,
                     timeout: Some(tcp_transport.timeout),
                 }),
-                #[cfg(any(test, feature = "test-support"))]
-                is_fake: binary.is_fake,
             },
             _ => self.binary.clone(),
         };
@@ -321,7 +319,6 @@ mod tests {
                 arguments: Default::default(),
                 envs: Default::default(),
                 connection: None,
-                is_fake: true,
                 cwd: None,
             },
             Box::new(|_, _| panic!("Did not expect to hit this code path")),
@@ -389,7 +386,6 @@ mod tests {
                 arguments: Default::default(),
                 envs: Default::default(),
                 connection: None,
-                is_fake: true,
                 cwd: None,
             },
             Box::new({
@@ -439,7 +435,6 @@ mod tests {
                 arguments: Default::default(),
                 envs: Default::default(),
                 connection: None,
-                is_fake: true,
                 cwd: None,
             },
             Box::new({

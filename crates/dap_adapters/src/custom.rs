@@ -50,8 +50,6 @@ impl DebugAdapter for CustomDebugAdapter {
                 .map(|args| args.iter().map(OsString::from).collect()),
             cwd: config.cwd.clone(),
             envs: self.custom_args.envs.clone(),
-            #[cfg(any(test, feature = "test-support"))]
-            is_fake: false,
             connection,
         };
         Ok(ret)

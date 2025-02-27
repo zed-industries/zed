@@ -100,9 +100,6 @@ pub struct DebugAdapterBinary {
     pub envs: Option<HashMap<String, String>>,
     pub cwd: Option<PathBuf>,
     pub connection: Option<TcpArguments>,
-    #[cfg(any(test, feature = "test-support"))]
-    // todo(debugger) Find a way to remove this. It's a hack for FakeTransport
-    pub is_fake: bool,
 }
 
 pub struct AdapterVersion {
@@ -333,7 +330,6 @@ impl DebugAdapter for FakeAdapter {
             command: "command".into(),
             arguments: None,
             connection: None,
-            is_fake: true,
             envs: None,
             cwd: None,
         })

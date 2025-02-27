@@ -87,8 +87,6 @@ impl DebugAdapter for GoDebugAdapter {
                 port: self.port,
                 timeout: self.timeout,
             }),
-            #[cfg(any(test, feature = "test-support"))]
-            is_fake: false,
         })
     }
 
