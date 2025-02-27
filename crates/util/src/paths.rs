@@ -428,7 +428,6 @@ where
     (number, count)
 }
 
-/// Helper function to perform natural sorting that handles numeric segments
 fn natural_sort(a: &str, b: &str) -> Ordering {
     let mut a_iter = a.chars().peekable();
     let mut b_iter = b.chars().peekable();
@@ -439,25 +438,18 @@ fn natural_sort(a: &str, b: &str) -> Ordering {
             (None, _) => return Ordering::Less,
             (_, None) => return Ordering::Greater,
             (Some(&a_char), Some(&b_char)) => {
-                // Check if both characters are digits
                 if a_char.is_ascii_digit() && b_char.is_ascii_digit() {
-                    // Parse numbers from both strings
                     let (a_num, a_digits) = parse_number(&mut a_iter);
                     let (b_num, b_digits) = parse_number(&mut b_iter);
 
-                    // First compare by numeric value
                     match a_num.cmp(&b_num) {
-                        Ordering::Equal => {
-                            // If the same number, then compare by number of digits (fewer digits first)
-                            match a_digits.cmp(&b_digits) {
-                                Ordering::Equal => continue, // Both digits and values are equal
-                                ordering => return ordering, // Sort by digit count (fewer digits first)
-                            }
-                        }
+                        Ordering::Equal => match a_digits.cmp(&b_digits) {
+                            Ordering::Equal => continue,
+                            ordering => return ordering,
+                        },
                         ordering => return ordering,
                     }
                 } else {
-                    // Regular character comparison
                     match a_char.cmp(&b_char) {
                         Ordering::Equal => {
                             a_iter.next();
