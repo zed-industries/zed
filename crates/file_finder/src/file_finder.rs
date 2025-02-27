@@ -115,28 +115,60 @@ impl FileFinder {
                 let abs_path = project
                     .worktree_for_id(project_path.worktree_id, cx)
                     .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path));
-                FoundPath::new(project_path, abs_path)
+                // It means it's an absolute path file
+                if project_path.path.to_string_lossy().is_empty() {
+                    FoundPath::Abs {
+                        abs: abs_path
+                            .unwrap_or_else(|| project_path.path.to_path_buf())
+                            .into(),
+                        worktree_id: project_path.worktree_id,
+                    }
+                } else {
+                    FoundPath::Project {
+                        path: project_path,
+                        abs: abs_path,
+                    }
+                }
             });
 
         let history_items = workspace
             .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
             .into_iter()
             .filter_map(|(project_path, abs_path)| {
+                let into_found_path = |project_path: ProjectPath, abs_path: Option<PathBuf>| {
+                    if project_path
+                        .path
+                        .to_str()
+                        .map(|p| p.is_empty())
+                        .unwrap_or(false)
+                    {
+                        FoundPath::Abs {
+                            abs: abs_path.unwrap_or_default().into(),
+                            worktree_id: project_path.worktree_id,
+                        }
+                    } else {
+                        FoundPath::Project {
+                            path: project_path,
+                            abs: abs_path,
+                        }
+                    }
+                };
+
                 if project.entry_for_path(&project_path, cx).is_some() {
-                    return Some(Task::ready(Some(FoundPath::new(project_path, abs_path))));
+                    return Some(Task::ready(Some(into_found_path(project_path, abs_path))));
                 }
                 let abs_path = abs_path?;
                 if project.is_local() {
                     let fs = fs.clone();
                     Some(cx.background_spawn(async move {
                         if fs.is_file(&abs_path).await {
-                            Some(FoundPath::new(project_path, Some(abs_path)))
+                            Some(into_found_path(project_path, Some(abs_path)))
                         } else {
                             None
                         }
                     }))
                 } else {
-                    Some(Task::ready(Some(FoundPath::new(
+                    Some(Task::ready(Some(into_found_path(
                         project_path,
                         Some(abs_path),
                     ))))
@@ -263,10 +295,10 @@ impl FileFinder {
                 if let Some(m) = delegate.matches.get(delegate.selected_index()) {
                     let path = match &m {
                         Match::History { path, .. } => {
-                            let worktree_id = path.project.worktree_id;
+                            let worktree_id = path.worktree_id();
                             ProjectPath {
                                 worktree_id,
-                                path: Arc::clone(&path.project.path),
+                                path: path.path().clone(),
                             }
                         }
                         Match::Search(m) => ProjectPath {
@@ -397,7 +429,7 @@ enum Match {
 impl Match {
     fn path(&self) -> &Arc<Path> {
         match self {
-            Match::History { path, .. } => &path.project.path,
+            Match::History { path, .. } => path.path(),
             Match::Search(panel_match) => &panel_match.0.path,
         }
     }
@@ -435,7 +467,7 @@ impl Matches {
             // reason for the matches set to change.
             self.matches
                 .iter()
-                .position(|m| path.project.path == *m.path())
+                .position(|m| path.path() == m.path())
                 .ok_or(0)
         } else {
             self.matches.binary_search_by(|m| {
@@ -543,43 +575,31 @@ fn matching_history_items<'a>(
     query: &FileSearchQuery,
 ) -> HashMap<Arc<Path>, Match> {
     let mut candidates_paths = HashMap::default();
-    // List of path not part of current project
-    let mut non_project_path = HashMap::default();
 
     let history_items_by_worktrees = history_items
         .into_iter()
         .chain(currently_opened)
         .filter_map(|found_path| {
-            // In case it's a file outside of the current project the ProjectPath.path in found_path will be empty, only the absolute path exists
-            // in order to be able to find matches on the path we still need to set it in path temporally
-            let (filename, path) = match found_path.project.path.file_name() {
-                Some(filename) => (
-                    filename.to_string_lossy().to_lowercase(),
-                    &*found_path.project.path,
-                ),
-                None => {
-                    let absolute_path = found_path.absolute.as_ref()?;
-                    non_project_path.insert(
-                        (found_path.project.worktree_id, absolute_path.as_path()),
-                        &found_path.project,
-                    );
-                    (
-                        absolute_path.file_name()?.to_string_lossy().to_lowercase(),
-                        absolute_path.as_ref(),
-                    )
-                }
-            };
-
             let candidate = PathMatchCandidate {
                 is_dir: false, // You can't open directories as project items
-                path,
+                path: found_path.path(),
                 // Only match history items names, otherwise their paths may match too many queries, producing false positives.
                 // E.g. `foo` would match both `something/foo/bar.rs` and `something/foo/foo.rs` and if the former is a history item,
                 // it would be shown first always, despite the latter being a better match.
-                char_bag: CharBag::from_iter(filename.chars()),
+                char_bag: CharBag::from_iter(
+                    found_path
+                        .path()
+                        .file_name()?
+                        .to_string_lossy()
+                        .to_lowercase()
+                        .chars(),
+                ),
             };
-            candidates_paths.insert(&found_path.project, found_path);
-            Some((found_path.project.worktree_id, candidate))
+            candidates_paths.insert(
+                (found_path.worktree_id(), found_path.path().clone()),
+                found_path,
+            );
+            Some((found_path.worktree_id(), candidate))
         })
         .fold(
             HashMap::default(),
@@ -604,20 +624,11 @@ fn matching_history_items<'a>(
             )
             .into_iter()
             .filter_map(|path_match| {
-                // Find the original ProjectPath if it's a file not included in the project
-                // This ProjectPath has been replaced earlier with a temporary path containing absolute path of the file
-                let candidate_path_key = match non_project_path.get(&(
-                    WorktreeId::from_usize(path_match.worktree_id),
-                    &path_match.path,
-                )) {
-                    Some(original_project_path) => (*original_project_path).clone(),
-                    None => ProjectPath {
-                        worktree_id: WorktreeId::from_usize(path_match.worktree_id),
-                        path: Arc::clone(&path_match.path),
-                    },
-                };
                 candidates_paths
-                    .remove_entry(&candidate_path_key)
+                    .remove_entry(&(
+                        WorktreeId::from_usize(path_match.worktree_id),
+                        path_match.path.clone(),
+                    ))
                     .map(|(_, found_path)| {
                         (
                             Arc::clone(&path_match.path),
@@ -634,14 +645,30 @@ fn matching_history_items<'a>(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct FoundPath {
-    project: ProjectPath,
-    absolute: Option<PathBuf>,
+enum FoundPath {
+    Project {
+        path: ProjectPath,
+        abs: Option<PathBuf>,
+    },
+    Abs {
+        abs: Arc<Path>,
+        worktree_id: WorktreeId,
+    },
 }
 
 impl FoundPath {
-    fn new(project: ProjectPath, absolute: Option<PathBuf>) -> Self {
-        Self { project, absolute }
+    fn worktree_id(&self) -> WorktreeId {
+        match self {
+            FoundPath::Project { path, .. } => path.worktree_id,
+            FoundPath::Abs { worktree_id, .. } => *worktree_id,
+        }
+    }
+
+    fn path(&self) -> &Arc<Path> {
+        match self {
+            FoundPath::Project { path, .. } => &path.path,
+            FoundPath::Abs { abs, .. } => &abs,
+        }
     }
 }
 
@@ -729,7 +756,7 @@ impl FileFinderDelegate {
         let relative_to = self
             .currently_opened_path
             .as_ref()
-            .map(|found_path| Arc::clone(&found_path.project.path));
+            .map(|found_path| Arc::clone(&found_path.path()));
         let worktrees = self
             .project
             .read(cx)
@@ -840,53 +867,47 @@ impl FileFinderDelegate {
                     path: entry_path,
                     panel_match,
                 } => {
-                    let worktree_id = entry_path.project.worktree_id;
-                    let project_relative_path = &entry_path.project.path;
+                    let worktree_id = entry_path.worktree_id();
+                    let project_relative_path = &entry_path.path();
                     let has_worktree = self
                         .project
                         .read(cx)
                         .worktree_for_id(worktree_id, cx)
                         .is_some();
 
-                    if let Some(absolute_path) =
-                        entry_path.absolute.as_ref().filter(|_| !has_worktree)
-                    {
-                        (
-                            absolute_path
-                                .file_name()
+                    match entry_path {
+                        FoundPath::Abs { abs, .. } if has_worktree => (
+                            abs.file_name()
                                 .map_or_else(
                                     || project_relative_path.to_string_lossy(),
                                     |file_name| file_name.to_string_lossy(),
                                 )
                                 .to_string(),
                             Vec::new(),
-                            absolute_path.to_string_lossy().to_string(),
+                            abs.to_string_lossy().to_string(),
                             Vec::new(),
-                        )
-                    } else {
-                        let mut path = Arc::clone(project_relative_path);
-                        if project_relative_path.as_ref() == Path::new("") {
-                            if let Some(absolute_path) = &entry_path.absolute {
-                                path = Arc::from(absolute_path.as_path());
+                        ),
+
+                        _ => {
+                            let path = Arc::clone(project_relative_path);
+
+                            let mut path_match = PathMatch {
+                                score: ix as f64,
+                                positions: Vec::new(),
+                                worktree_id: worktree_id.to_usize(),
+                                path,
+                                is_dir: false, // File finder doesn't support directories
+                                path_prefix: "".into(),
+                                distance_to_relative_ancestor: usize::MAX,
+                            };
+                            if let Some(found_path_match) = &panel_match {
+                                path_match
+                                    .positions
+                                    .extend(found_path_match.0.positions.iter())
                             }
-                        }
 
-                        let mut path_match = PathMatch {
-                            score: ix as f64,
-                            positions: Vec::new(),
-                            worktree_id: worktree_id.to_usize(),
-                            path,
-                            is_dir: false, // File finder doesn't support directories
-                            path_prefix: "".into(),
-                            distance_to_relative_ancestor: usize::MAX,
-                        };
-                        if let Some(found_path_match) = &panel_match {
-                            path_match
-                                .positions
-                                .extend(found_path_match.0.positions.iter())
+                            self.labels_for_path_match(&path_match)
                         }
-
-                        self.labels_for_path_match(&path_match)
                     }
                 }
                 Match::Search(path_match) => self.labels_for_path_match(&path_match.0),
@@ -1150,10 +1171,10 @@ impl PickerDelegate for FileFinderDelegate {
                 self.matches.push_new_matches(
                     self.history_items.iter().filter(|history_item| {
                         project
-                            .worktree_for_id(history_item.project.worktree_id, cx)
+                            .worktree_for_id(history_item.worktree_id(), cx)
                             .is_some()
                             || ((project.is_local() || project.is_via_ssh())
-                                && history_item.absolute.is_some())
+                                && matches!(history_item, FoundPath::Abs { .. }))
                     }),
                     self.currently_opened_path.as_ref(),
                     None,
@@ -1226,62 +1247,65 @@ impl PickerDelegate for FileFinderDelegate {
                         };
                     match &m {
                         Match::History { path, .. } => {
-                            let worktree_id = path.project.worktree_id;
-                            if workspace
-                                .project()
-                                .read(cx)
-                                .worktree_for_id(worktree_id, cx)
-                                .is_some()
-                            {
+                            match path {
+                                FoundPath::Project { path, .. } => split_or_open(
+                                    workspace,
+                                    ProjectPath {
+                                        worktree_id: path.worktree_id,
+                                        path: path.path.clone(),
+                                    },
+                                    window,
+                                    cx,
+                                ),
+                                FoundPath::Abs { abs, .. } => {
+                                    if secondary {
+                                        workspace.split_abs_path(
+                                            abs.to_path_buf(),
+                                            false,
+                                            window,
+                                            cx,
+                                        )
+                                    } else {
+                                        workspace.open_abs_path(
+                                            abs.to_path_buf(),
+                                            false,
+                                            window,
+                                            cx,
+                                        )
+                                    }
+                                }
+                            }
+                            // }
+                        }
+                        Match::Search(m) => {
+                            if m.0.path.is_absolute() {
+                                if secondary {
+                                    workspace.split_abs_path(
+                                        m.0.path.to_path_buf(),
+                                        false,
+                                        window,
+                                        cx,
+                                    )
+                                } else {
+                                    workspace.open_abs_path(
+                                        m.0.path.to_path_buf(),
+                                        false,
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            } else {
                                 split_or_open(
                                     workspace,
                                     ProjectPath {
-                                        worktree_id,
-                                        path: Arc::clone(&path.project.path),
+                                        worktree_id: WorktreeId::from_usize(m.0.worktree_id),
+                                        path: m.0.path.clone(),
                                     },
                                     window,
                                     cx,
                                 )
-                            } else {
-                                match path.absolute.as_ref() {
-                                    Some(abs_path) => {
-                                        if secondary {
-                                            workspace.split_abs_path(
-                                                abs_path.to_path_buf(),
-                                                false,
-                                                window,
-                                                cx,
-                                            )
-                                        } else {
-                                            workspace.open_abs_path(
-                                                abs_path.to_path_buf(),
-                                                false,
-                                                window,
-                                                cx,
-                                            )
-                                        }
-                                    }
-                                    None => split_or_open(
-                                        workspace,
-                                        ProjectPath {
-                                            worktree_id,
-                                            path: Arc::clone(&path.project.path),
-                                        },
-                                        window,
-                                        cx,
-                                    ),
-                                }
                             }
                         }
-                        Match::Search(m) => split_or_open(
-                            workspace,
-                            ProjectPath {
-                                worktree_id: WorktreeId::from_usize(m.0.worktree_id),
-                                path: m.0.path.clone(),
-                            },
-                            window,
-                            cx,
-                        ),
                     }
                 });
 
@@ -1359,7 +1383,8 @@ impl PickerDelegate for FileFinderDelegate {
             if !settings.file_icons {
                 return None;
             }
-            let file_name = path_match.path().file_name()?;
+            let path = path_match.path();
+            let file_name = path.file_name()?;
             let icon = FileIcons::get_icon(file_name.as_ref(), cx)?;
             Some(Icon::from_path(icon).color(Color::Muted))
         });

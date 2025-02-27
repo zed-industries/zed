@@ -802,13 +802,13 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
         open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
     assert_eq!(
         history_after_first,
-        vec![FoundPath::new(
-            ProjectPath {
+        vec![FoundPath::Project {
+            path: ProjectPath {
                 worktree_id,
                 path: Arc::from(Path::new("test/first.rs")),
             },
-            Some(PathBuf::from(path!("/src/test/first.rs")))
-        )],
+            abs: Some(PathBuf::from(path!("/src/test/first.rs")))
+        }],
         "Should show 1st opened item in the history when opening the 2nd item"
     );
 
@@ -817,20 +817,20 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         history_after_second,
         vec![
-            FoundPath::new(
-                ProjectPath {
+            FoundPath::Project {
+                path: ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/second.rs")),
                 },
-                Some(PathBuf::from(path!("/src/test/second.rs")))
-            ),
-            FoundPath::new(
-                ProjectPath {
+                abs: Some(PathBuf::from(path!("/src/test/second.rs")))
+            },
+            FoundPath::Project {
+                path: ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/first.rs")),
                 },
-                Some(PathBuf::from(path!("/src/test/first.rs")))
-            ),
+                abs: Some(PathBuf::from(path!("/src/test/first.rs")))
+            },
         ],
         "Should show 1st and 2nd opened items in the history when opening the 3rd item. \
     2nd item should be the first in the history, as the last opened."
@@ -841,27 +841,27 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
     assert_eq!(
                 history_after_third,
                 vec![
-                    FoundPath::new(
-                        ProjectPath {
+                    FoundPath::Project{
+                        path: ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/third.rs")),
                         },
-                        Some(PathBuf::from(path!("/src/test/third.rs")))
-                    ),
-                    FoundPath::new(
-                        ProjectPath {
+                        abs: Some(PathBuf::from(path!("/src/test/third.rs")))
+                    },
+                    FoundPath::Project{
+                        path: ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/second.rs")),
                         },
-                        Some(PathBuf::from(path!("/src/test/second.rs")))
-                    ),
-                    FoundPath::new(
-                        ProjectPath {
+                        abs: Some(PathBuf::from(path!("/src/test/second.rs")))
+                    },
+                    FoundPath::Project{
+                        path: ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/first.rs")),
                         },
-                        Some(PathBuf::from(path!("/src/test/first.rs")))
-                    ),
+                        abs: Some(PathBuf::from(path!("/src/test/first.rs")))
+                    },
                 ],
                 "Should show 1st, 2nd and 3rd opened items in the history when opening the 2nd item again. \
     3rd item should be the first in the history, as the last opened."
@@ -872,27 +872,27 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
     assert_eq!(
                 history_after_second_again,
                 vec![
-                    FoundPath::new(
-                        ProjectPath {
+                    FoundPath::Project{
+                        path: ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/second.rs")),
                         },
-                        Some(PathBuf::from(path!("/src/test/second.rs")))
-                    ),
-                    FoundPath::new(
-                        ProjectPath {
+                        abs: Some(PathBuf::from(path!("/src/test/second.rs")))
+                    },
+                    FoundPath::Project{
+                        path: ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/third.rs")),
                         },
-                        Some(PathBuf::from(path!("/src/test/third.rs")))
-                    ),
-                    FoundPath::new(
-                        ProjectPath {
+                        abs: Some(PathBuf::from(path!("/src/test/third.rs")))
+                    },
+                    FoundPath::Project{
+                        path: ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/first.rs")),
                         },
-                        Some(PathBuf::from(path!("/src/test/first.rs")))
-                    ),
+                        abs: Some(PathBuf::from(path!("/src/test/first.rs")))
+                    },
                 ],
                 "Should show 1st, 2nd and 3rd opened items in the history when opening the 3rd item again. \
     2nd item, as the last opened, 3rd item should go next as it was opened right before."
@@ -984,13 +984,10 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
         open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
     assert_eq!(
         initial_history_items,
-        vec![FoundPath::new(
-            ProjectPath {
-                worktree_id: external_worktree_id,
-                path: Arc::from(Path::new("")),
-            },
-            Some(PathBuf::from(path!("/external-src/test/third.rs")))
-        )],
+        vec![FoundPath::Abs {
+            worktree_id: external_worktree_id,
+            abs: PathBuf::from(path!("/external-src/test/third.rs")).into()
+        }],
         "Should show external file with its full path in the history after it was open"
     );
 
@@ -999,20 +996,17 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         updated_history_items,
         vec![
-            FoundPath::new(
-                ProjectPath {
+            FoundPath::Project {
+                path: ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/second.rs")),
                 },
-                Some(PathBuf::from(path!("/src/test/second.rs")))
-            ),
-            FoundPath::new(
-                ProjectPath {
-                    worktree_id: external_worktree_id,
-                    path: Arc::from(Path::new("")),
-                },
-                Some(PathBuf::from(path!("/external-src/test/third.rs")))
-            ),
+                abs: Some(PathBuf::from(path!("/src/test/second.rs")))
+            },
+            FoundPath::Abs {
+                worktree_id: external_worktree_id,
+                abs: PathBuf::from(path!("/external-src/test/third.rs")).into()
+            },
         ],
         "Should keep external file with history updates",
     );
@@ -1121,13 +1115,13 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
             let matches = collect_search_matches(picker);
             assert_eq!(matches.history.len(), 1, "Only one history item contains {first_query}, it should be present and others should be filtered out");
             let history_match = matches.history_found_paths.first().expect("Should have path matches for history items after querying");
-            assert_eq!(history_match, &FoundPath::new(
-                ProjectPath {
+            assert_eq!(history_match, &FoundPath::Project{
+                path: ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/first.rs")),
                 },
-                Some(PathBuf::from(path!("/src/test/first.rs")))
-            ));
+                abs: Some(PathBuf::from(path!("/src/test/first.rs")))
+            });
             assert_eq!(matches.search.len(), 1, "Only one non-history item contains {first_query}, it should be present");
             assert_eq!(matches.search.first().unwrap(), Path::new("test/fourth.rs"));
         });
@@ -1164,13 +1158,13 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
             let matches = collect_search_matches(picker);
             assert_eq!(matches.history.len(), 1, "Only one history item contains {first_query_again}, it should be present and others should be filtered out, even after non-matching query");
             let history_match = matches.history_found_paths.first().expect("Should have path matches for history items after querying");
-            assert_eq!(history_match, &FoundPath::new(
-                ProjectPath {
+            assert_eq!(history_match, &FoundPath::Project{
+                path: ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/first.rs")),
                 },
-                Some(PathBuf::from(path!("/src/test/first.rs")))
-            ));
+                abs: Some(PathBuf::from(path!("/src/test/first.rs")))
+            });
             assert_eq!(matches.search.len(), 1, "Only one non-history item contains {first_query_again}, it should be present, even after non-matching query");
             assert_eq!(matches.search.first().unwrap(), Path::new("test/fourth.rs"));
         });
@@ -2313,13 +2307,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
                         .map(|path_match| {
                             Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path)
                         })
-                        .unwrap_or_else(|| {
-                            history_path
-                                .absolute
-                                .as_deref()
-                                .unwrap_or_else(|| &history_path.project.path)
-                                .to_path_buf()
-                        }),
+                        .unwrap_or_else(|| history_path.path().to_path_buf()),
                 );
                 search_entries
                     .history_found_paths
@@ -2362,7 +2350,7 @@ fn assert_match_at_position(
         .get(match_index)
         .unwrap_or_else(|| panic!("Finder has no match for index {match_index}"));
     let match_file_name = match &match_item {
-        Match::History { path, .. } => path.absolute.as_deref().unwrap().file_name(),
+        Match::History { path, .. } => path.path().file_name(),
         Match::Search(path_match) => path_match.0.path.file_name(),
     }
     .unwrap()
