@@ -491,6 +491,8 @@ mod test {
         cx.set_state("ˇhello world", Mode::Normal);
         cx.simulate_keystrokes("c x i w c x c");
 
+        assert_eq!(cx.active_operator(), None);
+
         cx.update_editor(|editor, window, cx| {
             let highlights = editor.all_text_background_highlights(window, cx);
             assert_eq!(0, highlights.len());
