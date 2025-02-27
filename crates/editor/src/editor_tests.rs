@@ -1514,6 +1514,10 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         stop_at_indent: true,
     };
 
+    let delete_to_beg = DeleteToBeginningOfLine {
+        stop_at_indent: false,
+    };
+
     let move_to_end = MoveToEndOfLine {
         stop_at_soft_wraps: true,
     };
@@ -1672,7 +1676,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.delete_to_beginning_of_line(&DeleteToBeginningOfLine, window, cx);
+        editor.delete_to_beginning_of_line(&delete_to_beg, window, cx);
         assert_eq!(editor.display_text(cx), "\n");
         assert_eq!(
             editor.selections.display_ranges(cx),
@@ -1775,6 +1779,107 @@ fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
             vec![DisplayPoint::new(DisplayRow(2), 5)..DisplayPoint::new(DisplayRow(2), 5),],
             editor.selections.display_ranges(cx)
         );
+    });
+}
+
+#[gpui::test]
+fn test_beginning_of_line_stop_at_indent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let move_to_beg = MoveToBeginningOfLine {
+        stop_at_soft_wraps: true,
+        stop_at_indent: true,
+    };
+
+    let select_to_beg = SelectToBeginningOfLine {
+        stop_at_soft_wraps: true,
+        stop_at_indent: true,
+    };
+
+    let delete_to_beg = DeleteToBeginningOfLine {
+        stop_at_indent: true,
+    };
+
+    let move_to_end = MoveToEndOfLine {
+        stop_at_soft_wraps: false,
+    };
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("abc\n  def", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 1)..DisplayPoint::new(DisplayRow(0), 1),
+                DisplayPoint::new(DisplayRow(1), 4)..DisplayPoint::new(DisplayRow(1), 4),
+            ]);
+        });
+
+        // Moving to the beginning of the line should put the first cursor at the beginning of the line,
+        // and the second cursor at the first non-whitespace character in the line.
+        editor.move_to_beginning_of_line(&move_to_beg, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(1), 2),
+            ]
+        );
+
+        // Moving to the beginning of the line again should be a no-op for the first cursor,
+        // and should move the second cursor to the beginning of the line.
+        editor.move_to_beginning_of_line(&move_to_beg, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 0)..DisplayPoint::new(DisplayRow(1), 0),
+            ]
+        );
+
+        // Moving to the beginning of the line again should still be a no-op for the first cursor,
+        // and should move the second cursor back to the first non-whitespace character in the line.
+        editor.move_to_beginning_of_line(&move_to_beg, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 2)..DisplayPoint::new(DisplayRow(1), 2),
+            ]
+        );
+
+        // Selecting to the beginning of the line should select to the beginning of the line for the first cursor,
+        // and to the first non-whitespace character in the line for the second cursor.
+        editor.move_to_end_of_line(&move_to_end, window, cx);
+        editor.move_left(&MoveLeft, window, cx);
+        editor.select_to_beginning_of_line(&select_to_beg, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 4)..DisplayPoint::new(DisplayRow(1), 2),
+            ]
+        );
+
+        // Selecting to the beginning of the line again should be a no-op for the first cursor,
+        // and should select to the beginning of the line for the second cursor.
+        editor.select_to_beginning_of_line(&select_to_beg, window, cx);
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 0),
+                DisplayPoint::new(DisplayRow(1), 4)..DisplayPoint::new(DisplayRow(1), 0),
+            ]
+        );
+
+        // Deleting to the beginning of the line should delete to the beginning of the line for the first cursor,
+        // and should delete to the first non-whitespace character in the line for the second cursor.
+        editor.move_to_end_of_line(&move_to_end, window, cx);
+        editor.move_left(&MoveLeft, window, cx);
+        editor.delete_to_beginning_of_line(&delete_to_beg, window, cx);
+        assert_eq!(editor.text(cx), "c\n  f");
     });
 }
 
@@ -2295,7 +2400,13 @@ async fn test_delete_to_beginning_of_line(cx: &mut TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     cx.set_state("one «two threeˇ» four");
     cx.update_editor(|editor, window, cx| {
-        editor.delete_to_beginning_of_line(&DeleteToBeginningOfLine, window, cx);
+        editor.delete_to_beginning_of_line(
+            &DeleteToBeginningOfLine {
+                stop_at_indent: false,
+            },
+            window,
+            cx,
+        );
         assert_eq!(editor.text(cx), " four");
     });
 }
