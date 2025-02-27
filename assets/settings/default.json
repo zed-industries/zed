@@ -847,7 +847,7 @@
     // 2. Display predictions inline only when holding a modifier key (alt by default).
     //     "mode": "subtle"
     "mode": "eager",
-    // Whether edit predictions are enabled in the assistant prompt editor.
+    // Whether edit predictions are enabled in the assistant panel.
     // This setting has no effect if globally disabled.
     "enabled_in_assistant": true
   },

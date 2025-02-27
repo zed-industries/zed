@@ -236,7 +236,7 @@ pub struct EditPredictionSettings {
     pub mode: EditPredictionsMode,
     /// Settings specific to GitHub Copilot.
     pub copilot: CopilotSettings,
-    /// Whether edit predictions are enabled in the assistant prompt editor.
+    /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
     pub enabled_in_assistant: bool,
 }
