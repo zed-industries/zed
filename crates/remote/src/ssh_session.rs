@@ -240,7 +240,7 @@ impl SshConnectionOptions {
         let mut result = String::from("ssh://");
         if let Some(username) = &self.username {
             // Username might be: username1@username2@ip2
-            let username = username.replace("@", "%40");
+            let username = urlencoding::encode(username);
             result.push_str(&username);
             result.push('@');
         }

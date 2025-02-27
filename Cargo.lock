@@ -11012,6 +11012,7 @@ dependencies = [
  "smol",
  "tempfile",
  "thiserror 1.0.69",
+ "urlencoding",
  "util",
  "which 6.0.3",
 ]
