@@ -3645,18 +3645,19 @@ dependencies = [
 
 [[package]]
 name = "ctor"
-version = "0.3.6"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21d960ecacd0a1bf55e73144b72de745e7bf275c7952c50e36e8af0a0cb7ab1f"
+checksum = "a7747ac3a66a06f4ee6718686c8ea976d2d05fb30ada93ebd76b3f9aef97257c"
 dependencies = [
  "ctor-proc-macro",
+ "dtor",
 ]
 
 [[package]]
 name = "ctor-proc-macro"
-version = "0.0.4"
+version = "0.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c426d2ba3e525b39c1f0a9ba41b9fe61878dee11fa4e4a76b6ab440f46c5db5d"
+checksum = "4f211af61d8efdd104f96e57adf5e426ba1bc3ed7a4ead616e15e5881fd79c4d"
 
 [[package]]
 name = "ctrlc"
@@ -4031,6 +4032,21 @@ checksum = "415b6ec780d34dcf624666747194393603d0373b7141eef01d12ee58881507d9"
 dependencies = [
  "phf",
 ]
+
+[[package]]
+name = "dtor"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bf39a0bfd1f94d62ffdb2802a7e6244c0f34f6ebacf5d4c26547d08cd1d67a5"
+dependencies = [
+ "dtor-proc-macro",
+]
+
+[[package]]
+name = "dtor-proc-macro"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7454e41ff9012c00d53cf7f475c5e3afa3b91b7c90568495495e8d9bf47a1055"
 
 [[package]]
 name = "dunce"
@@ -15734,7 +15750,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
