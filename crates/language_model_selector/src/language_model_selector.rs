@@ -9,10 +9,10 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelAvailability, LanguageModelRegistry,
 };
 use picker::{Picker, PickerDelegate};
-use popover_button::{PopoverButton, TriggerablePopover};
 use proto::Plan;
 use ui::{
-    prelude::*, ButtonLike, IconButtonShape, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip,
+    prelude::*, ButtonLike, IconButtonShape, ListItem, ListItemSpacing, PopoverButton,
+    PopoverMenuHandle, Tooltip, TriggerablePopover,
 };
 use workspace::ShowConfiguration;
 
@@ -555,7 +555,7 @@ impl RenderOnce for AssistantLanguageModelSelector {
             _ => SharedString::from("No model selected"),
         };
 
-        popover_button::PopoverButton::new(
+        PopoverButton::new(
             self.selector.clone(),
             Corner::BottomRight,
             ButtonLike::new("active-model")

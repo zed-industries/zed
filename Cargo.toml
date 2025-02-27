@@ -98,7 +98,6 @@ members = [
     "crates/panel",
     "crates/paths",
     "crates/picker",
-    "crates/popover_button",
     "crates/prettier",
     "crates/project",
     "crates/project_panel",
@@ -302,7 +301,6 @@ outline_panel = { path = "crates/outline_panel" }
 paths = { path = "crates/paths" }
 panel = { path = "crates/panel" }
 picker = { path = "crates/picker" }
-popover_button = { path = "crates/popover_button" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }

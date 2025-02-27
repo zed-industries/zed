@@ -10,7 +10,9 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath};
 use std::sync::Arc;
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenuHandle};
+use ui::{
+    prelude::*, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenuHandle, TriggerablePopover,
+};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -78,7 +80,7 @@ pub struct BranchList {
     _subscription: Option<Subscription>,
 }
 
-impl popover_button::TriggerablePopover for BranchList {
+impl TriggerablePopover for BranchList {
     fn menu_handle(
         &mut self,
         _window: &mut Window,

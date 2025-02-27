@@ -4,9 +4,8 @@ use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{commit_message_editor, GitPanel};
 use git::Commit;
 use panel::{panel_button, panel_editor_style, panel_filled_button};
-use popover_button::TriggerablePopover;
 use project::Project;
-use ui::{prelude::*, KeybindingHint, Tooltip};
+use ui::{prelude::*, KeybindingHint, PopoverButton, Tooltip, TriggerablePopover};
 
 use editor::{Editor, EditorElement};
 use gpui::*;
@@ -288,7 +287,7 @@ impl CommitModal {
             }))
             .style(ButtonStyle::Transparent);
 
-        let branch_picker = popover_button::PopoverButton::new(
+        let branch_picker = PopoverButton::new(
             self.branch_list.clone(),
             Corner::BottomLeft,
             branch_picker_button,
