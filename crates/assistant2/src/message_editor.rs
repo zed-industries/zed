@@ -314,7 +314,7 @@ impl Render for MessageEditor {
             .child(self.context_strip.clone())
             .child(
                 v_flex()
-                    .gap_4()
+                    .gap_5()
                     .child({
                         let settings = ThemeSettings::get_global(cx);
                         let text_style = TextStyle {

@@ -960,17 +960,30 @@ impl Render for ConfigurationView {
         ];
         let env_var_set = self.state.read(cx).credentials_from_env;
 
+        let bg_color = cx.theme().colors().editor_background;
+        let border_color = cx.theme().colors().border_variant;
+        let input_base_styles = || {
+            h_flex()
+                .w_full()
+                .px_2()
+                .py_1()
+                .bg(bg_color)
+                .border_1()
+                .border_color(border_color)
+                .rounded_md()
+        };
+
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials...")).into_any()
         } else if self.should_render_editor(cx) {
             v_flex()
                 .size_full()
-                .on_action(cx.listener(Self::save_credentials))
+                .on_action(cx.listener(ConfigurationView::save_credentials))
                 .child(Label::new(INSTRUCTIONS[0]))
                 .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
                     Button::new("iam_console", IAM_CONSOLE_URL)
                         .style(ButtonStyle::Subtle)
-                        .icon(IconName::ExternalLink)
+                        .icon(IconName::ArrowUpRight)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
                         .on_click(move |_, _window, cx| cx.open_url(IAM_CONSOLE_URL))
@@ -978,11 +991,12 @@ impl Render for ConfigurationView {
                 )
                 .child(Label::new(INSTRUCTIONS[2]))
                 .child(
-                    h_flex()
+                    v_flex()
+                        .my_2()
                         .gap_1()
-                        .child(self.render_aa_id_editor(cx))
-                        .child(self.render_sk_editor(cx))
-                        .child(self.render_region_editor(cx))
+                        .child(input_base_styles().child(self.render_aa_id_editor(cx)))
+                        .child(input_base_styles().child(self.render_sk_editor(cx)))
+                        .child(input_base_styles().child(self.render_region_editor(cx)))
                 )
                 .child(
                     Label::new(
