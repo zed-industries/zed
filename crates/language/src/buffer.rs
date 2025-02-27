@@ -590,7 +590,7 @@ impl HighlightedText {
 
     pub fn to_styled_text(&self, default_style: &TextStyle) -> StyledText {
         gpui::StyledText::new(self.text.clone())
-            .with_highlights(default_style, self.highlights.iter().cloned())
+            .with_default_highlights(default_style, self.highlights.iter().cloned())
     }
 
     /// Returns the first line without leading whitespace unless highlighted

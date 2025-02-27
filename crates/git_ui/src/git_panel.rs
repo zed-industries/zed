@@ -286,6 +286,7 @@ impl GitPanel {
             let commit_editor = cx.new(|cx| {
                 commit_message_editor(temporary_buffer, None, project.clone(), true, window, cx)
             });
+
             commit_editor.update(cx, |editor, cx| {
                 editor.clear(window, cx);
             });

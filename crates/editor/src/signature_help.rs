@@ -310,7 +310,7 @@ impl SignatureHelpPopover {
             .child(
                 div().px_4().pb_1().child(
                     StyledText::new(self.label.clone())
-                        .with_highlights(&self.style, self.highlights.iter().cloned()),
+                        .with_default_highlights(&self.style, self.highlights.iter().cloned()),
                 ),
             )
             .into_any_element()

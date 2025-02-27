@@ -8,9 +8,9 @@ use gpui::{
 use itertools::Itertools;
 use linkify::{LinkFinder, LinkKind};
 use ui::{
-    div, h_flex, px, rems_from_px, v_flex, vh, Color, Context, FluentBuilder, Icon,
-    InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ParentElement, Render,
-    SharedString, Styled, StyledExt, Window,
+    div, h_flex, px, v_flex, vh, Clickable, Color, Context, FluentBuilder, Icon, IconButton,
+    IconName, InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ParentElement,
+    Render, SharedString, Styled, StyledExt, Window,
 };
 use workspace::{notifications::NotificationId, Workspace};
 
@@ -34,6 +34,8 @@ pub struct RemoteOutputToast {
     dismiss_task: Task<()>,
 }
 
+const REMOTE_OUTPUT_TOAST_SECONDS: u64 = 5;
+
 impl RemoteOutputToast {
     pub fn new(
         action: RemoteAction,
@@ -47,7 +49,7 @@ impl RemoteOutputToast {
             let id = id.clone();
             |_, mut cx| async move {
                 cx.background_executor()
-                    .timer(Duration::from_millis(5000))
+                    .timer(Duration::from_secs(REMOTE_OUTPUT_TOAST_SECONDS))
                     .await;
                 workspace
                     .update(&mut cx, |workspace, cx| {
@@ -59,6 +61,7 @@ impl RemoteOutputToast {
 
         let message;
         let remote;
+
         match action {
             RemoteAction::Fetch | RemoteAction::Pull => {
                 if output.is_empty() {
@@ -70,12 +73,12 @@ impl RemoteOutputToast {
             }
 
             RemoteAction::Push(remote_ref) => {
-                message = output.stdout.into();
+                message = output.stdout.trim().to_string().into();
                 let remote_message = get_remote_lines(&output.stderr);
                 let finder = LinkFinder::new();
                 let links = finder
                     .links(&remote_message)
-                    .filter(|link| *link.kind() != LinkKind::Url)
+                    .filter(|link| *link.kind() == LinkKind::Url)
                     .map(|link| link.start()..link.end())
                     .collect_vec();
 
@@ -108,52 +111,78 @@ impl Render for RemoteOutputToast {
                 v_flex()
                     .p_3()
                     .overflow_hidden()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_start()
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(Icon::new(IconName::GitBranch).color(Color::Default))
+                                    .child(Label::new("Git")),
+                            )
+                            .child(h_flex().child(
+                                IconButton::new("close", IconName::Close).on_click(
+                                    cx.listener(|_, _, _, cx| cx.emit(gpui::DismissEvent)),
+                                ),
+                            )),
+                    )
                     .child(Label::new(self.message.clone()).size(LabelSize::Default))
                     .when_some(self.remote_info.as_ref(), |this, remote_info| {
                         this.child(
-                            h_flex()
-                                .gap_2()
-                                .child(Icon::new(ui::IconName::Cloud).color(Color::Default))
+                            div()
+                                .border_1()
+                                .border_color(Color::Muted.color(cx))
+                                .rounded_lg()
+                                .text_sm()
+                                .mt_1()
+                                .p_1()
                                 .child(
-                                    Label::new(format!("From {}:", remote_info.name))
-                                        .size(LabelSize::Default),
-                                ),
-                        )
-                        .map(|div| {
-                            let mut text_style = window.text_style();
-                            text_style.font_size = rems_from_px(12.0).into();
-                            let styled_text = StyledText::new(remote_info.remote_text.clone())
-                                .with_highlights(
-                                    &window.text_style(),
-                                    remote_info.links.iter().map(|link| {
-                                        (
-                                            link.clone(),
-                                            HighlightStyle {
-                                                underline: Some(UnderlineStyle {
-                                                    thickness: px(1.0),
-                                                    ..Default::default()
-                                                }),
-                                                ..Default::default()
+                                    h_flex()
+                                        .gap_2()
+                                        .child(Icon::new(IconName::Cloud).color(Color::Default))
+                                        .child(
+                                            Label::new(remote_info.name.clone())
+                                                .size(LabelSize::Default),
+                                        ),
+                                )
+                                .map(|div| {
+                                    let styled_text =
+                                        StyledText::new(remote_info.remote_text.clone())
+                                            .with_highlights(remote_info.links.iter().map(
+                                                |link| {
+                                                    (
+                                                        link.clone(),
+                                                        HighlightStyle {
+                                                            underline: Some(UnderlineStyle {
+                                                                thickness: px(1.0),
+                                                                ..Default::default()
+                                                            }),
+                                                            ..Default::default()
+                                                        },
+                                                    )
+                                                },
+                                            ));
+                                    let this = cx.weak_entity();
+                                    let text = InteractiveText::new("remote-message", styled_text)
+                                        .on_click(
+                                            remote_info.links.clone(),
+                                            move |ix, _window, cx| {
+                                                this.update(cx, |this, cx| {
+                                                    if let Some(remote_info) = &this.remote_info {
+                                                        cx.open_url(
+                                                            &remote_info.remote_text
+                                                                [remote_info.links[ix].clone()],
+                                                        )
+                                                    }
+                                                })
+                                                .ok();
                                             },
-                                        )
-                                    }),
-                                );
-                            let this = cx.weak_entity();
-                            let text = InteractiveText::new("remote-message", styled_text)
-                                .on_click(remote_info.links.clone(), move |ix, _window, cx| {
-                                    this.update(cx, |this, cx| {
-                                        if let Some(remote_info) = &this.remote_info {
-                                            cx.open_url(
-                                                &remote_info.remote_text
-                                                    [remote_info.links[ix].clone()],
-                                            )
-                                        }
-                                    })
-                                    .ok();
-                                });
+                                        );
 
-                            div.child(text)
-                        })
+                                    div.child(text)
+                                }),
+                        )
                     }),
             )
     }
