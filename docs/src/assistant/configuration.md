@@ -10,6 +10,7 @@ The following providers are supported:
 - [Google AI](#google-ai)
 - [Ollama](#ollama)
 - [OpenAI](#openai)
+- [DeepSeek](#deepseek)
 - [LM Studio](#lmstudio)
 
 To configure different providers, run `assistant: show configuration` in the command palette, or click on the hamburger menu at the top-right of the assistant panel and select "Configure".
