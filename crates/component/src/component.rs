@@ -18,7 +18,7 @@ pub trait Component {
 }
 
 pub trait ComponentPreview: Component {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement;
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement;
 }
 
 #[distributed_slice]
@@ -32,7 +32,7 @@ pub static COMPONENT_DATA: Lazy<RwLock<ComponentRegistry>> =
 
 pub struct ComponentRegistry {
     components: Vec<(Option<&'static str>, &'static str, Option<&'static str>)>,
-    previews: HashMap<&'static str, fn(&mut Window, &App) -> AnyElement>,
+    previews: HashMap<&'static str, fn(&mut Window, &mut App) -> AnyElement>,
 }
 
 impl ComponentRegistry {
@@ -62,7 +62,10 @@ pub fn register_component<T: Component>() {
 }
 
 pub fn register_preview<T: ComponentPreview>() {
-    let preview_data = (T::name(), T::preview as fn(&mut Window, &App) -> AnyElement);
+    let preview_data = (
+        T::name(),
+        T::preview as fn(&mut Window, &mut App) -> AnyElement,
+    );
     COMPONENT_DATA
         .write()
         .previews
@@ -77,7 +80,7 @@ pub struct ComponentMetadata {
     name: SharedString,
     scope: Option<SharedString>,
     description: Option<SharedString>,
-    preview: Option<fn(&mut Window, &App) -> AnyElement>,
+    preview: Option<fn(&mut Window, &mut App) -> AnyElement>,
 }
 
 impl ComponentMetadata {
@@ -93,7 +96,7 @@ impl ComponentMetadata {
         self.description.clone()
     }
 
-    pub fn preview(&self) -> Option<fn(&mut Window, &App) -> AnyElement> {
+    pub fn preview(&self) -> Option<fn(&mut Window, &mut App) -> AnyElement> {
         self.preview
     }
 }

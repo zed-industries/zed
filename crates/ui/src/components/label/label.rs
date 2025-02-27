@@ -199,7 +199,7 @@ mod label_preview {
 
     // View this component preview using `workspace: open component-preview`
     impl ComponentPreview for Label {
-        fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+        fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
             v_flex()
                 .gap_6()
                 .children(vec![
