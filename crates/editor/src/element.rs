@@ -7258,7 +7258,7 @@ impl Element for EditorElement {
                             cx,
                         );
                     let mut breakpoint_rows = self.editor.update(cx, |editor, cx| {
-                        editor.active_breakpoint_points(start_row..end_row, window, cx)
+                        editor.active_breakpoints(start_row..end_row, window, cx)
                     });
                     for display_row in breakpoint_rows.keys() {
                         active_rows.entry(*display_row).or_default().breakpoint = true;

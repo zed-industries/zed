@@ -5671,7 +5671,7 @@ impl Editor {
     /// This function is used to handle overlaps between breakpoints and Code action/runner symbol.
     /// It's also used to set the color of line numbers with breakpoints to the breakpoint color.
     /// TODO debugger: Use this function to color toggle symbols that house nested breakpoints
-    fn active_breakpoint_points(
+    fn active_breakpoints(
         &mut self,
         range: Range<DisplayRow>,
         window: &mut Window,
@@ -5690,9 +5690,9 @@ impl Editor {
             return breakpoint_display_points;
         };
 
-        for excerpt_boundary in
-            multi_buffer_snapshot.excerpt_boundaries_in_range(Point::new(0, 0)..)
-        {
+        let range = snapshot.display_point_to_point(DisplayPoint::new(range.start, 0), Bias::Left)
+            ..snapshot.display_point_to_point(DisplayPoint::new(range.end, 0), Bias::Right);
+        for excerpt_boundary in multi_buffer_snapshot.excerpt_boundaries_in_range(range) {
             let info = excerpt_boundary.next.as_ref();
 
             if let Some(info) = info {
