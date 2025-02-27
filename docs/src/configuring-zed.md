@@ -1128,6 +1128,16 @@ TBD: Add Python Ruff source.organizeImports example
 
 `boolean` values
 
+## Tab-out
+
+- Description: Whether to tab-out of parentheses, brackets, braces, single or double quotes when pressing tab.
+- Setting: `use_tab_out`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Always Treat Brackets As Autoclosed
 
 - Description: Controls how the editor handles the autoclosed characters.
