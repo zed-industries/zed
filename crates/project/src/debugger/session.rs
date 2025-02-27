@@ -50,35 +50,6 @@ impl ThreadId {
     pub const MAX: ThreadId = ThreadId(u64::MAX);
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ToggledState {
-    Toggled,
-    UnToggled,
-    Leaf,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Variable {
-    pub dap: dap::Variable,
-}
-
-impl From<dap::Variable> for Variable {
-    fn from(dap: dap::Variable) -> Self {
-        Self { dap }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Scope {
-    pub dap: dap::Scope,
-}
-
-impl From<dap::Scope> for Scope {
-    fn from(scope: dap::Scope) -> Self {
-        Self { dap: scope }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct StackFrame {
     pub dap: dap::StackFrame,

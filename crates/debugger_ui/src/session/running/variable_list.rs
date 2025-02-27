@@ -5,37 +5,32 @@ use gpui::{
     actions, anchored, deferred, list, AnyElement, Context, Entity, FocusHandle, Focusable, Hsla,
     ListState, MouseDownEvent, Point, Subscription,
 };
-use project::debugger::session::{Scope, Session};
+use project::debugger::session::Session;
 use std::collections::HashMap;
 use ui::{prelude::*, ContextMenu, ListItem};
 
 actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
 
-type _IsToggled = bool;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Variable {
-    dap: dap::Variable,
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+struct VariableState {
     depth: usize,
     is_expanded: bool,
-    children: Vec<Variable>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ScopeState {
-    dap: dap::Scope,
     is_expanded: bool,
 }
 
 enum VariableListEntry {
-    _Scope(ScopeState),
-    _Variable(Variable),
+    _Scope((dap::Scope, ScopeState)),
+    Variable((dap::Variable, VariableState)),
 }
 
 pub struct VariableList {
     entries: Vec<VariableListEntry>,
-    scopes: HashMap<StackFrameId, Vec<ScopeState>>,
-    variables: HashMap<VariableReference, Vec<Variable>>,
+    scope_states: HashMap<StackFrameId, ScopeState>,
+    variable_states: HashMap<VariableReference, VariableState>,
     selected_stack_frame_id: Option<StackFrameId>,
     list: ListState,
     session: Entity<Session>,
@@ -82,9 +77,7 @@ impl VariableList {
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
             cx.subscribe(&session, |this, _, _, cx| {
-                if let Some(stack_frame_id) = this.selected_stack_frame_id {
-                    this.build_entries(stack_frame_id, cx);
-                }
+                this.build_entries(cx);
             }),
         ];
 
@@ -97,33 +90,20 @@ impl VariableList {
             _selection: None,
             open_context_menu: None,
             entries: Default::default(),
-            scopes: Default::default(),
-            variables: Default::default(),
+            scope_states: Default::default(),
+            variable_states: Default::default(),
         }
     }
 
-    fn build_entries(&mut self, stack_frame_id: StackFrameId, cx: &mut Context<Self>) {
-        let mut entries = vec![];
-
-        let Some(scopes) = self.scopes.get(&stack_frame_id).cloned() else {
-            self.session.update(cx, |session, cx| {
-                let scopes = session.scopes(stack_frame_id, cx);
-
-                self.scopes.insert(
-                    stack_frame_id,
-                    scopes
-                        .iter()
-                        .cloned()
-                        .map(|scope| ScopeState {
-                            dap: scope,
-                            is_expanded: true,
-                        })
-                        .collect(),
-                );
-            });
-
+    fn build_entries(&mut self, cx: &mut Context<Self>) {
+        let Some(stack_frame_id) = self.selected_stack_frame_id else {
             return;
         };
+
+        let mut entries = vec![];
+        let scopes: Vec<_> = self.session.update(cx, |session, cx| {
+            session.scopes(stack_frame_id, cx).iter().cloned().collect()
+        });
 
         fn inner(
             this: &mut VariableList,
@@ -136,20 +116,45 @@ impl VariableList {
                 .session
                 .update(cx, |session, cx| session.variables(variable_reference, cx))
             {
-                let _child_ref = variable.variables_reference;
-                entries.push(VariableListEntry::_Variable(Variable {
-                    dap: variable,
-                    depth,
-                    is_expanded: false,
-                    children: Default::default(),
-                }));
+                let child_ref = variable.variables_reference;
+                let var_state;
 
-                // If variable is expanded we want to add it's children in a dfs order
+                if child_ref != 0 {
+                    var_state =
+                        *this
+                            .variable_states
+                            .entry(variable_reference)
+                            .or_insert(VariableState {
+                                depth,
+                                is_expanded: false,
+                            });
+                } else {
+                    var_state = VariableState {
+                        depth,
+                        is_expanded: false,
+                    };
+                }
+
+                entries.push(VariableListEntry::Variable((variable, var_state)));
+
+                if var_state.is_expanded {
+                    inner(this, child_ref, depth + 1, entries, cx);
+                }
             }
         }
 
         for scope in scopes.iter().cloned() {
-            inner(self, scope.dap.variables_reference, 2, &mut entries, cx);
+            let state = *self
+                .scope_states
+                .entry(scope.variables_reference)
+                .or_insert(ScopeState { is_expanded: true });
+
+            let scope_ref = scope.variables_reference;
+            entries.push(VariableListEntry::_Scope((scope, state)));
+
+            if state.is_expanded {
+                inner(self, scope_ref, 2, &mut entries, cx);
+            }
         }
 
         self.entries = entries;
@@ -163,7 +168,8 @@ impl VariableList {
     ) {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged(stack_frame_id) => {
-                self.handle_selected_stack_frame_changed(*stack_frame_id, cx);
+                self.selected_stack_frame_id = Some(*stack_frame_id);
+                self.build_entries(cx);
             }
         }
     }
@@ -231,14 +237,7 @@ impl VariableList {
         // }
     }
 
-    fn _toggle_variable(
-        &mut self,
-        _scope: &Scope,
-        _variable: &Variable,
-        _depth: usize,
-        _cx: &mut Context<Self>,
-    ) {
-    }
+    fn _toggle_variable(&mut self, var_ref: VariableReference, _cx: &mut Context<Self>) {}
 
     // fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
     //     let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
@@ -439,12 +438,11 @@ impl VariableList {
     #[allow(clippy::too_many_arguments)]
     fn render_variable(
         &self,
-        variable: &Variable,
+        variable: dap::Variable,
+        state: VariableState,
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let disclosed = variable.is_expanded;
-
         let colors = _get_entry_color(cx);
         let bg_hover_color = if !is_selected {
             colors.hover
@@ -460,7 +458,7 @@ impl VariableList {
         div()
             .id(SharedString::from(format!(
                 "variable-{}-{}",
-                variable.dap.name, variable.depth
+                variable.name, state.depth
             )))
             .group("variable_list_entry")
             .border_1()
@@ -486,13 +484,13 @@ impl VariableList {
             .child(
                 ListItem::new(SharedString::from(format!(
                     "variable-item-{}-{}",
-                    variable.dap.name, variable.depth
+                    variable.name, state.depth
                 )))
                 .selectable(false)
-                .indent_level(variable.depth as usize)
+                .indent_level(state.depth as usize)
                 .indent_step_size(px(20.))
                 .always_show_disclosure_icon(true)
-                .toggle(disclosed)
+                .toggle(state.is_expanded)
                 // .when(
                 //     variable.dap.variables_reference > 0,
                 //     |list_item| {
@@ -527,12 +525,12 @@ impl VariableList {
                     h_flex()
                         .gap_1()
                         .text_ui_sm(cx)
-                        .child(variable.dap.name.clone())
+                        .child(variable.name.clone())
                         .child(
                             div()
                                 .text_ui_xs(cx)
                                 .text_color(cx.theme().colors().text_muted)
-                                .child(variable.dap.value.replace("\n", " ").clone()),
+                                .child(variable.value.replace("\n", " ").clone()),
                         ),
                 ),
             )
@@ -541,14 +539,12 @@ impl VariableList {
 
     fn _render_scope(
         &self,
-        scope: &ScopeState,
+        scope: dap::Scope,
+        state: ScopeState,
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let element_id = scope.dap.variables_reference;
-
-        // todo(debugger) set this based on the scope being toggled or not
-        let disclosed = true;
+        let element_id = scope.variables_reference;
 
         let colors = _get_entry_color(cx);
         let bg_hover_color = if !is_selected {
@@ -580,14 +576,14 @@ impl VariableList {
             .child(
                 ListItem::new(SharedString::from(format!(
                     "scope-{}",
-                    scope.dap.variables_reference
+                    scope.variables_reference
                 )))
                 .selectable(false)
                 .indent_level(1)
                 .indent_step_size(px(20.))
                 .always_show_disclosure_icon(true)
-                .toggle(disclosed)
-                .child(div().text_ui(cx).w_full().child(scope.dap.name.clone())),
+                .toggle(state.is_expanded)
+                .child(div().text_ui(cx).w_full().child(scope.name.clone())),
             )
             .into_any()
     }
