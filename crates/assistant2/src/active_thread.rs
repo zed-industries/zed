@@ -396,26 +396,25 @@ impl ActiveThread {
             .copied()
             .unwrap_or_default();
 
-        v_flex().px_2p5().child(
+        div().px_2p5().child(
             v_flex()
                 .gap_1()
-                .bg(cx.theme().colors().editor_background)
                 .rounded_lg()
                 .border_1()
                 .border_color(cx.theme().colors().border)
-                .shadow_sm()
                 .child(
                     h_flex()
                         .justify_between()
-                        .py_1()
-                        .px_2()
-                        .bg(cx.theme().colors().editor_foreground.opacity(0.05))
-                        .when(is_open, |element| element.border_b_1())
+                        .py_0p5()
+                        .pl_1()
+                        .pr_2()
+                        .bg(cx.theme().colors().editor_foreground.opacity(0.02))
+                        .when(is_open, |element| element.border_b_1().rounded_t(px(6.)))
+                        .when(!is_open, |element| element.rounded(px(6.)))
                         .border_color(cx.theme().colors().border)
-                        .rounded_t(px(6.))
                         .child(
                             h_flex()
-                                .gap_2()
+                                .gap_1()
                                 .child(Disclosure::new("tool-use-disclosure", is_open).on_click(
                                     cx.listener({
                                         let tool_use_id = tool_use.id.clone();
@@ -431,12 +430,16 @@ impl ActiveThread {
                                 ))
                                 .child(Label::new(tool_use.name)),
                         )
-                        .child(Label::new(match tool_use.status {
-                            ToolUseStatus::Pending => "Pending",
-                            ToolUseStatus::Running => "Running",
-                            ToolUseStatus::Finished(_) => "Finished",
-                            ToolUseStatus::Error(_) => "Error",
-                        })),
+                        .child(
+                            Label::new(match tool_use.status {
+                                ToolUseStatus::Pending => "Pending",
+                                ToolUseStatus::Running => "Running",
+                                ToolUseStatus::Finished(_) => "Finished",
+                                ToolUseStatus::Error(_) => "Error",
+                            })
+                            .size(LabelSize::XSmall)
+                            .buffer_font(cx),
+                        ),
                 )
                 .map(|parent| {
                     if !is_open {
@@ -445,11 +448,13 @@ impl ActiveThread {
 
                     parent.child(
                         v_flex()
-                            .gap_2()
-                            .p_2p5()
                             .child(
                                 v_flex()
                                     .gap_0p5()
+                                    .py_1()
+                                    .px_2p5()
+                                    .border_b_1()
+                                    .border_color(cx.theme().colors().border)
                                     .child(Label::new("Input:"))
                                     .child(Label::new(
                                         serde_json::to_string_pretty(&tool_use.input)
@@ -460,12 +465,16 @@ impl ActiveThread {
                                 ToolUseStatus::Finished(output) => parent.child(
                                     v_flex()
                                         .gap_0p5()
+                                        .py_1()
+                                        .px_2p5()
                                         .child(Label::new("Result:"))
                                         .child(Label::new(output)),
                                 ),
                                 ToolUseStatus::Error(err) => parent.child(
                                     v_flex()
                                         .gap_0p5()
+                                        .py_1()
+                                        .px_2p5()
                                         .child(Label::new("Error:"))
                                         .child(Label::new(err)),
                                 ),
