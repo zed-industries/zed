@@ -339,12 +339,13 @@ impl Vim {
     ) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
-        self.update_editor(window, cx, |vim, editor, window, cx| {
-            if let Some(marks) = vim.marks.get("^") {
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
-                });
-            }
+        let Some(marks) = self.get_local_mark("^".to_string(), window, cx) else {
+            return;
+        };
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
+            });
         });
     }
 

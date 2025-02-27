@@ -594,8 +594,22 @@ impl Position {
                 }
             }
             Position::Mark { name, offset } => {
-                let Some(mark) = vim.marks.get(&name.to_string()).and_then(|vec| vec.last()) else {
+                let multi_buffer = editor.buffer();
+                let Some(buffer) = multi_buffer.read(cx).as_singleton() else {
+                    return Err(anyhow!("mark {} could not get buffer", name));
+                };
+
+                let Some(anchors) = vim.get_local_mark_without_editor(
+                    name.to_string(),
+                    window,
+                    &buffer,
+                    multi_buffer,
+                    cx,
+                ) else {
                     return Err(anyhow!("mark {} not set", name));
+                };
+                let Some(mark) = anchors.last() else {
+                    return Err(anyhow!("mark {} contains empty anchors", name));
                 };
                 mark.to_point(&snapshot.buffer_snapshot)
                     .row

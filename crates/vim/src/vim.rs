@@ -23,7 +23,7 @@ use anyhow::Result;
 use collections::HashMap;
 use editor::{
     movement::{self, FindRange},
-    Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorMode, MultiBuffer, ToPoint,
 };
 use gpui::{
     actions, impl_actions, Action, App, AppContext, Axis, Context, Entity, EventEmitter,
@@ -316,7 +316,6 @@ pub(crate) struct Vim {
     operator_stack: Vec<Operator>,
     pub(crate) replacements: Vec<(Range<editor::Anchor>, String)>,
 
-    pub(crate) marks: HashMap<String, Vec<Anchor>>,
     pub(crate) stored_visual_mode: Option<(Mode, Vec<bool>)>,
     pub(crate) change_list: Vec<Vec<Anchor>>,
     pub(crate) change_list_position: Option<usize>,
@@ -364,7 +363,6 @@ impl Vim {
             operator_stack: Vec::new(),
             replacements: Vec::new(),
 
-            marks: HashMap::default(),
             stored_visual_mode: None,
             change_list: Vec::new(),
             change_list_position: None,
@@ -828,6 +826,23 @@ impl Vim {
                 let buffer = multi_buffer.read(cx).as_singleton()?;
                 ms.get_mark(name, &buffer, multi_buffer, cx)
             })
+        })
+    }
+
+    fn get_local_mark_without_editor(
+        &self,
+        name: String,
+        window: &mut Window,
+        buffer: &Entity<Buffer>,
+        multi_buffer: &Entity<MultiBuffer>,
+        cx: &mut App,
+    ) -> Option<Vec<Anchor>> {
+        VimGlobals::update_global(cx, |globals, cx| {
+            let workspace_id = self.workspace(window)?.read(cx).database_id()?;
+            globals
+                .marks
+                .get_mut(&workspace_id)?
+                .update(cx, |ms, cx| ms.get_mark(name, buffer, multi_buffer, cx))
         })
     }
 
