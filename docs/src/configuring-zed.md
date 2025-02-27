@@ -1768,8 +1768,9 @@ Or to set a `socks5` proxy:
   This applies to both in-file searches and project-wide searches.
 
   Examples:
-    - Searching for "function" would match "function", "Function", "FUNCTION", etc.
-    - Searching for "Function" would only match "Function", not "function" or "FUNCTION"
+
+  - Searching for "function" would match "function", "Function", "FUNCTION", etc.
+  - Searching for "Function" would only match "Function", not "function" or "FUNCTION"
 
 - Setting: `use_smartcase_search`
 - Default: `false`
