@@ -1,8 +1,11 @@
 // #![allow(unused, dead_code)]
 
+use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{commit_message_editor, GitPanel};
 use git::Commit;
 use panel::{panel_button, panel_editor_style, panel_filled_button};
+use popover_button::TriggerablePopover;
+use project::Project;
 use ui::{prelude::*, KeybindingHint, Tooltip};
 
 use editor::{Editor, EditorElement};
@@ -64,6 +67,7 @@ pub fn init(cx: &mut App) {
 }
 
 pub struct CommitModal {
+    branch_list: Entity<BranchList>,
     git_panel: Entity<GitPanel>,
     commit_editor: Entity<Editor>,
     restore_dock: RestoreDock,
@@ -139,9 +143,11 @@ impl CommitModal {
                 is_open,
                 active_index,
             };
+
+            let project = workspace.project().clone();
             workspace.open_panel::<GitPanel>(window, cx);
             workspace.toggle_modal(window, cx, move |window, cx| {
-                CommitModal::new(git_panel, restore_dock_position, window, cx)
+                CommitModal::new(git_panel, restore_dock_position, project, window, cx)
             })
         });
     }
@@ -149,6 +155,7 @@ impl CommitModal {
     fn new(
         git_panel: Entity<GitPanel>,
         restore_dock: RestoreDock,
+        project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -182,14 +189,21 @@ impl CommitModal {
 
         let focus_handle = commit_editor.focus_handle(cx);
 
-        cx.on_focus_out(&focus_handle, window, |_, _, _, cx| {
-            cx.emit(DismissEvent);
+        cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
+            if !this
+                .branch_list
+                .focus_handle(cx)
+                .contains_focused(window, cx)
+            {
+                cx.emit(DismissEvent);
+            }
         })
         .detach();
 
         let properties = ModalContainerProperties::new(window, 50);
 
         Self {
+            branch_list: branch_picker::popover(project.clone(), window, cx),
             git_panel,
             commit_editor,
             restore_dock,
@@ -230,7 +244,7 @@ impl CommitModal {
             )
     }
 
-    fn render_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn render_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let git_panel = self.git_panel.clone();
 
         let (branch, tooltip, commit_label, co_authors) =
@@ -238,7 +252,12 @@ impl CommitModal {
                 let branch = git_panel
                     .active_repository
                     .as_ref()
-                    .and_then(|repo| repo.read(cx).current_branch().map(|b| b.name.clone()))
+                    .and_then(|repo| {
+                        repo.read(cx)
+                            .repository_entry
+                            .branch()
+                            .map(|b| b.name.clone())
+                    })
                     .unwrap_or_else(|| "<no branch>".into());
                 let tooltip = if git_panel.has_staged_changes() {
                     "Commit staged changes"
@@ -248,13 +267,13 @@ impl CommitModal {
                 let title = if git_panel.has_staged_changes() {
                     "Commit"
                 } else {
-                    "Commit Tracked"
+                    "Commit All"
                 };
                 let co_authors = git_panel.render_co_authors(cx);
                 (branch, tooltip, title, co_authors)
             });
 
-        let branch_selector = panel_button(branch)
+        let branch_picker_button = panel_button(branch)
             .icon(IconName::GitBranch)
             .icon_size(IconSize::Small)
             .icon_color(Color::Placeholder)
@@ -268,6 +287,13 @@ impl CommitModal {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
             }))
             .style(ButtonStyle::Transparent);
+
+        let branch_picker = popover_button::PopoverButton::new(
+            self.branch_list.clone(),
+            Corner::BottomLeft,
+            branch_picker_button,
+            Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),
+        );
 
         let close_kb_hint =
             if let Some(close_kb) = ui::KeyBinding::for_action(&menu::Cancel, window, cx) {
@@ -303,7 +329,12 @@ impl CommitModal {
             .w_full()
             .h(px(self.properties.footer_height))
             .gap_1()
-            .child(h_flex().gap_1().child(branch_selector).children(co_authors))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(branch_picker.render(window, cx))
+                    .children(co_authors),
+            )
             .child(div().flex_1())
             .child(
                 h_flex()
@@ -340,6 +371,13 @@ impl Render for CommitModal {
             .key_context("GitCommit")
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::commit))
+            .on_action(
+                cx.listener(|this, _: &zed_actions::git::Branch, window, cx| {
+                    this.branch_list.update(cx, |branch_list, cx| {
+                        branch_list.menu_handle(window, cx).toggle(window, cx);
+                    })
+                }),
+            )
             .elevation_3(cx)
             .overflow_hidden()
             .flex_none()

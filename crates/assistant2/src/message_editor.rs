@@ -8,7 +8,6 @@ use gpui::{
     TextStyle, WeakEntity,
 };
 use language_model::LanguageModelRegistry;
-use language_model_selector::LanguageModelSelector;
 use rope::Point;
 use settings::Settings;
 use std::time::Duration;
@@ -25,7 +24,7 @@ use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker, ToggleModelSelector};
+use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker};
 
 pub struct MessageEditor {
     thread: Entity<Thread>,
@@ -36,7 +35,6 @@ pub struct MessageEditor {
     inline_context_picker: Entity<ContextPicker>,
     inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
-    model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     use_tools: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -53,7 +51,6 @@ impl MessageEditor {
         let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
-        let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(10, window, cx);
@@ -106,28 +103,11 @@ impl MessageEditor {
             context_picker_menu_handle,
             inline_context_picker,
             inline_context_picker_menu_handle,
-            model_selector: cx.new(|cx| {
-                AssistantModelSelector::new(
-                    fs,
-                    model_selector_menu_handle.clone(),
-                    editor.focus_handle(cx),
-                    window,
-                    cx,
-                )
-            }),
-            model_selector_menu_handle,
+            model_selector: cx
+                .new(|cx| AssistantModelSelector::new(fs, editor.focus_handle(cx), window, cx)),
             use_tools: false,
             _subscriptions: subscriptions,
         }
-    }
-
-    fn toggle_model_selector(
-        &mut self,
-        _: &ToggleModelSelector,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.model_selector_menu_handle.toggle(window, cx)
     }
 
     fn toggle_chat_mode(&mut self, _: &ChatMode, _window: &mut Window, cx: &mut Context<Self>) {
@@ -306,7 +286,12 @@ impl Render for MessageEditor {
         v_flex()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
-            .on_action(cx.listener(Self::toggle_model_selector))
+            .on_action(cx.listener(|this, action, window, cx| {
+                let selector = this.model_selector.read(cx).selector.clone();
+                selector.update(cx, |this, cx| {
+                    this.toggle_model_selector(action, window, cx);
+                })
+            }))
             .on_action(cx.listener(Self::toggle_context_picker))
             .on_action(cx.listener(Self::remove_all_context))
             .on_action(cx.listener(Self::move_up))
