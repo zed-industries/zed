@@ -1999,7 +1999,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.show_inline_completions_override = show_edit_predictions;
+        self.show_inline_completions_override = dbg!(show_edit_predictions);
         self.update_edit_prediction_settings(cx);
 
         if let Some(false) = show_edit_predictions {

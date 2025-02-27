@@ -406,6 +406,12 @@ There are two options to choose from:
 
 List of `string` values.
 
+### Enabled in Assistant
+
+- Description: Whether to show edit predictions in the assistant's prompt editor.
+- Setting: `enabled_in_assistant`
+- Default: `true`
+
 ## Edit Predictions Disabled in
 
 - Description: A list of language scopes in which edit predictions should be disabled.
