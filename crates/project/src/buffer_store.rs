@@ -816,20 +816,20 @@ impl LocalBufferStore {
                 .any(|(work_dir, _)| file.path.starts_with(work_dir))
             {
                 let snapshot = buffer.text_snapshot();
+                let has_unstaged_diff = diff_state
+                    .unstaged_diff
+                    .as_ref()
+                    .is_some_and(|diff| diff.is_upgradable());
+                let has_uncommitted_diff = diff_state
+                    .uncommitted_diff
+                    .as_ref()
+                    .is_some_and(|set| set.is_upgradable());
                 diff_state_updates.push((
                     snapshot.clone(),
                     file.path.clone(),
-                    diff_state
-                        .unstaged_diff
-                        .as_ref()
-                        .and_then(|set| set.upgrade())
-                        .is_some(),
-                    diff_state
-                        .uncommitted_diff
-                        .as_ref()
-                        .and_then(|set| set.upgrade())
-                        .is_some(),
-                ))
+                    has_unstaged_diff.then(|| diff_state.index_text.clone()),
+                    has_uncommitted_diff.then(|| diff_state.head_text.clone()),
+                ));
             }
         }
 
@@ -845,37 +845,54 @@ impl LocalBufferStore {
                     diff_state_updates
                         .into_iter()
                         .filter_map(
-                            |(buffer_snapshot, path, needs_staged_text, needs_committed_text)| {
+                            |(
+                                buffer_snapshot,
+                                path,
+                                mut current_index_text,
+                                mut current_head_text,
+                            )| {
                                 let local_repo = snapshot.local_repo_for_path(&path)?;
                                 let relative_path = local_repo.relativize(&path).ok()?;
-                                let staged_text = if needs_staged_text {
+                                let index_text = if current_index_text.is_some() {
                                     local_repo.repo().load_index_text(&relative_path)
                                 } else {
                                     None
                                 };
-                                let committed_text = if needs_committed_text {
+                                let head_text = if current_head_text.is_some() {
                                     local_repo.repo().load_committed_text(&relative_path)
                                 } else {
                                     None
                                 };
-                                let diff_bases_change =
-                                    match (needs_staged_text, needs_committed_text) {
-                                        (true, true) => Some(if staged_text == committed_text {
-                                            DiffBasesChange::SetBoth(committed_text)
-                                        } else {
-                                            DiffBasesChange::SetEach {
-                                                index: staged_text,
-                                                head: committed_text,
-                                            }
-                                        }),
-                                        (true, false) => {
-                                            Some(DiffBasesChange::SetIndex(staged_text))
+
+                                // Avoid triggering a diff update if the base text
+                                // has not changed.
+                                if let Some(current) = &current_index_text {
+                                    if current.as_deref() == index_text.as_ref() {
+                                        current_index_text.take();
+                                    }
+                                }
+                                if let Some(current) = &current_head_text {
+                                    if current.as_deref() == head_text.as_ref() {
+                                        current_head_text.take();
+                                    }
+                                }
+
+                                let diff_bases_change = match (
+                                    current_index_text.is_some(),
+                                    current_head_text.is_some(),
+                                ) {
+                                    (true, true) => Some(if index_text == head_text {
+                                        DiffBasesChange::SetBoth(head_text)
+                                    } else {
+                                        DiffBasesChange::SetEach {
+                                            index: index_text,
+                                            head: head_text,
                                         }
-                                        (false, true) => {
-                                            Some(DiffBasesChange::SetHead(committed_text))
-                                        }
-                                        (false, false) => None,
-                                    };
+                                    }),
+                                    (true, false) => Some(DiffBasesChange::SetIndex(index_text)),
+                                    (false, true) => Some(DiffBasesChange::SetHead(head_text)),
+                                    (false, false) => None,
+                                };
                                 Some((buffer_snapshot, diff_bases_change))
                             },
                         )
