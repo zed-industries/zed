@@ -846,7 +846,10 @@
     //     "mode": "eager"
     // 2. Display predictions inline only when holding a modifier key (alt by default).
     //     "mode": "subtle"
-    "mode": "eager"
+    "mode": "eager",
+    // Whether edit predictions are enabled in the assistant prompt editor.
+    // This setting has no effect if globally disabled.
+    "enabled_in_assistant": true
   },
   // Settings specific to journaling
   "journal": {
