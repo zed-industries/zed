@@ -842,7 +842,7 @@ impl GitPanel {
         .detach();
     }
 
-    fn discard_tracked_changes(
+    fn restore_tracked_files(
         &mut self,
         _: &RestoreTrackedFiles,
         window: &mut Window,
@@ -872,8 +872,8 @@ impl GitPanel {
 
         #[derive(strum::EnumIter, strum::VariantNames)]
         #[strum(serialize_all = "title_case")]
-        enum DiscardCancel {
-            DiscardTrackedChanges,
+        enum RestoreCancel {
+            RestoreTrackedFiles,
             Cancel,
         }
         let prompt = prompt(
@@ -884,7 +884,7 @@ impl GitPanel {
         );
         cx.spawn(|this, mut cx| async move {
             match prompt.await {
-                Ok(DiscardCancel::DiscardTrackedChanges) => {
+                Ok(RestoreCancel::RestoreTrackedFiles) => {
                     this.update(&mut cx, |this, cx| {
                         let repo_paths = entries.into_iter().map(|entry| entry.repo_path).collect();
                         this.perform_checkout(repo_paths, cx);
@@ -2386,17 +2386,15 @@ impl GitPanel {
         } else {
             "Stage File"
         };
-        let revert_title = if entry.status.is_deleted() {
-            "Restore file"
-        } else if entry.status.is_created() {
-            "Trash file"
+        let restore_title = if entry.status.is_created() {
+            "Trash File"
         } else {
-            "Discard changes"
+            "Restore File"
         };
         let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
             context_menu
                 .action(stage_title, ToggleStaged.boxed_clone())
-                .action(revert_title, git::RestoreFile.boxed_clone())
+                .action(restore_title, git::RestoreFile.boxed_clone())
                 .separator()
                 .action("Open Diff", Confirm.boxed_clone())
                 .action("Open File", SecondaryConfirm.boxed_clone())
@@ -2413,7 +2411,7 @@ impl GitPanel {
                 .separator()
                 .action("Open Diff", project_diff::Diff.boxed_clone())
                 .separator()
-                .action("Discard Tracked Changes", RestoreTrackedFiles.boxed_clone())
+                .action("Restore Tracked Files", RestoreTrackedFiles.boxed_clone())
                 .action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
         })
     }
@@ -2697,7 +2695,7 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::toggle_staged_for_selected))
             .on_action(cx.listener(Self::stage_all))
             .on_action(cx.listener(Self::unstage_all))
-            .on_action(cx.listener(Self::discard_tracked_changes))
+            .on_action(cx.listener(Self::restore_tracked_files))
             .on_action(cx.listener(Self::clean_all))
             .on_action(cx.listener(Self::fetch))
             .on_action(cx.listener(Self::pull))
