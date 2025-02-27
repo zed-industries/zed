@@ -44,12 +44,9 @@
   right: [(function_expression) (arrow_function)])
 
 ; Special identifiers
-
-(class_declaration
-  (class_body
-    (method_definition
-      name: (property_identifier) @constructor
-      (#eq? @constructor "constructor"))))
+(method_definition
+    name: (property_identifier) @constructor
+    (#eq? @constructor "constructor"))
 
 ((identifier) @type
  (#match? @type "^[A-Z]"))
