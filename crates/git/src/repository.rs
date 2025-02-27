@@ -1019,7 +1019,7 @@ impl Borrow<Path> for RepoPath {
 #[derive(Debug)]
 pub struct RepoPathDescendants<'a>(pub &'a Path);
 
-impl<'a> MapSeekTarget<RepoPath> for RepoPathDescendants<'a> {
+impl MapSeekTarget<RepoPath> for RepoPathDescendants<'_> {
     fn cmp_cursor(&self, key: &RepoPath) -> Ordering {
         if key.starts_with(self.0) {
             Ordering::Greater

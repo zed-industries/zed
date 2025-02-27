@@ -181,7 +181,10 @@ pub fn register_extension(build_extension: fn() -> Box<dyn Extension>) {
 }
 
 fn extension() -> &'static mut dyn Extension {
-    unsafe { EXTENSION.as_deref_mut().unwrap() }
+    #[expect(static_mut_refs)]
+    unsafe {
+        EXTENSION.as_deref_mut().unwrap()
+    }
 }
 
 static mut EXTENSION: Option<Box<dyn Extension>> = None;

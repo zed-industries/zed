@@ -305,13 +305,7 @@ impl LspAdapter for ExtensionLspAdapter {
             .labels_for_symbols(self.language_server_id.clone(), symbols)
             .await?;
 
-        Ok(labels_from_extension(
-            labels
-                .into_iter()
-                .map(|label| label.map(Into::into))
-                .collect(),
-            language,
-        ))
+        Ok(labels_from_extension(labels, language))
     }
 }
 

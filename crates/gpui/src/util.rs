@@ -72,7 +72,7 @@ where
 pub struct CwdBacktrace<'a>(pub &'a backtrace::Backtrace);
 
 #[cfg(any(test, feature = "test-support"))]
-impl<'a> std::fmt::Debug for CwdBacktrace<'a> {
+impl std::fmt::Debug for CwdBacktrace<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use backtrace::{BacktraceFmt, BytesOrWideString};
 

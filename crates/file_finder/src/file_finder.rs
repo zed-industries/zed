@@ -1451,9 +1451,9 @@ impl<'a> PathComponentSlice<'a> {
                     matches.next();
                 }
                 if is_first_normal || is_last || !is_normal || contains_match {
-                    if !longest
+                    if longest
                         .as_ref()
-                        .is_some_and(|old| old.end - old.start > cur.end - cur.start)
+                        .is_none_or(|old| old.end - old.start <= cur.end - cur.start)
                     {
                         longest = Some(cur);
                     }
@@ -1462,9 +1462,9 @@ impl<'a> PathComponentSlice<'a> {
                     cur.end = i + 1;
                 }
             }
-            if !longest
+            if longest
                 .as_ref()
-                .is_some_and(|old| old.end - old.start > cur.end - cur.start)
+                .is_none_or(|old| old.end - old.start <= cur.end - cur.start)
             {
                 longest = Some(cur);
             }

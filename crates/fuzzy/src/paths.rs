@@ -140,7 +140,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     let query_char_bag = CharBag::from(&lowercase_query[..]);
 
     let num_cpus = executor.num_cpus().min(path_count);
-    let segment_size = (path_count + num_cpus - 1) / num_cpus;
+    let segment_size = path_count.div_ceil(num_cpus);
     let mut segment_results = (0..num_cpus)
         .map(|_| Vec::with_capacity(max_results))
         .collect::<Vec<_>>();

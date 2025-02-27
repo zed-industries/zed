@@ -553,7 +553,7 @@ impl GitPanel {
     }
 
     fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.entries.first().is_some() {
+        if !self.entries.is_empty() {
             self.selected_entry = Some(1);
             self.scroll_to_selected_entry(cx);
         }
