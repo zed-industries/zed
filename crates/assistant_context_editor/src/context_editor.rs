@@ -29,7 +29,10 @@ use gpui::{
     WeakEntity,
 };
 use indexed_docs::IndexedDocsStore;
-use language::{language_settings::SoftWrap, BufferSnapshot, LspAdapterDelegate, ToOffset};
+use language::{
+    language_settings::{all_language_settings, SoftWrap},
+    BufferSnapshot, LspAdapterDelegate, ToOffset,
+};
 use language_model::{
     LanguageModelImage, LanguageModelProvider, LanguageModelProviderTosView, LanguageModelRegistry,
     Role,
@@ -41,7 +44,7 @@ use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
 use rope::Point;
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings};
+use settings::{update_settings_file, Settings, SettingsStore};
 use std::{any::TypeId, borrow::Cow, cmp, ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use text::SelectionGoal;
 use ui::{
@@ -228,6 +231,13 @@ impl ContextEditor {
             editor.set_completion_provider(Some(Box::new(completion_provider)));
             editor.set_menu_inline_completions_policy(MenuInlineCompletionsPolicy::Never);
             editor.set_collaboration_hub(Box::new(project.clone()));
+
+            let show_edit_predictions = all_language_settings(None, cx)
+                .edit_predictions
+                .enabled_in_assistant;
+
+            editor.set_show_edit_predictions(Some(show_edit_predictions), window, cx);
+
             editor
         });
 
@@ -236,6 +246,7 @@ impl ContextEditor {
             cx.subscribe_in(&context, window, Self::handle_context_event),
             cx.subscribe_in(&editor, window, Self::handle_editor_event),
             cx.subscribe_in(&editor, window, Self::handle_editor_search_event),
+            cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
         ];
 
         let fs_clone = fs.clone();
@@ -284,6 +295,16 @@ impl ContextEditor {
         this.insert_slash_command_output_sections(sections, false, window, cx);
         this.patches_updated(&Vec::new(), &patch_ranges, window, cx);
         this
+    }
+
+    fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            let show_edit_predictions = all_language_settings(None, cx)
+                .edit_predictions
+                .enabled_in_assistant;
+
+            editor.set_show_edit_predictions(Some(show_edit_predictions), window, cx);
+        });
     }
 
     pub fn context(&self) -> &Entity<AssistantContext> {

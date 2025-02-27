@@ -165,7 +165,7 @@ impl CommitModal {
             git_panel.set_modal_open(true, cx);
             let buffer = git_panel.commit_message_buffer(cx).clone();
             let project = git_panel.project.clone();
-            cx.new(|cx| commit_message_editor(buffer, project.clone(), false, window, cx))
+            cx.new(|cx| commit_message_editor(buffer, None, project.clone(), false, window, cx))
         });
 
         let commit_message = commit_editor.read(cx).text(cx);

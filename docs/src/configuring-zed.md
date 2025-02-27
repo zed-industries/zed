@@ -406,6 +406,12 @@ There are two options to choose from:
 
 List of `string` values.
 
+### Enabled in Assistant
+
+- Description: Whether to show edit predictions in the assistant panel.
+- Setting: `enabled_in_assistant`
+- Default: `true`
+
 ## Edit Predictions Disabled in
 
 - Description: A list of language scopes in which edit predictions should be disabled.
@@ -1517,8 +1523,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
   "show_other_hints": true,
   "show_background": false,
   "edit_debounce_ms": 700,
-  "scroll_debounce_ms": 50,
-  "toggle_on_modifiers_press": null
+  "scroll_debounce_ms": 50
 }
 ```
 
@@ -1539,22 +1544,6 @@ Use the `lsp` section for the server configuration. Examples are provided in the
 
 Hints are not instantly queried in Zed, two kinds of debounces are used, either may be set to 0 to be disabled.
 Settings-related hint updates are not debounced.
-
-All possible config values for `toggle_on_modifiers_press` are:
-
-```json
-"inlay_hints": {
-  "toggle_on_modifiers_press": {
-    "control": true,
-    "shift": true,
-    "alt": true,
-    "platform": true,
-    "function": true
-  }
-}
-```
-
-Unspecified values have a `false` value, hints won't be toggled if all the modifiers are `false` or not all the modifiers are pressed.
 
 ## Journal
 

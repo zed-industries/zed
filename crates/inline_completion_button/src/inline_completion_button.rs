@@ -456,7 +456,7 @@ impl InlineCompletionButton {
         }
 
         let settings = AllLanguageSettings::get_global(cx);
-        let globally_enabled = settings.show_inline_completions(None, cx);
+        let globally_enabled = settings.show_edit_predictions(None, cx);
         menu = menu.toggleable_entry("All Files", globally_enabled, IconPosition::Start, None, {
             let fs = fs.clone();
             move |_, cx| toggle_inline_completions_globally(fs.clone(), cx)
@@ -702,7 +702,7 @@ impl InlineCompletionButton {
             Some(
                 file.map(|file| {
                     all_language_settings(Some(file), cx)
-                        .inline_completions_enabled_for_path(file.path())
+                        .edit_predictions_enabled_for_file(file, cx)
                 })
                 .unwrap_or(true),
             )
@@ -825,7 +825,7 @@ async fn open_disabled_globs_setting_in_editor(
 }
 
 fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut App) {
-    let show_edit_predictions = all_language_settings(None, cx).show_inline_completions(None, cx);
+    let show_edit_predictions = all_language_settings(None, cx).show_edit_predictions(None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.defaults.show_edit_predictions = Some(!show_edit_predictions)
     });
@@ -845,7 +845,7 @@ fn toggle_show_inline_completions_for_language(
     cx: &mut App,
 ) {
     let show_edit_predictions =
-        all_language_settings(None, cx).show_inline_completions(Some(&language), cx);
+        all_language_settings(None, cx).show_edit_predictions(Some(&language), cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.languages
             .entry(language.name())
