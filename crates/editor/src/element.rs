@@ -513,8 +513,10 @@ impl EditorElement {
                         cx,
                     );
 
-                    if let Some(inlay_modifiers) =
-                        inlay_hint_settings.toggle_on_modifiers_press.as_ref()
+                    if let Some(inlay_modifiers) = inlay_hint_settings
+                        .toggle_on_modifiers_press
+                        .as_ref()
+                        .filter(|modifiers| modifiers.modified())
                     {
                         if inlay_modifiers == &event.modifiers {
                             editor.refresh_inlay_hints(
