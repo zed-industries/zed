@@ -120,6 +120,10 @@ impl VariableList {
                 let child_ref = variable.variables_reference;
                 let var_state;
 
+                //todo(debugger) This could cause an infinite loop if there's a var with a cycle that references itself
+                // and is expanded. We need to keep figure out a way to uniquely identify variables besides their reference
+                // maybe a key could be (var_id, depth). That would still have a double toggling bug though
+
                 if child_ref != 0 {
                     var_state = *this
                         .variable_states
