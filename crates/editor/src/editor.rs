@@ -7694,11 +7694,6 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) {
         let mut revert_changes = HashMap::default();
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let Some(project) = &self.project else {
-            return;
-        };
-
         let chunk_by = self
             .snapshot(window, cx)
             .hunks_for_ranges(ranges.into_iter())
@@ -7709,15 +7704,7 @@ impl Editor {
             for hunk in &hunks {
                 self.prepare_restore_change(&mut revert_changes, hunk, cx);
             }
-            Self::do_stage_or_unstage(
-                project,
-                false,
-                buffer_id,
-                hunks.into_iter(),
-                &snapshot,
-                window,
-                cx,
-            );
+            self.do_stage_or_unstage(false, buffer_id, hunks.into_iter(), window, cx);
         }
         drop(chunk_by);
         if !revert_changes.is_empty() {
@@ -13486,15 +13473,11 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let Some(project) = &self.project else {
-            return;
-        };
-
         let chunk_by = self
             .diff_hunks_in_ranges(&ranges, &snapshot)
             .chunk_by(|hunk| hunk.buffer_id);
         for (buffer_id, hunks) in &chunk_by {
-            Self::do_stage_or_unstage(project, stage, buffer_id, hunks, &snapshot, window, cx);
+            self.do_stage_or_unstage(stage, buffer_id, hunks, window, cx);
         }
     }
 
@@ -13568,16 +13551,20 @@ impl Editor {
     }
 
     fn do_stage_or_unstage(
-        project: &Entity<Project>,
+        &self,
         stage: bool,
         buffer_id: BufferId,
         hunks: impl Iterator<Item = MultiBufferDiffHunk>,
-        snapshot: &MultiBufferSnapshot,
         window: &mut Window,
         cx: &mut App,
     ) {
+        let Some(project) = self.project.as_ref() else {
+            return;
+        };
         let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
-            log::debug!("no buffer for id");
+            return;
+        };
+        let Some(diff) = self.buffer.read(cx).diff_for(buffer_id) else {
             return;
         };
         let buffer_snapshot = buffer.read(cx).snapshot();
@@ -13591,26 +13578,26 @@ impl Editor {
             log::debug!("no git repo for buffer id");
             return;
         };
-        let Some(diff) = snapshot.diff_for_buffer_id(buffer_id) else {
-            log::debug!("no diff for buffer id");
-            return;
-        };
 
-        let new_index_text = if stage && !file_exists {
-            log::debug!("removing from index");
-            None
-        } else {
-            diff.stage_or_unstage_hunks(
-                stage,
-                hunks.map(|hunk| buffer_diff::DiffHunk {
-                    buffer_range: hunk.buffer_range,
-                    diff_base_byte_range: hunk.diff_base_byte_range,
-                    secondary_status: hunk.secondary_status,
-                    row_range: 0..0, // unused
-                }),
-                &buffer_snapshot,
-            )
-        };
+        let new_index_text = diff.update(cx, |diff, cx| {
+            if stage && !file_exists {
+                log::debug!("removing from index");
+                None
+            } else {
+                diff.stage_or_unstage_hunks(
+                    stage,
+                    hunks.map(|hunk| buffer_diff::DiffHunk {
+                        buffer_range: hunk.buffer_range,
+                        diff_base_byte_range: hunk.diff_base_byte_range,
+                        secondary_status: hunk.secondary_status,
+                        row_range: 0..0, // unused
+                    }),
+                    &buffer_snapshot,
+                    cx,
+                )
+            }
+        });
+
         if file_exists {
             let buffer_store = project.read(cx).buffer_store().clone();
             buffer_store
