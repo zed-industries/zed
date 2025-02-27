@@ -47,6 +47,7 @@ mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+use language::SiblingDirection;
 pub(crate) use actions::*;
 pub use actions::{AcceptEditPrediction, OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
@@ -607,6 +608,13 @@ pub trait Addon: 'static {
 pub enum IsVimMode {
     Yes,
     No,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum SyntaxMovement {
+    Parent,
+    NextSibling,
+    PreviousSibling,
 }
 
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
@@ -10814,25 +10822,37 @@ impl Editor {
         }
     }
 
-    pub fn select_larger_syntax_node(
+
+    fn select_syntax_helper(
         &mut self,
-        _: &SelectLargerSyntaxNode,
         window: &mut Window,
         cx: &mut Context<Self>,
+        direction: SyntaxMovement,
+        named_only: bool,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
         let old_selections = self.selections.all::<usize>(cx).into_boxed_slice();
 
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
-        let mut selected_larger_node = false;
+        let mut selected_next_node = false;
         let new_selections = old_selections
             .iter()
             .map(|selection| {
                 let old_range = selection.start..selection.end;
                 let mut new_range = old_range.clone();
                 let mut new_node = None;
-                while let Some((node, containing_range)) = buffer.syntax_ancestor(new_range.clone())
+
+
+                while 
+                    let Some((node, containing_range)) = 
+                        match direction {
+                            SyntaxMovement::Parent => buffer.syntax_ancestor(new_range.clone()),
+                            SyntaxMovement::NextSibling => 
+                                buffer.syntax_sibling(new_range.clone(), SiblingDirection::Next, named_only),
+                            SyntaxMovement::PreviousSibling => 
+                                buffer.syntax_sibling(new_range.clone(), SiblingDirection::Previous, named_only),
+                        }
                 {
                     new_node = Some(node);
                     new_range = match containing_range {
@@ -10857,7 +10877,7 @@ impl Editor {
                     log::info!("Grandparent: {grandparent:?}");
                 }
 
-                selected_larger_node |= new_range != old_range;
+                selected_next_node |= new_range != old_range;
                 Selection {
                     id: selection.id,
                     start: new_range.start,
@@ -10868,14 +10888,44 @@ impl Editor {
             })
             .collect::<Vec<_>>();
 
-        if selected_larger_node {
-            stack.push(old_selections);
+        if selected_next_node {
+            if direction == SyntaxMovement::Parent {
+                stack.push(old_selections);
+            }
             self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select(new_selections);
             });
         }
         self.select_larger_syntax_node_stack = stack;
     }
+
+    pub fn select_larger_syntax_node(
+        &mut self,
+        _: &SelectLargerSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_syntax_helper(window, cx, SyntaxMovement::Parent, false);
+    }
+
+    pub fn select_next_syntax_node(
+        &mut self,
+        _: &SelectNextSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_syntax_helper(window, cx, SyntaxMovement::NextSibling, true);
+    }
+
+    pub fn select_previous_syntax_node(
+        &mut self,
+        _: &SelectPreviousSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_syntax_helper(window, cx, SyntaxMovement::PreviousSibling, true);
+    }
+    
 
     pub fn select_smaller_syntax_node(
         &mut self,
