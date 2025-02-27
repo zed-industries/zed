@@ -281,6 +281,7 @@ impl ProjectDiff {
                 let snapshot = multibuffer.snapshot(cx);
                 let mut point = anchor.to_point(&snapshot);
                 point.row = (point.row + 1).min(snapshot.max_row().0);
+                point.column = 0;
 
                 let Some((_, buffer, _)) = self.multibuffer.read(cx).excerpt_containing(point, cx)
                 else {
