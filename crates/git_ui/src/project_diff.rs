@@ -1002,13 +1002,13 @@ mod tests {
             cx,
             &"
                 - foo
-                + FOO
-                  ˇ"
+                + ˇFOO
+            "
             .unindent(),
         );
 
         editor.update_in(cx, |editor, window, cx| {
-            editor.restore_file(&Default::default(), window, cx);
+            editor.git_restore(&Default::default(), window, cx);
         });
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.statuses = HashMap::default();
