@@ -1,7 +1,7 @@
 use std::io::{Cursor, Write};
 
 use crate::role::Role;
-use crate::LanguageModelToolUse;
+use crate::{LanguageModelToolUse, LanguageModelToolUseId};
 use base64::write::EncoderWriter;
 use gpui::{
     point, size, App, AppContext as _, DevicePixels, Image, ObjectFit, RenderImage, Size, Task,
@@ -165,7 +165,7 @@ impl LanguageModelImage {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub struct LanguageModelToolResult {
-    pub tool_use_id: String,
+    pub tool_use_id: LanguageModelToolUseId,
     pub is_error: bool,
     pub content: String,
 }

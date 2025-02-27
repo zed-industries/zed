@@ -8,7 +8,7 @@ use gpui::{
     TextStyle, WeakEntity,
 };
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
-
+use language_model_selector::LanguageModelSelector;
 use rope::Point;
 use settings::Settings;
 use std::time::Duration;
@@ -186,22 +186,7 @@ impl MessageEditor {
                 .update(&mut cx, |thread, cx| {
                     let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
                     thread.insert_user_message(user_message, context, cx);
-                    let mut request = thread.to_completion_request(request_kind, cx);
-
-                    if use_tools {
-                        request.tools = thread
-                            .tools()
-                            .tools(cx)
-                            .into_iter()
-                            .map(|tool| LanguageModelRequestTool {
-                                name: tool.name(),
-                                description: tool.description(),
-                                input_schema: tool.input_schema(),
-                            })
-                            .collect();
-                    }
-
-                    thread.stream_completion(request, model, cx)
+                    thread.send_to_model(model, request_kind, use_tools, cx);
                 })
                 .ok();
         })

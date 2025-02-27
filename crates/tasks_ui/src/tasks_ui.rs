@@ -1,9 +1,12 @@
+use std::collections::HashMap;
+use std::path::Path;
+
 use ::settings::Settings;
-use editor::{tasks::task_context, Editor};
-use gpui::{App, Context, Task as AsyncTask, Window};
+use editor::Editor;
+use gpui::{App, AppContext as _, Context, Entity, Task, Window};
 use modal::{TaskOverrides, TasksModal};
-use project::{Location, WorktreeId};
-use task::{RevealTarget, TaskId};
+use project::{Location, TaskContexts, Worktree, WorktreeId};
+use task::{RevealTarget, TaskContext, TaskId, TaskVariables, VariableName};
 use workspace::tasks::schedule_task;
 use workspace::{tasks::schedule_resolved_task, Workspace};
 
@@ -43,19 +46,23 @@ pub fn init(cx: &mut App) {
                             if let Some(use_new_terminal) = action.use_new_terminal {
                                 original_task.use_new_terminal = use_new_terminal;
                             }
-                            let context_task = task_context(workspace, window, cx);
+                            let task_contexts = task_contexts(workspace, window, cx);
                             cx.spawn_in(window, |workspace, mut cx| async move {
-                                let task_context = context_task.await;
+                                let task_contexts = task_contexts.await;
                                 workspace
-                                    .update(&mut cx, |workspace, cx| {
-                                        schedule_task(
-                                            workspace,
-                                            task_source_kind,
-                                            &original_task,
-                                            &task_context,
-                                            false,
-                                            cx,
-                                        )
+                                    .update_in(&mut cx, |workspace, window, cx| {
+                                        if let Some(task_context) = task_contexts.active_context() {
+                                            schedule_task(
+                                                workspace,
+                                                task_source_kind,
+                                                &original_task,
+                                                task_context,
+                                                false,
+                                                cx,
+                                            )
+                                        } else {
+                                            toggle_modal(workspace, None, window, cx).detach();
+                                        }
                                     })
                                     .ok()
                             })
@@ -114,22 +121,22 @@ fn toggle_modal(
     reveal_target: Option<RevealTarget>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) -> AsyncTask<()> {
+) -> Task<()> {
     let task_store = workspace.project().read(cx).task_store().clone();
     let workspace_handle = workspace.weak_handle();
     let can_open_modal = workspace.project().update(cx, |project, cx| {
         project.is_local() || project.ssh_connection_string(cx).is_some() || project.is_via_ssh()
     });
     if can_open_modal {
-        let context_task = task_context(workspace, window, cx);
+        let task_contexts = task_contexts(workspace, window, cx);
         cx.spawn_in(window, |workspace, mut cx| async move {
-            let task_context = context_task.await;
+            let task_contexts = task_contexts.await;
             workspace
                 .update_in(&mut cx, |workspace, window, cx| {
                     workspace.toggle_modal(window, cx, |window, cx| {
                         TasksModal::new(
                             task_store.clone(),
-                            task_context,
+                            task_contexts,
                             reveal_target.map(|target| TaskOverrides {
                                 reveal_target: Some(target),
                             }),
@@ -142,7 +149,7 @@ fn toggle_modal(
                 .ok();
         })
     } else {
-        AsyncTask::ready(())
+        Task::ready(())
     }
 }
 
@@ -151,12 +158,12 @@ fn spawn_task_with_name(
     overrides: Option<TaskOverrides>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) -> AsyncTask<anyhow::Result<()>> {
+) -> Task<anyhow::Result<()>> {
     cx.spawn_in(window, |workspace, mut cx| async move {
-        let context_task = workspace.update_in(&mut cx, |workspace, window, cx| {
-            task_context(workspace, window, cx)
+        let task_contexts = workspace.update_in(&mut cx, |workspace, window, cx| {
+            task_contexts(workspace, window, cx)
         })?;
-        let task_context = context_task.await;
+        let task_contexts = task_contexts.await;
         let tasks = workspace.update(&mut cx, |workspace, cx| {
             let Some(task_inventory) = workspace
                 .project()
@@ -192,11 +199,13 @@ fn spawn_task_with_name(
                         target_task.reveal_target = target_override;
                     }
                 }
+                let default_context = TaskContext::default();
+                let active_context = task_contexts.active_context().unwrap_or(&default_context);
                 schedule_task(
                     workspace,
                     task_source_kind,
                     &target_task,
-                    &task_context,
+                    active_context,
                     false,
                     cx,
                 );
@@ -230,7 +239,14 @@ fn active_item_selection_properties(
     let worktree_id = active_item
         .as_ref()
         .and_then(|item| item.project_path(cx))
-        .map(|path| path.worktree_id);
+        .map(|path| path.worktree_id)
+        .filter(|worktree_id| {
+            workspace
+                .project()
+                .read(cx)
+                .worktree_for_id(*worktree_id, cx)
+                .map_or(false, |worktree| is_visible_directory(&worktree, cx))
+        });
     let location = active_item
         .and_then(|active_item| active_item.act_as::<Editor>(cx))
         .and_then(|editor| {
@@ -251,6 +267,84 @@ fn active_item_selection_properties(
     (worktree_id, location)
 }
 
+fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Task<TaskContexts> {
+    let active_item = workspace.active_item(cx);
+    let active_worktree = active_item
+        .as_ref()
+        .and_then(|item| item.project_path(cx))
+        .map(|project_path| project_path.worktree_id)
+        .filter(|worktree_id| {
+            workspace
+                .project()
+                .read(cx)
+                .worktree_for_id(*worktree_id, cx)
+                .map_or(false, |worktree| is_visible_directory(&worktree, cx))
+        });
+
+    let editor_context_task =
+        active_item
+            .and_then(|item| item.act_as::<Editor>(cx))
+            .map(|active_editor| {
+                active_editor.update(cx, |editor, cx| editor.task_context(window, cx))
+            });
+
+    let mut worktree_abs_paths = workspace
+        .worktrees(cx)
+        .filter(|worktree| is_visible_directory(worktree, cx))
+        .map(|worktree| {
+            let worktree = worktree.read(cx);
+            (worktree.id(), worktree.abs_path())
+        })
+        .collect::<HashMap<_, _>>();
+
+    cx.background_spawn(async move {
+        let mut task_contexts = TaskContexts::default();
+
+        if let Some(editor_context_task) = editor_context_task {
+            if let Some(editor_context) = editor_context_task.await {
+                task_contexts.active_item_context = Some((active_worktree, editor_context));
+            }
+        }
+
+        if let Some(active_worktree) = active_worktree {
+            if let Some(active_worktree_abs_path) = worktree_abs_paths.remove(&active_worktree) {
+                task_contexts.active_worktree_context =
+                    Some((active_worktree, worktree_context(&active_worktree_abs_path)));
+            }
+        } else if worktree_abs_paths.len() == 1 {
+            task_contexts.active_worktree_context = worktree_abs_paths
+                .drain()
+                .next()
+                .map(|(id, abs_path)| (id, worktree_context(&abs_path)));
+        }
+
+        task_contexts.other_worktree_contexts.extend(
+            worktree_abs_paths
+                .into_iter()
+                .map(|(id, abs_path)| (id, worktree_context(&abs_path))),
+        );
+        task_contexts
+    })
+}
+
+fn is_visible_directory(worktree: &Entity<Worktree>, cx: &App) -> bool {
+    let worktree = worktree.read(cx);
+    worktree.is_visible() && worktree.root_entry().map_or(false, |entry| entry.is_dir())
+}
+
+fn worktree_context(worktree_abs_path: &Path) -> TaskContext {
+    let mut task_variables = TaskVariables::default();
+    task_variables.insert(
+        VariableName::WorktreeRoot,
+        worktree_abs_path.to_string_lossy().to_string(),
+    );
+    TaskContext {
+        cwd: Some(worktree_abs_path.to_path_buf()),
+        task_variables,
+        project_env: HashMap::default(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{collections::HashMap, sync::Arc};
@@ -265,7 +359,7 @@ mod tests {
     use util::{path, separator};
     use workspace::{AppState, Workspace};
 
-    use crate::task_context;
+    use crate::task_contexts;
 
     #[gpui::test]
     async fn test_default_language_context(cx: &mut TestAppContext) {
@@ -325,8 +419,8 @@ mod tests {
                     "function" @context
                     name: (_) @name
                     parameters: (formal_parameters
-                      "(" @context
-                      ")" @context)) @item"#,
+                        "(" @context
+                        ")" @context)) @item"#,
             )
             .unwrap()
             .with_context_provider(Some(Arc::new(BasicContextProvider::new(
@@ -373,13 +467,15 @@ mod tests {
                     workspace.active_item(cx).unwrap().item_id(),
                     editor2.entity_id()
                 );
-                task_context(workspace, window, cx)
+                task_contexts(workspace, window, cx)
             })
             .await;
 
         assert_eq!(
-            first_context,
-            TaskContext {
+            first_context
+                .active_context()
+                .expect("Should have an active context"),
+            &TaskContext {
                 cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
@@ -405,10 +501,12 @@ mod tests {
         assert_eq!(
             workspace
                 .update_in(cx, |workspace, window, cx| {
-                    task_context(workspace, window, cx)
+                    task_contexts(workspace, window, cx)
                 })
-                .await,
-            TaskContext {
+                .await
+                .active_context()
+                .expect("Should have an active context"),
+            &TaskContext {
                 cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
@@ -431,10 +529,12 @@ mod tests {
                 .update_in(cx, |workspace, window, cx| {
                     // Now, let's switch the active item to .ts file.
                     workspace.activate_item(&editor1, true, true, window, cx);
-                    task_context(workspace, window, cx)
+                    task_contexts(workspace, window, cx)
                 })
-                .await,
-            TaskContext {
+                .await
+                .active_context()
+                .expect("Should have an active context"),
+            &TaskContext {
                 cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
                     (VariableName::File, path!("/dir/a.ts").into()),
