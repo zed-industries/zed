@@ -10971,6 +10971,106 @@ async fn cycle_through_same_place_diagnostics(
 }
 
 #[gpui::test]
+async fn active_diagnostics_dismiss_after_invalidation(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+
+    cx.set_state(indoc! {"
+        ˇfn func(abc def: i32) -> u32 {
+        }
+    "});
+
+    let message = "Something's wrong!";
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        version: None,
+                        diagnostics: vec![lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 11),
+                                lsp::Position::new(0, 12),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                            message: message.to_string(),
+                            ..Default::default()
+                        }],
+                    },
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+    executor.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+        assert_eq!(
+            editor
+                .active_diagnostics
+                .as_ref()
+                .map(|diagnostics_group| diagnostics_group.primary_message.as_str()),
+            Some(message),
+            "Should have a diagnostics group activated"
+        );
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        version: None,
+                        diagnostics: Vec::new(),
+                    },
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+    executor.run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        assert_eq!(
+            editor.active_diagnostics, None,
+            "After no diagnostics set to the editor, no diagnostics should be active"
+        );
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+        assert_eq!(
+            editor.active_diagnostics, None,
+            "Should be no diagnostics to go to and activate"
+        );
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+}
+
+#[gpui::test]
 async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -15544,7 +15644,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_multi_buffer_folding(cx: &mut TestAppContext) {
+async fn test_folding_buffers(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let sample_text_1 = "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj".to_string();
@@ -15651,7 +15751,7 @@ async fn test_multi_buffer_folding(cx: &mut TestAppContext) {
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
             EditorMode::Full,
-            multi_buffer,
+            multi_buffer.clone(),
             Some(project.clone()),
             true,
             window,
@@ -15659,10 +15759,9 @@ async fn test_multi_buffer_folding(cx: &mut TestAppContext) {
         )
     });
 
-    let full_text = "\n\n\naaaa\nbbbb\ncccc\n\n\n\nffff\ngggg\n\n\n\njjjj\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n";
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        full_text,
+        "\n\n\naaaa\nbbbb\ncccc\n\n\n\nffff\ngggg\n\n\n\njjjj\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
     );
 
     multi_buffer_editor.update(cx, |editor, cx| {
@@ -15708,12 +15807,25 @@ async fn test_multi_buffer_folding(cx: &mut TestAppContext) {
         "After unfolding the second buffer, its text should be displayed"
     );
 
-    multi_buffer_editor.update(cx, |editor, cx| {
-        editor.unfold_buffer(buffer_1.read(cx).remote_id(), cx)
+    // Typing inside of buffer 1 causes that buffer to be unfolded.
+    multi_buffer_editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(
+            multi_buffer
+                .read(cx)
+                .snapshot(cx)
+                .text_for_range(Point::new(1, 0)..Point::new(1, 4))
+                .collect::<String>(),
+            "bbbb"
+        );
+        editor.change_selections(None, window, cx, |selections| {
+            selections.select_ranges(vec![Point::new(1, 0)..Point::new(1, 0)]);
+        });
+        editor.handle_input("B", window, cx);
     });
+
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\naaaa\nbbbb\ncccc\n\n\n\nffff\ngggg\n\n\n\njjjj\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n",
+        "\n\n\nB\n\n\n\n\n\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n",
         "After unfolding the first buffer, its and 2nd buffer's text should be displayed"
     );
 
@@ -15722,13 +15834,13 @@ async fn test_multi_buffer_folding(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        full_text,
+        "\n\n\nB\n\n\n\n\n\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
         "After unfolding the all buffers, all original text should be displayed"
     );
 }
 
 #[gpui::test]
-async fn test_multi_buffer_single_excerpts_folding(cx: &mut TestAppContext) {
+async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let sample_text_1 = "1111\n2222\n3333".to_string();
@@ -15877,7 +15989,7 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_multi_buffer_with_single_excerpt_folding(cx: &mut TestAppContext) {
+async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let sample_text = "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj".to_string();

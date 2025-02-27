@@ -840,11 +840,11 @@
     ],
     // When to show edit predictions previews in buffer.
     // This setting takes two possible values:
-    // 1. Display inline when there are no language server completions available.
-    //     "mode": "eager_preview"
-    // 2. Display inline when holding modifier key (alt by default).
-    //     "mode": "auto"
-    "mode": "eager_preview"
+    // 1. Display predictions inline when there are no language server completions available.
+    //     "mode": "eager"
+    // 2. Display predictions inline only when holding a modifier key (alt by default).
+    //     "mode": "subtle"
+    "mode": "eager"
   },
   // Settings specific to journaling
   "journal": {
@@ -1296,6 +1296,7 @@
   },
   // Vim settings
   "vim": {
+    "default_mode": "normal",
     "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_multiline_find": false,

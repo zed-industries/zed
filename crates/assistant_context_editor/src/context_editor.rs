@@ -34,7 +34,7 @@ use language_model::{
     LanguageModelImage, LanguageModelProvider, LanguageModelProviderTosView, LanguageModelRegistry,
     Role,
 };
-use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
+use language_model_selector::{AssistantLanguageModelSelector, LanguageModelSelector};
 use multi_buffer::MultiBufferRow;
 use picker::Picker;
 use project::lsp_store::LocalLspAdapterDelegate;
@@ -77,7 +77,6 @@ actions!(
         InsertIntoEditor,
         QuoteSelection,
         Split,
-        ToggleModelSelector,
     ]
 );
 
@@ -194,7 +193,6 @@ pub struct ContextEditor {
     // context editor, we keep a reference here.
     dragged_file_worktrees: Vec<Entity<Worktree>>,
     language_model_selector: Entity<LanguageModelSelector>,
-    language_model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
 }
 
 pub const DEFAULT_TAB_TITLE: &str = "New Chat";
@@ -255,7 +253,6 @@ impl ContextEditor {
             )
         });
 
-        let language_model_selector_menu_handle = PopoverMenuHandle::default();
         let sections = context.read(cx).slash_command_output_sections().to_vec();
         let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
         let slash_commands = context.read(cx).slash_commands().clone();
@@ -281,7 +278,6 @@ impl ContextEditor {
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
             language_model_selector,
-            language_model_selector_menu_handle,
         };
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
@@ -2024,15 +2020,6 @@ impl ContextEditor {
         });
     }
 
-    fn toggle_model_selector(
-        &mut self,
-        _: &ToggleModelSelector,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.language_model_selector_menu_handle.toggle(window, cx);
-    }
-
     fn save(&mut self, _: &Save, _window: &mut Window, cx: &mut Context<Self>) {
         self.context.update(cx, |context, cx| {
             context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx)
@@ -2378,46 +2365,6 @@ impl ContextEditor {
                 )
             },
         )
-    }
-
-    fn render_language_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let active_model = LanguageModelRegistry::read_global(cx).active_model();
-        let focus_handle = self.editor().focus_handle(cx).clone();
-        let model_name = match active_model {
-            Some(model) => model.name().0,
-            None => SharedString::from("No model selected"),
-        };
-
-        LanguageModelSelectorPopoverMenu::new(
-            self.language_model_selector.clone(),
-            ButtonLike::new("active-model")
-                .style(ButtonStyle::Subtle)
-                .child(
-                    h_flex()
-                        .gap_0p5()
-                        .child(
-                            Label::new(model_name)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .child(
-                            Icon::new(IconName::ChevronDown)
-                                .color(Color::Muted)
-                                .size(IconSize::XSmall),
-                        ),
-                ),
-            move |window, cx| {
-                Tooltip::for_action_in(
-                    "Change Model",
-                    &ToggleModelSelector,
-                    &focus_handle,
-                    window,
-                    cx,
-                )
-            },
-            gpui::Corner::BottomLeft,
-        )
-        .with_handle(self.language_model_selector_menu_handle.clone())
     }
 
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -2864,6 +2811,7 @@ impl Render for ContextEditor {
             None
         };
 
+        let language_model_selector = self.language_model_selector.clone();
         v_flex()
             .key_context("ContextEditor")
             .capture_action(cx.listener(ContextEditor::cancel))
@@ -2876,7 +2824,11 @@ impl Render for ContextEditor {
             .on_action(cx.listener(ContextEditor::edit))
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
-            .on_action(cx.listener(ContextEditor::toggle_model_selector))
+            .on_action(move |action, window, cx| {
+                language_model_selector.update(cx, |this, cx| {
+                    this.toggle_model_selector(action, window, cx);
+                })
+            })
             .size_full()
             .children(self.render_notice(cx))
             .child(
@@ -2914,11 +2866,14 @@ impl Render for ContextEditor {
                                 .gap_1()
                                 .child(self.render_inject_context_menu(cx))
                                 .child(ui::Divider::vertical())
-                                .child(
-                                    div()
-                                        .pl_0p5()
-                                        .child(self.render_language_model_selector(cx)),
-                                ),
+                                .child(div().pl_0p5().child({
+                                    let focus_handle = self.editor().focus_handle(cx).clone();
+                                    AssistantLanguageModelSelector::new(
+                                        focus_handle,
+                                        self.language_model_selector.clone(),
+                                    )
+                                    .render(window, cx)
+                                })),
                         )
                         .child(
                             h_flex()

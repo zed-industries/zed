@@ -90,7 +90,7 @@ where
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct LanguageModelToolUse {
     pub id: LanguageModelToolUseId,
-    pub name: String,
+    pub name: Arc<str>,
     pub input: serde_json::Value,
 }
 
