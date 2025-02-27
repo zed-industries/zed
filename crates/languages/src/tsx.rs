@@ -1,9 +1,17 @@
 use anyhow::Result;
 use std::ops::Range;
 
-use language::{Anchor, BufferSnapshot, EditBehaviorProvider};
+use language::{Anchor, BufferSnapshot, EditBehaviorProvider, JsxTagAutoCloseConfig};
 
-pub struct TsxEditBehaviorProvider;
+pub struct TsxEditBehaviorProvider {
+    config: JsxTagAutoCloseConfig,
+}
+
+impl TsxEditBehaviorProvider {
+    pub fn new(config: JsxTagAutoCloseConfig) -> Self {
+        Self { config }
+    }
+}
 
 pub struct TsxTagCompletionState {
     edit_index: usize,
@@ -45,22 +53,32 @@ impl EditBehaviorProvider for TsxEditBehaviorProvider {
                 continue;
             };
             let mut jsx_open_tag_node = node;
-            if node.grammar_name() != "jsx_opening_element" {
+            if node.grammar_name() != self.config.open_tag_node_name {
                 if let Some(parent) = node.parent() {
-                    if parent.grammar_name() == "jsx_opening_element" {
+                    if parent.grammar_name() == self.config.open_tag_node_name {
                         jsx_open_tag_node = parent;
                     }
                 }
             }
-            if dbg!(jsx_open_tag_node.grammar_name()) != "jsx_opening_element" {
+            if dbg!(jsx_open_tag_node.grammar_name()) != self.config.open_tag_node_name {
                 continue;
             }
 
-            if jsx_open_tag_node.has_error() {
+            let first_two_chars: Option<[char; 2]> = {
                 let mut chars = buffer
                     .text_for_range(jsx_open_tag_node.byte_range())
                     .flat_map(|chunk| chunk.chars());
-                if chars.next() == Some('<') && chars.next() == Some('/') {
+                if let (Some(c1), Some(c2)) = (chars.next(), chars.next()) {
+                    Some([c1, c2])
+                } else {
+                    None
+                }
+            };
+            if let Some(chars) = first_two_chars {
+                if chars[0] != '<' {
+                    continue;
+                }
+                if chars[1] == '!' || chars[1] == '/' {
                     continue;
                 }
             }
@@ -106,7 +124,7 @@ impl EditBehaviorProvider for TsxEditBehaviorProvider {
             ) else {
                 continue;
             };
-            assert!(open_tag.grammar_name() == "jsx_opening_element");
+            assert!(open_tag.grammar_name() == self.config.open_tag_node_name);
             let tag_name_range = open_tag
                 .child_by_field_name("name")
                 .map_or(0..0, |node| node.byte_range());
@@ -119,8 +137,8 @@ impl EditBehaviorProvider for TsxEditBehaviorProvider {
                 while let Some(parent) = tree_root_node.parent() {
                     tree_root_node = parent;
                     if parent.is_error()
-                        || (parent.kind() != "jsx_element"
-                            && parent.kind() != "jsx_opening_element")
+                        || (parent.kind() != self.config.jsx_element_node_name
+                            && parent.kind() != self.config.open_tag_node_name)
                     {
                         break;
                     }
@@ -141,7 +159,7 @@ impl EditBehaviorProvider for TsxEditBehaviorProvider {
                 // else -> go to parent
                 // if parent == tree_root_node -> break
                 while let Some(node) = stack.pop() {
-                    if node.kind() == "jsx_opening_element" {
+                    if node.kind() == self.config.open_tag_node_name {
                         if node.child_by_field_name("name").map_or(false, |node| {
                             buffer
                                 .text_for_range(node.byte_range())
@@ -151,7 +169,7 @@ impl EditBehaviorProvider for TsxEditBehaviorProvider {
                             unclosed_open_tag_count += 1;
                         }
                         continue;
-                    } else if node.kind() == "jsx_closing_element" {
+                    } else if node.kind() == self.config.close_tag_node_name {
                         if node.child_by_field_name("name").map_or(false, |node| {
                             buffer
                                 .text_for_range(node.byte_range())

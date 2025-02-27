@@ -16463,27 +16463,34 @@ async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
 mod autoclose_tags {
     use super::*;
     use languages::language;
+    use languages::EditBehaviorImplementation;
     use std::sync::Arc;
+
+    async fn test_setup(cx: &mut TestAppContext) -> EditorTestContext {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| {
+            let language =
+                Arc::try_unwrap(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()))
+                    .unwrap();
+            let jsx_tag_auto_close = language.config().jsx_tag_auto_close.clone();
+            let language = language.with_edit_behavior_provider(jsx_tag_auto_close.map(|config| {
+                Arc::new(languages::tsx::TsxEditBehaviorProvider::new(config))
+                    as Arc<dyn EditBehaviorImplementation + 'static>
+            }));
+
+            buffer.set_language(Some(Arc::new(language)), cx)
+        });
+
+        cx
+    }
 
     macro_rules! check {
         ($name:ident, $initial:literal + $input:literal => $expected:expr) => {
             #[gpui::test]
             async fn $name(cx: &mut TestAppContext) {
-                init_test(cx, |_| {});
-
-                let mut cx = EditorTestContext::new(cx).await;
-                cx.update_buffer(|buffer, cx| {
-                    let language = Arc::try_unwrap(language(
-                        "tsx",
-                        tree_sitter_typescript::LANGUAGE_TSX.into(),
-                    ))
-                    .unwrap();
-                    let language = language.with_edit_behavior_provider(Some(Arc::new(
-                        languages::tsx::TsxEditBehaviorProvider,
-                    )));
-
-                    buffer.set_language(Some(Arc::new(language)), cx)
-                });
+                let mut cx = test_setup(cx).await;
                 cx.set_state($initial);
                 cx.run_until_parked();
 
@@ -16565,6 +16572,65 @@ mod autoclose_tags {
     check!(
         does_not_include_type_argument_in_autoclose_tag_name,
         "<Component<T> attr={boolean_value}ˇ" + ">" => "<Component<T> attr={boolean_value}>ˇ</Component>"
+    );
+
+    check!(
+        does_not_autoclose_doctype,
+        "<!DOCTYPE htmlˇ" + ">" => "<!DOCTYPE html>ˇ"
+    );
+
+    check!(
+        does_not_autoclose_comment,
+        "<!-- comment --ˇ" + ">" => "<!-- comment -->ˇ"
+    );
+
+    check!(
+        multi_cursor_autoclose_same_tag,
+        r#"
+        <divˇ
+        <divˇ
+        "#
+        + ">" =>
+        r#"
+        <div>ˇ</div>
+        <div>ˇ</div>
+        "#
+    );
+
+    check!(
+        multi_cursor_autoclose_different_tags,
+        r#"
+        <divˇ
+        <spanˇ
+        "#
+        + ">" =>
+        r#"
+        <div>ˇ</div>
+        <span>ˇ</span>
+        "#
+    );
+
+    check!(
+        multi_cursor_autoclose_some_dont_autoclose_others,
+        r#"
+        <divˇ
+        <div /ˇ
+        <spanˇ</span>
+        <!DOCTYPE htmlˇ
+        </divˇ
+        <Component<T>ˇ
+        ˇ
+        "#
+        + ">" =>
+        r#"
+        <div>ˇ</div>
+        <div />ˇ
+        <span>ˇ</span>
+        <!DOCTYPE html>ˇ
+        </div>ˇ
+        <Component<T>>ˇ</Component>
+        ˇ
+        "#
     );
 }
 

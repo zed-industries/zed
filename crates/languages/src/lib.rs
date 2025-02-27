@@ -103,15 +103,6 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         };
     }
 
-    macro_rules! edit_behavior_provider {
-        ($name:expr) => {
-            Some(Arc::new($name) as Arc<dyn EditBehaviorImplementation>)
-        };
-        () => {
-            None
-        };
-    }
-
     macro_rules! adapters {
         ($($item:expr),+ $(,)?) => {
             vec![
@@ -140,22 +131,22 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                         queries: load_queries($name),
                         context_provider: $context,
                         toolchain_provider: $toolchain,
-                        edit_behavior_provider: $edit_behavior,
+                        edit_behavior_provider: $edit_behavior(config.clone()),
                     })
                 }),
             );
         };
         ($name:expr) => {
-            register_language!($name, adapters => adapters![], context => context_provider!(), toolchain => toolchain_provider!(), edit_behavior => edit_behavior_provider!())
+            register_language!($name, adapters => adapters![], context => context_provider!(), toolchain => toolchain_provider!(), edit_behavior => |_| None)
         };
         ($name:expr, adapters => $adapters:expr, context => $context:expr, toolchain => $toolchain:expr) => {
-            register_language!($name, adapters => $adapters, context => $context, toolchain => $toolchain, edit_behavior => edit_behavior_provider!())
+            register_language!($name, adapters => $adapters, context => $context, toolchain => $toolchain, edit_behavior => |_| None)
         };
         ($name:expr, adapters => $adapters:expr, context => $context:expr) => {
-            register_language!($name, adapters => $adapters, context => $context, toolchain => toolchain_provider!(), edit_behavior => edit_behavior_provider!())
+            register_language!($name, adapters => $adapters, context => $context, toolchain => toolchain_provider!(), edit_behavior => |_| None)
         };
         ($name:expr, adapters => $adapters:expr) => {
-            register_language!($name, adapters => $adapters, context => context_provider!(), toolchain => toolchain_provider!(), edit_behavior => edit_behavior_provider!())
+            register_language!($name, adapters => $adapters, context => context_provider!(), toolchain => toolchain_provider!(), edit_behavior => |_| None)
         };
     }
 
@@ -164,7 +155,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         adapters => adapters![],
         context => context_provider!(bash_task_context()),
         toolchain => toolchain_provider!(),
-        edit_behavior => edit_behavior_provider!()
+        edit_behavior => |_| None
     );
 
     register_language!(
@@ -240,7 +231,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         ],
         context => context_provider!(typescript_task_context()),
         toolchain => toolchain_provider!(),
-        edit_behavior => edit_behavior_provider!(tsx::TsxEditBehaviorProvider)
+        edit_behavior => |config: LanguageConfig| config.jsx_tag_auto_close.map(|config| Arc::new(tsx::TsxEditBehaviorProvider::new(config)) as Arc<dyn EditBehaviorImplementation>)
     );
     register_language!(
         "typescript",
