@@ -5690,6 +5690,32 @@ impl Editor {
             return breakpoint_display_points;
         };
 
+        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            let buffer_snapshot = buffer.read(cx).snapshot();
+
+            for breakpoint in
+                breakpoint_store
+                    .read(cx)
+                    .breakpoints(&buffer, None, buffer_snapshot.clone(), cx)
+            {
+                let point = buffer_snapshot.summary_for_anchor::<Point>(&breakpoint.0);
+                breakpoint_display_points.insert(
+                    snapshot
+                        .point_to_display_point(
+                            MultiBufferPoint {
+                                row: point.row,
+                                column: point.column,
+                            },
+                            Bias::Left,
+                        )
+                        .row(),
+                    breakpoint.clone(),
+                );
+            }
+
+            return breakpoint_display_points;
+        }
+
         let range = snapshot.display_point_to_point(DisplayPoint::new(range.start, 0), Bias::Left)
             ..snapshot.display_point_to_point(DisplayPoint::new(range.end, 0), Bias::Right);
         for excerpt_boundary in multi_buffer_snapshot.excerpt_boundaries_in_range(range) {
