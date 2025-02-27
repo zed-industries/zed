@@ -9,9 +9,9 @@ use futures::{FutureExt as _, StreamExt as _};
 use gpui::{App, Context, EventEmitter, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
-    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
-    Role, StopReason,
+    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolUse, LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
+    PaymentRequiredError, Role, StopReason,
 };
 use serde::{Deserialize, Serialize};
 use util::{post_inc, TryFutureExt as _};
@@ -312,6 +312,31 @@ impl Thread {
         }
 
         text
+    }
+
+    pub fn send_to_model(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        request_kind: RequestKind,
+        use_tools: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let mut request = self.to_completion_request(request_kind, cx);
+
+        if use_tools {
+            request.tools = self
+                .tools()
+                .tools(cx)
+                .into_iter()
+                .map(|tool| LanguageModelRequestTool {
+                    name: tool.name(),
+                    description: tool.description(),
+                    input_schema: tool.input_schema(),
+                })
+                .collect();
+        }
+
+        self.stream_completion(request, model, cx);
     }
 
     pub fn to_completion_request(
