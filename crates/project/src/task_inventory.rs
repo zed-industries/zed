@@ -62,7 +62,7 @@ pub enum TaskSourceKind {
 pub struct TaskContexts {
     /// A context, related to the currently opened item.
     /// Item can be opened from an invisible worktree, or any other, not necessarily active worktree.
-    pub active_item_context: Option<(Option<WorktreeId>, TaskContext)>,
+    pub active_item_context: Option<(Option<WorktreeId>, Option<Location>, TaskContext)>,
     /// A worktree that corresponds to the active item, or the only worktree in the workspace.
     pub active_worktree_context: Option<(WorktreeId, TaskContext)>,
     /// If there are multiple worktrees in the workspace, all non-active ones are included here.
@@ -73,12 +73,30 @@ impl TaskContexts {
     pub fn active_context(&self) -> Option<&TaskContext> {
         self.active_item_context
             .as_ref()
-            .map(|(_, context)| context)
+            .map(|(_, _, context)| context)
             .or_else(|| {
                 self.active_worktree_context
                     .as_ref()
                     .map(|(_, context)| context)
             })
+    }
+
+    pub fn location(&self) -> Option<&Location> {
+        self.active_item_context
+            .as_ref()
+            .and_then(|(_, location, _)| location.as_ref())
+    }
+
+    pub fn worktree(&self) -> Option<WorktreeId> {
+        self.active_item_context
+            .as_ref()
+            .and_then(|(worktree_id, _, _)| worktree_id.as_ref())
+            .or_else(|| {
+                self.active_worktree_context
+                    .as_ref()
+                    .map(|(worktree_id, _)| worktree_id)
+            })
+            .copied()
     }
 }
 
@@ -138,23 +156,20 @@ impl Inventory {
     /// Deduplicates the tasks by their labels and context and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
     pub fn used_and_current_resolved_tasks(
         &self,
-        worktree: Option<WorktreeId>,
-        location: Option<Location>,
         task_contexts: &TaskContexts,
         cx: &App,
     ) -> (
         Vec<(TaskSourceKind, ResolvedTask)>,
         Vec<(TaskSourceKind, ResolvedTask)>,
     ) {
+        let worktree = task_contexts.worktree();
+        let location = task_contexts.location();
         let language = location
-            .as_ref()
             .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name().into(),
         });
-        let file = location
-            .as_ref()
-            .and_then(|location| location.buffer.read(cx).file().cloned());
+        let file = location.and_then(|location| location.buffer.read(cx).file().cloned());
 
         let mut task_labels_to_ids = HashMap::<String, HashSet<TaskId>>::default();
         let mut lru_score = 0_u32;
@@ -199,29 +214,28 @@ impl Inventory {
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
-            .flat_map(|task| Some((task_source_kind.clone()?, task)))
-            .chain(global_tasks);
+            .flat_map(|task| Some((task_source_kind.clone()?, task)));
         let worktree_tasks = self
             .worktree_templates_from_settings(worktree)
-            .chain(language_tasks);
+            .chain(language_tasks)
+            .chain(global_tasks);
 
-        let new_resolved_tasks =
-            worktree_tasks
-                .flat_map(|(kind, task)| {
-                    let id_base = kind.to_id_base();
+        let new_resolved_tasks = worktree_tasks
+            .flat_map(|(kind, task)| {
+                let id_base = kind.to_id_base();
+                if let TaskSourceKind::Worktree { id, .. } = &kind {
                     None.or_else(|| {
-                        let (_, item_context) = task_contexts.active_item_context.as_ref().filter(
-                            |(worktree_id, _)| worktree.is_none() || worktree == *worktree_id,
-                        )?;
+                        let (_, _, item_context) = task_contexts
+                            .active_item_context
+                            .as_ref()
+                            .filter(|(worktree_id, _, _)| Some(id) == worktree_id.as_ref())?;
                         task.resolve_task(&id_base, item_context)
                     })
                     .or_else(|| {
                         let (_, worktree_context) = task_contexts
                             .active_worktree_context
                             .as_ref()
-                            .filter(|(worktree_id, _)| {
-                                worktree.is_none() || worktree == Some(*worktree_id)
-                            })?;
+                            .filter(|(worktree_id, _)| id == worktree_id)?;
                         task.resolve_task(&id_base, worktree_context)
                     })
                     .or_else(|| {
@@ -236,24 +250,35 @@ impl Inventory {
                             None
                         }
                     })
-                    .or_else(|| task.resolve_task(&id_base, &TaskContext::default()))
-                    .map(move |resolved_task| (kind.clone(), resolved_task, not_used_score))
-                })
-                .filter(|(_, resolved_task, _)| {
-                    match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
-                        hash_map::Entry::Occupied(mut o) => {
-                            // Allow new tasks with the same label, if their context is different
-                            o.get_mut().insert(resolved_task.id.clone())
-                        }
-                        hash_map::Entry::Vacant(v) => {
-                            v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
-                            true
-                        }
+                } else {
+                    None.or_else(|| {
+                        let (_, _, item_context) = task_contexts.active_item_context.as_ref()?;
+                        task.resolve_task(&id_base, item_context)
+                    })
+                    .or_else(|| {
+                        let (_, worktree_context) =
+                            task_contexts.active_worktree_context.as_ref()?;
+                        task.resolve_task(&id_base, worktree_context)
+                    })
+                }
+                .or_else(|| task.resolve_task(&id_base, &TaskContext::default()))
+                .map(move |resolved_task| (kind.clone(), resolved_task, not_used_score))
+            })
+            .filter(|(_, resolved_task, _)| {
+                match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
+                    hash_map::Entry::Occupied(mut o) => {
+                        // Allow new tasks with the same label, if their context is different
+                        o.get_mut().insert(resolved_task.id.clone())
                     }
-                })
-                .sorted_unstable_by(task_lru_comparator)
-                .map(|(kind, task, _)| (kind, task))
-                .collect::<Vec<_>>();
+                    hash_map::Entry::Vacant(v) => {
+                        v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
+                        true
+                    }
+                }
+            })
+            .sorted_unstable_by(task_lru_comparator)
+            .map(|(kind, task, _)| (kind, task))
+            .collect::<Vec<_>>();
 
         (previously_spawned_tasks, new_resolved_tasks)
     }
@@ -915,7 +940,10 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> Vec<String> {
         let (used, current) = inventory.update(cx, |inventory, cx| {
-            inventory.used_and_current_resolved_tasks(worktree, None, &TaskContexts::default(), cx)
+            let mut task_contexts = TaskContexts::default();
+            task_contexts.active_worktree_context =
+                worktree.map(|worktree| (worktree, TaskContext::default()));
+            inventory.used_and_current_resolved_tasks(&task_contexts, cx)
         });
         used.into_iter()
             .chain(current)
@@ -944,7 +972,10 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> Vec<(TaskSourceKind, String)> {
         let (used, current) = inventory.update(cx, |inventory, cx| {
-            inventory.used_and_current_resolved_tasks(worktree, None, &TaskContexts::default(), cx)
+            let mut task_contexts = TaskContexts::default();
+            task_contexts.active_worktree_context =
+                worktree.map(|worktree| (worktree, TaskContext::default()));
+            inventory.used_and_current_resolved_tasks(&task_contexts, cx)
         });
         let mut all = used;
         all.extend(current);
