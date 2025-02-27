@@ -3190,7 +3190,11 @@ impl Editor {
                     continue;
                 }
 
-                // todo! if !langauge.is_edit_behavior_enabled() { continue; }
+                let language_settings = snapshot.settings_at(edit.new.end, cx);
+                if !language_settings.jsx_tag_auto_close.enabled {
+                    continue;
+                }
+
                 buffer_edit_ranges_map
                     .entry((snapshot.remote_id(), language.clone()))
                     .or_insert((buffer.downgrade(), vec![]))
