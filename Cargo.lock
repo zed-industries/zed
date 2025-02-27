@@ -490,6 +490,7 @@ dependencies = [
  "ui",
  "util",
  "uuid",
+ "vim_mode_setting",
  "workspace",
  "zed_actions",
 ]

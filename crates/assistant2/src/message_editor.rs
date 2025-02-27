@@ -14,8 +14,10 @@ use std::time::Duration;
 use text::Bias;
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ButtonLike, KeyBinding, PopoverMenu, PopoverMenuHandle, Switch, TintColor, Tooltip,
+    prelude::*, ButtonLike, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle, Switch,
+    TintColor, Tooltip,
 };
+use vim_mode_setting::VimModeSetting;
 use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
@@ -274,13 +276,22 @@ impl Render for MessageEditor {
         let inline_context_picker = self.inline_context_picker.clone();
         let bg_color = cx.theme().colors().editor_background;
         let is_streaming_completion = self.thread.read(cx).is_streaming();
-        let button_width = px(64.);
         let is_model_selected = self.is_model_selected(cx);
         let is_editor_empty = self.is_editor_empty(cx);
         let submit_label_color = if is_editor_empty {
             Color::Muted
         } else {
             Color::Default
+        };
+
+        let vim_mode_enabled = VimModeSetting::get_global(cx).0;
+        let platform = PlatformStyle::platform();
+        let linux = platform == PlatformStyle::Linux;
+        let windows = platform == PlatformStyle::Windows;
+        let button_width = if linux || windows || vim_mode_enabled {
+            px(92.)
+        } else {
+            px(64.)
         };
 
         v_flex()
