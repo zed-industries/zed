@@ -23,13 +23,15 @@ use anyhow::Result;
 use collections::HashMap;
 use editor::{
     movement::{self, FindRange},
-    Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorMode, MultiBuffer, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, App, AppContext as _, Axis, Context, Entity, EventEmitter,
-    KeyContext, KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window,
+    actions, impl_actions, Action, App, AppContext, Axis, Context, Entity, EventEmitter,
+    KeyContext, KeystrokeEvent, Render, Subscription, Task, UpdateGlobal, WeakEntity, Window,
 };
 use insert::{NormalBefore, TemporaryNormal};
+use itertools::Either;
+use language::{Buffer, BufferId};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
@@ -40,12 +42,13 @@ use serde::Deserialize;
 use serde_derive::Serialize;
 use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
+use std::path::Path;
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
-use ui::{px, IntoElement, SharedString};
+use ui::{px, BorrowAppContext, IntoElement, SharedString};
 use vim_mode_setting::VimModeSetting;
-use workspace::{self, Pane, Workspace};
+use workspace::{self, Pane, Workspace, WorkspaceId};
 
 use crate::state::ReplayableAction;
 
@@ -313,7 +316,6 @@ pub(crate) struct Vim {
     operator_stack: Vec<Operator>,
     pub(crate) replacements: Vec<(Range<editor::Anchor>, String)>,
 
-    pub(crate) marks: HashMap<String, Vec<Anchor>>,
     pub(crate) stored_visual_mode: Option<(Mode, Vec<bool>)>,
     pub(crate) change_list: Vec<Vec<Anchor>>,
     pub(crate) change_list_position: Option<usize>,
@@ -361,7 +363,6 @@ impl Vim {
             operator_stack: Vec::new(),
             replacements: Vec::new(),
 
-            marks: HashMap::default(),
             stored_visual_mode: None,
             change_list: Vec::new(),
             change_list_position: None,
@@ -791,6 +792,81 @@ impl Vim {
                 _ => {}
             }
         }
+    }
+
+    fn set_mark(
+        &mut self,
+        name: String,
+        anchors: Vec<Anchor>,
+        buffer_entity: &Entity<Buffer>,
+        workspace_id: WorkspaceId,
+        cx: &mut App,
+    ) {
+        cx.update_global::<VimGlobals, ()>(|vim_globals, cx| {
+            let Some(marks_state) = vim_globals.marks.get(&workspace_id) else {
+                return;
+            };
+            let anchors = anchors.iter().map(|anchor| anchor.text_anchor).collect();
+            marks_state.update(cx, |ms, cx| {
+                ms.set_mark(name.clone(), buffer_entity, anchors, cx);
+            });
+        });
+    }
+
+    fn get_local_mark(
+        &self,
+        name: String,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Vec<Anchor>> {
+        VimGlobals::update_global(cx, |globals, cx| {
+            let workspace_id = self.workspace(window)?.read(cx).database_id()?;
+            globals.marks.get_mut(&workspace_id)?.update(cx, |ms, cx| {
+                let multi_buffer = self.editor()?.read(cx).buffer();
+                let buffer = multi_buffer.read(cx).as_singleton()?;
+                ms.get_mark(name, &buffer, multi_buffer, cx)
+            })
+        })
+    }
+
+    fn get_local_mark_without_editor(
+        &self,
+        name: String,
+        window: &mut Window,
+        buffer: &Entity<Buffer>,
+        multi_buffer: &Entity<MultiBuffer>,
+        cx: &mut App,
+    ) -> Option<Vec<Anchor>> {
+        VimGlobals::update_global(cx, |globals, cx| {
+            let workspace_id = self.workspace(window)?.read(cx).database_id()?;
+            globals
+                .marks
+                .get_mut(&workspace_id)?
+                .update(cx, |ms, cx| ms.get_mark(name, buffer, multi_buffer, cx))
+        })
+    }
+
+    fn get_global_mark_identifier(
+        &self,
+        name: String,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Either<Arc<Path>, BufferId>> {
+        let workspace_id = self.workspace(window)?.read(cx).database_id()?;
+        VimGlobals::update_global(cx, |vim_globals, cx| {
+            let marks_collection = vim_globals.marks.get(&workspace_id)?;
+            if let Some(buffer_id) =
+                marks_collection.update(cx, |ms, _| ms.get_buffer_id_for_mark(name.clone()))
+            {
+                return Some(Either::Right(buffer_id));
+            }
+            if let Some(path) =
+                marks_collection.update(cx, |ms, _| ms.get_path_for_mark(name.clone()))
+            {
+                return Some(Either::Left(path));
+            }
+            None
+        })
     }
 
     fn handle_editor_event(
