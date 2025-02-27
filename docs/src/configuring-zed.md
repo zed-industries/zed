@@ -408,7 +408,7 @@ List of `string` values.
 
 ### Enabled in Assistant
 
-- Description: Whether to show edit predictions in the assistant's prompt editor.
+- Description: Whether to show edit predictions in the assistant panel.
 - Setting: `enabled_in_assistant`
 - Default: `true`
 
