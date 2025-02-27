@@ -47,7 +47,7 @@ use std::{
 };
 use std::{collections::VecDeque, sync::atomic::AtomicU32};
 use task::{AttachConfig, DebugAdapterConfig, DebugRequestType};
-use util::{merge_json_value_into, ResultExt as _};
+use util::ResultExt as _;
 use worktree::Worktree;
 
 pub enum DapStoreEvent {
@@ -85,109 +85,6 @@ pub struct LocalDapStore {
 impl LocalDapStore {
     fn next_session_id(&self) -> SessionId {
         SessionId(self.next_session_id.fetch_add(1, SeqCst))
-    }
-    pub fn respond_to_start_debugging(
-        &mut self,
-        session: &Entity<Session>,
-        seq: u64,
-        args: Option<StartDebuggingRequestArguments>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let config = session.read(cx).configuration();
-
-        let request_args = args.unwrap_or_else(|| StartDebuggingRequestArguments {
-            configuration: config.initialize_args.clone().unwrap_or_default(),
-            request: match config.request {
-                DebugRequestType::Launch => StartDebuggingRequestArgumentsRequest::Launch,
-                DebugRequestType::Attach(_) => StartDebuggingRequestArgumentsRequest::Attach,
-            },
-        });
-
-        // Merge the new configuration over the existing configuration
-        let mut initialize_args = config.initialize_args.clone().unwrap_or_default();
-        merge_json_value_into(request_args.configuration, &mut initialize_args);
-
-        let new_config = DebugAdapterConfig {
-            label: config.label.clone(),
-            kind: config.kind.clone(),
-            request: match &request_args.request {
-                StartDebuggingRequestArgumentsRequest::Launch => DebugRequestType::Launch,
-                StartDebuggingRequestArgumentsRequest::Attach => DebugRequestType::Attach(
-                    if let DebugRequestType::Attach(attach_config) = &config.request {
-                        attach_config.clone()
-                    } else {
-                        AttachConfig::default()
-                    },
-                ),
-            },
-            program: config.program.clone(),
-            cwd: config.cwd.clone(),
-            initialize_args: Some(initialize_args),
-            supports_attach: true,
-        };
-
-        cx.spawn(|this, mut cx| async move {
-            let (success, body) = {
-                let reconnect_task = this.update(&mut cx, |store, cx| {
-                    if !unimplemented!("client.adapter().supports_attach()")
-                        && matches!(new_config.request, DebugRequestType::Attach(_))
-                    {
-                        Task::<Result<()>>::ready(Err(anyhow!(
-                            "Debug adapter does not support `attach` request"
-                        )))
-                    } else {
-                        unimplemented!(
-                            "store.reconnect_client(client.binary().clone(), new_config, cx)"
-                        );
-                    }
-                });
-
-                match reconnect_task {
-                    Ok(task) => match task.await {
-                        Ok(_) => (true, None),
-                        Err(error) => (
-                            false,
-                            Some(serde_json::to_value(ErrorResponse {
-                                error: Some(dap::Message {
-                                    id: seq,
-                                    format: error.to_string(),
-                                    variables: None,
-                                    send_telemetry: None,
-                                    show_user: None,
-                                    url: None,
-                                    url_label: None,
-                                }),
-                            })?),
-                        ),
-                    },
-                    Err(error) => (
-                        false,
-                        Some(serde_json::to_value(ErrorResponse {
-                            error: Some(dap::Message {
-                                id: seq,
-                                format: error.to_string(),
-                                variables: None,
-                                send_telemetry: None,
-                                show_user: None,
-                                url: None,
-                                url_label: None,
-                            }),
-                        })?),
-                    ),
-                }
-            };
-            unimplemented!();
-            Ok(())
-            /*client
-            .send_message(Message::Response(Response {
-                seq,
-                body,
-                success,
-                request_seq: seq,
-                command: StartDebugging::COMMAND.to_string(),
-            }))
-            .await*/
-        })
     }
 }
 
@@ -275,7 +172,22 @@ impl DapStore {
                                     DebugAdapterConfig {
                                         label: config.label,
                                         kind: config.kind,
-                                        request: config.request,
+                                        request: match &args.request {
+                                            StartDebuggingRequestArgumentsRequest::Launch => {
+                                                DebugRequestType::Launch
+                                            }
+                                            StartDebuggingRequestArgumentsRequest::Attach => {
+                                                DebugRequestType::Attach(
+                                                    if let DebugRequestType::Attach(attach_config) =
+                                                        &config.request
+                                                    {
+                                                        attach_config.clone()
+                                                    } else {
+                                                        AttachConfig::default()
+                                                    },
+                                                )
+                                            }
+                                        },
                                         program: config.program,
                                         cwd: config.cwd,
                                         initialize_args: Some(args.configuration),
