@@ -450,6 +450,7 @@ impl Copilot {
                 binary,
                 root_path,
                 None,
+                Default::default(),
                 cx.clone(),
             )?;
 
