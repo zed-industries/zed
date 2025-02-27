@@ -46,10 +46,10 @@ use lsp::{
     notification::DidRenameFiles, CodeActionKind, CompletionContext, DiagnosticSeverity,
     DiagnosticTag, DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter,
     FileOperationPatternKind, FileOperationRegistrationOptions, FileRename, FileSystemWatcher,
-    InsertTextFormat, LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions,
-    LanguageServerId, LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf,
-    RenameFilesParams, ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, WillRenameFiles,
-    WorkDoneProgressCancelParams, WorkspaceFolder,
+    InactiveRegions, InsertTextFormat, LanguageServer, LanguageServerBinary,
+    LanguageServerBinaryOptions, LanguageServerId, LanguageServerName, LspRequestFuture,
+    MessageActionItem, MessageType, OneOf, RenameFilesParams, ServerHealthStatus, ServerStatus,
+    SymbolKind, TextEdit, WillRenameFiles, WorkDoneProgressCancelParams, WorkspaceFolder,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
@@ -479,6 +479,48 @@ impl LocalLspStore {
                 }
             })
             .detach();
+
+        // clang specific notification setup
+        if language_server.name().0 == "clangd" {
+            language_server
+                .on_notification::<InactiveRegions, _>({
+                    let adapter = adapter.clone();
+                    let this = this.clone();
+
+                    move |params, mut cx| {
+                        let adapter = adapter.clone();
+                        this.update(&mut cx, |this, cx| {
+                            let diagnostics = params
+                                .regions
+                                .into_iter()
+                                .map(|range| lsp::Diagnostic {
+                                    range,
+                                    severity: Some(lsp::DiagnosticSeverity::INFORMATION),
+                                    source: Some("clangd".to_string()),
+                                    message: "inactive region".to_string(),
+                                    tags: Some(vec![lsp::DiagnosticTag::UNNECESSARY]),
+                                    ..Default::default()
+                                })
+                                .collect();
+                            let fake_lsp_diag = lsp::PublishDiagnosticsParams {
+                                uri: params.text_document.uri,
+                                version: params.text_document.version,
+                                diagnostics,
+                            };
+                            this.update_diagnostics(
+                                server_id,
+                                fake_lsp_diag,
+                                &adapter.disk_based_diagnostic_sources,
+                                cx,
+                            )
+                            .log_err();
+                        })
+                        .ok();
+                    }
+                })
+                .detach();
+        }
+
         language_server
             .on_request::<lsp::request::WorkspaceConfiguration, _, _>({
                 let adapter = adapter.adapter.clone();

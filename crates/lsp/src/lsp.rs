@@ -39,7 +39,7 @@ use std::{
     time::{Duration, Instant},
 };
 use std::{path::Path, process::Stdio};
-use util::{ResultExt, TryFutureExt};
+use util::{merge_non_null_json_value_into, ResultExt, TryFutureExt};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
@@ -325,6 +325,21 @@ pub struct ServerStatusParams {
 impl lsp_types::notification::Notification for ServerStatus {
     type Params = ServerStatusParams;
     const METHOD: &'static str = "experimental/serverStatus";
+}
+
+#[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InactiveRegionsParams {
+    pub text_document: lsp_types::OptionalVersionedTextDocumentIdentifier,
+    pub regions: Vec<lsp_types::Range>,
+}
+
+/// InactiveRegions is a clangd extension that marks regions of inactive code.
+pub struct InactiveRegions;
+
+impl lsp_types::notification::Notification for InactiveRegions {
+    type Params = InactiveRegionsParams;
+    const METHOD: &'static str = "textDocument/inactiveRegions";
 }
 
 impl LanguageServer {
@@ -814,8 +829,30 @@ impl LanguageServer {
         configuration: Arc<DidChangeConfigurationParams>,
         cx: &App,
     ) -> Task<Result<Arc<Self>>> {
+        /// This is a drop-in replacement for `lsp_types::Initialize`, that allows us to insert non-standard objects into `Params`.
+        struct InitializeExtended;
+
+        impl request::Request for InitializeExtended {
+            type Params = serde_json::Value;
+            type Result = InitializeResult;
+            const METHOD: &'static str = Initialize::METHOD;
+        }
+        let mut params = serde_json::to_value(params).unwrap();
+        merge_non_null_json_value_into(
+            serde_json::json!({
+                "capabilities": {
+                    "textDocument": {
+                        "inactiveRegionsCapabilities": {
+                            "inactiveRegions": true,
+                        }
+                    }
+                }
+            }),
+            &mut params,
+        );
+
         cx.spawn(|_| async move {
-            let response = self.request::<request::Initialize>(params).await?;
+            let response = self.request::<InitializeExtended>(params).await?;
             if let Some(info) = response.server_info {
                 self.process_name = info.name.into();
             }
