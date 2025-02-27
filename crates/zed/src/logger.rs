@@ -4,7 +4,6 @@ use log::LevelFilter;
 use simplelog::ConfigBuilder;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::path::PathBuf;
 use time::UtcOffset;
 
 pub fn init_logger() {
@@ -19,7 +18,7 @@ pub fn init_logger() {
         let _ = std::fs::rename(paths::log_file(), paths::old_log_file());
     }
 
-    match CustomWriter::new(paths::log_file(), paths::old_log_file(), MAX_LOG_BYTES) {
+    match LogWriter::new(MAX_LOG_BYTES) {
         Ok(writer) => {
             let mut config_builder = ConfigBuilder::new();
 
@@ -74,44 +73,43 @@ pub fn init_stdout_logger() {
         .init();
 }
 
-struct CustomWriter {
+struct LogWriter {
     file: File,
-    path: &'static PathBuf,
-    old_path: &'static PathBuf,
     max_size: u64,
     current_size: u64,
 }
 
-impl CustomWriter {
-    fn new(path: &'static PathBuf, old_path: &'static PathBuf, max_size: u64) -> io::Result<Self> {
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
+impl LogWriter {
+    fn new(max_size: u64) -> io::Result<Self> {
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(paths::log_file())?;
         let current_size = file.metadata()?.len();
 
-        Ok(CustomWriter {
+        Ok(LogWriter {
             file,
-            path,
-            old_path,
             max_size,
             current_size,
         })
     }
 
-    fn swap(&mut self) -> io::Result<()> {
+    fn replace(&mut self) -> io::Result<()> {
         self.file.sync_all()?;
-        fs::rename(&self.path, &self.old_path)?;
+        fs::rename(paths::log_file(), paths::old_log_file())?;
         self.file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&self.path)?;
+            .open(paths::log_file())?;
         self.current_size = 0;
         Ok(())
     }
 }
 
-impl Write for CustomWriter {
+impl Write for LogWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if self.current_size + buf.len() as u64 > self.max_size {
-            self.swap()?;
+            self.replace()?;
         }
         let bytes = self.file.write(buf)?;
         self.current_size += bytes as u64;
