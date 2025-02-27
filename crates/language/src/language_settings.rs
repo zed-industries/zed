@@ -1433,9 +1433,25 @@ mod tests {
             EditPredictionSettings {
                 disabled_globs: globs
                     .iter()
-                    .map(|g| DisabledGlob {
-                        matcher: globset::Glob::new(g).unwrap().compile_matcher(),
-                        is_absolute: Path::new(g).is_absolute(),
+                    .map(|glob_str| {
+                        #[cfg(windows)]
+                        let glob_str = {
+                            let mut g = String::new();
+
+                            if glob_str.starts_with('/') {
+                                g.push_str("C:");
+                            }
+
+                            g.push_str(&glob_str.replace('/', "\\"));
+                            g
+                        };
+                        #[cfg(windows)]
+                        let glob_str = glob_str.as_str();
+
+                        DisabledGlob {
+                            matcher: globset::Glob::new(glob_str).unwrap().compile_matcher(),
+                            is_absolute: Path::new(glob_str).is_absolute(),
+                        }
                     })
                     .collect(),
                 ..Default::default()
@@ -1443,12 +1459,22 @@ mod tests {
         };
 
         const WORKTREE_NAME: &str = "project";
+        let make_test_file = |segments: &[&str]| -> Arc<dyn File> {
+            let mut path_buf = PathBuf::new();
+            path_buf.extend(segments);
 
-        let test_file: Arc<dyn File> = Arc::new(TestFile {
-            path: PathBuf::from("src/test/file.rs").as_path().into(),
-            root_name: WORKTREE_NAME.to_string(),
-            local_root: Some(PathBuf::from("/absolute/")),
-        });
+            Arc::new(TestFile {
+                path: path_buf.as_path().into(),
+                root_name: WORKTREE_NAME.to_string(),
+                local_root: Some(PathBuf::from(if cfg!(windows) {
+                    "C:\\absolute\\"
+                } else {
+                    "/absolute/"
+                })),
+            })
+        };
+
+        let test_file = make_test_file(&["src", "test", "file.rs"]);
 
         // Test relative globs
         let settings = build_settings(&["*.rs"]);
@@ -1513,22 +1539,15 @@ mod tests {
         assert!(settings.enabled_for_file(&test_file, &cx));
 
         // Test dot files
-        let dot_file: Arc<dyn File> = Arc::new(TestFile {
-            path: PathBuf::from(".config/settings.json").as_path().into(),
-            root_name: WORKTREE_NAME.to_string(),
-            local_root: Some(PathBuf::from("/abs/")),
-        });
-        let settings = build_settings(&[".*"]);
+        let dot_file = make_test_file(&[".config", "settings.json"]);
+        let settings = build_settings(&[".*/**"]);
         assert!(!settings.enabled_for_file(&dot_file, &cx));
 
-        let dot_env_file: Arc<dyn File> = Arc::new(TestFile {
-            path: PathBuf::from(".env").as_path().into(),
-            root_name: WORKTREE_NAME.to_string(),
-            local_root: Some(PathBuf::from("/abs/")),
-        });
+        let dot_env_file = make_test_file(&[".env"]);
         let settings = build_settings(&[".env"]);
         assert!(!settings.enabled_for_file(&dot_env_file, &cx));
     }
+
     #[test]
     pub fn test_resolve_language_servers() {
         fn language_server_names(names: &[&str]) -> Vec<LanguageServerName> {
