@@ -8,14 +8,16 @@ use gpui::{
     UnderlineStyle, WeakEntity,
 };
 use language::LanguageRegistry;
-use language_model::{LanguageModelToolUseId, Role};
+use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure};
 use workspace::Workspace;
 
-use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent, ToolUse, ToolUseStatus};
+use crate::thread::{
+    MessageId, RequestKind, Thread, ThreadError, ThreadEvent, ToolUse, ToolUseStatus,
+};
 use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
 
@@ -263,7 +265,24 @@ impl ActiveThread {
                     }
                 }
             }
-            ThreadEvent::ToolFinished { .. } => {}
+            ThreadEvent::ToolFinished { .. } => {
+                let all_tools_finished = self
+                    .thread
+                    .read(cx)
+                    .pending_tool_uses()
+                    .into_iter()
+                    .all(|tool_use| tool_use.status.is_error());
+                if all_tools_finished {
+                    let model_registry = LanguageModelRegistry::read_global(cx);
+                    if let Some(model) = model_registry.active_model() {
+                        self.thread.update(cx, |thread, cx| {
+                            // Insert an empty user message to contain the tool results.
+                            thread.insert_user_message("", Vec::new(), cx);
+                            thread.send_to_model(model, RequestKind::Chat, true, cx);
+                        });
+                    }
+                }
+            }
         }
     }
 
@@ -280,6 +299,14 @@ impl ActiveThread {
         let context = self.thread.read(cx).context_for_message(message_id);
         let tool_uses = self.thread.read(cx).tool_uses_for_message(message_id);
         let colors = cx.theme().colors();
+
+        // Don't render user messages that are just there for returning tool results.
+        if message.role == Role::User
+            && message.text.is_empty()
+            && self.thread.read(cx).message_has_tool_results(message_id)
+        {
+            return Empty.into_any();
+        }
 
         let message_content = v_flex()
             .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
