@@ -874,7 +874,13 @@ impl Motion {
                 end_of_document(map, point, maybe_times),
                 SelectionGoal::None,
             ),
-            Matching => (matching(map, point), SelectionGoal::None),
+            Matching => {
+                if maybe_times.is_some() {
+                    (go_to_percentage(map, point, times), SelectionGoal::None)
+                } else {
+                    (matching(map, point), SelectionGoal::None)
+                }
+            }
             UnmatchedForward { char } => (
                 unmatched_forward(map, point, *char, times),
                 SelectionGoal::None,
@@ -2168,6 +2174,18 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
     } else {
         display_point
     }
+}
+
+// Go to {count} percentage in the file, on the first
+// non-blank in the line linewise.  To compute the new
+// line number this formula is used:
+// ({count} * number-of-lines + 99) / 100
+//
+// https://neovim.io/doc/user/motion.html#N%25
+fn go_to_percentage(map: &DisplaySnapshot, point: DisplayPoint, count: usize) -> DisplayPoint {
+    let total_lines = map.buffer_snapshot.max_point().row + 1;
+    let target_line = (count * total_lines as usize + 99) / 100;
+    go_to_line(map, point, target_line)
 }
 
 fn unmatched_forward(
