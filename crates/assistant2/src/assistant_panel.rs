@@ -596,7 +596,6 @@ impl AssistantPanel {
 
         h_flex()
             .id("assistant-toolbar")
-            .px(DynamicSpacing::Base08.rems(cx))
             .h(Tab::container_height(cx))
             .flex_none()
             .justify_between()
@@ -605,71 +604,85 @@ impl AssistantPanel {
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
+                div()
+                    .id("title")
+                    .overflow_x_scroll()
+                    .px(DynamicSpacing::Base08.rems(cx))
+                    .child(Label::new(title).text_ellipsis()),
+            )
+            .child(
                 h_flex()
-                    .w_full()
-                    .gap_1()
-                    .justify_between()
-                    .child(Label::new(title))
+                    .h_full()
+                    .pl_2()
+                    .gap_2()
+                    .bg(cx.theme().colors().tab_bar_background)
                     .children(if matches!(self.active_view, ActiveView::PromptEditor) {
                         self.context_editor
                             .as_ref()
                             .and_then(|editor| render_remaining_tokens(editor, cx))
                     } else {
                         None
-                    }),
-            )
-            .child(
-                h_flex()
-                    .h_full()
-                    .pl_1p5()
-                    .border_l_1()
-                    .border_color(cx.theme().colors().border)
-                    .gap(DynamicSpacing::Base02.rems(cx))
+                    })
                     .child(
-                        PopoverMenu::new("assistant-toolbar-new-popover-menu")
-                            .trigger_with_tooltip(
-                                IconButton::new("new", IconName::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .style(ButtonStyle::Subtle),
-                                Tooltip::text("New…"),
-                            )
-                            .anchor(Corner::TopRight)
-                            .with_handle(self.new_item_context_menu_handle.clone())
-                            .menu(move |window, cx| {
-                                Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
-                                    menu.action("New Thread", NewThread.boxed_clone())
-                                        .action("New Prompt Editor", NewPromptEditor.boxed_clone())
-                                }))
-                            }),
-                    )
-                    .child(
-                        IconButton::new("open-history", IconName::HistoryRerun)
-                            .icon_size(IconSize::Small)
-                            .style(ButtonStyle::Subtle)
-                            .tooltip({
-                                let focus_handle = self.focus_handle(cx);
-                                move |window, cx| {
-                                    Tooltip::for_action_in(
-                                        "History",
-                                        &OpenHistory,
-                                        &focus_handle,
-                                        window,
-                                        cx,
+                        h_flex()
+                            .h_full()
+                            .px(DynamicSpacing::Base08.rems(cx))
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border)
+                            .gap(DynamicSpacing::Base02.rems(cx))
+                            .child(
+                                PopoverMenu::new("assistant-toolbar-new-popover-menu")
+                                    .trigger_with_tooltip(
+                                        IconButton::new("new", IconName::Plus)
+                                            .icon_size(IconSize::Small)
+                                            .style(ButtonStyle::Subtle),
+                                        Tooltip::text("New…"),
                                     )
-                                }
-                            })
-                            .on_click(move |_event, window, cx| {
-                                window.dispatch_action(OpenHistory.boxed_clone(), cx);
-                            }),
-                    )
-                    .child(
-                        IconButton::new("configure-assistant", IconName::Settings)
-                            .icon_size(IconSize::Small)
-                            .style(ButtonStyle::Subtle)
-                            .tooltip(Tooltip::text("Assistant Settings"))
-                            .on_click(move |_event, window, cx| {
-                                window.dispatch_action(OpenConfiguration.boxed_clone(), cx);
-                            }),
+                                    .anchor(Corner::TopRight)
+                                    .with_handle(self.new_item_context_menu_handle.clone())
+                                    .menu(move |window, cx| {
+                                        Some(ContextMenu::build(
+                                            window,
+                                            cx,
+                                            |menu, _window, _cx| {
+                                                menu.action("New Thread", NewThread.boxed_clone())
+                                                    .action(
+                                                        "New Prompt Editor",
+                                                        NewPromptEditor.boxed_clone(),
+                                                    )
+                                            },
+                                        ))
+                                    }),
+                            )
+                            .child(
+                                IconButton::new("open-history", IconName::HistoryRerun)
+                                    .icon_size(IconSize::Small)
+                                    .style(ButtonStyle::Subtle)
+                                    .tooltip({
+                                        let focus_handle = self.focus_handle(cx);
+                                        move |window, cx| {
+                                            Tooltip::for_action_in(
+                                                "History",
+                                                &OpenHistory,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                        }
+                                    })
+                                    .on_click(move |_event, window, cx| {
+                                        window.dispatch_action(OpenHistory.boxed_clone(), cx);
+                                    }),
+                            )
+                            .child(
+                                IconButton::new("configure-assistant", IconName::Settings)
+                                    .icon_size(IconSize::Small)
+                                    .style(ButtonStyle::Subtle)
+                                    .tooltip(Tooltip::text("Assistant Settings"))
+                                    .on_click(move |_event, window, cx| {
+                                        window.dispatch_action(OpenConfiguration.boxed_clone(), cx);
+                                    }),
+                            ),
                     ),
             )
     }
