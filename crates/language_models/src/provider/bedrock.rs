@@ -967,9 +967,6 @@ impl Render for ConfigurationView {
         ];
         const BEDROCK_MODEL_CATALOG_LABEL: &str = "Bedrock Model Catalog";
         const BEDROCK_IAM_DOCS: &str = "Prerequisites";
-        const ACCESS_KEY_ID: &str = "Access Key ID:";
-        const SECRET_ACCESS_KEY: &str = "Secret Access Key:";
-        const REGION: &str = "Region:";
 
         let env_var_set = self.state.read(cx).credentials_from_env;
 
