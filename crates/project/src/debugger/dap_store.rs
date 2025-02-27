@@ -271,7 +271,7 @@ impl DapStore {
                                     .expect("worktree-less project");
 
                                 let config = parent_session.read(cx).configuration();
-                                this.new_session(
+                                let new_session_task = this.new_session(
                                     DebugAdapterConfig {
                                         label: config.label,
                                         kind: config.kind,
@@ -282,9 +282,45 @@ impl DapStore {
                                         supports_attach: config.supports_attach,
                                     },
                                     &worktree,
-                                    Some(parent_session),
+                                    Some(parent_session.clone()),
                                     cx,
-                                )
+                                );
+
+                                let request_seq = request.seq;
+                                cx.spawn(|this, mut cx| async move {
+                                    let (success, body) = match new_session_task.await {
+                                        Ok(_) => (true, None),
+                                        Err(error) => (
+                                            false,
+                                            Some(serde_json::to_value(ErrorResponse {
+                                                error: Some(dap::Message {
+                                                    id: request_seq,
+                                                    format: error.to_string(),
+                                                    variables: None,
+                                                    send_telemetry: None,
+                                                    show_user: None,
+                                                    url: None,
+                                                    url_label: None,
+                                                }),
+                                            })?),
+                                        ),
+                                    };
+
+                                    parent_session
+                                        .update(&mut cx, |session, cx| {
+                                            session.respond_to_client(
+                                                dap::messages::Response {
+                                                    seq: request_seq + 1,
+                                                    request_seq,
+                                                    success,
+                                                    command: StartDebugging::COMMAND.to_string(),
+                                                    body,
+                                                },
+                                                cx,
+                                            )
+                                        })?
+                                        .await
+                                })
                                 .detach_and_log_err(cx);
                             } else if request.command == RunInTerminal::COMMAND {
                                 // spawn terminal

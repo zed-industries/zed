@@ -190,10 +190,6 @@ struct LocalMode {
     client: Arc<DebugAdapterClient>,
 }
 
-enum ReverseRequest {
-    RunInTerminal(),
-}
-
 fn client_source(abs_path: &Path) -> dap::Source {
     dap::Source {
         name: abs_path
@@ -693,6 +689,13 @@ impl Session {
         matches!(self.mode, Mode::Local(_))
     }
 
+    fn as_local(&self) -> Option<&LocalMode> {
+        match &self.mode {
+            Mode::Local(local_mode) => Some(local_mode),
+            Mode::Remote(_) => None,
+        }
+    }
+
     pub fn output(&self) -> Vec<dap::OutputEvent> {
         self.output.iter().cloned().collect()
     }
@@ -703,6 +706,23 @@ impl Session {
 
     pub fn set_last_processed_output(&mut self, last_processed_output: usize) {
         self.last_processed_output = last_processed_output;
+    }
+
+    pub(crate) fn respond_to_client(
+        &self,
+        response: dap::messages::Response,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some(local_session) = self.as_local().cloned() else {
+            unreachable!("Cannot respond to remote client");
+        };
+
+        cx.background_spawn(async move {
+            local_session
+                .client
+                .send_message(Message::Response(response))
+                .await
+        })
     }
 
     fn handle_stopped_event(&mut self, event: StoppedEvent, cx: &mut Context<Self>) {
