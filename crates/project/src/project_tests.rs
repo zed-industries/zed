@@ -233,7 +233,6 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
     let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
-    let task_contexts = TaskContexts::default();
 
     cx.executor().run_until_parked();
     let worktree_id = cx.update(|cx| {
@@ -241,6 +240,10 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             project.worktrees(cx).next().unwrap().read(cx).id()
         })
     });
+
+    let mut task_contexts = TaskContexts::default();
+    task_contexts.active_worktree_context = Some((worktree_id, TaskContext::default()));
+
     let topmost_local_task_source_kind = TaskSourceKind::Worktree {
         id: worktree_id,
         directory_in_worktree: PathBuf::from(".zed"),
@@ -265,7 +268,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             assert_eq!(settings_a.tab_size.get(), 8);
             assert_eq!(settings_b.tab_size.get(), 2);
 
-            get_all_tasks(&project, Some(worktree_id), &task_contexts, cx)
+            get_all_tasks(&project, &task_contexts, cx)
         })
         .into_iter()
         .map(|(source_kind, task)| {
@@ -305,7 +308,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     );
 
     let (_, resolved_task) = cx
-        .update(|cx| get_all_tasks(&project, Some(worktree_id), &task_contexts, cx))
+        .update(|cx| get_all_tasks(&project, &task_contexts, cx))
         .into_iter()
         .find(|(source_kind, _)| source_kind == &topmost_local_task_source_kind)
         .expect("should have one global task");
@@ -343,7 +346,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     cx.run_until_parked();
 
     let all_tasks = cx
-        .update(|cx| get_all_tasks(&project, Some(worktree_id), &task_contexts, cx))
+        .update(|cx| get_all_tasks(&project, &task_contexts, cx))
         .into_iter()
         .map(|(source_kind, task)| {
             let resolved = task.resolved.unwrap();
@@ -433,9 +436,8 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
     let active_non_worktree_item_tasks = cx.update(|cx| {
         get_all_tasks(
             &project,
-            Some(worktree_id),
             &TaskContexts {
-                active_item_context: Some((Some(worktree_id), TaskContext::default())),
+                active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
                 active_worktree_context: None,
                 other_worktree_contexts: Vec::new(),
             },
@@ -450,9 +452,8 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
     let active_worktree_tasks = cx.update(|cx| {
         get_all_tasks(
             &project,
-            Some(worktree_id),
             &TaskContexts {
-                active_item_context: Some((Some(worktree_id), TaskContext::default())),
+                active_item_context: Some((Some(worktree_id), None, TaskContext::default())),
                 active_worktree_context: Some((worktree_id, {
                     let mut worktree_context = TaskContext::default();
                     worktree_context
@@ -6139,7 +6140,6 @@ fn tsx_lang() -> Arc<Language> {
 
 fn get_all_tasks(
     project: &Entity<Project>,
-    worktree_id: Option<WorktreeId>,
     task_contexts: &TaskContexts,
     cx: &mut App,
 ) -> Vec<(TaskSourceKind, ResolvedTask)> {
@@ -6150,7 +6150,7 @@ fn get_all_tasks(
             .task_inventory()
             .unwrap()
             .read(cx)
-            .used_and_current_resolved_tasks(worktree_id, None, task_contexts, cx)
+            .used_and_current_resolved_tasks(task_contexts, cx)
     });
     old.extend(new);
     old
