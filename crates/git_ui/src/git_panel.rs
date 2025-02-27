@@ -2488,6 +2488,7 @@ impl GitPanel {
 
         let id: ElementId = ElementId::Name(format!("entry_{}", display_name).into());
 
+        let is_entry_staged = self.entry_is_staged(entry);
         let mut is_staged: ToggleState = self.entry_is_staged(entry).into();
 
         if !self.has_staged_changes() && !self.has_conflicts() && !entry.status.is_created() {
@@ -2511,18 +2512,23 @@ impl GitPanel {
                 })
             });
 
-        let start_slot =
-            h_flex()
-                .id(("start-slot", ix))
-                .gap(DynamicSpacing::Base04.rems(cx))
-                .child(checkbox.tooltip(|window, cx| {
-                    Tooltip::for_action("Stage File", &ToggleStaged, window, cx)
-                }))
-                .child(git_status_icon(status, cx))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                    // prevent the list item active state triggering when toggling checkbox
-                    cx.stop_propagation();
-                });
+        let start_slot = h_flex()
+            .id(("start-slot", ix))
+            .gap(DynamicSpacing::Base04.rems(cx))
+            .child(checkbox.tooltip(move |window, cx| {
+                let tooltip_name = if is_entry_staged.unwrap_or(false) {
+                    "Unstage"
+                } else {
+                    "Stage"
+                };
+
+                Tooltip::for_action(tooltip_name, &ToggleStaged, window, cx)
+            }))
+            .child(git_status_icon(status, cx))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                // prevent the list item active state triggering when toggling checkbox
+                cx.stop_propagation();
+            });
 
         div()
             .w_full()

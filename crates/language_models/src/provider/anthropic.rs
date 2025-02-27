@@ -506,7 +506,7 @@ pub fn into_anthropic(
                         MessageContent::ToolUse(tool_use) => {
                             Some(anthropic::RequestContent::ToolUse {
                                 id: tool_use.id.to_string(),
-                                name: tool_use.name,
+                                name: tool_use.name.to_string(),
                                 input: tool_use.input,
                                 cache_control,
                             })
@@ -515,7 +515,7 @@ pub fn into_anthropic(
                             Some(anthropic::RequestContent::ToolResult {
                                 tool_use_id: tool_result.tool_use_id.to_string(),
                                 is_error: tool_result.is_error,
-                                content: tool_result.content,
+                                content: tool_result.content.to_string(),
                                 cache_control,
                             })
                         }
@@ -636,7 +636,7 @@ pub fn map_to_language_model_completion_events(
                                         Ok(LanguageModelCompletionEvent::ToolUse(
                                             LanguageModelToolUse {
                                                 id: tool_use.id.into(),
-                                                name: tool_use.name,
+                                                name: tool_use.name.into(),
                                                 input: if tool_use.input_json.is_empty() {
                                                     serde_json::Value::Null
                                                 } else {
