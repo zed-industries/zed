@@ -235,6 +235,7 @@ pub struct ComponentExampleGroup {
     pub title: Option<SharedString>,
     pub examples: Vec<ComponentExample>,
     pub grow: bool,
+    pub vertical: bool,
 }
 
 impl RenderOnce for ComponentExampleGroup {
@@ -270,6 +271,7 @@ impl RenderOnce for ComponentExampleGroup {
             .child(
                 div()
                     .flex()
+                    .when(self.vertical, |this| this.flex_col())
                     .items_start()
                     .w_full()
                     .gap_6()
@@ -287,6 +289,7 @@ impl ComponentExampleGroup {
             title: None,
             examples,
             grow: false,
+            vertical: false,
         }
     }
 
@@ -296,12 +299,19 @@ impl ComponentExampleGroup {
             title: Some(title.into()),
             examples,
             grow: false,
+            vertical: false,
         }
     }
 
     /// Set the group to grow to fill the available horizontal space.
     pub fn grow(mut self) -> Self {
         self.grow = true;
+        self
+    }
+
+    /// Lay the group out vertically.
+    pub fn vertical(mut self) -> Self {
+        self.vertical = true;
         self
     }
 }
