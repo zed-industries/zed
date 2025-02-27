@@ -115,7 +115,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
     }
 
     macro_rules! register_language {
-        ($name:expr, adapters => $adapters:expr, context => $context:expr, toolchain => $toolchain:expr, edit_behavior => $edit_behavior:expr) => {
+        ($name:expr, adapters => $adapters:expr, context => $context:expr, toolchain => $toolchain:expr) => {
             let config = load_config($name);
             for adapter in $adapters {
                 languages.register_lsp_adapter(config.name.clone(), adapter);
@@ -131,22 +131,22 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                         queries: load_queries($name),
                         context_provider: $context,
                         toolchain_provider: $toolchain,
-                        edit_behavior_provider: $edit_behavior(config.clone()),
+                        edit_behavior_provider: config.jsx_tag_auto_close.clone().map(|config| Arc::new(tsx::TsxEditBehaviorProvider::new(config)) as Arc<dyn EditBehaviorImplementation>),
                     })
                 }),
             );
         };
         ($name:expr) => {
-            register_language!($name, adapters => adapters![], context => context_provider!(), toolchain => toolchain_provider!(), edit_behavior => |_| None)
+            register_language!($name, adapters => adapters![], context => context_provider!(), toolchain => toolchain_provider!())
         };
         ($name:expr, adapters => $adapters:expr, context => $context:expr, toolchain => $toolchain:expr) => {
-            register_language!($name, adapters => $adapters, context => $context, toolchain => $toolchain, edit_behavior => |_| None)
+            register_language!($name, adapters => $adapters, context => $context, toolchain => $toolchain)
         };
         ($name:expr, adapters => $adapters:expr, context => $context:expr) => {
-            register_language!($name, adapters => $adapters, context => $context, toolchain => toolchain_provider!(), edit_behavior => |_| None)
+            register_language!($name, adapters => $adapters, context => $context, toolchain => toolchain_provider!())
         };
         ($name:expr, adapters => $adapters:expr) => {
-            register_language!($name, adapters => $adapters, context => context_provider!(), toolchain => toolchain_provider!(), edit_behavior => |_| None)
+            register_language!($name, adapters => $adapters, context => context_provider!(), toolchain => toolchain_provider!())
         };
     }
 
@@ -154,8 +154,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         "bash",
         adapters => adapters![],
         context => context_provider!(bash_task_context()),
-        toolchain => toolchain_provider!(),
-        edit_behavior => |_| None
+        toolchain => toolchain_provider!()
     );
 
     register_language!(
@@ -230,8 +229,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
             vtsls::VtslsLspAdapter::new(node_runtime.clone()),
         ],
         context => context_provider!(typescript_task_context()),
-        toolchain => toolchain_provider!(),
-        edit_behavior => |config: LanguageConfig| config.jsx_tag_auto_close.map(|config| Arc::new(tsx::TsxEditBehaviorProvider::new(config)) as Arc<dyn EditBehaviorImplementation>)
+        toolchain => toolchain_provider!()
     );
     register_language!(
         "typescript",
@@ -347,10 +345,16 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn language(name: &str, grammar: tree_sitter::Language) -> Arc<Language> {
+    let config = load_config(name);
+    let jsx_tag_auto_close = config.jsx_tag_auto_close.clone();
     Arc::new(
-        Language::new(load_config(name), Some(grammar))
+        Language::new(config, Some(grammar))
             .with_queries(load_queries(name))
-            .unwrap(),
+            .unwrap()
+            .with_edit_behavior_provider(jsx_tag_auto_close.map(|config| {
+                Arc::new(tsx::TsxEditBehaviorProvider::new(config))
+                    as Arc<dyn EditBehaviorImplementation + 'static>
+            })),
     )
 }
 
@@ -373,6 +377,7 @@ fn load_config(name: &str) -> LanguageConfig {
         config = LanguageConfig {
             name: config.name,
             matcher: config.matcher,
+            jsx_tag_auto_close: config.jsx_tag_auto_close,
             ..Default::default()
         }
     }

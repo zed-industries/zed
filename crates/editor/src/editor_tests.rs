@@ -16463,24 +16463,20 @@ async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
 mod autoclose_tags {
     use super::*;
     use languages::language;
-    use languages::EditBehaviorImplementation;
-    use std::sync::Arc;
-
+    
     async fn test_setup(cx: &mut TestAppContext) -> EditorTestContext {
         init_test(cx, |_| {});
 
         let mut cx = EditorTestContext::new(cx).await;
         cx.update_buffer(|buffer, cx| {
-            let language =
-                Arc::try_unwrap(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()))
-                    .unwrap();
-            let jsx_tag_auto_close = language.config().jsx_tag_auto_close.clone();
-            let language = language.with_edit_behavior_provider(jsx_tag_auto_close.map(|config| {
-                Arc::new(languages::tsx::TsxEditBehaviorProvider::new(config))
-                    as Arc<dyn EditBehaviorImplementation + 'static>
-            }));
+            let language = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+            // let jsx_tag_auto_close = language.config().jsx_tag_auto_close.clone();
+            // let language = language.with_edit_behavior_provider(jsx_tag_auto_close.map(|config| {
+            //     Arc::new(languages::tsx::TsxEditBehaviorProvider::new(config))
+            //         as Arc<dyn EditBehaviorImplementation + 'static>
+            // }));
 
-            buffer.set_language(Some(Arc::new(language)), cx)
+            buffer.set_language(Some(language), cx)
         });
 
         cx
