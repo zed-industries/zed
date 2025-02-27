@@ -24,10 +24,6 @@ impl DebugAdapter for GdbDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn transport(&self) -> Arc<dyn Transport> {
-        Arc::new(StdioTransport::new())
-    }
-
     async fn get_binary(
         &self,
         delegate: &dyn DapDelegate,
@@ -56,6 +52,9 @@ impl DebugAdapter for GdbDebugAdapter {
             arguments: Some(vec!["-i=dap".into()]),
             envs: None,
             cwd: config.cwd.clone(),
+            #[cfg(any(test, feature = "test-support"))]
+            is_fake: false,
+            connection: None,
         })
     }
 
