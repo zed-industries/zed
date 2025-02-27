@@ -83,7 +83,6 @@ const ZED_AWS_CREDENTIALS_VAR: &str = "ZED_AWS_CREDENTIALS";
 pub struct State {
     credentials: Option<BedrockCredentials>,
     credentials_from_env: bool,
-    region: Option<String>,
     _subscription: Subscription,
 }
 
@@ -175,7 +174,6 @@ impl BedrockLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         let state = cx.new(|cx| State {
             credentials: None,
-            region: Some(String::from("us-east-1")),
             credentials_from_env: false,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
@@ -311,7 +309,7 @@ impl BedrockModel {
                     Ok((
                         credentials.access_key_id.clone(),
                         credentials.secret_access_key.clone(),
-                        state.region.clone(),
+                        credentials.region.clone(),
                     ))
                 } else {
                     return Err(anyhow!("Failed to read credentials"));
@@ -331,7 +329,7 @@ impl BedrockModel {
                     None,
                     "Keychain",
                 ))
-                .region(Region::new(region.unwrap()))
+                .region(Region::new(region))
                 .http_client(self.http_client.clone())
                 .build(),
         );
@@ -733,7 +731,7 @@ pub fn map_to_language_model_completion_events(
                                                     Ok(LanguageModelCompletionEvent::ToolUse(
                                                         LanguageModelToolUse {
                                                             id: tool_use.id.into(),
-                                                            name: tool_use.name,
+                                                            name: tool_use.name.into(),
                                                             input: if tool_use.input_json.is_empty()
                                                             {
                                                                 Value::Null
@@ -975,17 +973,30 @@ impl Render for ConfigurationView {
 
         let env_var_set = self.state.read(cx).credentials_from_env;
 
+        let bg_color = cx.theme().colors().editor_background;
+        let border_color = cx.theme().colors().border_variant;
+        let input_base_styles = || {
+            h_flex()
+                .w_full()
+                .px_2()
+                .py_1()
+                .bg(bg_color)
+                .border_1()
+                .border_color(border_color)
+                .rounded_md()
+        };
+
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials...")).into_any()
         } else if self.should_render_editor(cx) {
             v_flex()
                 .size_full()
-                .on_action(cx.listener(Self::save_credentials))
+                .on_action(cx.listener(ConfigurationView::save_credentials))
                 .child(Label::new(INSTRUCTIONS[0]))
                 .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
                     Button::new("iam_console", IAM_CONSOLE_URL)
                         .style(ButtonStyle::Subtle)
-                        .icon(IconName::ExternalLink)
+                        .icon(IconName::ArrowUpRight)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
                         .on_click(move |_, _window, cx| cx.open_url(IAM_CONSOLE_URL))
@@ -1010,10 +1021,11 @@ impl Render for ConfigurationView {
                 .child(Label::new(INSTRUCTIONS[4]))
                 .child(
                     v_flex()
+                        .my_2()
                         .gap_1()
-                        .child(h_flex().gap_2().child(Label::new(ACCESS_KEY_ID)).child(self.render_aa_id_editor(cx)))
-                        .child(h_flex().gap_2().child(Label::new(SECRET_ACCESS_KEY)).child(self.render_sk_editor(cx)))
-                        .child(h_flex().gap_2().child(Label::new(REGION)).child(self.render_region_editor(cx)))
+                        .child(input_base_styles().child(self.render_aa_id_editor(cx)))
+                        .child(input_base_styles().child(self.render_sk_editor(cx)))
+                        .child(input_base_styles().child(self.render_region_editor(cx)))
                 )
                 .child(
                     Label::new(

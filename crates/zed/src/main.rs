@@ -173,6 +173,22 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 }
 
 fn main() {
+    let args = Args::parse();
+
+    #[cfg(target_os = "windows")]
+    let run_foreground = args.foreground;
+
+    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    if run_foreground {
+        unsafe {
+            use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+
+            if run_foreground {
+                let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+            }
+        }
+    }
+
     menu::init();
     zed_actions::init();
 
@@ -217,7 +233,10 @@ fn main() {
 
             #[cfg(target_os = "windows")]
             {
-                !crate::zed::windows_only_instance::check_single_instance()
+                !crate::zed::windows_only_instance::check_single_instance(
+                    open_listener.clone(),
+                    run_foreground,
+                )
             }
 
             #[cfg(target_os = "macos")]
@@ -574,7 +593,6 @@ fn main() {
         })
         .detach_and_log_err(cx);
 
-        let args = Args::parse();
         let urls: Vec<_> = args
             .paths_or_urls
             .iter()
@@ -1012,6 +1030,11 @@ struct Args {
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
+
+    /// Run zed in the foreground, only used on Windows, to match the behavior of the behavior on macOS.
+    #[arg(long)]
+    #[cfg(target_os = "windows")]
+    foreground: bool,
 }
 
 #[derive(Clone, Debug)]

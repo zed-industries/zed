@@ -38,7 +38,6 @@ actions!(
         NewThread,
         NewPromptEditor,
         ToggleContextPicker,
-        ToggleModelSelector,
         RemoveAllContext,
         OpenHistory,
         OpenConfiguration,
