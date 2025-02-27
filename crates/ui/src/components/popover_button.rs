@@ -1,8 +1,6 @@
 use gpui::{AnyView, Corner, Entity, ManagedView};
-use ui::{
-    px, App, ButtonCommon, IntoElement, PopoverMenu, PopoverMenuHandle, PopoverTrigger, RenderOnce,
-    Window,
-};
+
+use crate::{prelude::*, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 
 pub trait TriggerablePopover: ManagedView {
     fn menu_handle(
@@ -12,7 +10,6 @@ pub trait TriggerablePopover: ManagedView {
     ) -> PopoverMenuHandle<Self>;
 }
 
-// We want a button, that tells us what parameters to pass, and that "just works" after that
 pub struct PopoverButton<T, B, F> {
     selector: Entity<T>,
     button: B,

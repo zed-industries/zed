@@ -33,7 +33,6 @@ menu.workspace = true
 multi_buffer.workspace = true
 panel.workspace = true
 picker.workspace = true
-popover_button.workspace = true
 postage.workspace = true
 project.workspace = true
 schemars.workspace = true
