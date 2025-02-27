@@ -513,12 +513,16 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                 let image_element = div()
                     .id(element_id)
                     .cursor_pointer()
-                    .child(img(ImageSource::Resource(image_resource)).with_fallback({
-                        let alt_text = image.alt_text.clone();
-                        {
-                            move || div().children(alt_text.clone()).into_any_element()
-                        }
-                    }))
+                    .child(
+                        img(ImageSource::Resource(image_resource))
+                            .max_w_full()
+                            .with_fallback({
+                                let alt_text = image.alt_text.clone();
+                                {
+                                    move || div().children(alt_text.clone()).into_any_element()
+                                }
+                            }),
+                    )
                     .tooltip({
                         let link = image.link.clone();
                         move |_, cx| {
