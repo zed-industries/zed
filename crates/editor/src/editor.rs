@@ -15844,10 +15844,17 @@ impl Editor {
         &mut self,
         event: FocusOutEvent,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         if event.blurred != self.focus_handle {
             self.last_focused_descendant = Some(event.blurred);
+        }
+        if self.inlay_hint_modifiers_toggled {
+            self.refresh_inlay_hints(
+                InlayHintRefreshReason::Toggle(!self.inlay_hints_enabled()),
+                cx,
+            );
+            self.inlay_hint_modifiers_toggled = false;
         }
     }
 
