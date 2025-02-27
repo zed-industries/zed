@@ -2934,6 +2934,7 @@ impl ToOffset for Point {
 }
 
 impl ToOffset for usize {
+    #[track_caller]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
         assert!(
             *self <= snapshot.len(),

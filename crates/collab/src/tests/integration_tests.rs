@@ -6354,7 +6354,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     // Open item 1 as preview
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.open_path_preview(path_1.clone(), None, true, true, window, cx)
+            workspace.open_path_preview(path_1.clone(), None, true, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6375,7 +6375,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     // Open item 2 as preview
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, window, cx)
+            workspace.open_path_preview(path_2.clone(), None, true, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6507,7 +6507,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     // Open item 2 as preview in right pane
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, window, cx)
+            workspace.open_path_preview(path_2.clone(), None, true, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6545,7 +6545,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     // Open item 2 as preview in left pane
     workspace
         .update_in(cx, |workspace, window, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, window, cx)
+            workspace.open_path_preview(path_2.clone(), None, true, true, true, window, cx)
         })
         .await
         .unwrap();

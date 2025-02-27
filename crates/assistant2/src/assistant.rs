@@ -7,6 +7,7 @@ mod context;
 mod context_picker;
 mod context_store;
 mod context_strip;
+mod history_store;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod message_editor;
@@ -37,10 +38,8 @@ actions!(
         NewThread,
         NewPromptEditor,
         ToggleContextPicker,
-        ToggleModelSelector,
         RemoveAllContext,
         OpenHistory,
-        OpenPromptEditorHistory,
         OpenConfiguration,
         RemoveSelectedThread,
         Chat,
