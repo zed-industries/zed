@@ -178,6 +178,7 @@ fn main() {
             return;
         }
     }
+
     let args = Args::parse();
 
     #[cfg(all(not(debug_assertions), target_os = "windows"))]
