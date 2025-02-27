@@ -90,7 +90,7 @@ impl EditBehaviorProvider for TsxEditBehaviorProvider {
 
     fn auto_edit(
         &self,
-        buffer: BufferSnapshot,
+        buffer: &BufferSnapshot,
         ranges: &[Range<usize>],
         state: Self::AutoEditState,
     ) -> Result<Vec<(Range<Anchor>, String)>> {

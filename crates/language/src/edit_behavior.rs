@@ -11,7 +11,7 @@ pub trait EditBehaviorImplementation: Send + Sync {
     ) -> Option<Box<dyn std::any::Any + Send>>;
     fn boxed_auto_edit(
         &self,
-        buffer: BufferSnapshot,
+        buffer: &BufferSnapshot,
         ranges: &[Range<usize>],
         state: Box<dyn std::any::Any + Send>,
     ) -> Result<Vec<(Range<Anchor>, String)>>;
@@ -34,7 +34,7 @@ where
 
     fn boxed_auto_edit(
         &self,
-        buffer: BufferSnapshot,
+        buffer: &BufferSnapshot,
         ranges: &[Range<usize>],
         state: Box<dyn std::any::Any + Send>,
     ) -> Result<Vec<(Range<Anchor>, String)>> {
@@ -70,7 +70,7 @@ pub trait EditBehaviorProvider: Send + Sync {
     /// to be applied to the buffer.
     fn auto_edit(
         &self,
-        buffer: BufferSnapshot,
+        buffer: &BufferSnapshot,
         ranges: &[Range<usize>],
         state: Self::AutoEditState,
     ) -> Result<Vec<(Range<Anchor>, String)>>;

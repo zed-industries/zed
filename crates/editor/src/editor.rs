@@ -3219,12 +3219,11 @@ impl Editor {
                 }
 
                 let edits = cx.background_executor().spawn({
-                    // todo! make edit_behavior_provider.boxed_auto_edit take reference to buffer_snapshot
                     let buffer_snapshot = buffer_snapshot.clone();
                     async move {
-
-                    edit_behavior_provider.boxed_auto_edit(buffer_snapshot, &edited_ranges, edit_behavior_state)
-                }}).await;
+                        edit_behavior_provider.boxed_auto_edit(&buffer_snapshot, &edited_ranges, edit_behavior_state)
+                    }
+                }).await;
 
                 let edits = edits.context("Auto Edit Operation Failed - Failed to compute edits")?;
 
