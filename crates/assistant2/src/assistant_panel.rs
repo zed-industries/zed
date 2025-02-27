@@ -14,7 +14,7 @@ use client::zed_urls;
 use editor::Editor;
 use fs::Fs;
 use gpui::{
-    prelude::*, px, svg, Action, AnyElement, App, AsyncWindowContext, Corner, Entity, EventEmitter,
+    prelude::*, Action, AnyElement, App, AsyncWindowContext, Corner, Entity, EventEmitter,
     FocusHandle, Focusable, FontWeight, Pixels, Subscription, Task, UpdateGlobal, WeakEntity,
 };
 use language::LanguageRegistry;

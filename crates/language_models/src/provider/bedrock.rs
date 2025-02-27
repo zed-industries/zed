@@ -20,8 +20,7 @@ use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
 use gpui::{
-    AnyElement, AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle,
-    WhiteSpace,
+    AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
