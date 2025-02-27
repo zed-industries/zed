@@ -1076,7 +1076,7 @@ mod tests {
         cx.run_until_parked();
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
-            diff.scroll_to_path(
+            diff.move_to_path(
                 PathKey::namespaced(TRACKED_NAMESPACE, Path::new("foo").into()),
                 window,
                 cx,
@@ -1097,7 +1097,7 @@ mod tests {
         );
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
-            diff.scroll_to_path(
+            diff.move_to_path(
                 PathKey::namespaced(TRACKED_NAMESPACE, Path::new("bar").into()),
                 window,
                 cx,
