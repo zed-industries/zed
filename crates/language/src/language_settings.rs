@@ -231,11 +231,31 @@ pub struct EditPredictionSettings {
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
-    pub disabled_globs: Vec<GlobMatcher>,
+    pub disabled_globs: Vec<DisabledGlob>,
     /// Configures how edit predictions are displayed in the buffer.
     pub mode: EditPredictionsMode,
     /// Settings specific to GitHub Copilot.
     pub copilot: CopilotSettings,
+}
+
+impl EditPredictionSettings {
+    /// Returns whether edit predictions are enabled for the given path.
+    pub fn enabled_for_file(&self, file: &Arc<dyn File>, cx: &App) -> bool {
+        !self.disabled_globs.iter().any(|glob| {
+            if glob.is_absolute {
+                file.as_local()
+                    .map_or(false, |local| glob.matcher.is_match(local.abs_path(cx)))
+            } else {
+                glob.matcher.is_match(file.path())
+            }
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct DisabledGlob {
+    matcher: GlobMatcher,
+    is_absolute: bool,
 }
 
 /// The mode in which edit predictions should be displayed.
@@ -963,12 +983,9 @@ impl AllLanguageSettings {
     }
 
     /// Returns whether edit predictions are enabled for the given path.
-    pub fn inline_completions_enabled_for_path(&self, path: &Path) -> bool {
-        !self
-            .edit_predictions
-            .disabled_globs
-            .iter()
-            .any(|glob| glob.is_match(path))
+    ///  todo! az rename
+    pub fn inline_completions_enabled_for_file(&self, file: &Arc<dyn File>, cx: &App) -> bool {
+        self.edit_predictions.enabled_for_file(file, cx)
     }
 
     /// Returns whether edit predictions are enabled for the given language and path.
@@ -1197,7 +1214,12 @@ impl settings::Settings for AllLanguageSettings {
                 },
                 disabled_globs: completion_globs
                     .iter()
-                    .filter_map(|g| Some(globset::Glob::new(g).ok()?.compile_matcher()))
+                    .filter_map(|g| {
+                        Some(DisabledGlob {
+                            matcher: globset::Glob::new(g).ok()?.compile_matcher(),
+                            is_absolute: Path::new(g).is_absolute(),
+                        })
+                    })
                     .collect(),
                 mode: edit_predictions_mode,
                 copilot: copilot_settings,
@@ -1355,6 +1377,8 @@ pub struct PrettierSettings {
 
 #[cfg(test)]
 mod tests {
+    use gpui::TestAppContext;
+
     use super::*;
 
     #[test]
@@ -1399,6 +1423,105 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[gpui::test]
+    fn test_inline_completions_enabled_for_file(cx: &mut TestAppContext) {
+        use crate::TestFile;
+        use std::path::PathBuf;
+
+        let cx = cx.app.borrow_mut();
+
+        let build_settings = |globs: &[&str]| -> EditPredictionSettings {
+            EditPredictionSettings {
+                disabled_globs: globs
+                    .iter()
+                    .map(|g| DisabledGlob {
+                        matcher: globset::Glob::new(g).unwrap().compile_matcher(),
+                        is_absolute: Path::new(g).is_absolute(),
+                    })
+                    .collect(),
+                ..Default::default()
+            }
+        };
+
+        const WORKTREE_NAME: &str = "project";
+
+        let test_file: Arc<dyn File> = Arc::new(TestFile {
+            path: PathBuf::from(format!("src/test/file.rs")).as_path().into(),
+            root_name: WORKTREE_NAME.to_string(),
+            local_root: Some(PathBuf::from("/absolute/")),
+        });
+
+        // Test relative globs
+        let settings = build_settings(&["*.rs"]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["*.txt"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test absolute globs
+        let settings = build_settings(&["/absolute/**/*.rs"]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["/other/**/*.rs"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test exact path match relative
+        let settings = build_settings(&["src/test/file.rs"]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["src/test/otherfile.rs"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test exact path match absolute
+        let settings = build_settings(&[&format!("/absolute/{}/src/test/file.rs", WORKTREE_NAME)]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["/other/test/otherfile.rs"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test * glob
+        let settings = build_settings(&["*"]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["*.txt"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test **/* glob
+        let settings = build_settings(&["**/*"]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["other/**/*"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test directory/** glob
+        let settings = build_settings(&["src/**"]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["other/**"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test **/directory/* glob
+        let settings = build_settings(&["**/test/*"]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["**/other/*"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test multiple globs
+        let settings = build_settings(&["*.rs", "*.txt", "src/**"]);
+        assert!(!settings.enabled_for_file(&test_file, &cx));
+        let settings = build_settings(&["*.txt", "*.md", "other/**"]);
+        assert!(settings.enabled_for_file(&test_file, &cx));
+
+        // Test dot files
+        let dot_file: Arc<dyn File> = Arc::new(TestFile {
+            path: PathBuf::from(".config/settings.json").as_path().into(),
+            root_name: WORKTREE_NAME.to_string(),
+            local_root: Some(PathBuf::from("/abs/")),
+        });
+        let settings = build_settings(&[".*", "**/.config/*"]);
+        assert!(!settings.enabled_for_file(&dot_file, &cx));
+
+        let dot_env_file: Arc<dyn File> = Arc::new(TestFile {
+            path: PathBuf::from(".env").as_path().into(),
+            root_name: WORKTREE_NAME.to_string(),
+            local_root: Some(PathBuf::from("/abs/")),
+        });
+        let settings = build_settings(&[".env"]);
+        assert!(!settings.enabled_for_file(&dot_env_file, &cx));
+    }
     #[test]
     pub fn test_resolve_language_servers() {
         fn language_server_names(names: &[&str]) -> Vec<LanguageServerName> {

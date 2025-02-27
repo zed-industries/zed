@@ -702,7 +702,7 @@ impl InlineCompletionButton {
             Some(
                 file.map(|file| {
                     all_language_settings(Some(file), cx)
-                        .inline_completions_enabled_for_path(file.path())
+                        .inline_completions_enabled_for_file(file, cx)
                 })
                 .unwrap_or(true),
             )
