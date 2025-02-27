@@ -1409,7 +1409,7 @@ impl FakeLanguageServer {
         let server_name = LanguageServerName(name.clone().into());
         let process_name = Arc::from(name.as_str());
         let root = Self::root_path();
-        let workspace_folders = Default::default();
+        let workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
         let mut server = LanguageServer::new_internal(
             server_id,
             server_name.clone(),
