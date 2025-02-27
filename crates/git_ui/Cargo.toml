@@ -12,11 +12,14 @@ workspace = true
 name = "git_ui"
 path = "src/git_ui.rs"
 
+[features]
+default = []
+test-support = ["multi_buffer/test-support"]
+
 [dependencies]
 anyhow.workspace = true
 buffer_diff.workspace = true
 collections.workspace = true
-popover_button.workspace = true
 db.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
@@ -30,6 +33,7 @@ menu.workspace = true
 multi_buffer.workspace = true
 panel.workspace = true
 picker.workspace = true
+popover_button.workspace = true
 postage.workspace = true
 project.workspace = true
 schemars.workspace = true
@@ -53,9 +57,5 @@ editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
-workspace = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
-
-[features]
-default = []
-test-support = ["multi_buffer/test-support"]
+workspace = { workspace = true, features = ["test-support"] }

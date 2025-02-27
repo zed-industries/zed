@@ -27,7 +27,6 @@ members = [
     "crates/collab",
     "crates/collab_ui",
     "crates/collections",
-    "crates/popover_button",
     "crates/command_palette",
     "crates/command_palette_hooks",
     "crates/component",
@@ -99,6 +98,7 @@ members = [
     "crates/panel",
     "crates/paths",
     "crates/picker",
+    "crates/popover_button",
     "crates/prettier",
     "crates/project",
     "crates/project_panel",
@@ -232,7 +232,6 @@ clock = { path = "crates/clock" }
 collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
-popover_button = { path = "crates/popover_button" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
@@ -303,6 +302,7 @@ outline_panel = { path = "crates/outline_panel" }
 paths = { path = "crates/paths" }
 panel = { path = "crates/panel" }
 picker = { path = "crates/picker" }
+popover_button = { path = "crates/popover_button" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }
