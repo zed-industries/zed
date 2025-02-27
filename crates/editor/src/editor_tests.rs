@@ -16532,6 +16532,179 @@ async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
     "});
 }
 
+mod autoclose_tags {
+    use super::*;
+    use language::language_settings::JsxTagAutoCloseSettings;
+    use languages::language;
+
+    async fn test_setup(cx: &mut TestAppContext) -> EditorTestContext {
+        init_test(cx, |settings| {
+            settings.defaults.jsx_tag_auto_close = Some(JsxTagAutoCloseSettings { enabled: true });
+        });
+
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| {
+            let language = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+            // let jsx_tag_auto_close = language.config().jsx_tag_auto_close.clone();
+            // let language = language.with_edit_behavior_provider(jsx_tag_auto_close.map(|config| {
+            //     Arc::new(languages::tsx::TsxEditBehaviorProvider::new(config))
+            //         as Arc<dyn EditBehaviorImplementation + 'static>
+            // }));
+
+            buffer.set_language(Some(language), cx)
+        });
+
+        cx
+    }
+
+    macro_rules! check {
+        ($name:ident, $initial:literal + $input:literal => $expected:expr) => {
+            #[gpui::test]
+            async fn $name(cx: &mut TestAppContext) {
+                let mut cx = test_setup(cx).await;
+                cx.set_state($initial);
+                cx.run_until_parked();
+
+                cx.update_editor(|editor, window, cx| {
+                    editor.handle_input($input, window, cx);
+                });
+                cx.run_until_parked();
+                cx.assert_editor_state($expected);
+            }
+        };
+    }
+
+    // #[gpui::test]
+    // async fn example(cx: &mut TestAppContext) {
+    //     init_test(cx, |_| {});
+
+    //     let mut cx = EditorTestContext::new(cx).await;
+    //     cx.update_buffer(|buffer, cx| {
+    //         let language =
+    //             Arc::try_unwrap(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()))
+    //                 .unwrap();
+    //         let language =
+    //             language.with_edit_behavior_provider(Some(Arc::new(ExampleJSXCompletion)));
+
+    //         buffer.set_language(Some(Arc::new(language)), cx)
+    //     });
+    // }
+
+    check!(
+        basic,
+        "<divˇ" + ">" => "<div>ˇ</div>"
+    );
+
+    check!(
+        basic_nested,
+        "<div><divˇ</div>" + ">" => "<div><div>ˇ</div></div>"
+    );
+
+    check!(
+        basic_ignore_already_closed,
+        "<div><divˇ</div></div>" + ">" => "<div><div>ˇ</div></div>"
+    );
+
+    check!(
+        doesnt_autoclose_closing_tag,
+        "</divˇ" + ">" => "</div>ˇ"
+    );
+
+    check!(
+        jsx_attr,
+        "<div attr={</div>}ˇ" + ">" => "<div attr={</div>}>ˇ</div>"
+    );
+
+    check!(
+        ignores_closing_tags_in_expr_block,
+        "<div><divˇ{</div>}</div>" + ">" => "<div><div>ˇ</div>{</div>}</div>"
+    );
+
+    check!(
+        doesnt_autoclose_on_gt_in_expr,
+        "<div attr={1 ˇ" + ">" => "<div attr={1 >ˇ"
+    );
+
+    check!(
+        ignores_closing_tags_with_different_tag_names,
+        "<div><divˇ</div></span>" + ">" => "<div><div>ˇ</div></div></span>"
+    );
+
+    check!(
+        autocloses_in_jsx_expression,
+        "<div>{<divˇ}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
+    );
+
+    check!(
+        doesnt_autoclose_already_closed_in_jsx_expression,
+        "<div>{<divˇ</div>}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
+    );
+
+    check!(
+        does_not_include_type_argument_in_autoclose_tag_name,
+        "<Component<T> attr={boolean_value}ˇ" + ">" => "<Component<T> attr={boolean_value}>ˇ</Component>"
+    );
+
+    check!(
+        does_not_autoclose_doctype,
+        "<!DOCTYPE htmlˇ" + ">" => "<!DOCTYPE html>ˇ"
+    );
+
+    check!(
+        does_not_autoclose_comment,
+        "<!-- comment --ˇ" + ">" => "<!-- comment -->ˇ"
+    );
+
+    check!(
+        multi_cursor_autoclose_same_tag,
+        r#"
+        <divˇ
+        <divˇ
+        "#
+        + ">" =>
+        r#"
+        <div>ˇ</div>
+        <div>ˇ</div>
+        "#
+    );
+
+    check!(
+        multi_cursor_autoclose_different_tags,
+        r#"
+        <divˇ
+        <spanˇ
+        "#
+        + ">" =>
+        r#"
+        <div>ˇ</div>
+        <span>ˇ</span>
+        "#
+    );
+
+    check!(
+        multi_cursor_autoclose_some_dont_autoclose_others,
+        r#"
+        <divˇ
+        <div /ˇ
+        <spanˇ</span>
+        <!DOCTYPE htmlˇ
+        </divˇ
+        <Component<T>ˇ
+        ˇ
+        "#
+        + ">" =>
+        r#"
+        <div>ˇ</div>
+        <div />ˇ
+        <span>ˇ</span>
+        <!DOCTYPE html>ˇ
+        </div>ˇ
+        <Component<T>>ˇ</Component>
+        ˇ
+        "#
+    );
+}
+
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(DisplayRow(row as u32), column as u32);
     point..point

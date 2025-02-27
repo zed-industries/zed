@@ -9,6 +9,7 @@
 mod buffer;
 mod diagnostic_set;
 mod highlight_map;
+pub mod jsx_tag_auto_close;
 mod language_registry;
 pub mod language_settings;
 mod outline;
@@ -680,6 +681,9 @@ pub struct LanguageConfig {
     /// languages, but should not appear to the user as a distinct language.
     #[serde(default)]
     pub hidden: bool,
+    /// If configured, this language contains JSX style tags, and should support auto-closing of those tags.
+    #[serde(default)]
+    pub jsx_tag_auto_close: Option<JsxTagAutoCloseConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -695,6 +699,14 @@ pub struct LanguageMatcher {
     )]
     #[schemars(schema_with = "regex_json_schema")]
     pub first_line_pattern: Option<Regex>,
+}
+
+/// The configuration for JSX tag auto-closing.
+#[derive(Clone, Deserialize, JsonSchema)]
+pub struct JsxTagAutoCloseConfig {
+    pub open_tag_node_name: String,
+    pub close_tag_node_name: String,
+    pub jsx_element_node_name: String,
 }
 
 /// Represents a language for the given range. Some languages (e.g. HTML)
@@ -767,6 +779,7 @@ impl Default for LanguageConfig {
             soft_wrap: None,
             prettier_parser_name: None,
             hidden: false,
+            jsx_tag_auto_close: None,
         }
     }
 }
