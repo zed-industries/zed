@@ -1489,6 +1489,14 @@ mod tests {
         // Test directory/** glob
         let settings = build_settings(&["src/**"]);
         assert!(!settings.enabled_for_file(&test_file, &cx));
+
+        let test_file_root: Arc<dyn File> = Arc::new(TestFile {
+            path: PathBuf::from("file.rs").as_path().into(),
+            root_name: WORKTREE_NAME.to_string(),
+            local_root: Some(PathBuf::from("/absolute/")),
+        });
+        assert!(settings.enabled_for_file(&test_file_root, &cx));
+
         let settings = build_settings(&["other/**"]);
         assert!(settings.enabled_for_file(&test_file, &cx));
 
@@ -1510,7 +1518,7 @@ mod tests {
             root_name: WORKTREE_NAME.to_string(),
             local_root: Some(PathBuf::from("/abs/")),
         });
-        let settings = build_settings(&[".*", "**/.config/*"]);
+        let settings = build_settings(&[".*"]);
         assert!(!settings.enabled_for_file(&dot_file, &cx));
 
         let dot_env_file: Arc<dyn File> = Arc::new(TestFile {
