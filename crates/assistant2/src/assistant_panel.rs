@@ -724,12 +724,11 @@ impl AssistantPanel {
     ) -> impl IntoElement {
         let recent_history = self
             .history_store
-            .update(cx, |this, cx| this.recent_entries(3, cx));
+            .update(cx, |this, cx| this.recent_entries(6, cx));
 
         let create_welcome_heading = || {
             h_flex()
                 .w_full()
-                .justify_center()
                 .child(Headline::new("Welcome to the Assistant Panel").size(HeadlineSize::Small))
         };
 
@@ -737,36 +736,27 @@ impl AssistantPanel {
         let no_error = configuration_error.is_none();
 
         v_flex()
-            .gap_2()
-            .child(
-                v_flex().w_full().child(
-                    svg()
-                        .path("icons/logo_96.svg")
-                        .text_color(cx.theme().colors().text)
-                        .w(px(40.))
-                        .h(px(40.))
-                        .mx_auto()
-                        .mb_4(),
-                ),
-            )
+            .p_1p5()
+            .size_full()
+            .justify_end()
+            .gap_1()
             .map(|parent| {
                 match configuration_error {
                     Some(ConfigurationError::ProviderNotAuthenticated)
                     | Some(ConfigurationError::NoProvider) => {
                         parent.child(
                             v_flex()
+                                .px_1p5()
                                 .gap_0p5()
                                 .child(create_welcome_heading())
                                 .child(
-                                    h_flex().mb_2().w_full().justify_center().child(
-                                        Label::new(
-                                            "To start using the assistant, configure at least one LLM provider.",
-                                        )
-                                        .color(Color::Muted),
-                                    ),
+                                    Label::new(
+                                        "To start using the assistant, configure at least one LLM provider.",
+                                    )
+                                    .color(Color::Muted),
                                 )
                                 .child(
-                                    h_flex().w_full().justify_center().child(
+                                    h_flex().mt_1().w_full().child(
                                         Button::new("open-configuration", "Configure a Provider")
                                             .size(ButtonSize::Compact)
                                             .icon(Some(IconName::Sliders))
@@ -780,7 +770,7 @@ impl AssistantPanel {
                         )
                     }
                     Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => parent
-                        .child(v_flex().gap_0p5().child(create_welcome_heading()).children(
+                        .child(v_flex().px_1p5().gap_0p5().child(create_welcome_heading()).children(
                             provider.render_accept_terms(
                                 LanguageModelProviderTosView::ThreadEmptyState,
                                 cx,
@@ -791,21 +781,40 @@ impl AssistantPanel {
             })
             .when(recent_history.is_empty() && no_error, |parent| {
                 parent.child(v_flex().gap_0p5().child(create_welcome_heading()).child(
-                    h_flex().w_full().justify_center().child(
-                        Label::new("Start typing to chat with your codebase").color(Color::Muted),
-                    ),
+                    Label::new("Start typing to chat with your codebase").color(Color::Muted),
                 ))
             })
             .when(!recent_history.is_empty(), |parent| {
                 parent
                     .child(
-                        h_flex().w_full().justify_center().child(
-                            Label::new("Recent Threads:")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
+                        h_flex()
+                            .pl_1p5()
+                            .pb_1()
+                            .w_full()
+                            .justify_between()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(
+                                Label::new("Past Interactions")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Button::new("view-history", "View All")
+                                    .style(ButtonStyle::Subtle)
+                                    .label_size(LabelSize::Small)
+                                    .key_binding(KeyBinding::for_action_in(
+                                        &OpenHistory,
+                                        &self.focus_handle(cx),
+                                        window,
+                                        cx,
+                                    ))
+                                    .on_click(move |_event, window, cx| {
+                                        window.dispatch_action(OpenHistory.boxed_clone(), cx);
+                                    }),
+                            ),
                     )
-                    .child(v_flex().mx_auto().w_4_5().gap_2().children(
+                    .child(v_flex().gap_1().children(
                         recent_history.into_iter().map(|entry| {
                             // TODO: Add keyboard navigation.
                             match entry {
@@ -820,22 +829,6 @@ impl AssistantPanel {
                             }
                         }),
                     ))
-                    .child(
-                        h_flex().w_full().justify_center().child(
-                            Button::new("view-all-past-threads", "View All Past Threads")
-                                .style(ButtonStyle::Subtle)
-                                .label_size(LabelSize::Small)
-                                .key_binding(KeyBinding::for_action_in(
-                                    &OpenHistory,
-                                    &self.focus_handle(cx),
-                                    window,
-                                    cx,
-                                ))
-                                .on_click(move |_event, window, cx| {
-                                    window.dispatch_action(OpenHistory.boxed_clone(), cx);
-                                }),
-                        ),
-                    )
             })
     }
 
