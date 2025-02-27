@@ -711,6 +711,7 @@ pub struct Editor {
     edit_prediction_indent_conflict: bool,
     edit_prediction_requires_modifier_in_indent_conflict: bool,
     inlay_hint_cache: InlayHintCache,
+    inlay_hint_modifiers_toggled: bool,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
@@ -1419,6 +1420,7 @@ impl Editor {
                 released_too_fast: false,
             },
             inline_diagnostics_enabled: mode == EditorMode::Full,
+            inlay_hint_modifiers_toggled: false,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -3691,6 +3693,9 @@ impl Editor {
         );
         let (invalidate_cache, required_languages) = match reason {
             InlayHintRefreshReason::Toggle(enabled) => {
+                if self.inlay_hint_cache.enabled == enabled {
+                    return;
+                }
                 self.inlay_hint_cache.enabled = enabled;
                 if enabled {
                     (InvalidationStrategy::RefreshRequested, None)

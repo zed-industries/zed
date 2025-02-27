@@ -1,4 +1,5 @@
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
     fmt::{Display, Write},
@@ -306,24 +307,29 @@ impl std::fmt::Display for Keystroke {
 }
 
 /// The state of the modifier keys at some point in time
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Deserialize, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Serialize, Deserialize, Hash, JsonSchema)]
 pub struct Modifiers {
     /// The control key
+    #[serde(default)]
     pub control: bool,
 
     /// The alt key
     /// Sometimes also known as the 'meta' key
+    #[serde(default)]
     pub alt: bool,
 
     /// The shift key
+    #[serde(default)]
     pub shift: bool,
 
     /// The command key, on macos
     /// the windows key, on windows
     /// the super key, on linux
+    #[serde(default)]
     pub platform: bool,
 
     /// The function key
+    #[serde(default)]
     pub function: bool,
 }
 
