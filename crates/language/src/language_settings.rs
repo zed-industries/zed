@@ -1110,11 +1110,11 @@ impl settings::Settings for AllLanguageSettings {
             })
             .unwrap_or_default();
 
-        let mut edit_predictions_enabled_in_assistant = dbg!(default_value
+        let mut edit_predictions_enabled_in_assistant = default_value
             .edit_predictions
             .as_ref()
-            .map(|settings| settings.enabled_in_assistant))
-        .unwrap_or(true);
+            .map(|settings| settings.enabled_in_assistant)
+            .unwrap_or(true);
 
         let mut file_types: HashMap<Arc<str>, GlobSet> = HashMap::default();
 
