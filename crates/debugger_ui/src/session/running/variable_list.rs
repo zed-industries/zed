@@ -1,24 +1,20 @@
 use super::stack_frame_list::{StackFrameId, StackFrameList, StackFrameListEvent};
 use anyhow::{anyhow, Result};
-use dap::{proto_conversions::ProtoConversion, Scope, ScopePresentationHint};
+use dap::Scope;
 use editor::{actions::SelectAll, Editor, EditorEvent};
 use gpui::{
     actions, anchored, deferred, list, AnyElement, ClipboardItem, Context, DismissEvent, Entity,
-    FocusHandle, Focusable, Hsla, ListOffset, ListState, MouseDownEvent, Point, Subscription, Task,
+    FocusHandle, Focusable, Hsla, ListState, MouseDownEvent, Point, Subscription, Task,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::debugger::session::{self, Session, Variable, VariableListContainer};
-use rpc::proto::{
-    self, DebuggerScopeVariableIndex, DebuggerVariableContainer, VariableListScopes,
-    VariableListVariables,
-};
+use project::debugger::session::{self, Session, Variable};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
 use sum_tree::{Dimension, Item, SumTree, Summary};
 use ui::{prelude::*, ContextMenu, ListItem};
-use util::{debug_panic, ResultExt};
+use util::debug_panic;
 
 actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
 
@@ -257,7 +253,7 @@ impl VariableList {
     ) {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged(stack_frame_id) => {
-                self.handle_selected_stack_frame_changed(*stack_frame_id, cx);
+                // self.handle_selected_stack_frame_changed(*stack_frame_id, cx);
             }
             StackFrameListEvent::StackFramesUpdated => {
                 self.entries.clear();
@@ -267,40 +263,40 @@ impl VariableList {
         }
     }
 
-    fn handle_selected_stack_frame_changed(
-        &mut self,
-        stack_frame_id: StackFrameId,
-        cx: &mut Context<Self>,
-    ) {
-        // if self.scopes.contains_key(&stack_frame_id) {
-        //     return self.build_entries(true, cx);
-        // }
+    // fn handle_selected_stack_frame_changed(
+    //     &mut self,
+    //     stack_frame_id: StackFrameId,
+    //     cx: &mut Context<Self>,
+    // ) {
+    // if self.scopes.contains_key(&stack_frame_id) {
+    //     return self.build_entries(true, cx);
+    // }
 
-        // self.fetch_variables_task = Some(cx.spawn(|this, mut cx| async move {
-        //     let task = this.update(&mut cx, |variable_list, cx| {
-        //         variable_list.fetch_variables_for_stack_frame(stack_frame_id, cx)
-        //     })?;
+    // self.fetch_variables_task = Some(cx.spawn(|this, mut cx| async move {
+    //     let task = this.update(&mut cx, |variable_list, cx| {
+    //         variable_list.fetch_variables_for_stack_frame(stack_frame_id, cx)
+    //     })?;
 
-        //     let (scopes, variables) = task.await?;
+    //     let (scopes, variables) = task.await?;
 
-        //     this.update(&mut cx, |variable_list, cx| {
-        //         variable_list.scopes.insert(stack_frame_id, scopes);
+    //     this.update(&mut cx, |variable_list, cx| {
+    //         variable_list.scopes.insert(stack_frame_id, scopes);
 
-        //         for (scope_id, variables) in variables.into_iter() {
-        //             let mut variable_index = ScopeVariableIndex::new();
-        //             variable_index.add_variables(scope_id, variables);
+    //         for (scope_id, variables) in variables.into_iter() {
+    //             let mut variable_index = ScopeVariableIndex::new();
+    //             variable_index.add_variables(scope_id, variables);
 
-        //             variable_list
-        //                 .variables
-        //                 .insert((stack_frame_id, scope_id), variable_index);
-        //         }
+    //             variable_list
+    //                 .variables
+    //                 .insert((stack_frame_id, scope_id), variable_index);
+    //         }
 
-        //         variable_list.build_entries(true, cx);
+    //         variable_list.build_entries(true, cx);
 
-        //         variable_list.fetch_variables_task.take();
-        //     })
-        // }));
-    }
+    //         variable_list.fetch_variables_task.take();
+    //     })
+    // }));
+    // }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn scopes(&self) -> &HashMap<StackFrameId, Vec<Scope>> {
@@ -1000,7 +996,7 @@ impl Render for VariableList {
         // todo(debugger): We are reconstructing the variable list list state every frame
         // which is very bad!! We should only reconstruct the variable list state when necessary.
         // Will fix soon
-        let (stack_frame_id, thread_id) = self.stack_frame_list.read_with(cx, |list, cx| {
+        let (stack_frame_id, thread_id) = self.stack_frame_list.read_with(cx, |list, _| {
             (list.current_stack_frame_id(), list.current_thread_id())
         });
         let len = if let Some(thread_id) = thread_id {

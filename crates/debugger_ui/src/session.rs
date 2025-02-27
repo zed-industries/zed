@@ -7,7 +7,7 @@ use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
 use inert::{InertEvent, InertState};
-use project::debugger::{self, dap_store::DapStore, session::Session};
+use project::debugger::{dap_store::DapStore, session::Session};
 use project::worktree_store::WorktreeStore;
 use project::Project;
 use rpc::proto::{self, PeerId};

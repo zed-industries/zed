@@ -1,6 +1,6 @@
 use crate::project_settings::ProjectSettings;
 
-use super::breakpoint_store::{BreakpointStore, BreakpointStoreEvent};
+use super::breakpoint_store::BreakpointStore;
 use super::dap_command::{
     self, ConfigurationDone, ContinueCommand, DapCommand, DisconnectCommand, EvaluateCommand,
     Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, ModulesCommand, NextCommand,
@@ -12,15 +12,14 @@ use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
 use collections::{HashMap, IndexMap};
 use dap::adapters::{DebugAdapter, DebugAdapterBinary};
+use dap::OutputEventCategory;
 use dap::{
-    adapters::{DapDelegate, DapStatus, DebugAdapterName},
+    adapters::{DapDelegate, DapStatus},
     client::{DebugAdapterClient, SessionId},
-    messages::{self, Events, Message},
-    requests::SetBreakpoints,
-    Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, SetBreakpointsArguments,
-    Source, SourceBreakpoint, SteppingGranularity, StoppedEvent,
+    messages::{Events, Message},
+    Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, SteppingGranularity,
+    StoppedEvent,
 };
-use dap::{DebugAdapterKind, OutputEventCategory, StartDebuggingRequestArguments};
 use dap_adapters::build_adapter;
 use futures::channel::oneshot;
 use futures::{future::join_all, future::Shared, FutureExt};
@@ -30,7 +29,6 @@ use serde_json::{json, Value};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::path::PathBuf;
-use std::time::Duration;
 use std::u64;
 use std::{
     any::Any,
@@ -1218,14 +1216,6 @@ impl Session {
         };
 
         self.request(command, Self::empty_response, cx).detach();
-    }
-
-    pub fn handle_loaded_source_event(
-        &mut self,
-        _: &dap::LoadedSourceEvent,
-        cx: &mut Context<Self>,
-    ) {
-        self.invalidate_state(&LoadedSourcesCommand.into());
     }
 
     pub fn stack_frames(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) -> Vec<StackFrame> {

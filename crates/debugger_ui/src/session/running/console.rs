@@ -80,7 +80,7 @@ impl Console {
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
             cx.observe_in(&session, window, |console, session, window, cx| {
-                let (output, last_processed_ix) = session.update(cx, |session, cx| {
+                let (output, last_processed_ix) = session.update(cx, |session, _| {
                     (session.output(), session.last_processed_output())
                 });
 
@@ -89,7 +89,7 @@ impl Console {
                         console.add_message(event.clone(), window, cx);
                     }
 
-                    session.update(cx, |session, cx| {
+                    session.update(cx, |session, _| {
                         session.set_last_processed_output(output.len());
                     });
                 }

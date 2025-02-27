@@ -25,7 +25,7 @@ use dap::{
     Source, StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
 };
 use fs::Fs;
-use futures::future::{join_all, Shared};
+use futures::future::Shared;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
 use language::{BinaryStatus, LanguageRegistry, LanguageToolchainStore};

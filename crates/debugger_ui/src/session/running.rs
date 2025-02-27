@@ -661,14 +661,14 @@ impl Item for RunningState {
 
     fn tab_content(
         &self,
-        params: workspace::item::TabContentParams,
+        _params: workspace::item::TabContentParams,
         _window: &Window,
-        cx: &App,
+        _cx: &App,
     ) -> AnyElement {
         todo!()
     }
 
-    fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
+    fn tab_tooltip_text(&self, _cx: &App) -> Option<SharedString> {
         todo!()
     }
 
