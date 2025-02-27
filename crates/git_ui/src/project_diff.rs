@@ -935,6 +935,8 @@ impl Render for ProjectDiffToolbar {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use collections::HashMap;
     use editor::test::editor_test_context::assert_state_with_diff;
     use git::status::{StatusCode, TrackedStatus};
@@ -1020,5 +1022,99 @@ mod tests {
 
         let text = String::from_utf8(fs.read_file_sync("/project/foo").unwrap()).unwrap();
         assert_eq!(text, "foo\n");
+    }
+
+    #[gpui::test]
+    async fn test_scroll_to_beginning_with_deletion(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "bar": "BAR\n",
+                "foo": "FOO\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("bar".into(), "bar\n".into()),
+                ("foo".into(), "foo\n".into()),
+            ],
+        );
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.statuses = HashMap::from_iter([
+                (
+                    "bar".into(),
+                    TrackedStatus {
+                        index_status: StatusCode::Unmodified,
+                        worktree_status: StatusCode::Modified,
+                    }
+                    .into(),
+                ),
+                (
+                    "foo".into(),
+                    TrackedStatus {
+                        index_status: StatusCode::Unmodified,
+                        worktree_status: StatusCode::Modified,
+                    }
+                    .into(),
+                ),
+            ]);
+        });
+        cx.run_until_parked();
+
+        let editor = cx.update_window_entity(&diff, |diff, window, cx| {
+            diff.scroll_to_path(
+                PathKey::namespaced(TRACKED_NAMESPACE, Path::new("foo").into()),
+                window,
+                cx,
+            );
+            diff.editor.clone()
+        });
+        assert_state_with_diff(
+            &editor,
+            cx,
+            &"
+                - bar
+                + BAR
+
+                - ˇfoo
+                + FOO
+            "
+            .unindent(),
+        );
+
+        let editor = cx.update_window_entity(&diff, |diff, window, cx| {
+            diff.scroll_to_path(
+                PathKey::namespaced(TRACKED_NAMESPACE, Path::new("bar").into()),
+                window,
+                cx,
+            );
+            diff.editor.clone()
+        });
+        assert_state_with_diff(
+            &editor,
+            cx,
+            &"
+                - ˇbar
+                + BAR
+
+                - foo
+                + FOO
+            "
+            .unindent(),
+        );
     }
 }
