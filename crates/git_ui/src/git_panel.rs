@@ -1826,16 +1826,20 @@ impl GitPanel {
         });
 
         let has_visible_repo = all_repositories.len() > 0 || has_repo_above;
-
         if has_visible_repo {
             Some(
                 self.panel_header_container(window, cx)
-                    .child(
-                        Label::new("Repository")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .child(self.render_repository_selector(cx))
+                    .child(if all_repositories.len() > 1 {
+                        h_flex()
+                            .child(
+                                Label::new("Repository")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(self.render_repository_selector(cx))
+                    } else {
+                        div()
+                    })
                     .child(div().flex_grow()) // spacer
                     .child(
                         div()
@@ -1844,15 +1848,17 @@ impl GitPanel {
                             .children(self.render_spinner(cx))
                             .children(self.render_sync_button(cx))
                             .children(self.render_pull_button(cx))
-                            .child(
-                                Button::new("diff", "+/-")
+                            .children(if self.entries.len() > 0 {
+                                vec![Button::new("diff", "+/-")
                                     .tooltip(Tooltip::for_action_title("Open diff", &Diff))
                                     .on_click(|_, _, cx| {
                                         cx.defer(|cx| {
                                             cx.dispatch_action(&Diff);
                                         })
-                                    }),
-                            )
+                                    })]
+                            } else {
+                                vec![]
+                            })
                             .child(self.render_overflow_menu()),
                     ),
             )
@@ -1908,9 +1914,11 @@ impl GitPanel {
                     let status = &upstream.tracking;
 
                     let disabled = status.is_gone();
+                    let mut behind = 0;
 
                     panel_filled_button(match status {
                         git::repository::UpstreamTracking::Tracked(status) if status.behind > 0 => {
+                            behind = status.behind;
                             format!("Pull ({})", status.behind)
                         }
                         _ => "Pull".to_string(),
@@ -1924,8 +1932,16 @@ impl GitPanel {
                         if disabled {
                             Tooltip::simple("Upstream is gone", cx)
                         } else {
+                            let mut title = "git pull".to_string();
+                            if behind > 0 {
+                                title.push_str(&format!(
+                                    "\n{} incoming commit{}",
+                                    behind,
+                                    if behind > 1 { "s" } else { "" }
+                                ));
+                            }
                             // TODO: Add <origin> and <branch> argument substitutions to this
-                            Tooltip::for_action("git pull", &git::Pull, window, cx)
+                            Tooltip::for_action(title, &git::Pull, window, cx)
                         }
                     })
                     .on_click(
@@ -2725,12 +2741,12 @@ impl Render for GitPanel {
                     .map(|this| {
                         if has_entries {
                             this.child(self.render_entries(has_write_access, window, cx))
+                                .child(self.render_commit_editor(window, cx))
                         } else {
                             this.child(self.render_empty_state(cx).into_any_element())
                         }
                     })
                     .children(self.render_previous_commit(cx))
-                    .child(self.render_commit_editor(window, cx))
                     .into_any_element(),
             )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
