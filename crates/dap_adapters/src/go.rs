@@ -85,7 +85,7 @@ impl DebugAdapter for GoDebugAdapter {
             connection: Some(adapters::TcpArguments {
                 host: self.host,
                 port: self.port,
-                timeout: self.port,
+                timeout: self.timeout,
             }),
             #[cfg(any(test, feature = "test-support"))]
             is_fake: false,
