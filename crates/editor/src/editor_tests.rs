@@ -16616,7 +16616,7 @@ mod autoclose_tags {
         <div /ˇ
         <spanˇ</span>
         <!DOCTYPE htmlˇ
-        </divˇ
+        </headˇ
         <Component<T>ˇ
         ˇ
         "#
@@ -16626,9 +16626,9 @@ mod autoclose_tags {
         <div />ˇ
         <span>ˇ</span>
         <!DOCTYPE html>ˇ
-        </div>ˇ
+        </head>ˇ
         <Component<T>>ˇ</Component>
-        ˇ
+        >ˇ
         "#
     );
 }
