@@ -5005,7 +5005,7 @@ impl Editor {
                 return Some(true);
             };
             let settings = all_language_settings(Some(file), cx);
-            Some(settings.inline_completions_enabled_for_file(file, cx))
+            Some(settings.edit_predictions_enabled_for_file(file, cx))
         })
         .unwrap_or(false)
     }

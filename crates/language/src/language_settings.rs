@@ -983,13 +983,12 @@ impl AllLanguageSettings {
     }
 
     /// Returns whether edit predictions are enabled for the given path.
-    ///  todo! az rename
-    pub fn inline_completions_enabled_for_file(&self, file: &Arc<dyn File>, cx: &App) -> bool {
+    pub fn edit_predictions_enabled_for_file(&self, file: &Arc<dyn File>, cx: &App) -> bool {
         self.edit_predictions.enabled_for_file(file, cx)
     }
 
     /// Returns whether edit predictions are enabled for the given language and path.
-    pub fn show_inline_completions(&self, language: Option<&Arc<Language>>, cx: &App) -> bool {
+    pub fn show_edit_predictions(&self, language: Option<&Arc<Language>>, cx: &App) -> bool {
         self.language(None, language.map(|l| l.name()).as_ref(), cx)
             .show_edit_predictions
     }
@@ -1446,7 +1445,7 @@ mod tests {
         const WORKTREE_NAME: &str = "project";
 
         let test_file: Arc<dyn File> = Arc::new(TestFile {
-            path: PathBuf::from(format!("src/test/file.rs")).as_path().into(),
+            path: PathBuf::from("src/test/file.rs").as_path().into(),
             root_name: WORKTREE_NAME.to_string(),
             local_root: Some(PathBuf::from("/absolute/")),
         });
