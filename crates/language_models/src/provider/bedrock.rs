@@ -772,8 +772,7 @@ struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    const PLACEHOLDER_ACCESS_KEY_ID_TEXT: &'static str = "<YOUR ACCESS KEY ID HERE>";
-    const PLACEHOLDER_SECRET_ACCESS_KEY_TEXT: &'static str = "<YOUR SECRET ACCESS KEY HERE>";
+    const PLACEHOLDER_TEXT: &'static str = "XXXXXXXXXXXXXXXXXXX";
     const PLACEHOLDER_REGION: &'static str = "us-east-1";
 
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -803,12 +802,12 @@ impl ConfigurationView {
         Self {
             access_key_id_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_ACCESS_KEY_ID_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
                 editor
             }),
             secret_access_key_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
                 editor
             }),
             region_editor: cx.new(|cx| {
@@ -962,8 +961,8 @@ impl Render for ConfigurationView {
             "To use Zed's assistant with Bedrock, you need to add the Access Key ID, Secret Access Key and AWS Region. Follow these steps:",
             "- Create a user and security credentials here:",
             "- Grant that user permissions according to this documentation:",
-            "- Go to the Bedrock console and select the models you would like access to: ",
-            "- Paste your Access Key ID, Secret Key, and Region below and hit enter to use the assistant:",
+            "- Go to the console and select the models you would like access to:",
+            "- Fill the fields below and hit enter to use the assistant:",
         ];
         const BEDROCK_MODEL_CATALOG_LABEL: &str = "Bedrock Model Catalog";
         const BEDROCK_IAM_DOCS: &str = "Prerequisites";
@@ -990,7 +989,7 @@ impl Render for ConfigurationView {
                 .size_full()
                 .on_action(cx.listener(ConfigurationView::save_credentials))
                 .child(Label::new(INSTRUCTIONS[0]))
-                .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
+                .child(h_flex().flex_wrap().child(Label::new(INSTRUCTIONS[1])).child(
                     Button::new("iam_console", IAM_CONSOLE_URL)
                         .style(ButtonStyle::Subtle)
                         .icon(IconName::ArrowUpRight)
@@ -999,18 +998,18 @@ impl Render for ConfigurationView {
                         .on_click(move |_, _window, cx| cx.open_url(IAM_CONSOLE_URL))
                 )
                 )
-                .child(h_flex().child(Label::new(INSTRUCTIONS[2])).child(
+                .child(h_flex().flex_wrap().child(Label::new(INSTRUCTIONS[2])).child(
                     Button::new("bedrock_iam_docs", BEDROCK_IAM_DOCS)
                         .style(ButtonStyle::Subtle)
-                        .icon(IconName::ExternalLink)
+                        .icon(IconName::ArrowUpRight)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
                         .on_click(move |_, _window, cx| cx.open_url(BEDROCK_DOCS_URL))
                 ))
-                .child(h_flex().child(Label::new(INSTRUCTIONS[3])).child(
+                .child(h_flex().flex_wrap().child(Label::new(INSTRUCTIONS[3])).child(
                     Button::new("bedrock_model_catalog", BEDROCK_MODEL_CATALOG_LABEL)
                         .style(ButtonStyle::Subtle)
-                        .icon(IconName::ExternalLink)
+                        .icon(IconName::ArrowUpRight)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
                         .on_click(move |_, _window, cx| cx.open_url(BEDROCK_MODEL_CATALOG))
@@ -1019,14 +1018,35 @@ impl Render for ConfigurationView {
                 .child(
                     v_flex()
                         .my_2()
-                        .gap_1()
-                        .child(input_base_styles().child(self.render_aa_id_editor(cx)))
-                        .child(input_base_styles().child(self.render_sk_editor(cx)))
-                        .child(input_base_styles().child(self.render_region_editor(cx)))
+                        .gap_1p5()
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(Label::new("Access Key ID").size(LabelSize::Small))
+                                .child(
+                                    input_base_styles().child(self.render_aa_id_editor(cx))
+                                )
+                        )
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(Label::new("Secret Access Key").size(LabelSize::Small))
+                                .child(
+                                    input_base_styles().child(self.render_sk_editor(cx))
+                                )
+                        )
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(Label::new("Region").size(LabelSize::Small))
+                                .child(
+                                    input_base_styles().child(self.render_region_editor(cx))
+                                )
+                            )
                 )
                 .child(
                     Label::new(
-                        format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR} and {ZED_BEDROCK_REGION_VAR} environment variable and restart Zed."),
+                        format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables and restart Zed."),
                     )
                         .size(LabelSize::Small),
                 )
