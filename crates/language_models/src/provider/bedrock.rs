@@ -83,7 +83,6 @@ const ZED_AWS_CREDENTIALS_VAR: &str = "ZED_AWS_CREDENTIALS";
 pub struct State {
     credentials: Option<BedrockCredentials>,
     credentials_from_env: bool,
-    region: Option<String>,
     _subscription: Subscription,
 }
 
@@ -175,7 +174,6 @@ impl BedrockLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         let state = cx.new(|cx| State {
             credentials: None,
-            region: Some(String::from("us-east-1")),
             credentials_from_env: false,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
@@ -311,7 +309,7 @@ impl BedrockModel {
                     Ok((
                         credentials.access_key_id.clone(),
                         credentials.secret_access_key.clone(),
-                        state.region.clone(),
+                        credentials.region.clone(),
                     ))
                 } else {
                     return Err(anyhow!("Failed to read credentials"));
@@ -331,7 +329,7 @@ impl BedrockModel {
                     None,
                     "Keychain",
                 ))
-                .region(Region::new(region.unwrap()))
+                .region(Region::new(region))
                 .http_client(self.http_client.clone())
                 .build(),
         );
