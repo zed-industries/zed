@@ -27,7 +27,7 @@ VersionInfoVersion={#Version}
 ShowLanguageDialog=auto
 WizardStyle=modern
 
-; CloseApplications=force
+CloseApplications=force
 
 SignTool=Defaultsign
 DefaultDirName={autopf}\{#AppName}
