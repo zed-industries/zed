@@ -21,7 +21,9 @@ use dap::{
 use dap_adapters::build_adapter;
 use futures::channel::oneshot;
 use futures::{future::join_all, future::Shared, FutureExt};
-use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, Task, WeakEntity};
+use gpui::{
+    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Task, WeakEntity,
+};
 use rpc::AnyProtoClient;
 use serde_json::{json, Value};
 use settings::Settings;
@@ -414,7 +416,7 @@ pub struct Session {
     last_processed_output: usize,
     output: Vec<dap::OutputEvent>,
     threads: IndexMap<ThreadId, Thread>,
-    variables: HashMap<VariablesReference, Vec<Variable>>,
+    variables: HashMap<VariablesReference, Vec<dap::Variable>>,
     stack_frames: IndexMap<StackFrameId, StackFrame>,
     thread_states: ThreadStates,
     is_session_terminated: bool,
@@ -496,6 +498,13 @@ impl CompletionsQuery {
         }
     }
 }
+
+pub enum SessionEvent {
+    Invalidate,
+}
+
+impl EventEmitter<SessionEvent> for Session {}
+
 // local session will send breakpoint updates to DAP for all new breakpoints
 // remote side will only send breakpoint updates when it is a breakpoint created by that peer
 // BreakpointStore notifies session on breakpoint changes
@@ -1160,6 +1169,7 @@ impl Session {
                         "Sent request for thread_id that doesn't exist"
                     );
 
+                    cx.emit(SessionEvent::Invalidate);
                     cx.notify();
                 },
                 cx,
@@ -1182,13 +1192,20 @@ impl Session {
     pub fn scopes(&mut self, stack_frame_id: u64, cx: &mut Context<Self>) -> &[dap::Scope] {
         self.fetch(
             ScopesCommand { stack_frame_id },
-            move |this, scopes, _cx| {
+            move |this, scopes, cx| {
+
+                for scope in scopes {
+                    this.variables(scope.variables_reference, cx);
+                }
+
                 let entry = this
                     .stack_frames
                     .entry(stack_frame_id)
                     .and_modify(|stack_frame| {
                         stack_frame.scopes = scopes.clone();
                     });
+
+                cx.emit(SessionEvent::Invalidate);
 
                 debug_assert!(
                     matches!(entry, indexmap::map::Entry::Occupied(_)),
@@ -1209,7 +1226,7 @@ impl Session {
         &mut self,
         variables_reference: VariablesReference,
         cx: &mut Context<Self>,
-    ) -> Vec<Variable> {
+    ) -> Vec<dap::Variable> {
         let command = VariablesCommand {
             variables_reference,
             filter: None,
@@ -1221,11 +1238,10 @@ impl Session {
         self.fetch(
             command,
             move |this, variables, cx| {
-                this.variables.insert(
-                    variables_reference,
-                    variables.iter().cloned().map(From::from).collect(),
-                );
-                cx.notify();
+                this.variables
+                    .insert(variables_reference, variables.clone());
+
+                cx.emit(SessionEvent::Invalidate);
             },
             cx,
         );

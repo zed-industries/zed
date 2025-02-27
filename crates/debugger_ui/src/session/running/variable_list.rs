@@ -1,5 +1,5 @@
 use super::stack_frame_list::{StackFrameList, StackFrameListEvent};
-use dap::StackFrameId;
+use dap::{StackFrameId, VariableReference};
 use editor::{Editor, EditorEvent};
 use gpui::{
     actions, anchored, deferred, list, AnyElement, Context, Entity, FocusHandle, Focusable, Hsla,
@@ -23,7 +23,6 @@ struct Variable {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ScopeState {
-    variables: Vec<Variable>,
     dap: dap::Scope,
     is_expanded: bool,
 }
@@ -34,10 +33,12 @@ enum VariableListEntry {
 }
 
 pub struct VariableList {
-    _scopes: HashMap<StackFrameId, Vec<ScopeState>>,
-    _selected_stack_frame_id: Option<StackFrameId>,
+    entries: Vec<VariableListEntry>,
+    scopes: HashMap<StackFrameId, Vec<ScopeState>>,
+    variables: HashMap<VariableReference, Vec<Variable>>,
+    selected_stack_frame_id: Option<StackFrameId>,
     list: ListState,
-    _session: Entity<Session>,
+    session: Entity<Session>,
     _selection: Option<VariableListEntry>,
     open_context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     focus_handle: FocusHandle,
@@ -78,49 +79,80 @@ impl VariableList {
         )
         .detach();
 
-        let _subscriptions =
-            vec![cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events)];
+        let _subscriptions = vec![
+            cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
+            cx.subscribe(&session, |this, _, _, cx| {
+                if let Some(stack_frame_id) = this.selected_stack_frame_id {
+                    this.build_entries(stack_frame_id, cx);
+                }
+            }),
+        ];
 
         Self {
             list,
-            _session: session,
+            session,
             focus_handle,
             _subscriptions,
-            _selected_stack_frame_id: None,
+            selected_stack_frame_id: None,
             _selection: None,
             open_context_menu: None,
-            _scopes: Default::default(),
+            entries: Default::default(),
+            scopes: Default::default(),
+            variables: Default::default(),
         }
     }
 
-    fn _build_entries(
-        &mut self,
-        stack_frame_id: StackFrameId,
-        _cx: &mut Context<Self>,
-    ) -> Vec<VariableListEntry> {
-        let ret = vec![];
+    fn build_entries(&mut self, stack_frame_id: StackFrameId, cx: &mut Context<Self>) {
+        let mut entries = vec![];
 
-        let Some(_scopes) = self._scopes.get_mut(&stack_frame_id) else {
-            // self.session
-            //     .update(cx, |session, cx| session.scopes(stack_frame_id, cx));
-            return ret;
+        let Some(scopes) = self.scopes.get(&stack_frame_id).cloned() else {
+            self.session.update(cx, |session, cx| {
+                let scopes = session.scopes(stack_frame_id, cx);
+
+                self.scopes.insert(
+                    stack_frame_id,
+                    scopes
+                        .iter()
+                        .cloned()
+                        .map(|scope| ScopeState {
+                            dap: scope,
+                            is_expanded: true,
+                        })
+                        .collect(),
+                );
+            });
+
+            return;
         };
 
         fn inner(
-            _this: &mut VariableList,
-            _variable_reference: u64,
-            _entries: &mut Vec<VariableListEntry>,
-            _cx: &mut Context<VariableList>,
+            this: &mut VariableList,
+            variable_reference: VariableReference,
+            depth: usize,
+            entries: &mut Vec<VariableListEntry>,
+            cx: &mut Context<VariableList>,
         ) {
+            for variable in this
+                .session
+                .update(cx, |session, cx| session.variables(variable_reference, cx))
+            {
+                let _child_ref = variable.variables_reference;
+                entries.push(VariableListEntry::_Variable(Variable {
+                    dap: variable,
+                    depth,
+                    is_expanded: false,
+                    children: Default::default(),
+                }));
+
+                // If variable is expanded we want to add it's children in a dfs order
+            }
         }
 
-        // for scope in scopes {
-        //     for variable in scope.variables {
-        //         ret.push(VariableListEntry::Variable(variable));
-        //     }
-        // }
+        for scope in scopes.iter().cloned() {
+            inner(self, scope.dap.variables_reference, 2, &mut entries, cx);
+        }
 
-        todo!()
+        self.entries = entries;
     }
 
     fn handle_stack_frame_list_events(
@@ -405,7 +437,7 @@ impl VariableList {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn _render_variable(
+    fn render_variable(
         &self,
         variable: &Variable,
         is_selected: bool,
