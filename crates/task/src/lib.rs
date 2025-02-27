@@ -336,10 +336,6 @@ pub struct ShellBuilder {
 impl ShellBuilder {
     /// Create a new ShellBuilder as configured.
     pub fn new(is_local: bool, shell: &Shell) -> Self {
-        println!(
-            "--> ShellBuilder::new(is_local: {}, shell: {:?})",
-            is_local, shell
-        );
         let (program, args) = match shell {
             Shell::System => {
                 if is_local {
@@ -436,8 +432,6 @@ impl ShellBuilder {
         }
     }
 
-    // `alacritty_terminal` uses this as default on Windows. See:
-    // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130
     fn system_shell() -> String {
         util::retrieve_system_shell()
     }
