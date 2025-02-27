@@ -841,21 +841,21 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
     assert_eq!(
                 history_after_third,
                 vec![
-                    FoundPath::Project{
+                    FoundPath::Project {
                         path: ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/third.rs")),
                         },
                         abs: Some(PathBuf::from(path!("/src/test/third.rs")))
                     },
-                    FoundPath::Project{
+                    FoundPath::Project {
                         path: ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/second.rs")),
                         },
                         abs: Some(PathBuf::from(path!("/src/test/second.rs")))
                     },
-                    FoundPath::Project{
+                    FoundPath::Project {
                         path: ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/first.rs")),
@@ -872,21 +872,21 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
     assert_eq!(
                 history_after_second_again,
                 vec![
-                    FoundPath::Project{
+                    FoundPath::Project {
                         path: ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/second.rs")),
                         },
                         abs: Some(PathBuf::from(path!("/src/test/second.rs")))
                     },
-                    FoundPath::Project{
+                    FoundPath::Project {
                         path: ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/third.rs")),
                         },
                         abs: Some(PathBuf::from(path!("/src/test/third.rs")))
                     },
-                    FoundPath::Project{
+                    FoundPath::Project {
                         path: ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/first.rs")),
@@ -1115,7 +1115,7 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
             let matches = collect_search_matches(picker);
             assert_eq!(matches.history.len(), 1, "Only one history item contains {first_query}, it should be present and others should be filtered out");
             let history_match = matches.history_found_paths.first().expect("Should have path matches for history items after querying");
-            assert_eq!(history_match, &FoundPath::Project{
+            assert_eq!(history_match, &FoundPath::Project {
                 path: ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/first.rs")),
@@ -1158,7 +1158,7 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
             let matches = collect_search_matches(picker);
             assert_eq!(matches.history.len(), 1, "Only one history item contains {first_query_again}, it should be present and others should be filtered out, even after non-matching query");
             let history_match = matches.history_found_paths.first().expect("Should have path matches for history items after querying");
-            assert_eq!(history_match, &FoundPath::Project{
+            assert_eq!(history_match, &FoundPath::Project {
                 path: ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/first.rs")),

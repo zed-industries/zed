@@ -1246,37 +1246,24 @@ impl PickerDelegate for FileFinderDelegate {
                             }
                         };
                     match &m {
-                        Match::History { path, .. } => {
-                            match path {
-                                FoundPath::Project { path, .. } => split_or_open(
-                                    workspace,
-                                    ProjectPath {
-                                        worktree_id: path.worktree_id,
-                                        path: path.path.clone(),
-                                    },
-                                    window,
-                                    cx,
-                                ),
-                                FoundPath::Abs { abs, .. } => {
-                                    if secondary {
-                                        workspace.split_abs_path(
-                                            abs.to_path_buf(),
-                                            false,
-                                            window,
-                                            cx,
-                                        )
-                                    } else {
-                                        workspace.open_abs_path(
-                                            abs.to_path_buf(),
-                                            false,
-                                            window,
-                                            cx,
-                                        )
-                                    }
+                        Match::History { path, .. } => match path {
+                            FoundPath::Project { path, .. } => split_or_open(
+                                workspace,
+                                ProjectPath {
+                                    worktree_id: path.worktree_id,
+                                    path: path.path.clone(),
+                                },
+                                window,
+                                cx,
+                            ),
+                            FoundPath::Abs { abs, .. } => {
+                                if secondary {
+                                    workspace.split_abs_path(abs.to_path_buf(), false, window, cx)
+                                } else {
+                                    workspace.open_abs_path(abs.to_path_buf(), false, window, cx)
                                 }
                             }
-                            // }
-                        }
+                        },
                         Match::Search(m) => {
                             if m.0.path.is_absolute() {
                                 if secondary {
