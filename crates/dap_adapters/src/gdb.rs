@@ -2,7 +2,6 @@ use std::ffi::OsStr;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use dap::transport::{StdioTransport, Transport};
 use gpui::AsyncApp;
 use task::DebugAdapterConfig;
 

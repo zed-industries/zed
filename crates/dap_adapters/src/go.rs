@@ -82,7 +82,11 @@ impl DebugAdapter for GoDebugAdapter {
             ]),
             cwd: config.cwd.clone(),
             envs: None,
-            connection: None,
+            connection: Some(adapters::TcpArguments {
+                host: self.host,
+                port: self.port,
+                timeout: self.port,
+            }),
             #[cfg(any(test, feature = "test-support"))]
             is_fake: false,
         })
