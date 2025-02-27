@@ -201,7 +201,6 @@ pub struct DapStore {
     mode: DapStoreMode,
     downstream_client: Option<(AnyProtoClient, u64)>,
     breakpoint_store: Entity<BreakpointStore>,
-    active_debug_line: Option<(SessionId, ProjectPath, u32)>,
     sessions: BTreeMap<SessionId, Entity<Session>>,
 }
 
@@ -278,7 +277,6 @@ impl DapStore {
                 _start_debugging_task,
             }),
             downstream_client: None,
-            active_debug_line: None,
             breakpoint_store,
             sessions: Default::default(),
         }
@@ -296,7 +294,6 @@ impl DapStore {
                 event_queue: Some(VecDeque::default()),
             }),
             downstream_client: None,
-            active_debug_line: None,
             breakpoint_store,
             sessions: Default::default(),
         }
@@ -418,22 +415,6 @@ impl DapStore {
                 ))
                 .log_err();
         }
-    }
-
-    pub fn active_debug_line(&self) -> Option<(SessionId, ProjectPath, u32)> {
-        self.active_debug_line.clone()
-    }
-
-    pub fn set_active_debug_line(
-        &mut self,
-        session_id: SessionId,
-        project_path: &ProjectPath,
-        row: u32,
-        cx: &mut Context<Self>,
-    ) {
-        self.active_debug_line = Some((session_id, project_path.clone(), row));
-        cx.emit(DapStoreEvent::ActiveDebugLineChanged);
-        cx.notify();
     }
 
     pub fn breakpoint_store(&self) -> &Entity<BreakpointStore> {

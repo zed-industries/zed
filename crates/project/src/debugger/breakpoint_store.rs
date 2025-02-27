@@ -14,10 +14,7 @@ use language::{
     Buffer, BufferSnapshot,
 };
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
-use settings::Settings;
-use settings::WorktreeId;
 use std::{
-    collections::BTreeSet,
     hash::{Hash, Hasher},
     num::NonZeroU32,
     ops::Range,
@@ -201,6 +198,10 @@ impl BreakpointStore {
             })
     }
 
+    pub fn active_position(&self) -> Option<(Arc<Path>, u32)> {
+        // TODO: implement
+        None
+    }
     pub(crate) fn all_breakpoints(
         &self,
         cx: &App,

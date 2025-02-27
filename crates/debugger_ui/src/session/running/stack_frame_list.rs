@@ -241,11 +241,13 @@ impl StackFrameList {
                             .read(cx)
                             .dap_store()
                             .update(cx, |store, cx| {
-                                store.set_active_debug_line(
+                                unimplemented!(
+                                    r#"store.set_active_debug_line(
                                     this.session.read(cx).session_id(),
                                     &project_path,
                                     row,
                                     cx,
+                                );"#
                                 );
                             })
                     })

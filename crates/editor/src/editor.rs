@@ -729,7 +729,6 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
-    pub dap_store: Option<Entity<DapStore>>,
     pub breakpoint_store: Option<Entity<BreakpointStore>>,
     /// Allow's a user to create a breakpoint by selecting this indicator
     /// It should be None while a user is not hovering over the gutter
@@ -1305,13 +1304,9 @@ impl Editor {
             None
         };
 
-        let (dap_store, breakpoint_store) = match (mode, project.as_ref()) {
-            (EditorMode::Full, Some(project)) => {
-                let dap_store = project.read(cx).dap_store();
-                let breakpoint_store = project.read(cx).breakpoint_store();
-                (Some(dap_store), Some(breakpoint_store))
-            }
-            _ => (None, None),
+        let breakpoint_store = match (mode, project.as_ref()) {
+            (EditorMode::Full, Some(project)) => Some(project.read(cx).breakpoint_store()),
+            _ => None,
         };
 
         let mut code_action_providers = Vec::new();
@@ -1448,7 +1443,7 @@ impl Editor {
             blame: None,
             blame_subscription: None,
             tasks: Default::default(),
-            dap_store,
+
             breakpoint_store,
             gutter_breakpoint_indicator: None,
             _subscriptions: vec![
@@ -5684,7 +5679,7 @@ impl Editor {
     ) -> HashMap<DisplayRow, (text::Anchor, Breakpoint)> {
         let mut breakpoint_display_points = HashMap::default();
 
-        let Some(dap_store) = self.dap_store.clone() else {
+        let Some(breakpoint_store) = self.breakpoint_store.clone() else {
             return breakpoint_display_points;
         };
 
@@ -5711,7 +5706,7 @@ impl Editor {
                     continue;
                 };
 
-                let breakpoints = dap_store.read(cx).breakpoint_store().read(cx).breakpoints(
+                let breakpoints = breakpoint_store.read(cx).breakpoints(
                     &buffer,
                     Some(info.range.context.start..info.range.context.end),
                     info.buffer.clone(),
@@ -7476,22 +7471,23 @@ impl Editor {
             .summary_for_anchor::<Point>(&breakpoint_position)
             .row;
 
-        let bp = self.dap_store.clone()?.read_with(cx, |dap_store, cx| {
-            dap_store
-                .breakpoint_store()
-                .read(cx)
-                .breakpoints(
-                    &buffer,
-                    Some(breakpoint_position..(text::Anchor::MAX)),
-                    buffer_snapshot.clone(),
-                    cx,
-                )
-                .next()
-                .filter(|(anchor, _)| {
-                    buffer_snapshot.summary_for_anchor::<Point>(anchor).row == row
-                })
-                .cloned()
-        });
+        let bp = self
+            .breakpoint_store
+            .as_ref()?
+            .read_with(cx, |breakpoint_store, cx| {
+                breakpoint_store
+                    .breakpoints(
+                        &buffer,
+                        Some(breakpoint_position..(text::Anchor::MAX)),
+                        buffer_snapshot.clone(),
+                        cx,
+                    )
+                    .next()
+                    .filter(|(anchor, _)| {
+                        buffer_snapshot.summary_for_anchor::<Point>(anchor).row == row
+                    })
+                    .cloned()
+            });
         bp
     }
 
@@ -14040,29 +14036,33 @@ impl Editor {
     }
 
     pub fn go_to_active_debug_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(dap_store) = self.dap_store.as_ref() else {
-            return;
-        };
+        let _ = maybe!({
+            let breakpoint_store = self.breakpoint_store.as_ref()?;
 
-        let Some(project_path) = self.project_path(cx) else {
-            return;
-        };
+            let project_path = self.project_path(cx)?;
 
-        if let Some((_, path, position)) = dap_store.read(cx).active_debug_line() {
-            if path == project_path {
-                self.go_to_line::<DebugCurrentRowHighlight>(
-                    position,
-                    Some(cx.theme().colors().editor_debugger_active_line_background),
-                    window,
-                    cx,
-                );
+            let abs_path = self
+                .project
+                .as_ref()?
+                .read(cx)
+                .absolute_path(&project_path, cx)?;
+            if let Some((path, position)) = breakpoint_store.read(cx).active_position() {
+                if path.as_ref() == abs_path {
+                    self.go_to_line::<DebugCurrentRowHighlight>(
+                        position,
+                        Some(cx.theme().colors().editor_debugger_active_line_background),
+                        window,
+                        cx,
+                    );
 
-                return;
+                    return Some(());
+                }
             }
-        }
 
-        self.clear_row_highlights::<DebugCurrentRowHighlight>();
-        cx.notify();
+            self.clear_row_highlights::<DebugCurrentRowHighlight>();
+            cx.notify();
+            Some(())
+        });
     }
 
     pub fn copy_file_name_without_extension(

@@ -2074,10 +2074,6 @@ impl EditorElement {
         cx: &mut App,
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
-            if editor.dap_store.is_none() {
-                return Vec::new();
-            };
-
             breakpoints
                 .into_iter()
                 .filter_map(|(point, (text_anchor, bp))| {
