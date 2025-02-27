@@ -1267,11 +1267,7 @@ impl GitPanel {
             .find(|entry| match entry.status_entry() {
                 Some(entry) => entry.is_staged.unwrap_or(false),
                 _ => false,
-            });
-
-        let Some(entry) = entry else {
-            return None;
-        };
+            })?;
 
         let GitListEntry::GitStatusEntry(git_status_entry) = entry.clone() else {
             return None;
@@ -1287,17 +1283,13 @@ impl GitPanel {
             None
         };
 
-        let Some(action_text) = action_text else {
-            return None;
-        };
-
         let file_name = git_status_entry
             .repo_path
             .file_name()
             .unwrap_or_default()
             .to_string_lossy();
 
-        Some(format!("{} {}", action_text, file_name))
+        Some(format!("{} {}", action_text?, file_name))
     }
 
     fn update_editor_placeholder(&mut self, cx: &mut Context<Self>) {
