@@ -207,11 +207,19 @@ impl VariableList {
         }
     }
 
+    fn toggle_scope(&mut self, scope_ref: VariableReference, cx: &mut Context<Self>) {
+        let Some(entry) = self.scope_states.get_mut(&scope_ref) else {
+            debug_panic!("Trying to toggle scope in variable list that has an no state");
+            return;
+        };
+
+        entry.is_expanded = !entry.is_expanded;
+        self.build_entries(cx);
+    }
+
     fn toggle_variable(&mut self, var_ref: VariableReference, cx: &mut Context<Self>) {
         let Some(entry) = self.variable_states.get_mut(&var_ref) else {
-            debug_panic!(
-                "Trying to toggle variable in variable list that has an out of bounds index"
-            );
+            debug_panic!("Trying to toggle variable in variable list that has an no state");
             return;
         };
 
@@ -521,7 +529,7 @@ impl VariableList {
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let element_id = scope.variables_reference;
+        let var_ref = scope.variables_reference;
 
         let colors = _get_entry_color(cx);
         let bg_hover_color = if !is_selected {
@@ -536,7 +544,7 @@ impl VariableList {
         };
 
         div()
-            .id(element_id as usize)
+            .id(var_ref as usize)
             .group("variable_list_entry")
             .border_1()
             .border_r_2()
@@ -551,16 +559,14 @@ impl VariableList {
                 }
             }))
             .child(
-                ListItem::new(SharedString::from(format!(
-                    "scope-{}",
-                    scope.variables_reference
-                )))
-                .selectable(false)
-                .indent_level(1)
-                .indent_step_size(px(20.))
-                .always_show_disclosure_icon(true)
-                .toggle(state.is_expanded)
-                .child(div().text_ui(cx).w_full().child(scope.name.clone())),
+                ListItem::new(SharedString::from(format!("scope-{}", var_ref)))
+                    .selectable(false)
+                    .indent_level(1)
+                    .indent_step_size(px(20.))
+                    .always_show_disclosure_icon(true)
+                    .toggle(state.is_expanded)
+                    .on_toggle(cx.listener(move |this, _, _, cx| this.toggle_scope(var_ref, cx)))
+                    .child(div().text_ui(cx).w_full().child(scope.name.clone())),
             )
             .into_any()
     }
