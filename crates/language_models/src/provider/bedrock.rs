@@ -962,7 +962,7 @@ impl Render for ConfigurationView {
             "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess";
         const INSTRUCTIONS: [&str; 5] = [
             "To use Zed's assistant with Bedrock, you need to add the Access Key ID, Secret Access Key and AWS Region. Follow these steps:",
-            "- Create your credentials at:",
+            "- Create a user and security credentials here:",
             "- Grant that user permissions according to this documentation:",
             "- Go to the Bedrock console and select the models you would like access to: ",
             "- Paste your Access Key ID, Secret Key, and Region below and hit enter to use the assistant:",
