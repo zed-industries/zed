@@ -7,8 +7,7 @@ use gpui::{
     pulsating_between, Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription,
     TextStyle, WeakEntity,
 };
-use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
-use language_model_selector::LanguageModelSelector;
+use language_model::LanguageModelRegistry;
 use rope::Point;
 use settings::Settings;
 use std::time::Duration;
