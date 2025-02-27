@@ -8,6 +8,7 @@ use gpui::{
 use project::debugger::session::Session;
 use std::collections::HashMap;
 use ui::{prelude::*, ContextMenu, ListItem};
+use util::debug_panic;
 
 actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
 
@@ -23,7 +24,7 @@ struct ScopeState {
 }
 
 enum VariableListEntry {
-    _Scope((dap::Scope, ScopeState)),
+    Scope((dap::Scope, ScopeState)),
     Variable((dap::Variable, VariableState)),
 }
 
@@ -120,14 +121,13 @@ impl VariableList {
                 let var_state;
 
                 if child_ref != 0 {
-                    var_state =
-                        *this
-                            .variable_states
-                            .entry(variable_reference)
-                            .or_insert(VariableState {
-                                depth,
-                                is_expanded: false,
-                            });
+                    var_state = *this
+                        .variable_states
+                        .entry(child_ref)
+                        .or_insert(VariableState {
+                            depth,
+                            is_expanded: false,
+                        });
                 } else {
                     var_state = VariableState {
                         depth,
@@ -150,7 +150,8 @@ impl VariableList {
                 .or_insert(ScopeState { is_expanded: true });
 
             let scope_ref = scope.variables_reference;
-            entries.push(VariableListEntry::_Scope((scope, state)));
+
+            entries.push(VariableListEntry::Scope((scope, state)));
 
             if state.is_expanded {
                 inner(self, scope_ref, 2, &mut entries, cx);
@@ -158,6 +159,8 @@ impl VariableList {
         }
 
         self.entries = entries;
+        self.list.reset(self.entries.len());
+        cx.notify();
     }
 
     fn handle_stack_frame_list_events(
@@ -174,41 +177,6 @@ impl VariableList {
         }
     }
 
-    fn handle_selected_stack_frame_changed(
-        &mut self,
-        _stack_frame_id: StackFrameId,
-        _cx: &mut Context<Self>,
-    ) {
-        // if self.scopes.contains_key(&stack_frame_id) {
-        //     return self.build_entries(true, cx);
-        // }
-
-        // self.fetch_variables_task = Some(cx.spawn(|this, mut cx| async move {
-        //     let task = this.update(&mut cx, |variable_list, cx| {
-        //         variable_list.fetch_variables_for_stack_frame(stack_frame_id, cx)
-        //     })?;
-
-        //     let (scopes, variables) = task.await?;
-
-        //     this.update(&mut cx, |variable_list, cx| {
-        //         variable_list.scopes.insert(stack_frame_id, scopes);
-
-        //         for (scope_id, variables) in variables.into_iter() {
-        //             let mut variable_index = ScopeVariableIndex::new();
-        //             variable_index.add_variables(scope_id, variables);
-
-        //             variable_list
-        //                 .variables
-        //                 .insert((stack_frame_id, scope_id), variable_index);
-        //         }
-
-        //         variable_list.build_entries(true, cx);
-
-        //         variable_list.fetch_variables_task.take();
-        //     })
-        // }));
-    }
-
     // pub fn completion_variables(&self, cx: &mut Context<Self>) -> Vec<VariableContainer> {
     //     let stack_frame_id = self
     //         .stack_frame_list
@@ -220,24 +188,36 @@ impl VariableList {
     //         .collect()
     // }
 
-    fn render_entry(&mut self, _ix: usize, _cx: &mut Context<Self>) -> AnyElement {
-        // let Some(entry) = self.entries.get(ix) else {
-        //     debug_panic!("Trying to render entry in variable list that has an out of bounds index");
-        //     return div().into_any_element();
-        // };
+    fn render_entry(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        let Some(entry) = self.entries.get(ix) else {
+            debug_panic!("Trying to render entry in variable list that has an out of bounds index");
+            return div().into_any_element();
+        };
 
-        return div().into_any_element();
+        // todo(debugger) pass a valid value for is selected
+        let is_selected = false;
 
-        // let entry = &entries[ix];
-        // match entry {
-        //     VariableListEntry::Scope(scope) => self.render_scope(&scope, false, cx), // todo(debugger) pass a valid value for is selected
-        //     VariableListEntry::Variable(variable) => {
-        //         self.render_variable(&variable, false, cx)
-        //     }
-        // }
+        match entry {
+            VariableListEntry::Scope((scope, state)) => {
+                self.render_scope(scope.clone(), *state, is_selected, cx)
+            }
+            VariableListEntry::Variable((variable, state)) => {
+                self.render_variable(variable.clone(), *state, is_selected, cx)
+            }
+        }
     }
 
-    fn _toggle_variable(&mut self, var_ref: VariableReference, _cx: &mut Context<Self>) {}
+    fn toggle_variable(&mut self, var_ref: VariableReference, cx: &mut Context<Self>) {
+        let Some(entry) = self.variable_states.get_mut(&var_ref) else {
+            debug_panic!(
+                "Trying to toggle variable in variable list that has an out of bounds index"
+            );
+            return;
+        };
+
+        entry.is_expanded = !entry.is_expanded;
+        self.build_entries(cx);
+    }
 
     // fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
     //     let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
@@ -443,6 +423,7 @@ impl VariableList {
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let var_ref = variable.variables_reference;
         let colors = _get_entry_color(cx);
         let bg_hover_color = if !is_selected {
             colors.hover
@@ -490,21 +471,17 @@ impl VariableList {
                 .indent_level(state.depth as usize)
                 .indent_step_size(px(20.))
                 .always_show_disclosure_icon(true)
-                .toggle(state.is_expanded)
-                // .when(
-                //     variable.dap.variables_reference > 0,
-                //     |list_item| {
-                //         list_item.on_toggle(cx.listener({
-                //             let variable = variable.clone();
-                //             move |this, _, _window, cx| {
-                //                 this.session.update(cx, |session, cx| {
-                //                     session.variables(thread_id, stack_frame_id, variables_reference, cx)
-                //                 })
-                //                 this.toggle_variable(&scope, &variable, depth, cx)
-                //             }
-                //         }))
-                //     },
-                // )
+                .when(var_ref > 0, |list_item| {
+                    list_item.toggle(state.is_expanded).on_toggle(cx.listener({
+                        move |this, _, _window, cx| {
+                            this.session.update(cx, |session, cx| {
+                                session.variables(var_ref, cx);
+                            });
+
+                            this.toggle_variable(var_ref, cx);
+                        }
+                    }))
+                })
                 .on_secondary_mouse_down(cx.listener({
                     // let scope = scope.clone();
                     // let variable = variable.clone();
@@ -537,7 +514,7 @@ impl VariableList {
             .into_any()
     }
 
-    fn _render_scope(
+    fn render_scope(
         &self,
         scope: dap::Scope,
         state: ScopeState,
@@ -597,6 +574,7 @@ impl Focusable for VariableList {
 
 impl Render for VariableList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.build_entries(cx);
         // todo(debugger): We are reconstructing the variable list list state every frame
         // which is very bad!! We should only reconstruct the variable list state when necessary.
         // Will fix soon
