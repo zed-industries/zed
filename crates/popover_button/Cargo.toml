@@ -15,8 +15,5 @@ path = "src/popover_button.rs"
 default = []
 
 [dependencies]
-anyhow.workspace = true
 gpui.workspace = true
 ui.workspace = true
-util.workspace = true
-picker.workspace = true
