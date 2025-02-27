@@ -81,7 +81,6 @@ pub struct TerminalPanel {
 
 impl TerminalPanel {
     pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        println!("--> TerminalPanel::new");
         let project = workspace.project();
         let pane = new_terminal_pane(workspace.weak_handle(), project.clone(), false, window, cx);
         let center = PaneGroup::new(pane.clone());
