@@ -3135,9 +3135,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // dbg!(&buffer_edits_subscriptions_map);
-        // let buf = self.buffer.read(cx).snapshot(cx);
-
         let mut buffer_edit_ranges_map = HashMap::<
             (BufferId, Arc<language::Language>),
             (WeakEntity<Buffer>, Vec<Range<usize>>),
@@ -3167,8 +3164,7 @@ impl Editor {
         }
 
         for ((buffer_id, language), (buffer, edited_ranges)) in buffer_edit_ranges_map {
-            let Ok((mut excerpt_buffer_parse_status_rx, buffer_version_initial)) =
-                buffer.read_with(cx, |buffer, _| (buffer.parse_status(), buffer.version()))
+            let Ok(buffer_version_initial) = buffer.read_with(cx, |buffer, _| buffer.version())
             else {
                 continue;
             };
@@ -3254,7 +3250,6 @@ impl Editor {
                 {
                     let selections = this.read_with(&cx, |this, _| {
                         this.selections.disjoint_anchors().clone()
-                        // this.selections.disjoint_anchors().iter().filter(|selection| selection.head().buffer_id == selection.tail().buffer_id && selection.head().buffer_id == Some(buffer_id)).cloned().collect::<Vec<_>>()
                     }).context("Auto Edit Operation Failed - Failed to get selections")?;
                     for selection in selections.iter() {
                         let Some(selection_buffer_offset_head) = multi_buffer_snapshot.point_to_buffer_offset(selection.head()) else {
@@ -3302,7 +3297,6 @@ impl Editor {
                     }
                 }
 
-                // dbg!(selection);
                 buffer.update(&mut cx, |buffer, cx| {
                     // todo! autoindent mode
                     buffer.edit(edits, None, cx);
@@ -3321,11 +3315,6 @@ impl Editor {
                     }));
 
                     let base_selections = base_selections.into_iter().map(|selection| selection.map(|anchor| anchor.to_offset(&multi_buffer_snapshot))).collect::<Vec<_>>();
-                    // this.read_with(&cx, |this, cx| {
-                    //     this.buffer.read_with(cx, |buffer, cx| {
-                    //     })
-                    // })
-                    // multi_buffer_snapshot.
                     this.update_in(&mut cx, |this, window, cx| {
                         this.change_selections_inner(None, false, window, cx, |s| {
                             s.select(base_selections);
@@ -3333,16 +3322,6 @@ impl Editor {
                     }).context("Auto Edit Operation Failed - Failed to update selections")?;
                 }
 
-                // let Ok(edits) = edits else {
-                //     dbg!(edits);
-                //     return Ok(());
-                // };
-
-                // cx.background_executor()
-                //     .spawn(async move {
-                //         // language.
-                //     })
-                //     .detach();
                 Ok(())
             }).detach_and_log_err(cx);
         }

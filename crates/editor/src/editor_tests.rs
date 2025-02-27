@@ -16183,7 +16183,6 @@ mod autoclose_tags {
     use super::*;
     use languages::language;
     use std::sync::Arc;
-    use text::Anchor;
 
     macro_rules! check {
         ($name:ident, $initial:literal + $input:literal => $expected:expr) => {
@@ -16204,13 +16203,6 @@ mod autoclose_tags {
 
                     buffer.set_language(Some(Arc::new(language)), cx)
                 });
-                // let default_state = r#"
-                //     function Component() {
-                //         return {}
-                //     }
-                //     "#
-                // .unindent();
-                // cx.set_state(&default_state.replace("{}", $initial));
                 cx.set_state($initial);
                 cx.run_until_parked();
 
@@ -16218,7 +16210,6 @@ mod autoclose_tags {
                     editor.handle_input($input, window, cx);
                 });
                 cx.run_until_parked();
-                // cx.assert_editor_state(&default_state.replace("{}", $expected));
                 cx.assert_editor_state($expected);
             }
         };
