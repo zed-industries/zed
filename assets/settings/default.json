@@ -398,16 +398,7 @@
     "edit_debounce_ms": 700,
     // Time to wait after scrolling the buffer, before requesting the hints,
     // set to 0 to disable debouncing.
-    "scroll_debounce_ms": 50,
-    /// A set of modifiers which, when pressed, will toggle the visibility of inlay hints.
-    /// If the set if empty or not all the modifiers specified are pressed, inlay hints will not be toggled.
-    "toggle_on_modifiers_press": {
-      "control": false,
-      "shift": false,
-      "alt": false,
-      "platform": false,
-      "function": false
-    }
+    "scroll_debounce_ms": 50
   },
   "project_panel": {
     // Whether to show the project panel button in the status bar

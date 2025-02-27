@@ -9,7 +9,7 @@ use ec4rs::{
     Properties as EditorconfigProperties,
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
-use gpui::{App, Modifiers};
+use gpui::App;
 use itertools::{Either, Itertools};
 use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
@@ -905,13 +905,6 @@ pub struct InlayHintSettings {
     /// Default: 50
     #[serde(default = "scroll_debounce_ms")]
     pub scroll_debounce_ms: u64,
-    /// Toggles inlay hints (hides or shows) when the user presses the modifiers specified.
-    /// If only a subset of the modifiers specified is pressed, hints are not toggled.
-    /// If no modifiers are specified, this is equivalent to `None`.
-    ///
-    /// Default: None
-    #[serde(default)]
-    pub toggle_on_modifiers_press: Option<Modifiers>,
 }
 
 fn edit_debounce_ms() -> u64 {
