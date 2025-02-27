@@ -636,7 +636,7 @@ impl Thread {
                             Ok(output) => {
                                 tool_results.push(LanguageModelToolResult {
                                     tool_use_id: tool_use_id.clone(),
-                                    content: output,
+                                    content: output.into(),
                                     is_error: false,
                                 });
                                 thread.pending_tool_uses_by_id.remove(&tool_use_id);
@@ -646,14 +646,15 @@ impl Thread {
                             Err(err) => {
                                 tool_results.push(LanguageModelToolResult {
                                     tool_use_id: tool_use_id.clone(),
-                                    content: err.to_string(),
+                                    content: err.to_string().into(),
                                     is_error: true,
                                 });
 
                                 if let Some(tool_use) =
                                     thread.pending_tool_uses_by_id.get_mut(&tool_use_id)
                                 {
-                                    tool_use.status = PendingToolUseStatus::Error(err.to_string());
+                                    tool_use.status =
+                                        PendingToolUseStatus::Error(err.to_string().into());
                                 }
 
                                 cx.emit(ThreadEvent::ToolFinished { tool_use_id });
@@ -716,7 +717,7 @@ pub struct PendingToolUse {
     pub id: LanguageModelToolUseId,
     /// The ID of the Assistant message in which the tool use was requested.
     pub assistant_message_id: MessageId,
-    pub name: String,
+    pub name: Arc<str>,
     pub input: serde_json::Value,
     pub status: PendingToolUseStatus,
 }
@@ -725,7 +726,7 @@ pub struct PendingToolUse {
 pub enum PendingToolUseStatus {
     Idle,
     Running { _task: Shared<Task<()>> },
-    Error(#[allow(unused)] String),
+    Error(#[allow(unused)] Arc<str>),
 }
 
 impl PendingToolUseStatus {
