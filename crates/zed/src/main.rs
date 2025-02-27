@@ -15,6 +15,7 @@ use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use env_logger::Builder;
 use extension::ExtensionHostProxy;
+use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
@@ -44,7 +45,10 @@ use std::{
     process,
     sync::Arc,
 };
-use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
+use theme::{
+    ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
+    ThemeSettings,
+};
 use time::UtcOffset;
 use util::{maybe, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -169,6 +173,22 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 }
 
 fn main() {
+    let args = Args::parse();
+
+    #[cfg(target_os = "windows")]
+    let run_foreground = args.foreground;
+
+    #[cfg(all(not(debug_assertions), target_os = "windows"))]
+    if run_foreground {
+        unsafe {
+            use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+
+            if run_foreground {
+                let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+            }
+        }
+    }
+
     menu::init();
     zed_actions::init();
 
@@ -213,7 +233,10 @@ fn main() {
 
             #[cfg(target_os = "windows")]
             {
-                !crate::zed::windows_only_instance::check_single_instance()
+                !crate::zed::windows_only_instance::check_single_instance(
+                    open_listener.clone(),
+                    run_foreground,
+                )
             }
 
             #[cfg(target_os = "macos")]
@@ -432,7 +455,7 @@ fn main() {
             cx,
         );
         supermaven::init(app_state.client.clone(), cx);
-        language_model::init(cx);
+        language_model::init(app_state.client.clone(), cx);
         language_models::init(
             app_state.user_store.clone(),
             app_state.client.clone(),
@@ -515,10 +538,10 @@ fn main() {
         zeta::init(cx);
 
         cx.observe_global::<SettingsStore>({
+            let fs = fs.clone();
             let languages = app_state.languages.clone();
             let http = app_state.client.http_client();
             let client = app_state.client.clone();
-
             move |cx| {
                 for &mut window in cx.windows().iter_mut() {
                     let background_appearance = cx.theme().window_background_appearance();
@@ -528,6 +551,9 @@ fn main() {
                         })
                         .ok();
                 }
+
+                eager_load_active_theme_and_icon_theme(fs.clone(), cx);
+
                 languages.set_theme(cx.theme().clone());
                 let new_host = &client::ClientSettings::get_global(cx).server_url;
                 if &http.base_url() != new_host {
@@ -567,7 +593,6 @@ fn main() {
         })
         .detach_and_log_err(cx);
 
-        let args = Args::parse();
         let urls: Vec<_> = args
             .paths_or_urls
             .iter()
@@ -723,10 +748,10 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
 async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
     if stdout_is_a_pty() {
-        if *client::ZED_DEVELOPMENT_AUTH {
-            client.authenticate_and_connect(true, cx).await?;
-        } else if client::IMPERSONATE_LOGIN.is_some() {
+        if client::IMPERSONATE_LOGIN.is_some() {
             client.authenticate_and_connect(false, cx).await?;
+        } else if client.has_credentials(cx).await {
+            client.authenticate_and_connect(true, cx).await?;
         }
     } else if client.has_credentials(cx).await {
         client.authenticate_and_connect(true, cx).await?;
@@ -1005,6 +1030,11 @@ struct Args {
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
+
+    /// Run zed in the foreground, only used on Windows, to match the behavior of the behavior on macOS.
+    #[arg(long)]
+    #[cfg(target_os = "windows")]
+    foreground: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1060,6 +1090,66 @@ fn load_embedded_fonts(cx: &App) {
     cx.text_system()
         .add_fonts(embedded_fonts.into_inner())
         .unwrap();
+}
+
+/// Eagerly loads the active theme and icon theme based on the selections in the
+/// theme settings.
+///
+/// This fast path exists to load these themes as soon as possible so the user
+/// doesn't see the default themes while waiting on extensions to load.
+fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &App) {
+    let extension_store = ExtensionStore::global(cx);
+    let theme_registry = ThemeRegistry::global(cx);
+    let theme_settings = ThemeSettings::get_global(cx);
+    let appearance = cx.window_appearance().into();
+
+    if let Some(theme_selection) = theme_settings.theme_selection.as_ref() {
+        let theme_name = theme_selection.theme(appearance);
+        if matches!(theme_registry.get(theme_name), Err(ThemeNotFoundError(_))) {
+            if let Some(theme_path) = extension_store.read(cx).path_to_extension_theme(theme_name) {
+                cx.spawn({
+                    let theme_registry = theme_registry.clone();
+                    let fs = fs.clone();
+                    |cx| async move {
+                        theme_registry.load_user_theme(&theme_path, fs).await?;
+
+                        cx.update(|cx| {
+                            ThemeSettings::reload_current_theme(cx);
+                        })
+                    }
+                })
+                .detach_and_log_err(cx);
+            }
+        }
+    }
+
+    if let Some(icon_theme_selection) = theme_settings.icon_theme_selection.as_ref() {
+        let icon_theme_name = icon_theme_selection.icon_theme(appearance);
+        if matches!(
+            theme_registry.get_icon_theme(icon_theme_name),
+            Err(IconThemeNotFoundError(_))
+        ) {
+            if let Some((icon_theme_path, icons_root_path)) = extension_store
+                .read(cx)
+                .path_to_extension_icon_theme(icon_theme_name)
+            {
+                cx.spawn({
+                    let theme_registry = theme_registry.clone();
+                    let fs = fs.clone();
+                    |cx| async move {
+                        theme_registry
+                            .load_icon_theme(&icon_theme_path, &icons_root_path, fs)
+                            .await?;
+
+                        cx.update(|cx| {
+                            ThemeSettings::reload_current_icon_theme(cx);
+                        })
+                    }
+                })
+                .detach_and_log_err(cx);
+            }
+        }
+    }
 }
 
 /// Spawns a background task to load the user themes from the themes directory.

@@ -6,7 +6,11 @@ pub mod repository;
 pub mod status;
 
 use anyhow::{anyhow, Context as _, Result};
+use gpui::action_with_deprecated_aliases;
 use gpui::actions;
+use gpui::impl_actions;
+use repository::PushOptions;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fmt;
@@ -26,24 +30,36 @@ pub static COMMIT_MESSAGE: LazyLock<&'static OsStr> =
     LazyLock::new(|| OsStr::new("COMMIT_EDITMSG"));
 pub static INDEX_LOCK: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("index.lock"));
 
+#[derive(Debug, Copy, Clone, PartialEq, Deserialize, JsonSchema)]
+pub struct Push {
+    pub options: Option<PushOptions>,
+}
+
+impl_actions!(git, [Push]);
+
 actions!(
     git,
     [
+        // per-hunk
+        ToggleStaged,
+        StageAndNext,
+        UnstageAndNext,
+        // per-file
         StageFile,
         UnstageFile,
-        ToggleStaged,
-        // Revert actions are currently in the editor crate:
-        // editor::RevertFile,
-        // editor::RevertSelectedHunks
+        // repo-wide
         StageAll,
         UnstageAll,
-        DiscardTrackedChanges,
+        RestoreTrackedFiles,
         TrashUntrackedFiles,
         Uncommit,
+        Pull,
+        Fetch,
         Commit,
-        ClearCommitMessage
     ]
 );
+action_with_deprecated_aliases!(git, RestoreFile, ["editor::RevertFile"]);
+action_with_deprecated_aliases!(git, Restore, ["editor::RevertSelectedHunks"]);
 
 /// The length of a Git short SHA.
 pub const SHORT_SHA_LENGTH: usize = 7;

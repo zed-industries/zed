@@ -118,7 +118,7 @@ mv Cargo.toml.backup Cargo.toml
 popd
 echo "Bundled ${app_path}"
 
-if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" && -n "${APPLE_NOTARIZATION_USERNAME:-}" && -n "${APPLE_NOTARIZATION_PASSWORD:-}" ]]; then
+if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" && -n "${APPLE_NOTARIZATION_KEY:-}" && -n "${APPLE_NOTARIZATION_KEY_ID:-}" && -n "${APPLE_NOTARIZATION_ISSUER_ID:-}" ]]; then
     can_code_sign=true
 
     echo "Setting up keychain for code signing..."
@@ -247,7 +247,7 @@ function sign_app_binaries() {
         /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}/Contents/MacOS/zed" -v
         /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}" -v
     else
-        echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_USERNAME, APPLE_NOTARIZATION_PASSWORD"
+        echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_KEY, APPLE_NOTARIZATION_KEY_ID, APPLE_NOTARIZATION_ISSUER_ID"
         if [[ "$local_only" = false ]]; then
             echo "To create a self-signed local build use ./scripts/build.sh -ldf"
             exit 1
@@ -311,23 +311,7 @@ function sign_app_binaries() {
         rm -rf ${dmg_source_directory}
         mkdir -p ${dmg_source_directory}
         mv "${app_path}" "${dmg_source_directory}"
-
-        if [[ $can_code_sign = true ]]; then
-            echo "Creating temporary DMG at ${dmg_file_path} using ${dmg_source_directory} to notarize app bundle"
-            hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
-
-            echo "Code-signing DMG"
-            /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
-
-            echo "Notarizing DMG with Apple"
-            "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTARIZATION_TEAM" "${dmg_file_path}"
-
-            echo "Removing temporary DMG (used only for notarization)"
-            rm "${dmg_file_path}"
-
-            echo "Stapling notarization ticket to ${dmg_source_directory}/${bundle_name}"
-            "${xcode_bin_dir_path}/stapler" staple "${dmg_source_directory}/${bundle_name}"
-        fi
+        notarization_key_file=$(mktemp)
 
         echo "Adding symlink to /Applications to ${dmg_source_directory}"
         ln -s /Applications ${dmg_source_directory}
@@ -347,7 +331,9 @@ function sign_app_binaries() {
         if [[ $can_code_sign = true ]]; then
             echo "Notarizing DMG with Apple"
             /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
-            "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTARIZATION_TEAM" "${dmg_file_path}"
+            echo "$APPLE_NOTARIZATION_KEY" > "$notarization_key_file"
+            "${xcode_bin_dir_path}/notarytool" submit --wait --key "$notarization_key_file" --key-id "$APPLE_NOTARIZATION_KEY_ID" --issuer "$APPLE_NOTARIZATION_ISSUER_ID" "${dmg_file_path}"
+            rm "$notarization_key_file"
             "${xcode_bin_dir_path}/stapler" staple "${dmg_file_path}"
         fi
 

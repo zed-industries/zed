@@ -9,7 +9,7 @@ use clock::ReplicaId;
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use context_server::ContextServerFactoryRegistry;
-use fs::Fs;
+use fs::{Fs, RemoveOptions};
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
@@ -350,6 +350,12 @@ impl ContextStore {
         }
     }
 
+    pub fn contexts(&self) -> Vec<SavedContextMetadata> {
+        let mut contexts = self.contexts_metadata.iter().cloned().collect::<Vec<_>>();
+        contexts.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.mtime));
+        contexts
+    }
+
     pub fn create(&mut self, cx: &mut Context<Self>) -> Entity<AssistantContext> {
         let context = cx.new(|cx| {
             AssistantContext::local(
@@ -466,6 +472,38 @@ impl ContextStore {
                     context
                 }
             })
+        })
+    }
+
+    pub fn delete_local_context(
+        &mut self,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let fs = self.fs.clone();
+
+        cx.spawn(|this, mut cx| async move {
+            fs.remove_file(
+                &path,
+                RemoveOptions {
+                    recursive: false,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
+
+            this.update(&mut cx, |this, cx| {
+                this.contexts.retain(|context| {
+                    context
+                        .upgrade()
+                        .and_then(|context| context.read(cx).path())
+                        != Some(&path)
+                });
+                this.contexts_metadata
+                    .retain(|context| context.path != path);
+            })?;
+
+            Ok(())
         })
     }
 

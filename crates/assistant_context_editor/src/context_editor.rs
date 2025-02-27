@@ -517,6 +517,7 @@ impl ContextEditor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn run_command(
         &mut self,
         command_range: Range<language::Anchor>,
@@ -633,7 +634,7 @@ impl ContextEditor {
                                 }
                             });
                             let placeholder = FoldPlaceholder {
-                                render: Arc::new(move |_, _, _, _| Empty.into_any()),
+                                render: Arc::new(move |_, _, _| Empty.into_any()),
                                 ..Default::default()
                             };
                             let render_toggle = {
@@ -1086,7 +1087,7 @@ impl ContextEditor {
         patch: AssistantPatch,
         mut cx: AsyncWindowContext,
     ) -> Result<()> {
-        let project = this.update(&mut cx, |this, _| this.project.clone())?;
+        let project = this.read_with(&cx, |this, _| this.project.clone())?;
         let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
 
         let editor = cx.new_window_entity(|window, cx| {
@@ -1111,7 +1112,7 @@ impl ContextEditor {
             editor
         })?;
 
-        this.update_in(&mut cx, |this, window, cx| {
+        this.update(&mut cx, |this, _| {
             if let Some(patch_state) = this.patches.get_mut(&patch.range) {
                 patch_state.editor = Some(PatchEditorState {
                     editor: editor.downgrade(),
@@ -1119,19 +1120,12 @@ impl ContextEditor {
                 });
                 patch_state.update_task.take();
             }
-
-            this.workspace
-                .update(cx, |workspace, cx| {
-                    workspace.add_item_to_active_pane(
-                        Box::new(editor.clone()),
-                        None,
-                        false,
-                        window,
-                        cx,
-                    )
-                })
-                .log_err();
         })?;
+        this.read_with(&cx, |this, _| this.workspace.clone())?
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, window, cx)
+            })
+            .log_err();
 
         Ok(())
     }
@@ -1233,8 +1227,8 @@ impl ContextEditor {
                     .px_1()
                     .mr_0p5()
                     .border_1()
-                    .border_color(theme::color_alpha(colors.border_variant, 0.6))
-                    .bg(theme::color_alpha(colors.element_background, 0.6))
+                    .border_color(colors.border_variant.alpha(0.6))
+                    .bg(colors.element_background.alpha(0.6))
                     .child("esc"),
             )
             .child("to cancel")
@@ -1513,15 +1507,11 @@ impl ContextEditor {
 
                 (!text.is_empty()).then_some((text, true))
             } else {
-                let anchor = context_editor.selections.newest_anchor();
-                let text = context_editor
-                    .buffer()
-                    .read(cx)
-                    .read(cx)
-                    .text_for_range(anchor.range())
-                    .collect::<String>();
+                let selection = context_editor.selections.newest_adjusted(cx);
+                let buffer = context_editor.buffer().read(cx).snapshot(cx);
+                let selected_text = buffer.text_for_range(selection.range()).collect::<String>();
 
-                (!text.is_empty()).then_some((text, false))
+                (!selected_text.is_empty()).then_some((selected_text, false))
             }
         })
     }
@@ -1776,23 +1766,16 @@ impl ContextEditor {
         &mut self,
         cx: &mut Context<Self>,
     ) -> (String, CopyMetadata, Vec<text::Selection<usize>>) {
-        let (snapshot, selection, creases) = self.editor.update(cx, |editor, cx| {
-            let mut selection = editor.selections.newest::<Point>(cx);
+        let (selection, creases) = self.editor.update(cx, |editor, cx| {
+            let mut selection = editor.selections.newest_adjusted(cx);
             let snapshot = editor.buffer().read(cx).snapshot(cx);
 
-            let is_entire_line = selection.is_empty() || editor.selections.line_mode;
-            if is_entire_line {
-                selection.start = Point::new(selection.start.row, 0);
-                selection.end =
-                    cmp::min(snapshot.max_point(), Point::new(selection.start.row + 1, 0));
-                selection.goal = SelectionGoal::None;
-            }
+            selection.goal = SelectionGoal::None;
 
             let selection_start = snapshot.point_to_offset(selection.start);
 
             (
-                snapshot.clone(),
-                selection.clone(),
+                selection.map(|point| snapshot.point_to_offset(point)),
                 editor.display_map.update(cx, |display_map, cx| {
                     display_map
                         .snapshot(cx)
@@ -1832,7 +1815,6 @@ impl ContextEditor {
             )
         });
 
-        let selection = selection.map(|point| snapshot.point_to_offset(point));
         let context = self.context.read(cx);
 
         let mut text = String::new();
@@ -2042,6 +2024,15 @@ impl ContextEditor {
         });
     }
 
+    fn toggle_model_selector(
+        &mut self,
+        _: &ToggleModelSelector,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.language_model_selector_menu_handle.toggle(window, cx);
+    }
+
     fn save(&mut self, _: &Save, _window: &mut Window, cx: &mut Context<Self>) {
         self.context.update(cx, |context, cx| {
             context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx)
@@ -2057,6 +2048,7 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_patch_block(
         &mut self,
         range: Range<text::Anchor>,
@@ -2657,8 +2649,8 @@ fn render_fold_icon_button(
     editor: WeakEntity<Editor>,
     icon: IconName,
     label: SharedString,
-) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut Window, &mut App) -> AnyElement> {
-    Arc::new(move |fold_id, fold_range, _window, _cx| {
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
+    Arc::new(move |fold_id, fold_range, _cx| {
         let editor = editor.clone();
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
@@ -2718,7 +2710,7 @@ pub fn fold_toggle(
 fn quote_selection_fold_placeholder(title: String, editor: WeakEntity<Editor>) -> FoldPlaceholder {
     FoldPlaceholder {
         render: Arc::new({
-            move |fold_id, fold_range, _window, _cx| {
+            move |fold_id, fold_range, _cx| {
                 let editor = editor.clone();
                 ButtonLike::new(fold_id)
                     .style(ButtonStyle::Filled)
@@ -2884,6 +2876,7 @@ impl Render for ContextEditor {
             .on_action(cx.listener(ContextEditor::edit))
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
+            .on_action(cx.listener(ContextEditor::toggle_model_selector))
             .size_full()
             .children(self.render_notice(cx))
             .child(
@@ -3401,7 +3394,7 @@ fn invoked_slash_command_fold_placeholder(
     FoldPlaceholder {
         constrain_width: false,
         merge_adjacent: false,
-        render: Arc::new(move |fold_id, _, _window, cx| {
+        render: Arc::new(move |fold_id, _, cx| {
             let Some(context) = context.upgrade() else {
                 return Empty.into_any();
             };

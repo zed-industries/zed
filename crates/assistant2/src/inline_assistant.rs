@@ -24,8 +24,7 @@ use gpui::{
     UpdateGlobal, WeakEntity, Window,
 };
 use language::{Buffer, Point, Selection, TransactionId};
-use language_model::LanguageModelRegistry;
-use language_models::report_assistant_event;
+use language_model::{report_assistant_event, LanguageModelRegistry};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
@@ -480,6 +479,7 @@ impl InlineAssistant {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn suggest_assist(
         &mut self,
         editor: &Entity<Editor>,
@@ -1450,6 +1450,7 @@ struct InlineAssistScrollLock {
 }
 
 impl EditorInlineAssists {
+    #[allow(clippy::too_many_arguments)]
     fn new(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Self {
         let (highlight_updates_tx, mut highlight_updates_rx) = async_watch::channel(());
         Self {
@@ -1561,6 +1562,7 @@ pub struct InlineAssist {
 }
 
 impl InlineAssist {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         assist_id: InlineAssistId,
         group_id: InlineAssistGroupId,

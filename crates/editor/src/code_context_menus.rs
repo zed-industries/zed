@@ -603,7 +603,6 @@ impl CompletionsMenu {
                             hover_markdown_style(window, cx),
                             languages,
                             language,
-                            window,
                             cx,
                         )
                         .copy_code_block_buttons(false)
@@ -611,7 +610,7 @@ impl CompletionsMenu {
                     })
                 });
                 markdown.update(cx, |markdown, cx| {
-                    markdown.reset(parsed.clone(), window, cx);
+                    markdown.reset(parsed.clone(), cx);
                 });
                 div().child(markdown.clone())
             }

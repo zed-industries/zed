@@ -30,13 +30,12 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, FontWeight, Global, HighlightStyle, Subscription, Task,
     TextStyle, UpdateGlobal, WeakEntity, Window,
 };
-use language::{Buffer, IndentKind, Point, Selection, TransactionId};
+use language::{line_diff, Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
-    LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelTextStream, Role,
+    report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelTextStream, Role,
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
-use language_models::report_assistant_event;
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
@@ -387,6 +386,7 @@ impl InlineAssistant {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn suggest_assist(
         &mut self,
         editor: &Entity<Editor>,
@@ -1674,6 +1674,7 @@ impl Focusable for PromptEditor {
 impl PromptEditor {
     const MAX_LINES: u8 = 8;
 
+    #[allow(clippy::too_many_arguments)]
     fn new(
         id: InlineAssistId,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
@@ -2225,7 +2226,7 @@ impl PromptEditor {
             },
             font_family: settings.buffer_font.family.clone(),
             font_fallbacks: settings.buffer_font.fallbacks.clone(),
-            font_size: settings.buffer_font_size.into(),
+            font_size: settings.buffer_font_size(cx).into(),
             font_weight: settings.buffer_font.weight,
             line_height: relative(settings.buffer_line_height.value()),
             ..Default::default()
@@ -2332,6 +2333,7 @@ struct InlineAssist {
 }
 
 impl InlineAssist {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         assist_id: InlineAssistId,
         group_id: InlineAssistGroupId,
@@ -3347,52 +3349,29 @@ impl CodegenAlternative {
                         )
                         .collect::<String>();
 
-                    let mut old_row = old_range.start.row;
-                    let mut new_row = new_range.start.row;
-                    let batch_diff =
-                        similar::TextDiff::from_lines(old_text.as_str(), new_text.as_str());
-
+                    let old_start_row = old_range.start.row;
+                    let new_start_row = new_range.start.row;
                     let mut deleted_row_ranges: Vec<(Anchor, RangeInclusive<u32>)> = Vec::new();
                     let mut inserted_row_ranges = Vec::new();
-                    for change in batch_diff.iter_all_changes() {
-                        let line_count = change.value().lines().count() as u32;
-                        match change.tag() {
-                            similar::ChangeTag::Equal => {
-                                old_row += line_count;
-                                new_row += line_count;
-                            }
-                            similar::ChangeTag::Delete => {
-                                let old_end_row = old_row + line_count - 1;
-                                let new_row = new_snapshot.anchor_before(Point::new(new_row, 0));
-
-                                if let Some((_, last_deleted_row_range)) =
-                                    deleted_row_ranges.last_mut()
-                                {
-                                    if *last_deleted_row_range.end() + 1 == old_row {
-                                        *last_deleted_row_range =
-                                            *last_deleted_row_range.start()..=old_end_row;
-                                    } else {
-                                        deleted_row_ranges.push((new_row, old_row..=old_end_row));
-                                    }
-                                } else {
-                                    deleted_row_ranges.push((new_row, old_row..=old_end_row));
-                                }
-
-                                old_row += line_count;
-                            }
-                            similar::ChangeTag::Insert => {
-                                let new_end_row = new_row + line_count - 1;
-                                let start = new_snapshot.anchor_before(Point::new(new_row, 0));
-                                let end = new_snapshot.anchor_before(Point::new(
-                                    new_end_row,
-                                    new_snapshot.line_len(MultiBufferRow(new_end_row)),
-                                ));
-                                inserted_row_ranges.push(start..end);
-                                new_row += line_count;
-                            }
+                    for (old_rows, new_rows) in line_diff(&old_text, &new_text) {
+                        let old_rows = old_start_row + old_rows.start..old_start_row + old_rows.end;
+                        let new_rows = new_start_row + new_rows.start..new_start_row + new_rows.end;
+                        if !old_rows.is_empty() {
+                            deleted_row_ranges.push((
+                                new_snapshot.anchor_before(Point::new(new_rows.start, 0)),
+                                old_rows.start..=old_rows.end - 1,
+                            ));
+                        }
+                        if !new_rows.is_empty() {
+                            let start = new_snapshot.anchor_before(Point::new(new_rows.start, 0));
+                            let new_end_row = new_rows.end - 1;
+                            let end = new_snapshot.anchor_before(Point::new(
+                                new_end_row,
+                                new_snapshot.line_len(MultiBufferRow(new_end_row)),
+                            ));
+                            inserted_row_ranges.push(start..end);
                         }
                     }
-
                     (deleted_row_ranges, inserted_row_ranges)
                 })
                 .await;

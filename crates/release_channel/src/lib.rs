@@ -23,6 +23,15 @@ pub static RELEASE_CHANNEL: LazyLock<ReleaseChannel> =
         _ => panic!("invalid release channel {}", *RELEASE_CHANNEL_NAME),
     });
 
+/// The app identifier for the current release channel, Windows only.
+#[cfg(target_os = "windows")]
+pub static APP_IDENTIFIER: LazyLock<&str> = LazyLock::new(|| match *RELEASE_CHANNEL {
+    ReleaseChannel::Dev => "Zed-Editor-Dev",
+    ReleaseChannel::Nightly => "Zed-Editor-Nightly",
+    ReleaseChannel::Preview => "Zed-Editor-Preview",
+    ReleaseChannel::Stable => "Zed-Editor-Stable",
+});
+
 /// The Git commit SHA that Zed was built at.
 #[derive(Clone)]
 pub struct AppCommitSha(pub String);

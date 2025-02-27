@@ -9,7 +9,6 @@ mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
 use db::kvp::KEY_VALUE_STORE;
-use editor::Editor;
 pub use init::*;
 use inline_completion::DataCollectionState;
 pub use license_detection::is_license_eligible_for_data_collection;
@@ -24,15 +23,14 @@ use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{
     actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, SemanticVersion,
-    Subscription, Task,
+    Subscription, Task, WeakEntity,
 };
 use http_client::{HttpClient, Method};
 use input_excerpt::excerpt_for_cursor_position;
 use language::{
-    Anchor, Buffer, BufferSnapshot, CharClassifier, CharKind, EditPreview, OffsetRangeExt,
-    ToOffset, ToPoint,
+    text_diff, Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToOffset, ToPoint,
 };
-use language_models::LlmApiToken;
+use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use postage::watch;
 use project::Project;
 use release_channel::AppVersion;
@@ -187,7 +185,7 @@ impl std::fmt::Debug for InlineCompletion {
 }
 
 pub struct Zeta {
-    editor: Option<Entity<Editor>>,
+    workspace: Option<WeakEntity<Workspace>>,
     client: Arc<Client>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
@@ -210,14 +208,14 @@ impl Zeta {
     }
 
     pub fn register(
-        editor: Option<Entity<Editor>>,
+        workspace: Option<WeakEntity<Workspace>>,
         worktree: Option<Entity<Worktree>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
         cx: &mut App,
     ) -> Entity<Self> {
         let this = Self::global(cx).unwrap_or_else(|| {
-            let entity = cx.new(|cx| Self::new(editor, client, user_store, cx));
+            let entity = cx.new(|cx| Self::new(workspace, client, user_store, cx));
             cx.set_global(ZetaGlobal(entity.clone()));
             entity
         });
@@ -240,18 +238,18 @@ impl Zeta {
     }
 
     fn new(
-        editor: Option<Entity<Editor>>,
+        workspace: Option<WeakEntity<Workspace>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let refresh_llm_token_listener = language_models::RefreshLlmTokenListener::global(cx);
+        let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
 
         let data_collection_choice = Self::load_data_collection_choices();
         let data_collection_choice = cx.new(|_| data_collection_choice);
 
         Self {
-            editor,
+            workspace,
             client,
             events: VecDeque::new(),
             shown_completions: VecDeque::new(),
@@ -355,6 +353,7 @@ impl Zeta {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn request_completion_impl<F, R>(
         &mut self,
         workspace: Option<Entity<Workspace>>,
@@ -706,9 +705,9 @@ and then another
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<InlineCompletion>>> {
         let workspace = self
-            .editor
+            .workspace
             .as_ref()
-            .and_then(|editor| editor.read(cx).workspace());
+            .and_then(|workspace| workspace.upgrade());
         self.request_completion_impl(
             workspace,
             project,
@@ -792,6 +791,7 @@ and then another
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_completion_response(
         prediction_response: PredictEditsResponse,
         buffer: Entity<Buffer>,
@@ -917,77 +917,18 @@ and then another
         offset: usize,
         snapshot: &BufferSnapshot,
     ) -> Vec<(Range<Anchor>, String)> {
-        fn tokenize(text: &str) -> Vec<&str> {
-            let classifier = CharClassifier::new(None).for_completion(true);
-            let mut chars = text.chars().peekable();
-            let mut prev_ch = chars.peek().copied();
-            let mut tokens = Vec::new();
-            let mut start = 0;
-            let mut end = 0;
-            while let Some(ch) = chars.next() {
-                let prev_kind = prev_ch.map(|ch| classifier.kind(ch));
-                let kind = classifier.kind(ch);
-                if Some(kind) != prev_kind || (kind == CharKind::Punctuation && Some(ch) != prev_ch)
-                {
-                    tokens.push(&text[start..end]);
-                    start = end;
-                }
-                end += ch.len_utf8();
-                prev_ch = Some(ch);
-            }
-            tokens.push(&text[start..end]);
-            tokens
-        }
-
-        let old_tokens = tokenize(&old_text);
-        let new_tokens = tokenize(new_text);
-
-        let diff = similar::TextDiffConfig::default()
-            .algorithm(similar::Algorithm::Patience)
-            .diff_slices(&old_tokens, &new_tokens);
-        let mut edits: Vec<(Range<usize>, String)> = Vec::new();
-        let mut old_start = offset;
-        for change in diff.iter_all_changes() {
-            let value = change.value();
-            match change.tag() {
-                similar::ChangeTag::Equal => {
-                    old_start += value.len();
-                }
-                similar::ChangeTag::Delete => {
-                    let old_end = old_start + value.len();
-                    if let Some((last_old_range, _)) = edits.last_mut() {
-                        if last_old_range.end == old_start {
-                            last_old_range.end = old_end;
-                        } else {
-                            edits.push((old_start..old_end, String::new()));
-                        }
-                    } else {
-                        edits.push((old_start..old_end, String::new()));
-                    }
-                    old_start = old_end;
-                }
-                similar::ChangeTag::Insert => {
-                    if let Some((last_old_range, last_new_text)) = edits.last_mut() {
-                        if last_old_range.end == old_start {
-                            last_new_text.push_str(value);
-                        } else {
-                            edits.push((old_start..old_start, value.into()));
-                        }
-                    } else {
-                        edits.push((old_start..old_start, value.into()));
-                    }
-                }
-            }
-        }
-
-        edits
+        text_diff(&old_text, &new_text)
             .into_iter()
             .map(|(mut old_range, new_text)| {
+                old_range.start += offset;
+                old_range.end += offset;
+
                 let prefix_len = common_prefix(
                     snapshot.chars_for_range(old_range.clone()),
                     new_text.chars(),
                 );
                 old_range.start += prefix_len;
+
                 let suffix_len = common_prefix(
                     snapshot.reversed_chars_for_range(old_range.clone()),
                     new_text[prefix_len..].chars().rev(),
@@ -1246,10 +1187,7 @@ impl Event {
                     writeln!(prompt, "User renamed {:?} to {:?}\n", old_path, new_path).unwrap();
                 }
 
-                let diff =
-                    similar::TextDiff::from_lines(&old_snapshot.text(), &new_snapshot.text())
-                        .unified_diff()
-                        .to_string();
+                let diff = language::unified_diff(&old_snapshot.text(), &new_snapshot.text());
                 if !diff.is_empty() {
                     write!(
                         prompt,
@@ -1710,7 +1648,6 @@ mod tests {
     use http_client::FakeHttpClient;
     use indoc::indoc;
     use language::Point;
-    use language_models::RefreshLlmTokenListener;
     use rpc::proto;
     use settings::SettingsStore;
 

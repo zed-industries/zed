@@ -15,7 +15,7 @@ use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownStyle};
-use multi_buffer::ToOffset;
+use multi_buffer::{MultiOrSingleBufferOffsetRange, ToOffset};
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use std::{borrow::Cow, cell::RefCell};
@@ -339,7 +339,7 @@ fn show_hover(
                         base_text_style.refine(&TextStyleRefinement {
                             font_family: Some(settings.ui_font.family.clone()),
                             font_fallbacks: settings.ui_font.fallbacks.clone(),
-                            font_size: Some(settings.ui_font_size.into()),
+                            font_size: Some(settings.ui_font_size(cx).into()),
                             color: Some(cx.theme().colors().editor_foreground),
                             background_color: Some(gpui::transparent_black()),
 
@@ -358,15 +358,8 @@ fn show_hover(
                             },
                             ..Default::default()
                         };
-                        Markdown::new_text(
-                            SharedString::new(text),
-                            markdown_style.clone(),
-                            None,
-                            None,
-                            window,
-                            cx,
-                        )
-                        .open_url(open_markdown_url)
+                        Markdown::new_text(SharedString::new(text), markdown_style.clone(), cx)
+                            .open_url(open_markdown_url)
                     })
                     .ok();
 
@@ -454,11 +447,13 @@ fn show_hover(
                     })
                     .or_else(|| {
                         let snapshot = &snapshot.buffer_snapshot;
-                        let offset_range = snapshot.syntax_ancestor(anchor..anchor)?.1;
-                        Some(
-                            snapshot.anchor_before(offset_range.start)
-                                ..snapshot.anchor_after(offset_range.end),
-                        )
+                        match snapshot.syntax_ancestor(anchor..anchor)?.1 {
+                            MultiOrSingleBufferOffsetRange::Multi(range) => Some(
+                                snapshot.anchor_before(range.start)
+                                    ..snapshot.anchor_after(range.end),
+                            ),
+                            MultiOrSingleBufferOffsetRange::Single(_) => None,
+                        }
                     })
                     .unwrap_or_else(|| anchor..anchor);
 
@@ -573,7 +568,6 @@ async fn parse_blocks(
                 hover_markdown_style(window, cx),
                 Some(language_registry.clone()),
                 fallback_language_name,
-                window,
                 cx,
             )
             .copy_code_block_buttons(false)

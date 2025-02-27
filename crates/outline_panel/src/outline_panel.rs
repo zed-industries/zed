@@ -2360,6 +2360,7 @@ impl OutlinePanel {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_search_match(
         &mut self,
         multi_buffer_snapshot: Option<&MultiBufferSnapshot>,
@@ -2451,6 +2452,7 @@ impl OutlinePanel {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn entry_element(
         &self,
         rendered_entry: PanelEntry,
@@ -3834,6 +3836,7 @@ impl OutlinePanel {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn push_entry(
         &self,
         state: &mut GenerationState,
@@ -4051,6 +4054,7 @@ impl OutlinePanel {
         update_cached_entries
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_excerpt_entries(
         &self,
         state: &mut GenerationState,
@@ -4109,6 +4113,7 @@ impl OutlinePanel {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_search_entries(
         &mut self,
         state: &mut GenerationState,
@@ -4945,13 +4950,16 @@ impl Render for OutlinePanel {
             .track_focus(&self.focus_handle)
             .when_some(search_query, |outline_panel, search_state| {
                 outline_panel.child(
-                    v_flex()
-                        .child(
-                            Label::new(format!("Searching: '{}'", search_state.query))
-                                .color(Color::Muted)
-                                .mx_2(),
-                        )
-                        .child(horizontal_separator(cx)),
+                    h_flex()
+                        .py_1p5()
+                        .px_2()
+                        .h(DynamicSpacing::Base32.px(cx))
+                        .flex_shrink_0()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border)
+                        .gap_0p5()
+                        .child(Label::new("Searching:").color(Color::Muted))
+                        .child(Label::new(format!("'{}'", search_state.query))),
                 )
             })
             .child(self.render_main_contents(query, show_indent_guides, indent_size, window, cx))

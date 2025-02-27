@@ -1,4 +1,4 @@
-use crate::{Event, *};
+use crate::{task_inventory::TaskContexts, Event, *};
 use buffer_diff::{assert_hunks, DiffHunkSecondaryStatus, DiffHunkStatus};
 use fs::FakeFs;
 use futures::{future, StreamExt};
@@ -25,7 +25,11 @@ use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
-    assert_set_eq, path, paths::PathMatcher, separator, test::TempTree, uri, TryFutureExt as _,
+    assert_set_eq, path,
+    paths::PathMatcher,
+    separator,
+    test::{marked_text_offsets, TempTree},
+    uri, TryFutureExt as _,
 };
 
 #[gpui::test]
@@ -229,7 +233,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
     let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
-    let task_context = TaskContext::default();
+    let task_contexts = TaskContexts::default();
 
     cx.executor().run_until_parked();
     let worktree_id = cx.update(|cx| {
@@ -261,7 +265,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             assert_eq!(settings_a.tab_size.get(), 8);
             assert_eq!(settings_b.tab_size.get(), 2);
 
-            get_all_tasks(&project, Some(worktree_id), &task_context, cx)
+            get_all_tasks(&project, Some(worktree_id), &task_contexts, cx)
         })
         .into_iter()
         .map(|(source_kind, task)| {
@@ -301,7 +305,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     );
 
     let (_, resolved_task) = cx
-        .update(|cx| get_all_tasks(&project, Some(worktree_id), &task_context, cx))
+        .update(|cx| get_all_tasks(&project, Some(worktree_id), &task_contexts, cx))
         .into_iter()
         .find(|(source_kind, _)| source_kind == &topmost_local_task_source_kind)
         .expect("should have one global task");
@@ -339,7 +343,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     cx.run_until_parked();
 
     let all_tasks = cx
-        .update(|cx| get_all_tasks(&project, Some(worktree_id), &task_context, cx))
+        .update(|cx| get_all_tasks(&project, Some(worktree_id), &task_contexts, cx))
         .into_iter()
         .map(|(source_kind, task)| {
             let resolved = task.resolved.unwrap();
@@ -391,6 +395,96 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                 ))),
             ),
         ]
+    );
+}
+
+#[gpui::test]
+async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    TaskStore::init(None);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".zed": {
+                "tasks.json": r#"[{
+                    "label": "test worktree root",
+                    "command": "echo $ZED_WORKTREE_ROOT"
+                }]"#,
+            },
+            "a": {
+                "a.rs": "fn a() {\n    A\n}"
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let _worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+    let worktree_id = cx.update(|cx| {
+        project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let active_non_worktree_item_tasks = cx.update(|cx| {
+        get_all_tasks(
+            &project,
+            Some(worktree_id),
+            &TaskContexts {
+                active_item_context: Some((Some(worktree_id), TaskContext::default())),
+                active_worktree_context: None,
+                other_worktree_contexts: Vec::new(),
+            },
+            cx,
+        )
+    });
+    assert!(
+        active_non_worktree_item_tasks.is_empty(),
+        "A task can not be resolved with context with no ZED_WORKTREE_ROOT data"
+    );
+
+    let active_worktree_tasks = cx.update(|cx| {
+        get_all_tasks(
+            &project,
+            Some(worktree_id),
+            &TaskContexts {
+                active_item_context: Some((Some(worktree_id), TaskContext::default())),
+                active_worktree_context: Some((worktree_id, {
+                    let mut worktree_context = TaskContext::default();
+                    worktree_context
+                        .task_variables
+                        .insert(task::VariableName::WorktreeRoot, "/dir".to_string());
+                    worktree_context
+                })),
+                other_worktree_contexts: Vec::new(),
+            },
+            cx,
+        )
+    });
+    assert_eq!(
+        active_worktree_tasks
+            .into_iter()
+            .map(|(source_kind, task)| {
+                let resolved = task.resolved.unwrap();
+                (source_kind, resolved.command)
+            })
+            .collect::<Vec<_>>(),
+        vec![(
+            TaskSourceKind::Worktree {
+                id: worktree_id,
+                directory_in_worktree: PathBuf::from(separator!(".zed")),
+                id_base: if cfg!(windows) {
+                    "local worktree tasks from directory \".zed\"".into()
+                } else {
+                    "local worktree tasks from directory \".zed\"".into()
+                },
+            },
+            "echo /dir".to_string(),
+        )]
     );
 }
 
@@ -3625,7 +3719,8 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
 async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let initial_contents = "aaa\nbbbbb\nc\n";
+    let (initial_contents, initial_offsets) =
+        marked_text_offsets("one twoˇ\nthree ˇfourˇ five\nsixˇ seven\n");
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/dir"),
@@ -3640,8 +3735,9 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let anchors = (0..3)
-        .map(|row| buffer.update(cx, |b, _| b.anchor_before(Point::new(row, 1))))
+    let anchors = initial_offsets
+        .iter()
+        .map(|offset| buffer.update(cx, |b, _| b.anchor_before(offset)))
         .collect::<Vec<_>>();
 
     // Change the file on disk, adding two new lines of text, and removing
@@ -3650,10 +3746,12 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
         assert!(!buffer.is_dirty());
         assert!(!buffer.has_conflict());
     });
-    let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
+
+    let (new_contents, new_offsets) =
+        marked_text_offsets("oneˇ\nthree ˇFOURˇ five\nsixtyˇ seven\n");
     fs.save(
         path!("/dir/the-file").as_ref(),
-        &new_contents.into(),
+        &new_contents.as_str().into(),
         LineEnding::Unix,
     )
     .await
@@ -3668,14 +3766,11 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
         assert!(!buffer.is_dirty());
         assert!(!buffer.has_conflict());
 
-        let anchor_positions = anchors
+        let anchor_offsets = anchors
             .iter()
-            .map(|anchor| anchor.to_point(&*buffer))
+            .map(|anchor| anchor.to_offset(&*buffer))
             .collect::<Vec<_>>();
-        assert_eq!(
-            anchor_positions,
-            [Point::new(1, 1), Point::new(3, 1), Point::new(3, 5)]
-        );
+        assert_eq!(anchor_offsets, new_offsets);
     });
 
     // Modify the buffer
@@ -3698,6 +3793,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     // marked as having a conflict.
     cx.executor().run_until_parked();
     buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.text(), " ".to_string() + &new_contents);
         assert!(buffer.has_conflict());
     });
 }
@@ -4952,14 +5048,14 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         fs.paths(true),
         vec![
-            PathBuf::from("/"),
-            PathBuf::from("/one"),
-            PathBuf::from("/one/two"),
-            PathBuf::from("/one/two/c.rs"),
-            PathBuf::from("/one/two/three"),
-            PathBuf::from("/one/two/three/a.txt"),
-            PathBuf::from("/one/two/three/b.."),
-            PathBuf::from("/one/two/three/four"),
+            PathBuf::from(path!("/")),
+            PathBuf::from(path!("/one")),
+            PathBuf::from(path!("/one/two")),
+            PathBuf::from(path!("/one/two/c.rs")),
+            PathBuf::from(path!("/one/two/three")),
+            PathBuf::from(path!("/one/two/three/a.txt")),
+            PathBuf::from(path!("/one/two/three/b..")),
+            PathBuf::from(path!("/one/two/three/four")),
         ]
     );
 
@@ -5693,12 +5789,12 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
             &snapshot,
             &unstaged_diff.base_text_string().unwrap(),
             &[
-                (0..1, "", "// print goodbye\n", DiffHunkStatus::added()),
+                (0..1, "", "// print goodbye\n", DiffHunkStatus::added_none()),
                 (
                     2..3,
                     "    println!(\"hello world\");\n",
                     "    println!(\"goodbye world\");\n",
-                    DiffHunkStatus::modified(),
+                    DiffHunkStatus::modified_none(),
                 ),
             ],
         );
@@ -5727,7 +5823,7 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
                 2..3,
                 "",
                 "    println!(\"goodbye world\");\n",
-                DiffHunkStatus::added(),
+                DiffHunkStatus::added_none(),
             )],
         );
     });
@@ -5815,13 +5911,13 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
                     0..1,
                     "",
                     "// print goodbye\n",
-                    DiffHunkStatus::Added(DiffHunkSecondaryStatus::HasSecondaryHunk),
+                    DiffHunkStatus::added(DiffHunkSecondaryStatus::HasSecondaryHunk),
                 ),
                 (
                     2..3,
                     "    println!(\"hello world\");\n",
                     "    println!(\"goodbye world\");\n",
-                    DiffHunkStatus::modified(),
+                    DiffHunkStatus::modified_none(),
                 ),
             ],
         );
@@ -5850,7 +5946,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
                 2..3,
                 "",
                 "    println!(\"goodbye world\");\n",
-                DiffHunkStatus::added(),
+                DiffHunkStatus::added_none(),
             )],
         );
     });
@@ -5916,7 +6012,7 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
                 1..2,
                 "    println!(\"hello from HEAD\");\n",
                 "    println!(\"hello from the working copy\");\n",
-                DiffHunkStatus::modified(),
+                DiffHunkStatus::modified_none(),
             )],
         );
     });
@@ -6044,7 +6140,7 @@ fn tsx_lang() -> Arc<Language> {
 fn get_all_tasks(
     project: &Entity<Project>,
     worktree_id: Option<WorktreeId>,
-    task_context: &TaskContext,
+    task_contexts: &TaskContexts,
     cx: &mut App,
 ) -> Vec<(TaskSourceKind, ResolvedTask)> {
     let (mut old, new) = project.update(cx, |project, cx| {
@@ -6054,7 +6150,7 @@ fn get_all_tasks(
             .task_inventory()
             .unwrap()
             .read(cx)
-            .used_and_current_resolved_tasks(worktree_id, None, task_context, cx)
+            .used_and_current_resolved_tasks(worktree_id, None, task_contexts, cx)
     });
     old.extend(new);
     old

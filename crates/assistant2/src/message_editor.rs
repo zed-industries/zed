@@ -7,13 +7,13 @@ use gpui::{
     pulsating_between, Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription,
     TextStyle, WeakEntity,
 };
-use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
+use language_model::LanguageModelRegistry;
 use language_model_selector::LanguageModelSelector;
 use rope::Point;
 use settings::Settings;
 use std::time::Duration;
 use text::Bias;
-use theme::{get_ui_font_size, ThemeSettings};
+use theme::ThemeSettings;
 use ui::{
     prelude::*, ButtonLike, KeyBinding, PopoverMenu, PopoverMenuHandle, Switch, TintColor, Tooltip,
 };
@@ -205,22 +205,7 @@ impl MessageEditor {
                 .update(&mut cx, |thread, cx| {
                     let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
                     thread.insert_user_message(user_message, context, cx);
-                    let mut request = thread.to_completion_request(request_kind, cx);
-
-                    if use_tools {
-                        request.tools = thread
-                            .tools()
-                            .tools(cx)
-                            .into_iter()
-                            .map(|tool| LanguageModelRequestTool {
-                                name: tool.name(),
-                                description: tool.description(),
-                                input_schema: tool.input_schema(),
-                            })
-                            .collect();
-                    }
-
-                    thread.stream_completion(request, model, cx)
+                    thread.send_to_model(model, request_kind, use_tools, cx);
                 })
                 .ok();
         })
@@ -369,7 +354,7 @@ impl Render for MessageEditor {
                             .anchor(gpui::Corner::BottomLeft)
                             .offset(gpui::Point {
                                 x: px(0.0),
-                                y: (-get_ui_font_size(cx) * 2) - px(4.0),
+                                y: (-ThemeSettings::get_global(cx).ui_font_size(cx) * 2) - px(4.0),
                             })
                             .with_handle(self.inline_context_picker_menu_handle.clone()),
                     )

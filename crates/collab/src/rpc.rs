@@ -392,9 +392,13 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::OpenContext>)
             .add_request_handler(forward_mutating_project_request::<proto::CreateContext>)
             .add_request_handler(forward_mutating_project_request::<proto::SynchronizeContexts>)
+            .add_request_handler(forward_mutating_project_request::<proto::Push>)
+            .add_request_handler(forward_mutating_project_request::<proto::Pull>)
+            .add_request_handler(forward_mutating_project_request::<proto::Fetch>)
             .add_request_handler(forward_mutating_project_request::<proto::Stage>)
             .add_request_handler(forward_mutating_project_request::<proto::Unstage>)
             .add_request_handler(forward_mutating_project_request::<proto::Commit>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetRemotes>)
             .add_request_handler(forward_read_only_project_request::<proto::GitShow>)
             .add_request_handler(forward_read_only_project_request::<proto::GitReset>)
             .add_request_handler(forward_read_only_project_request::<proto::GitCheckoutFiles>)
@@ -691,6 +695,7 @@ impl Server {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn handle_connection(
         self: &Arc<Self>,
         connection: Connection,
@@ -1074,6 +1079,7 @@ pub fn routes(server: Arc<Server>) -> Router<(), Body> {
         .layer(Extension(server))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_websocket_request(
     TypedHeader(ProtocolVersion(protocol_version)): TypedHeader<ProtocolVersion>,
     app_version_header: Option<TypedHeader<AppVersionHeader>>,

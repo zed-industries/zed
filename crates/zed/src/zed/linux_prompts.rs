@@ -39,7 +39,7 @@ pub fn fallback_prompt_renderer(
                     let mut base_text_style = window.text_style();
                     base_text_style.refine(&TextStyleRefinement {
                         font_family: Some(settings.ui_font.family.clone()),
-                        font_size: Some(settings.ui_font_size.into()),
+                        font_size: Some(settings.ui_font_size(cx).into()),
                         color: Some(ui::Color::Muted.color(cx)),
                         ..Default::default()
                     });
@@ -48,14 +48,7 @@ pub fn fallback_prompt_renderer(
                         selection_background_color: { cx.theme().players().local().selection },
                         ..Default::default()
                     };
-                    Markdown::new(
-                        SharedString::new(text),
-                        markdown_style,
-                        None,
-                        None,
-                        window,
-                        cx,
-                    )
+                    Markdown::new(SharedString::new(text), markdown_style, None, None, cx)
                 })
             }),
         }

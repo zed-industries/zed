@@ -1235,6 +1235,7 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
         VK_DELETE => "delete",
+        VK_APPS => "menu",
         _ => {
             let basic_key = basic_vkcode_to_string(vk_code, modifiers);
             if basic_key.is_some() {
@@ -1289,6 +1290,7 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
         VK_DELETE => "delete",
+        VK_APPS => "menu",
         _ => {
             if is_modifier(VIRTUAL_KEY(vk_code)) {
                 return Some(KeystrokeOrModifier::Modifier(modifiers));
