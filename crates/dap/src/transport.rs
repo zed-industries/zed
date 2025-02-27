@@ -112,7 +112,7 @@ impl Transport {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> &FakeTransport {
+    pub(crate) fn as_fake(&self) -> &FakeTransport {
         match self {
             Transport::Fake(fake_transport) => fake_transport,
             _ => panic!("Not a fake transport layer"),
@@ -128,25 +128,7 @@ pub(crate) struct TransportDelegate {
     server_tx: Arc<Mutex<Option<Sender<Message>>>>,
 }
 
-impl Transport {
-    #[cfg(any(test, feature = "test-support"))]
-    fn _fake(_args: DebugAdapterBinary) -> Self {
-        todo!()
-    }
-}
-
 impl TransportDelegate {
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn _fake(args: DebugAdapterBinary) -> Self {
-        Self {
-            transport: Transport::_fake(args),
-            server_tx: Default::default(),
-            log_handlers: Default::default(),
-            current_requests: Default::default(),
-            pending_requests: Default::default(),
-        }
-    }
-
     pub(crate) async fn start(
         binary: &DebugAdapterBinary,
         cx: AsyncApp,
@@ -553,13 +535,6 @@ impl TcpTransport {
         }
     }
 
-    async fn open_port_for_host(host: Ipv4Addr) -> Result<u16> {
-        Ok(TcpListener::bind(SocketAddrV4::new(host, 0))
-            .await?
-            .local_addr()?
-            .port())
-    }
-
     async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
         let Some(connection_args) = binary.connection.as_ref() else {
             return Err(anyhow!("No connection arguments provided"));
@@ -905,10 +880,5 @@ impl FakeTransport {
 
     async fn kill(&self) -> Result<()> {
         Ok(())
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    fn as_fake(&self) -> &FakeTransport {
-        self
     }
 }
