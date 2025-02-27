@@ -263,6 +263,12 @@ impl Thread {
         tool_uses
     }
 
+    pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
+        self.tool_results_by_message
+            .get(&message_id)
+            .map_or(false, |results| !results.is_empty())
+    }
+
     pub fn insert_user_message(
         &mut self,
         text: impl Into<String>,
@@ -649,6 +655,8 @@ impl Thread {
                                 {
                                     tool_use.status = PendingToolUseStatus::Error(err.to_string());
                                 }
+
+                                cx.emit(ThreadEvent::ToolFinished { tool_use_id });
                             }
                         }
                     })
@@ -723,5 +731,9 @@ pub enum PendingToolUseStatus {
 impl PendingToolUseStatus {
     pub fn is_idle(&self) -> bool {
         matches!(self, PendingToolUseStatus::Idle)
+    }
+
+    pub fn is_error(&self) -> bool {
+        matches!(self, PendingToolUseStatus::Error(_))
     }
 }
