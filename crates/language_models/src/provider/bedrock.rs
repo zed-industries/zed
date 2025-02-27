@@ -847,11 +847,11 @@ impl ConfigurationView {
             .to_string()
             .trim()
             .to_string();
-        
+
         if region.is_empty() {
             region = Self::PLACEHOLDER_REGION.to_string();
         }
-        
+
         let state = self.state.clone();
         cx.spawn(|_, mut cx| async move {
             state
