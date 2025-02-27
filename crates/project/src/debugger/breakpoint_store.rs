@@ -112,9 +112,7 @@ impl BreakpointStore {
         edit_action: BreakpointEditAction,
         cx: &mut Context<Self>,
     ) {
-        dbg!("In toggle breakpoint");
         let Some(abs_path) = Self::abs_path_from_buffer(&buffer, cx) else {
-            dbg!("couldn't get abs path from buffer");
             return;
         };
 
@@ -135,7 +133,6 @@ impl BreakpointStore {
                 if len_before == breakpoint_set.breakpoints.len() {
                     // We did not remove any breakpoint, hence let's toggle one.
                     breakpoint_set.breakpoints.push(breakpoint);
-                    dbg!(&breakpoint_set.breakpoints);
                 }
             }
             BreakpointEditAction::EditLogMessage(log_message) => {

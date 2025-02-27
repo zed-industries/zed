@@ -7572,7 +7572,6 @@ impl Editor {
         edit_action: BreakpointEditAction,
         cx: &mut Context<Self>,
     ) {
-        dbg!(&kind);
         let Some(breakpoint_store) = &self.breakpoint_store else {
             return;
         };
