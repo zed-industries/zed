@@ -7,7 +7,7 @@ use crate::{
     },
     JoinLines,
 };
-use buffer_diff::{BufferDiff, DiffHunkStatus};
+use buffer_diff::{BufferDiff, DiffHunkStatus, DiffHunkStatusKind};
 use futures::StreamExt;
 use gpui::{
     div, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
@@ -24,7 +24,7 @@ use language::{
     Override, Point,
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
-use multi_buffer::IndentGuide;
+use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::project_settings::{LspSettings, ProjectSettings};
@@ -36,6 +36,7 @@ use std::{
     sync::atomic::{self, AtomicUsize},
 };
 use test::{build_editor_with_project, editor_lsp_test_context::rust_lang};
+use text::ToPoint as _;
 use unindent::Unindent;
 use util::{
     assert_set_eq, path,
@@ -1510,6 +1511,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let move_to_beg = MoveToBeginningOfLine {
         stop_at_soft_wraps: true,
+        stop_at_indent: true,
     };
 
     let move_to_end = MoveToEndOfLine {
@@ -1590,6 +1592,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         editor.select_to_beginning_of_line(
             &SelectToBeginningOfLine {
                 stop_at_soft_wraps: true,
+                stop_at_indent: true,
             },
             window,
             cx,
@@ -1607,6 +1610,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         editor.select_to_beginning_of_line(
             &SelectToBeginningOfLine {
                 stop_at_soft_wraps: true,
+                stop_at_indent: true,
             },
             window,
             cx,
@@ -1624,6 +1628,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
         editor.select_to_beginning_of_line(
             &SelectToBeginningOfLine {
                 stop_at_soft_wraps: true,
+                stop_at_indent: true,
             },
             window,
             cx,
@@ -1684,6 +1689,7 @@ fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let move_to_beg = MoveToBeginningOfLine {
         stop_at_soft_wraps: false,
+        stop_at_indent: false,
     };
 
     let move_to_end = MoveToEndOfLine {
@@ -3389,7 +3395,7 @@ async fn test_join_lines_with_git_diff_base(executor: BackgroundExecutor, cx: &m
         .unindent(),
     );
 
-    cx.set_diff_base(&diff_base);
+    cx.set_head_text(&diff_base);
     executor.run_until_parked();
 
     // Join lines
@@ -3429,7 +3435,7 @@ async fn test_custom_newlines_cause_no_false_positive_diffs(
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
     cx.set_state("Line 0\r\nLine 1\rˇ\nLine 2\r\nLine 3");
-    cx.set_diff_base("Line 0\r\nLine 1\r\nLine 2\r\nLine 3");
+    cx.set_head_text("Line 0\r\nLine 1\r\nLine 2\r\nLine 3");
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
@@ -5811,7 +5817,7 @@ async fn test_fold_function_bodies(cx: &mut TestAppContext) {
 
     let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
     cx.set_state(&text);
-    cx.set_diff_base(&base_text);
+    cx.set_head_text(&base_text);
     cx.update_editor(|editor, window, cx| {
         editor.expand_all_diff_hunks(&Default::default(), window, cx);
     });
@@ -10965,6 +10971,106 @@ async fn cycle_through_same_place_diagnostics(
 }
 
 #[gpui::test]
+async fn active_diagnostics_dismiss_after_invalidation(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+
+    cx.set_state(indoc! {"
+        ˇfn func(abc def: i32) -> u32 {
+        }
+    "});
+
+    let message = "Something's wrong!";
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        version: None,
+                        diagnostics: vec![lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 11),
+                                lsp::Position::new(0, 12),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                            message: message.to_string(),
+                            ..Default::default()
+                        }],
+                    },
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+    executor.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+        assert_eq!(
+            editor
+                .active_diagnostics
+                .as_ref()
+                .map(|diagnostics_group| diagnostics_group.primary_message.as_str()),
+            Some(message),
+            "Should have a diagnostics group activated"
+        );
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        version: None,
+                        diagnostics: Vec::new(),
+                    },
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+    executor.run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        assert_eq!(
+            editor.active_diagnostics, None,
+            "After no diagnostics set to the editor, no diagnostics should be active"
+        );
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+        assert_eq!(
+            editor.active_diagnostics, None,
+            "Should be no diagnostics to go to and activate"
+        );
+    });
+    cx.assert_editor_state(indoc! {"
+        fn func(abcˇ def: i32) -> u32 {
+        }
+    "});
+}
+
+#[gpui::test]
 async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -11039,7 +11145,7 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) 
         .unindent(),
     );
 
-    cx.set_diff_base(&diff_base);
+    cx.set_head_text(&diff_base);
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
@@ -12531,7 +12637,7 @@ async fn test_deleting_over_diff_hunk(cx: &mut TestAppContext) {
         three
         "#};
 
-    cx.set_diff_base(base_text);
+    cx.set_head_text(base_text);
     cx.set_state("\nˇ\n");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _window, cx| {
@@ -13168,7 +13274,7 @@ async fn test_toggle_selected_diff_hunks(executor: BackgroundExecutor, cx: &mut 
         .unindent(),
     );
 
-    cx.set_diff_base(&diff_base);
+    cx.set_head_text(&diff_base);
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
@@ -13302,7 +13408,7 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
         .unindent(),
     );
 
-    cx.set_diff_base(&diff_base);
+    cx.set_head_text(&diff_base);
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
@@ -13330,7 +13436,7 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
         .unindent(),
     );
 
-    cx.set_diff_base("new diff base!");
+    cx.set_head_text("new diff base!");
     executor.run_until_parked();
     cx.assert_state_with_diff(
         r#"
@@ -13630,7 +13736,7 @@ async fn test_edits_around_expanded_insertion_hunks(
         .unindent(),
     );
 
-    cx.set_diff_base(&diff_base);
+    cx.set_head_text(&diff_base);
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
@@ -13778,7 +13884,7 @@ async fn test_toggling_adjacent_diff_hunks(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    cx.set_diff_base(indoc! { "
+    cx.set_head_text(indoc! { "
         one
         two
         three
@@ -13901,7 +14007,7 @@ async fn test_edits_around_expanded_deletion_hunks(
         .unindent(),
     );
 
-    cx.set_diff_base(&diff_base);
+    cx.set_head_text(&diff_base);
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
@@ -14024,7 +14130,7 @@ async fn test_backspace_after_deletion_hunk(executor: BackgroundExecutor, cx: &m
         .unindent(),
     );
 
-    cx.set_diff_base(&base_text);
+    cx.set_head_text(&base_text);
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
@@ -14106,7 +14212,7 @@ async fn test_edit_after_expanded_modification_hunk(
         .unindent(),
     );
 
-    cx.set_diff_base(&diff_base);
+    cx.set_head_text(&diff_base);
     executor.run_until_parked();
     cx.update_editor(|editor, window, cx| {
         editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
@@ -14841,7 +14947,7 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
         "#
         .unindent(),
     );
-    cx.set_diff_base(&diff_base);
+    cx.set_head_text(&diff_base);
     cx.update_editor(|editor, window, cx| {
         editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
     });
@@ -14976,6 +15082,168 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
         "#
         .unindent(),
     );
+}
+
+#[gpui::test]
+async fn test_display_diff_hunks(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/test"),
+        json!({
+            ".git": {},
+            "file-1": "ONE\n",
+            "file-2": "TWO\n",
+            "file-3": "THREE\n",
+        }),
+    )
+    .await;
+
+    fs.set_head_for_repo(
+        path!("/test/.git").as_ref(),
+        &[
+            ("file-1".into(), "one\n".into()),
+            ("file-2".into(), "two\n".into()),
+            ("file-3".into(), "three\n".into()),
+        ],
+    );
+
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let mut buffers = vec![];
+    for i in 1..=3 {
+        let buffer = project
+            .update(cx, |project, cx| {
+                let path = format!(path!("/test/file-{}"), i);
+                project.open_local_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+        buffers.push(buffer);
+    }
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        multibuffer.set_all_diff_hunks_expanded(cx);
+        for buffer in &buffers {
+            let snapshot = buffer.read(cx).snapshot();
+            multibuffer.set_excerpts_for_path(
+                PathKey::namespaced("", buffer.read(cx).file().unwrap().path().clone()),
+                buffer.clone(),
+                vec![text::Anchor::MIN.to_point(&snapshot)..text::Anchor::MAX.to_point(&snapshot)],
+                DEFAULT_MULTIBUFFER_CONTEXT,
+                cx,
+            );
+        }
+        multibuffer
+    });
+
+    let editor = cx.add_window(|window, cx| {
+        Editor::new(
+            EditorMode::Full,
+            multibuffer,
+            Some(project),
+            true,
+            window,
+            cx,
+        )
+    });
+    cx.run_until_parked();
+
+    let snapshot = editor
+        .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+        .unwrap();
+    let hunks = snapshot
+        .display_diff_hunks_for_rows(DisplayRow(0)..DisplayRow(u32::MAX), &Default::default())
+        .map(|hunk| match hunk {
+            DisplayDiffHunk::Unfolded {
+                display_row_range, ..
+            } => display_row_range,
+            DisplayDiffHunk::Folded { .. } => unreachable!(),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        hunks,
+        [
+            DisplayRow(3)..DisplayRow(5),
+            DisplayRow(10)..DisplayRow(12),
+            DisplayRow(17)..DisplayRow(19),
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_partially_staged_hunk(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_head_text(indoc! { "
+        one
+        two
+        three
+        four
+        five
+        "
+    });
+    cx.set_index_text(indoc! { "
+        one
+        two
+        three
+        four
+        five
+        "
+    });
+    cx.set_state(indoc! {"
+        one
+        TWO
+        ˇTHREE
+        FOUR
+        five
+    "});
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_staged_selected_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_index_text(Some(indoc! {"
+        one
+        TWO
+        THREE
+        FOUR
+        five
+    "}));
+    cx.set_state(indoc! { "
+        one
+        TWO
+        ˇTHREE-HUNDRED
+        FOUR
+        five
+    "});
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let hunks = editor
+            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot)
+            .collect::<Vec<_>>();
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(
+            hunks[0].status(),
+            DiffHunkStatus {
+                kind: DiffHunkStatusKind::Modified,
+                secondary: DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
+            }
+        );
+
+        editor.toggle_staged_selected_diff_hunks(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_index_text(Some(indoc! {"
+        one
+        TWO
+        THREE-HUNDRED
+        FOUR
+        five
+    "}));
 }
 
 #[gpui::test]
@@ -15337,11 +15605,12 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
     });
 
     editor.update_in(cx, |editor, window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
         editor.tasks.insert(
             (buffer.read(cx).remote_id(), 3),
             RunnableTasks {
                 templates: vec![],
-                offset: MultiBufferOffset(43),
+                offset: snapshot.anchor_before(43),
                 column: 0,
                 extra_variables: HashMap::default(),
                 context_range: BufferOffset(43)..BufferOffset(85),
@@ -15351,7 +15620,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
             (buffer.read(cx).remote_id(), 8),
             RunnableTasks {
                 templates: vec![],
-                offset: MultiBufferOffset(86),
+                offset: snapshot.anchor_before(86),
                 column: 0,
                 extra_variables: HashMap::default(),
                 context_range: BufferOffset(86)..BufferOffset(191),
@@ -15375,7 +15644,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_multi_buffer_folding(cx: &mut TestAppContext) {
+async fn test_folding_buffers(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let sample_text_1 = "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj".to_string();
@@ -15482,7 +15751,7 @@ async fn test_multi_buffer_folding(cx: &mut TestAppContext) {
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
             EditorMode::Full,
-            multi_buffer,
+            multi_buffer.clone(),
             Some(project.clone()),
             true,
             window,
@@ -15490,10 +15759,9 @@ async fn test_multi_buffer_folding(cx: &mut TestAppContext) {
         )
     });
 
-    let full_text = "\n\n\naaaa\nbbbb\ncccc\n\n\n\nffff\ngggg\n\n\n\njjjj\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n";
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        full_text,
+        "\n\n\naaaa\nbbbb\ncccc\n\n\n\nffff\ngggg\n\n\n\njjjj\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
     );
 
     multi_buffer_editor.update(cx, |editor, cx| {
@@ -15539,12 +15807,25 @@ async fn test_multi_buffer_folding(cx: &mut TestAppContext) {
         "After unfolding the second buffer, its text should be displayed"
     );
 
-    multi_buffer_editor.update(cx, |editor, cx| {
-        editor.unfold_buffer(buffer_1.read(cx).remote_id(), cx)
+    // Typing inside of buffer 1 causes that buffer to be unfolded.
+    multi_buffer_editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(
+            multi_buffer
+                .read(cx)
+                .snapshot(cx)
+                .text_for_range(Point::new(1, 0)..Point::new(1, 4))
+                .collect::<String>(),
+            "bbbb"
+        );
+        editor.change_selections(None, window, cx, |selections| {
+            selections.select_ranges(vec![Point::new(1, 0)..Point::new(1, 0)]);
+        });
+        editor.handle_input("B", window, cx);
     });
+
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        "\n\n\naaaa\nbbbb\ncccc\n\n\n\nffff\ngggg\n\n\n\njjjj\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n",
+        "\n\n\nB\n\n\n\n\n\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n",
         "After unfolding the first buffer, its and 2nd buffer's text should be displayed"
     );
 
@@ -15553,13 +15834,13 @@ async fn test_multi_buffer_folding(cx: &mut TestAppContext) {
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
-        full_text,
+        "\n\n\nB\n\n\n\n\n\n\n\n\n\n\nllll\nmmmm\nnnnn\n\n\n\nqqqq\nrrrr\n\n\n\nuuuu\n\n\n\n\nvvvv\nwwww\nxxxx\n\n\n\n1111\n2222\n\n\n\n5555\n",
         "After unfolding the all buffers, all original text should be displayed"
     );
 }
 
 #[gpui::test]
-async fn test_multi_buffer_single_excerpts_folding(cx: &mut TestAppContext) {
+async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let sample_text_1 = "1111\n2222\n3333".to_string();
@@ -15708,7 +15989,7 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_multi_buffer_with_single_excerpt_folding(cx: &mut TestAppContext) {
+async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let sample_text = "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj".to_string();
@@ -16448,7 +16729,8 @@ fn assert_hunk_revert(
     cx: &mut EditorLspTestContext,
 ) {
     cx.set_state(not_reverted_text_with_selections);
-    cx.set_diff_base(base_text);
+    cx.set_head_text(base_text);
+    cx.clear_index_text();
     cx.executor().run_until_parked();
 
     let actual_hunk_statuses_before = cx.update_editor(|editor, window, cx| {

@@ -79,6 +79,12 @@ pub struct MultiBuffer {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MultiOrSingleBufferOffsetRange {
+    Single(Range<usize>),
+    Multi(Range<usize>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     ExcerptsAdded {
         buffer: Entity<Buffer>,
@@ -92,7 +98,8 @@ pub enum Event {
         ids: Vec<ExcerptId>,
     },
     ExcerptsEdited {
-        ids: Vec<ExcerptId>,
+        excerpt_ids: Vec<ExcerptId>,
+        buffer_ids: Vec<BufferId>,
     },
     DiffHunksToggled,
     Edited {
@@ -131,7 +138,6 @@ pub struct MultiBufferDiffHunk {
     pub diff_base_byte_range: Range<usize>,
     /// Whether or not this hunk also appears in the 'secondary diff'.
     pub secondary_status: DiffHunkSecondaryStatus,
-    pub secondary_diff_base_byte_range: Option<Range<usize>>,
 }
 
 impl MultiBufferDiffHunk {
@@ -159,6 +165,10 @@ pub struct PathKey {
 impl PathKey {
     pub fn namespaced(namespace: &'static str, path: Arc<Path>) -> Self {
         Self { namespace, path }
+    }
+
+    pub fn path(&self) -> &Arc<Path> {
+        &self.path
     }
 }
 
@@ -758,7 +768,9 @@ impl MultiBuffer {
                 this.convert_edits_to_buffer_edits(edits, &snapshot, &original_start_columns);
             drop(snapshot);
 
+            let mut buffer_ids = Vec::new();
             for (buffer_id, mut edits) in buffer_edits {
+                buffer_ids.push(buffer_id);
                 edits.sort_by_key(|edit| edit.range.start);
                 this.buffers.borrow()[&buffer_id]
                     .buffer
@@ -835,7 +847,8 @@ impl MultiBuffer {
             }
 
             cx.emit(Event::ExcerptsEdited {
-                ids: edited_excerpt_ids,
+                excerpt_ids: edited_excerpt_ids,
+                buffer_ids,
             });
         }
     }
@@ -995,7 +1008,9 @@ impl MultiBuffer {
                 this.convert_edits_to_buffer_edits(edits, &snapshot, &[]);
             drop(snapshot);
 
+            let mut buffer_ids = Vec::new();
             for (buffer_id, mut edits) in buffer_edits {
+                buffer_ids.push(buffer_id);
                 edits.sort_unstable_by_key(|edit| edit.range.start);
 
                 let mut ranges: Vec<Range<usize>> = Vec::new();
@@ -1017,7 +1032,8 @@ impl MultiBuffer {
             }
 
             cx.emit(Event::ExcerptsEdited {
-                ids: edited_excerpt_ids,
+                excerpt_ids: edited_excerpt_ids,
+                buffer_ids,
             });
         }
     }
@@ -1454,6 +1470,11 @@ impl MultiBuffer {
         ))
     }
 
+    pub fn excerpt_paths(&self) -> impl Iterator<Item = &PathKey> {
+        self.buffers_by_path.keys()
+    }
+
+    /// Sets excerpts, returns `true` if at least one new excerpt was added.
     pub fn set_excerpts_for_path(
         &mut self,
         path: PathKey,
@@ -1461,7 +1482,7 @@ impl MultiBuffer {
         ranges: Vec<Range<Point>>,
         context_line_count: u32,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
         let mut insert_after = self
@@ -1480,6 +1501,7 @@ impl MultiBuffer {
         let mut new_excerpt_ids = Vec::new();
         let mut to_remove = Vec::new();
         let mut to_insert = Vec::new();
+        let mut added_a_new_excerpt = false;
         let snapshot = self.snapshot(cx);
 
         let mut excerpts_cursor = snapshot.excerpts.cursor::<Option<&Locator>>(&());
@@ -1494,6 +1516,7 @@ impl MultiBuffer {
                     continue;
                 }
                 (Some(_), None) => {
+                    added_a_new_excerpt = true;
                     to_insert.push(new_iter.next().unwrap());
                     continue;
                 }
@@ -1557,6 +1580,8 @@ impl MultiBuffer {
         } else {
             self.buffers_by_path.insert(path, new_excerpt_ids);
         }
+
+        added_a_new_excerpt
     }
 
     pub fn paths(&self) -> impl Iterator<Item = PathKey> + '_ {
@@ -3507,7 +3532,6 @@ impl MultiBufferSnapshot {
                 buffer_range: hunk.buffer_range.clone(),
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                 secondary_status: hunk.secondary_status,
-                secondary_diff_base_byte_range: hunk.secondary_diff_base_byte_range,
             })
         })
     }
@@ -3877,7 +3901,6 @@ impl MultiBufferSnapshot {
                         buffer_range: hunk.buffer_range.clone(),
                         diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                         secondary_status: hunk.secondary_status,
-                        secondary_diff_base_byte_range: hunk.secondary_diff_base_byte_range,
                     });
                 }
             }
@@ -5686,13 +5709,19 @@ impl MultiBufferSnapshot {
     pub fn syntax_ancestor<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> Option<(tree_sitter::Node, Range<usize>)> {
+    ) -> Option<(tree_sitter::Node, MultiOrSingleBufferOffsetRange)> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut excerpt = self.excerpt_containing(range.clone())?;
         let node = excerpt
             .buffer()
             .syntax_ancestor(excerpt.map_range_to_buffer(range))?;
-        Some((node, excerpt.map_range_from_buffer(node.byte_range())))
+        let node_range = node.byte_range();
+        let range = if excerpt.contains_buffer_range(node_range.clone()) {
+            MultiOrSingleBufferOffsetRange::Multi(excerpt.map_range_from_buffer(node_range))
+        } else {
+            MultiOrSingleBufferOffsetRange::Single(node_range)
+        };
+        Some((node, range))
     }
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
@@ -6138,6 +6167,16 @@ where
                     || self.diff_transforms.item().is_none()
                 {
                     self.excerpts.next(&());
+                } else if let Some(DiffTransform::DeletedHunk { hunk_info, .. }) =
+                    self.diff_transforms.item()
+                {
+                    if self
+                        .excerpts
+                        .item()
+                        .map_or(false, |excerpt| excerpt.id != hunk_info.excerpt_id)
+                    {
+                        self.excerpts.next(&());
+                    }
                 }
             }
         }
@@ -6175,12 +6214,13 @@ where
             return true;
         }
 
-        self.diff_transforms.next(&());
-        let next_transform = self.diff_transforms.item();
-        self.diff_transforms.prev(&());
-
-        next_transform.map_or(true, |next_transform| {
-            matches!(next_transform, DiffTransform::BufferContent { .. })
+        let next_transform = self.diff_transforms.next_item();
+        next_transform.map_or(true, |next_transform| match next_transform {
+            DiffTransform::BufferContent { .. } => true,
+            DiffTransform::DeletedHunk { hunk_info, .. } => self
+                .excerpts
+                .item()
+                .map_or(false, |excerpt| excerpt.id != hunk_info.excerpt_id),
         })
     }
 
@@ -6664,9 +6704,17 @@ impl<'a> MultiBufferExcerpt<'a> {
 
     /// Map a range within the [`Buffer`] to a range within the [`MultiBuffer`]
     pub fn map_range_from_buffer(&mut self, buffer_range: Range<usize>) -> Range<usize> {
+        if buffer_range.start < self.buffer_offset {
+            log::warn!("Attempting to map a range from a buffer offset that starts before the current buffer offset");
+            return buffer_range;
+        }
         let overshoot = buffer_range.start - self.buffer_offset;
         let excerpt_offset = ExcerptDimension(self.excerpt_offset.0 + overshoot);
         self.diff_transforms.seek(&excerpt_offset, Bias::Right, &());
+        if excerpt_offset.0 < self.diff_transforms.start().1 .0 {
+            log::warn!("Attempting to map a range from a buffer offset that starts before the current buffer offset");
+            return buffer_range;
+        }
         let overshoot = excerpt_offset.0 - self.diff_transforms.start().1 .0;
         let start = self.diff_transforms.start().0 .0 + overshoot;
 

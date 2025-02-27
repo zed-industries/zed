@@ -9,7 +9,7 @@ use ec4rs::{
     Properties as EditorconfigProperties,
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
-use gpui::App;
+use gpui::{App, Modifiers};
 use itertools::{Either, Itertools};
 use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
@@ -234,6 +234,8 @@ pub struct EditPredictionSettings {
     pub disabled_globs: Vec<GlobMatcher>,
     /// Configures how edit predictions are displayed in the buffer.
     pub mode: EditPredictionsMode,
+    /// Settings specific to GitHub Copilot.
+    pub copilot: CopilotSettings,
 }
 
 /// The mode in which edit predictions should be displayed.
@@ -242,10 +244,20 @@ pub struct EditPredictionSettings {
 pub enum EditPredictionsMode {
     /// If provider supports it, display inline when holding modifier key (e.g., alt).
     /// Otherwise, eager preview is used.
-    Auto,
+    #[serde(alias = "auto")]
+    Subtle,
     /// Display inline when there are no language server completions available.
     #[default]
-    EagerPreview,
+    #[serde(alias = "eager_preview")]
+    Eager,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CopilotSettings {
+    /// HTTP/HTTPS proxy to use for Copilot.
+    pub proxy: Option<String>,
+    /// Disable certificate verification for proxy (not recommended).
+    pub proxy_no_verify: Option<bool>,
 }
 
 /// The settings for all languages.
@@ -465,6 +477,23 @@ pub struct EditPredictionSettingsContent {
     /// Provider support required.
     #[serde(default)]
     pub mode: EditPredictionsMode,
+    /// Settings specific to GitHub Copilot.
+    #[serde(default)]
+    pub copilot: CopilotSettingsContent,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct CopilotSettingsContent {
+    /// HTTP/HTTPS proxy to use for Copilot.
+    ///
+    /// Default: none
+    #[serde(default)]
+    pub proxy: Option<String>,
+    /// Disable certificate verification for the proxy (not recommended).
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub proxy_no_verify: Option<bool>,
 }
 
 /// The settings for enabling/disabling features.
@@ -876,6 +905,13 @@ pub struct InlayHintSettings {
     /// Default: 50
     #[serde(default = "scroll_debounce_ms")]
     pub scroll_debounce_ms: u64,
+    /// Toggles inlay hints (hides or shows) when the user presses the modifiers specified.
+    /// If only a subset of the modifiers specified is pressed, hints are not toggled.
+    /// If no modifiers are specified, this is equivalent to `None`.
+    ///
+    /// Default: None
+    #[serde(default)]
+    pub toggle_on_modifiers_press: Option<Modifiers>,
 }
 
 fn edit_debounce_ms() -> u64 {
@@ -1064,6 +1100,16 @@ impl settings::Settings for AllLanguageSettings {
             .map(|globs| globs.iter().collect())
             .ok_or_else(Self::missing_default)?;
 
+        let mut copilot_settings = default_value
+            .edit_predictions
+            .as_ref()
+            .map(|settings| settings.copilot.clone())
+            .map(|copilot| CopilotSettings {
+                proxy: copilot.proxy,
+                proxy_no_verify: copilot.proxy_no_verify,
+            })
+            .unwrap_or_default();
+
         let mut file_types: HashMap<Arc<str>, GlobSet> = HashMap::default();
 
         for (language, suffixes) in &default_value.file_types {
@@ -1094,6 +1140,22 @@ impl settings::Settings for AllLanguageSettings {
                 if let Some(disabled_globs) = edit_predictions.disabled_globs.as_ref() {
                     completion_globs.extend(disabled_globs.iter());
                 }
+            }
+
+            if let Some(proxy) = user_settings
+                .edit_predictions
+                .as_ref()
+                .and_then(|settings| settings.copilot.proxy.clone())
+            {
+                copilot_settings.proxy = Some(proxy);
+            }
+
+            if let Some(proxy_no_verify) = user_settings
+                .edit_predictions
+                .as_ref()
+                .and_then(|settings| settings.copilot.proxy_no_verify)
+            {
+                copilot_settings.proxy_no_verify = Some(proxy_no_verify);
             }
 
             // A user's global settings override the default global settings and
@@ -1147,6 +1209,7 @@ impl settings::Settings for AllLanguageSettings {
                     .filter_map(|g| Some(globset::Glob::new(g).ok()?.compile_matcher()))
                     .collect(),
                 mode: edit_predictions_mode,
+                copilot: copilot_settings,
             },
             defaults,
             languages,

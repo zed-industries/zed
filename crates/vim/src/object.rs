@@ -303,14 +303,17 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Quotes, window, cx| {
         vim.object(Object::Quotes, window, cx)
     });
+    Vim::action(editor, cx, |vim, _: &BackQuotes, window, cx| {
+        vim.object(Object::BackQuotes, window, cx)
+    });
     Vim::action(editor, cx, |vim, _: &AnyQuotes, window, cx| {
         vim.object(Object::AnyQuotes, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &AnyBrackets, window, cx| {
         vim.object(Object::AnyBrackets, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &DoubleQuotes, window, cx| {
-        vim.object(Object::DoubleQuotes, window, cx)
+    Vim::action(editor, cx, |vim, _: &BackQuotes, window, cx| {
+        vim.object(Object::BackQuotes, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &DoubleQuotes, window, cx| {
         vim.object(Object::DoubleQuotes, window, cx)
@@ -557,56 +560,9 @@ impl Object {
         if let Some(range) = self.range(map, selection.clone(), around) {
             selection.start = range.start;
             selection.end = range.end;
-            if !around && self.is_multiline() {
-                preserve_indented_newline(map, selection);
-            }
             true
         } else {
             false
-        }
-    }
-}
-
-/// Returns a range without the final newline char.
-///
-/// If the selection spans multiple lines and is preceded by an opening brace (`{`),
-/// this function will trim the selection to exclude the final newline
-/// in order to preserve a properly indented line.
-pub fn preserve_indented_newline(map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>) {
-    let (start_point, end_point) = (selection.start.to_point(map), selection.end.to_point(map));
-
-    if start_point.row == end_point.row {
-        return;
-    }
-
-    let start_offset = selection.start.to_offset(map, Bias::Left);
-    let mut pos = start_offset;
-
-    while pos > 0 {
-        pos -= 1;
-        let current_char = map.buffer_chars_at(pos).next().map(|(ch, _)| ch);
-
-        match current_char {
-            Some(ch) if !ch.is_whitespace() => break,
-            Some('\n') if pos > 0 => {
-                let prev_char = map.buffer_chars_at(pos - 1).next().map(|(ch, _)| ch);
-                if prev_char == Some('{') {
-                    let end_pos = selection.end.to_offset(map, Bias::Left);
-                    for (ch, offset) in map.reverse_buffer_chars_at(end_pos) {
-                        match ch {
-                            '\n' => {
-                                selection.end = offset.to_display_point(map);
-                                selection.reversed = true;
-                                break;
-                            }
-                            ch if !ch.is_whitespace() => break,
-                            _ => continue,
-                        }
-                    }
-                }
-                break;
-            }
-            _ => continue,
         }
     }
 }
@@ -1515,38 +1471,37 @@ fn surrounding_markers(
         }
     }
 
-    if !around && search_across_lines {
-        // Handle trailing newline after opening
-        if let Some((ch, range)) = movement::chars_after(map, opening.end).next() {
-            if ch == '\n' {
-                opening.end = range.end;
+    // Adjust selection to remove leading and trailing whitespace for multiline inner brackets
+    if !around && open_marker != close_marker {
+        let start_point = opening.end.to_display_point(map);
+        let end_point = closing.start.to_display_point(map);
+        let start_offset = start_point.to_offset(map, Bias::Left);
+        let end_offset = end_point.to_offset(map, Bias::Left);
 
-                // After newline, skip leading whitespace
-                let mut chars = movement::chars_after(map, opening.end).peekable();
-                while let Some((ch, range)) = chars.peek() {
-                    if !ch.is_whitespace() {
-                        break;
-                    }
-                    opening.end = range.end;
-                    chars.next();
+        if start_point.row() != end_point.row()
+            && map
+                .buffer_chars_at(start_offset)
+                .take_while(|(_, offset)| offset < &end_offset)
+                .any(|(ch, _)| !ch.is_whitespace())
+        {
+            let mut first_non_ws = None;
+            let mut last_non_ws = None;
+            for (ch, offset) in map.buffer_chars_at(start_offset) {
+                if !ch.is_whitespace() {
+                    first_non_ws = Some(offset);
+                    break;
                 }
             }
-        }
-
-        // Handle leading whitespace before closing
-        let mut last_newline_end = None;
-        for (ch, range) in movement::chars_before(map, closing.start) {
-            if !ch.is_whitespace() {
-                break;
+            for (ch, offset) in map.reverse_buffer_chars_at(end_offset) {
+                if !ch.is_whitespace() {
+                    last_non_ws = Some(offset + ch.len_utf8());
+                    break;
+                }
             }
-            if ch == '\n' {
-                last_newline_end = Some(range.end);
-                break;
+            if let Some(start) = first_non_ws {
+                opening.end = start;
             }
-        }
-        // Adjust closing.start to exclude whitespace after a newline, if present
-        if let Some(end) = last_newline_end {
-            if end > opening.end {
+            if let Some(end) = last_non_ws {
                 closing.start = end;
             }
         }
@@ -1901,10 +1856,10 @@ mod test {
         cx.assert_state(
             indoc! {
                 "func empty(a string) bool {
-                   «ˇif a == \"\" {
+                   «if a == \"\" {
                       return true
                    }
-                   return false»
+                   return falseˇ»
                 }"
             },
             Mode::Visual,
@@ -1926,7 +1881,7 @@ mod test {
             indoc! {
                 "func empty(a string) bool {
                      if a == \"\" {
-                         «ˇreturn true»
+                         «return trueˇ»
                      }
                      return false
                 }"
@@ -1950,7 +1905,7 @@ mod test {
             indoc! {
                 "func empty(a string) bool {
                      if a == \"\" {
-                         «ˇreturn true»
+                         «return trueˇ»
                      }
                      return false
                 }"
@@ -1973,13 +1928,32 @@ mod test {
         cx.assert_state(
             indoc! {
                 "func empty(a string) bool {
-                     «ˇif a == \"\" {
+                     «if a == \"\" {
                          return true
                      }
-                     return false»
+                     return falseˇ»
                 }"
             },
             Mode::Visual,
+        );
+
+        cx.set_state(
+            indoc! {
+                "func empty(a string) bool {
+                             if a == \"\" {
+                             ˇ
+
+                             }"
+            },
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c i {");
+        cx.assert_state(
+            indoc! {
+                "func empty(a string) bool {
+                             if a == \"\" {ˇ}"
+            },
+            Mode::Insert,
         );
     }
 
@@ -2600,7 +2574,6 @@ mod test {
     #[gpui::test]
     async fn test_anybrackets_trailing_space(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-
         cx.set_shared_state("(trailingˇ whitespace          )")
             .await;
         cx.simulate_shared_keystrokes("v i b").await;

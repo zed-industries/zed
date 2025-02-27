@@ -188,7 +188,7 @@ impl Vim {
                                     )
                                     .0;
                                 }
-                                cursor = movement::indented_line_beginning(map, cursor, true);
+                                cursor = movement::indented_line_beginning(map, cursor, true, true);
                             } else if !is_multiline && !vim.temp_mode {
                                 cursor = movement::saturating_left(map, cursor)
                             }
@@ -941,6 +941,22 @@ mod test {
                 fish fisˇh
                 two three
                 "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("g r r");
+        cx.assert_state(
+            indoc! {"
+                fisˇh
+                two three
+                "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("j w g r $");
+        cx.assert_state(
+            indoc! {"
+                fish
+                two fisˇh
+            "},
             Mode::Normal,
         );
         let clipboard: Register = cx.read_from_clipboard().unwrap().into();

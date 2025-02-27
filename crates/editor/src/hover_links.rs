@@ -1271,6 +1271,7 @@ mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 

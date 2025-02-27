@@ -24,8 +24,7 @@ use gpui::{
     UpdateGlobal, WeakEntity, Window,
 };
 use language::{Buffer, Point, Selection, TransactionId};
-use language_model::LanguageModelRegistry;
-use language_models::report_assistant_event;
+use language_model::{report_assistant_event, LanguageModelRegistry};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};

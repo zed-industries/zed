@@ -377,7 +377,7 @@ impl WorktreeStore {
             match event {
                 worktree::Event::UpdatedEntries(changes) => {
                     cx.emit(WorktreeStoreEvent::WorktreeUpdatedEntries(
-                        worktree.read(cx).id(),
+                        worktree_id,
                         changes.clone(),
                     ));
                 }
@@ -946,12 +946,17 @@ impl WorktreeStore {
                             upstream: proto_branch.upstream.map(|upstream| {
                                 git::repository::Upstream {
                                     ref_name: upstream.ref_name.into(),
-                                    tracking: upstream.tracking.map(|tracking| {
-                                        git::repository::UpstreamTracking {
-                                            ahead: tracking.ahead as u32,
-                                            behind: tracking.behind as u32,
-                                        }
-                                    }),
+                                    tracking: upstream
+                                        .tracking
+                                        .map(|tracking| {
+                                            git::repository::UpstreamTracking::Tracked(
+                                                git::repository::UpstreamTrackingStatus {
+                                                    ahead: tracking.ahead as u32,
+                                                    behind: tracking.behind as u32,
+                                                },
+                                            )
+                                        })
+                                        .unwrap_or(git::repository::UpstreamTracking::Gone),
                                 }
                             }),
                             most_recent_commit: proto_branch.most_recent_commit.map(|commit| {
