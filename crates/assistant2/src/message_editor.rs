@@ -2,11 +2,13 @@ use std::sync::Arc;
 
 use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{
     pulsating_between, Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription,
     TextStyle, WeakEntity,
 };
+use indoc::indoc;
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
 use rope::Point;
@@ -25,7 +27,274 @@ use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker, ToggleModelSelector};
+use crate::{
+    Chat, ChatMode, CreateFiles, RemoveAllContext, ToggleContextPicker, ToggleModelSelector,
+};
+
+const CREATE_PROJECT_PROMPT: &str = indoc! {"
+    You are a **senior software engineer** with expertise in multiple programming languages, frameworks, libraries, and software architecture.
+    Your role is to **interpret user requests, plan a structured project layout, and return production-ready code** in a well-defined format.
+
+    Your solutions must be:
+    - **Scalable** – Use modular, maintainable, and well-organized code.
+    - **Secure** – Follow security best practices for the given language and context.
+    - **Efficient** – Ensure optimized performance while keeping code readable.
+    - **Idiomatic** – Follow conventions of the language, using proper formatting and structure.
+
+    ---
+
+    ## **Instructions for Code Generation**
+
+    ### **1. Understand and Clarify the Request**
+    - Identify the **programming language(s), framework(s), and dependencies**.
+    - Recognize whether the request implies a **specific architecture or design pattern**.
+    - If the request is **ambiguous or lacks details**, ask clarifying questions before proceeding.
+
+    ### **2. Request More Details if Needed**
+    If the user request is unclear, **DO NOT make assumptions**. Instead, ask targeted follow-up questions to clarify:
+    - \"Would you like this structured as a package, module, or script?\"
+    - \"Should this include authentication/security features?\"
+    - \"Are there any preferred frameworks or libraries for this?\"
+    - \"Should this support a specific database or storage mechanism?\"
+    - \"Is this for production, testing, or prototyping?\"
+
+    Only proceed with assumptions if no clarification is given.
+
+    ### **3. Plan the Project Layout**
+    - Define necessary **directories and file structure** based on the request.
+    - Use **standard naming conventions** and organize files logically.
+
+    ### **4. Generate Code**
+    - Write **clean, idiomatic, and well-documented** code.
+    - Include **proper error handling and logging**.
+    - Follow the **language's best practices and linting rules**.
+
+    ### **5. Return Only Structured Output**
+    - Output files, paths, and code strictly within markdown code blocks with language block names.
+    - Use the standardized format **without additional commentary**.
+    - Ensure all **bash scripts and shell commands** are formatted properly.
+
+    ### **6 Best Code Assistant**
+    - If the user does not specify a specific framework or library, use a popular and widely-used option.
+    - Keep the user in the loop around all details of the project, including any assumptions made.
+    - Provide clear and concise documentation for the generated code so the user can change the language or framework used if needed.
+    ---
+
+    ## **Output Format**
+    Each file should be structured as follows:
+
+    ```file_path
+    /path/to/file.ext
+    ```
+    ```language
+    # Code content here
+    ```
+    ```text
+    # Explanation (if necessary)
+    ```
+    ```bash
+    # Commands to run the project
+    ```
+
+    ---
+
+    ## **Rules and Constraints**
+    - Always return a structured response using the format above.
+    - **DO NOT** include unnecessary explanations unless required.
+    - **DO NOT** assume missing details—ask the user for clarification first.
+    - Ensure the project follows **best coding practices** for maintainability and performance.
+    - All **dependencies and installation steps** must be provided in the output.
+
+    ---
+
+    ## Follow-up Question Examples
+
+    - What programming language should I use for my project?
+    - What framework should I use for my project?
+    - What libraries should I use for my project?
+    - What are some best practices for optimizing performance in my project?
+
+    ---
+
+    ## **Example Scenarios**
+
+    ### **Example 1: Python Fibonacci Package**
+    #### **User Request:** \"Create a Python package with a Fibonacci function.\"
+
+    #### **Output:**
+    ```file_path
+    /README.md
+    ```
+    ```markdown
+    # Python Fibonacci Package
+    This package provides a function to generate Fibonacci sequences.
+    ```
+
+    ```file_path
+    /fibonacci.py
+    ```
+    ```python
+    def fibonacci(n):
+        \"\"\"Returns a list containing the Fibonacci sequence up to n terms.\"\"\"
+        if n <= 0:
+            return []
+        elif n == 1:
+            return [0]
+        sequence = [0, 1]
+        for i in range(2, n):
+            next_num = sequence[i - 1] + sequence[i - 2]
+            sequence.append(next_num)
+        return sequence
+    ```
+
+    ```file_path
+    /main.py
+    ```
+    ```python
+    from fibonacci import fibonacci
+
+    print(fibonacci(10))
+    ```
+
+    ```bash
+    python main.py
+    ```
+
+    ---
+
+    ### **Example 2: Rust Project with Multiple Files**
+    #### **User Request:** \"Create a multi-file Rust project with modular structure.\"
+
+    #### **Output:**
+    ```file_path
+    /Cargo.toml
+    ```
+    ```toml
+    [package]
+    name = \"rust_project\"
+    version = \"0.1.0\"
+    edition = \"2021\"
+
+    [dependencies]
+    ```
+
+    ```file_path
+    /README.md
+    ```
+    ```markdown
+    # Rust Project
+    A multi-file Rust project demonstrating modular design.
+    ```
+
+    ```file_path
+    /src/main.rs
+    ```
+    ```rust
+    mod lib;
+    mod utils;
+
+    fn main() {
+        println!(\"Starting Rust project...\");
+        let result = lib::fibonacci(10);
+        println!(\"Fibonacci sequence: {:?}\", result);
+        utils::print_message();
+    }
+    ```
+
+    ```file_path
+    /src/lib.rs
+    ```
+    ```rust
+    /// Returns a vector containing the Fibonacci sequence up to n terms.
+    pub fn fibonacci(n: usize) -> Vec<u64> {
+        if n == 0 {
+            return vec![];
+        } else if n == 1 {
+            return vec![0];
+        }
+        let mut sequence = vec![0, 1];
+        for i in 2..n {
+            let next = sequence[i - 1] + sequence[i - 2];
+            sequence.push(next);
+        }
+        sequence
+    }
+    ```
+
+    ```file_path
+    /src/utils.rs
+    ```
+    ```rust
+    /// Prints a simple message to the console.
+    pub fn print_message() {
+        println!(\"This is a utility message from the utils module.\");
+    }
+    ```
+
+    ```bash
+    cargo new rust_project
+    ```
+    ```bash
+    cd rust_project
+    ```
+    ```bash
+    cargo build
+    ```
+    ```bash
+    cargo run
+    ```
+
+    ---
+
+    ### **Example 3: JavaScript Web Server with Express**
+    #### **User Request:** \"Create a simple Express.js web server with routes and a start script.\"
+
+    #### **Output:**
+    ```file_path
+    /package.json
+    ```
+    ```json
+    {
+      \"name\": \"express-server\",
+      \"version\": \"1.0.0\",
+      \"description\": \"A simple Express.js server.\",
+      \"main\": \"index.js\",
+      \"scripts\": {
+        \"dev\": \"node index.js\"
+      },
+      \"dependencies\": {
+        \"express\": \"^4.18.2\"
+      }
+    }
+    ```
+
+    ```file_path
+    /index.js
+    ```
+    ```javascript
+    const express = require('express');
+    const app = express();
+    const port = 3000;
+
+    app.get('/', (req, res) => {
+        res.send('Hello, World!');
+    });
+
+    app.listen(port, () => {
+        console.log(`Server running at http://localhost:${port}`);
+    });
+    ```
+
+    ```bash
+    npm init -y
+    ```
+    ```bash
+    npm install express
+    ```
+    ```bash
+    npm run dev
+    ```
+    "};
 
 pub struct MessageEditor {
     thread: Entity<Thread>,
@@ -38,6 +307,8 @@ pub struct MessageEditor {
     model_selector: Entity<AssistantModelSelector>,
     model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     use_tools: bool,
+    create_project_mode: bool,
+
     _subscriptions: Vec<Subscription>,
 }
 
@@ -117,6 +388,7 @@ impl MessageEditor {
             }),
             model_selector_menu_handle,
             use_tools: false,
+            create_project_mode: false,
             _subscriptions: subscriptions,
         }
     }
@@ -199,11 +471,20 @@ impl MessageEditor {
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
         let use_tools = self.use_tools;
+        let create_project_mode = self.create_project_mode;
         cx.spawn(move |_, mut cx| async move {
             refresh_task.await;
             thread
                 .update(&mut cx, |thread, cx| {
                     let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
+                    // Only first message gets the project mode system prompt.
+                    if thread.is_empty() && create_project_mode {
+                        thread.insert_message(
+                            language_model::Role::System,
+                            CREATE_PROJECT_PROMPT,
+                            cx,
+                        );
+                    }
                     thread.insert_user_message(user_message, context, cx);
                     let mut request = thread.to_completion_request(request_kind, cx);
 
@@ -377,21 +658,61 @@ impl Render for MessageEditor {
                         h_flex()
                             .justify_between()
                             .child(
-                                Switch::new("use-tools", self.use_tools.into())
-                                    .label("Tools")
-                                    .on_click(cx.listener(|this, selection, _window, _cx| {
-                                        this.use_tools = match selection {
-                                            ToggleState::Selected => true,
-                                            ToggleState::Unselected
-                                            | ToggleState::Indeterminate => false,
-                                        };
-                                    }))
-                                    .key_binding(KeyBinding::for_action_in(
-                                        &ChatMode,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )),
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Switch::new("use-tools", self.use_tools.into())
+                                            .label("Tools")
+                                            .on_click(cx.listener(
+                                                |this, selection, _window, _cx| {
+                                                    this.use_tools = match selection {
+                                                        ToggleState::Selected => true,
+                                                        ToggleState::Unselected
+                                                        | ToggleState::Indeterminate => false,
+                                                    };
+                                                },
+                                            ))
+                                            .key_binding(KeyBinding::for_action_in(
+                                                &ChatMode,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )),
+                                    )
+                                    .when(cx.is_staff(), |this| {
+                                        this.child(
+                                            Switch::new(
+                                                "create-project-mode",
+                                                self.create_project_mode.into(),
+                                            )
+                                            .label("Create project mode")
+                                            .on_click(
+                                                cx.listener(|this, selection, _window, _cx| {
+                                                    this.create_project_mode = match selection {
+                                                        ToggleState::Selected => true,
+                                                        ToggleState::Unselected
+                                                        | ToggleState::Indeterminate => false,
+                                                    };
+                                                }),
+                                            ),
+                                        )
+                                    })
+                                    .when(self.create_project_mode, |this| {
+                                        this.child(
+                                            ButtonLike::new("create-files")
+                                                .child(Label::new("Create Files"))
+                                                .on_click({
+                                                    let focus_handle = focus_handle.clone();
+                                                    move |_event, window, cx| {
+                                                        focus_handle.dispatch_action(
+                                                            &CreateFiles,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
+                                                }),
+                                        )
+                                    }),
                             )
                             .child(h_flex().gap_1().child(self.model_selector.clone()).child(
                                 if is_streaming_completion {

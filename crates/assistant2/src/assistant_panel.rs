@@ -36,7 +36,9 @@ use crate::message_editor::MessageEditor;
 use crate::thread::{Thread, ThreadError, ThreadId};
 use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
-use crate::{InlineAssistant, NewPromptEditor, NewThread, OpenConfiguration, OpenHistory};
+use crate::{
+    CreateFiles, InlineAssistant, NewPromptEditor, NewThread, OpenConfiguration, OpenHistory,
+};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -64,6 +66,16 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
+                    }
+                })
+                .register_action(|workspace, _: &CreateFiles, window, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel
+                                .thread
+                                .update(cx, |thread, cx| thread.create_files(window, cx))
+                        });
                     }
                 });
         },

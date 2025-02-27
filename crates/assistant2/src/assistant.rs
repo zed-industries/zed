@@ -45,6 +45,7 @@ actions!(
         RemoveSelectedThread,
         Chat,
         ChatMode,
+        CreateFiles,
         CycleNextInlineAssist,
         CyclePreviousInlineAssist,
         FocusUp,

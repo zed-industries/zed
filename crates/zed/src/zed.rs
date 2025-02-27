@@ -1704,8 +1704,12 @@ fn open_settings_file(
                         // restarts.
                         project.find_or_create_worktree(paths::config_dir().as_path(), false, cx)
                     });
-                    let settings_open_task =
-                        create_and_open_local_file(abs_path, window, cx, default_content);
+                    let settings_open_task = create_and_open_local_file(
+                        abs_path.to_path_buf(),
+                        window,
+                        cx,
+                        default_content,
+                    );
                     (worktree_creation_task, settings_open_task)
                 })
             })?

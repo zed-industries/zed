@@ -1,5 +1,7 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
@@ -9,11 +11,14 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::Role;
+use markdown::parser::{CodeBlockKind, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings as _;
+use text::Rope;
 use theme::ThemeSettings;
 use ui::prelude::*;
-use workspace::Workspace;
+use util::ResultExt;
+use workspace::{create_and_open_local_file, Workspace};
 
 use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent};
 use crate::thread_store::ThreadStore;
@@ -101,6 +106,131 @@ impl ActiveThread {
 
     pub fn clear_last_error(&mut self) {
         self.last_error.take();
+    }
+
+    pub fn create_files(&self, window: &mut Window, cx: &mut App) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let messages = self.thread.read(cx).messages();
+
+        let mut files_to_create = Vec::new();
+        for message in messages {
+            if message.role != Role::Assistant {
+                continue;
+            }
+
+            let Some(rendered_message) = self.rendered_messages_by_id.get(&message.id) else {
+                log::error!("Missing rendered message for ID: {:?}", message.id);
+                continue;
+            };
+            let mut in_file_path_block = false;
+            let mut code_block_to_create: Option<Rope> = None;
+            let mut prior_file_path: Option<String> = None;
+            for (_range, event) in rendered_message.read(cx).parsed_markdown().events().iter() {
+                match event {
+                    MarkdownEvent::Start(MarkdownTag::CodeBlock(CodeBlockKind::Fenced(
+                        language,
+                    ))) => {
+                        if language == "file_path" {
+                            in_file_path_block = true;
+                            prior_file_path = None;
+                        } else if prior_file_path.as_ref().is_some() {
+                            code_block_to_create = Some(Rope::new());
+                        }
+                    }
+                    MarkdownEvent::Text(text) => {
+                        if in_file_path_block {
+                            prior_file_path = Some(
+                                (prior_file_path.unwrap_or("".to_string()) + &text).to_string(),
+                            );
+                        } else {
+                            match code_block_to_create.as_mut() {
+                                Some(code_block) => {
+                                    code_block.push(text);
+                                }
+                                None => {}
+                            }
+                        }
+                    }
+                    MarkdownEvent::End(MarkdownTagEnd::CodeBlock) => {
+                        in_file_path_block = false;
+                        match (&prior_file_path, &code_block_to_create) {
+                            (Some(file_path), Some(code)) => {
+                                let file_path = file_path.trim().to_string();
+                                let file_path = PathBuf::from(
+                                    file_path
+                                        .strip_prefix("/")
+                                        .unwrap_or(&file_path)
+                                        .to_string(),
+                                );
+                                files_to_create.push((file_path, code.clone()));
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let weak_workspace = workspace.downgrade();
+
+        window.defer(cx, move |window, cx| {
+            let resolved_files_to_create = weak_workspace
+                .update(cx, |workspace, cx| {
+                    let Some(first_worktree) = workspace.worktrees(cx).next() else {
+                        return Err(anyhow!("No worktree found"));
+                    };
+
+                    let first_worktree = first_worktree.read(cx).snapshot();
+
+                    let mut resolved_files_to_create = Vec::new();
+
+                    for (file_path, code) in files_to_create {
+                        let abs_path = first_worktree.absolutize(file_path.as_path())?;
+                        resolved_files_to_create.push((abs_path, code));
+                    }
+                    return Ok(resolved_files_to_create);
+                })
+                .log_err()
+                .and_then(|inner| inner.log_err());
+
+            let Some(resolved_files_to_create) = resolved_files_to_create else {
+                return;
+            };
+
+            let Some(fs) = weak_workspace
+                .update(cx, |workspace, _cx| workspace.app_state().fs.clone())
+                .log_err()
+            else {
+                return;
+            };
+
+            window
+                .spawn(cx, move |mut cx| async move {
+                    for (abs_path, _) in resolved_files_to_create.iter() {
+                        let parent = abs_path.parent().map(|parent| parent.to_path_buf());
+                        if let Some(parent) = parent {
+                            fs.create_dir(parent.as_path()).await?;
+                        }
+                    }
+                    for (abs_path, code) in resolved_files_to_create {
+                        weak_workspace
+                            .update_in(&mut cx, |_, window, cx| {
+                                create_and_open_local_file(abs_path, window, cx, move || {
+                                    code.clone()
+                                })
+                                .detach_and_log_err(cx);
+                            })
+                            .log_err();
+                    }
+
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+        })
     }
 
     fn push_message(

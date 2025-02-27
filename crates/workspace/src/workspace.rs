@@ -6081,36 +6081,33 @@ pub fn open_new(
 }
 
 pub fn create_and_open_local_file(
-    path: &'static Path,
+    path: PathBuf,
     window: &mut Window,
     cx: &mut Context<Workspace>,
     default_content: impl 'static + Send + FnOnce() -> Rope,
 ) -> Task<Result<Box<dyn ItemHandle>>> {
     cx.spawn_in(window, |workspace, mut cx| async move {
         let fs = workspace.update(&mut cx, |workspace, _| workspace.app_state().fs.clone())?;
-        if !fs.is_file(path).await {
-            fs.create_file(path, Default::default()).await?;
-            fs.save(path, &default_content(), Default::default())
+        if !fs.is_file(path.as_path()).await {
+            fs.create_file(path.as_path(), Default::default()).await?;
+            fs.save(path.as_path(), &default_content(), Default::default())
                 .await?;
         }
 
         let mut items = workspace
-            .update_in(&mut cx, |workspace, window, cx| {
-                workspace.with_local_workspace(window, cx, |workspace, window, cx| {
-                    workspace.open_paths(
-                        vec![path.to_path_buf()],
-                        OpenVisible::None,
-                        None,
-                        window,
-                        cx,
-                    )
-                })
+            .update_in(&mut cx, {
+                let path = path.clone();
+                |workspace, window, cx| {
+                    workspace.with_local_workspace(window, cx, |workspace, window, cx| {
+                        workspace.open_paths(vec![path], OpenVisible::None, None, window, cx)
+                    })
+                }
             })?
             .await?
             .await;
 
         let item = items.pop().flatten();
-        item.ok_or_else(|| anyhow!("path {path:?} is not a file"))?
+        item.ok_or_else(|| anyhow!("path {:?} is not a file", path))?
     })
 }
 
