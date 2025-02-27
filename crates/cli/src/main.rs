@@ -524,7 +524,7 @@ mod flatpak {
 #[cfg(target_os = "windows")]
 mod windows {
     use anyhow::Context;
-    use release_channel::APP_IDENTIFIER;
+    use release_channel::app_identifier;
     use windows::{
         core::HSTRING,
         Win32::{
@@ -546,7 +546,7 @@ mod windows {
             CreateMutexW(
                 None,
                 false,
-                &HSTRING::from(format!("{}-Instance-Mutex", *APP_IDENTIFIER)),
+                &HSTRING::from(format!("{}-Instance-Mutex", app_identifier())),
             )
             .expect("Unable to create instance sync event")
         };
@@ -583,7 +583,7 @@ mod windows {
             } else {
                 unsafe {
                     let pipe = CreateFileW(
-                        &HSTRING::from(format!("\\\\.\\pipe\\{}-Named-Pipe", *APP_IDENTIFIER)),
+                        &HSTRING::from(format!("\\\\.\\pipe\\{}-Named-Pipe", app_identifier())),
                         GENERIC_WRITE.0,
                         FILE_SHARE_MODE::default(),
                         None,
