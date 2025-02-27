@@ -805,17 +805,15 @@ impl BufferDiff {
         let new_index_text = self.inner.stage_or_unstage_hunks(
             &self.secondary_diff.as_ref()?.read(cx).inner,
             stage,
-            hunks.into_iter().map(|hunk| {
+            hunks.into_iter().inspect(|hunk| {
                 start.get_or_insert(hunk.buffer_range.start);
                 end = Some(hunk.buffer_range.end);
-                hunk
             }),
             buffer,
         );
         if let Some((start, end)) = start.zip(end) {
-            let changed_range = start..end;
             cx.emit(BufferDiffEvent::DiffChanged {
-                changed_range: Some(changed_range),
+                changed_range: Some(start..end),
             });
         }
         new_index_text
