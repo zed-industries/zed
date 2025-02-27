@@ -829,6 +829,8 @@
     // A list of globs representing files that edit predictions should be disabled for.
     // There's a sensible default list of globs already included.
     // Any addition to this list will be merged with the default list.
+    // Globs are matched relative to the worktree root,
+    // except when starting with a slash (/) or equivalent in Windows.
     "disabled_globs": [
       "**/.env*",
       "**/*.pem",
