@@ -6,7 +6,11 @@ use gpui::{
     ListState, MouseDownEvent, Point, Subscription,
 };
 use project::debugger::session::Session;
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use ui::{prelude::*, ContextMenu, ListItem};
 use util::debug_panic;
 
@@ -23,15 +27,21 @@ struct ScopeState {
     is_expanded: bool,
 }
 
+#[derive(PartialEq, Eq, Hash, Clone)]
+struct VariablePath {
+    base: VariableReference,
+    indices: Arc<[VariableReference]>,
+}
+
 enum VariableListEntry {
     Scope((dap::Scope, ScopeState)),
-    Variable((dap::Variable, VariableState)),
+    Variable((dap::Variable, VariablePath, VariableState)),
 }
 
 pub struct VariableList {
     entries: Vec<VariableListEntry>,
     scope_states: HashMap<StackFrameId, ScopeState>,
-    variable_states: HashMap<VariableReference, VariableState>,
+    variable_states: HashMap<VariablePath, VariableState>,
     selected_stack_frame_id: Option<StackFrameId>,
     list: ListState,
     session: Entity<Session>,
@@ -62,6 +72,9 @@ impl VariableList {
                     .unwrap_or(div().into_any())
             },
         );
+        list.set_scroll_handler(|_, _, _| {
+            dbg!("Scrolling");
+        });
 
         let set_variable_editor = cx.new(|cx| Editor::single_line(window, cx));
 
@@ -109,7 +122,7 @@ impl VariableList {
         fn inner(
             this: &mut VariableList,
             variable_reference: VariableReference,
-            depth: usize,
+            indices: &mut Vec<u64>,
             entries: &mut Vec<VariableListEntry>,
             cx: &mut Context<VariableList>,
         ) {
@@ -118,34 +131,32 @@ impl VariableList {
                 .update(cx, |session, cx| session.variables(variable_reference, cx))
             {
                 let child_ref = variable.variables_reference;
-                let var_state;
+                let depth = indices.len() + 1;
 
-                //todo(debugger) This could cause an infinite loop if there's a var with a cycle that references itself
-                // and is expanded. We need to keep figure out a way to uniquely identify variables besides their reference
-                // maybe a key could be (var_id, depth). That would still have a double toggling bug though
+                let var_path = VariablePath {
+                    base: child_ref,
+                    indices: Arc::from(indices.clone()),
+                };
 
-                if child_ref != 0 {
-                    var_state = *this
+                let var_state =
+                    *this
                         .variable_states
-                        .entry(child_ref)
+                        .entry(var_path.clone())
                         .or_insert(VariableState {
                             depth,
                             is_expanded: false,
                         });
-                } else {
-                    var_state = VariableState {
-                        depth,
-                        is_expanded: false,
-                    };
-                }
 
-                entries.push(VariableListEntry::Variable((variable, var_state)));
+                entries.push(VariableListEntry::Variable((variable, var_path, var_state)));
 
+                indices.push(child_ref);
                 if var_state.is_expanded {
-                    inner(this, child_ref, depth + 1, entries, cx);
+                    inner(this, child_ref, indices, entries, cx);
                 }
+                indices.pop();
             }
         }
+        let mut indices = Vec::new();
 
         for scope in scopes.iter().cloned() {
             let state = *self
@@ -157,9 +168,12 @@ impl VariableList {
 
             entries.push(VariableListEntry::Scope((scope, state)));
 
+            indices.push(scope_ref);
+
             if state.is_expanded {
-                inner(self, scope_ref, 2, &mut entries, cx);
+                inner(self, scope_ref, &mut indices, &mut entries, cx);
             }
+            indices.pop();
         }
 
         self.entries = entries;
@@ -205,9 +219,13 @@ impl VariableList {
             VariableListEntry::Scope((scope, state)) => {
                 self.render_scope(scope.clone(), *state, is_selected, cx)
             }
-            VariableListEntry::Variable((variable, state)) => {
-                self.render_variable(variable.clone(), *state, is_selected, cx)
-            }
+            VariableListEntry::Variable((variable, var_path, state)) => self.render_variable(
+                variable.clone(),
+                var_path.to_owned(),
+                *state,
+                is_selected,
+                cx,
+            ),
         }
     }
 
@@ -221,8 +239,8 @@ impl VariableList {
         self.build_entries(cx);
     }
 
-    fn toggle_variable(&mut self, var_ref: VariableReference, cx: &mut Context<Self>) {
-        let Some(entry) = self.variable_states.get_mut(&var_ref) else {
+    fn toggle_variable(&mut self, var_path: &VariablePath, cx: &mut Context<Self>) {
+        let Some(entry) = self.variable_states.get_mut(var_path) else {
             debug_panic!("Trying to toggle variable in variable list that has an no state");
             return;
         };
@@ -431,6 +449,7 @@ impl VariableList {
     fn render_variable(
         &self,
         variable: dap::Variable,
+        var_path: VariablePath,
         state: VariableState,
         is_selected: bool,
         cx: &mut Context<Self>,
@@ -485,12 +504,13 @@ impl VariableList {
                 .always_show_disclosure_icon(true)
                 .when(var_ref > 0, |list_item| {
                     list_item.toggle(state.is_expanded).on_toggle(cx.listener({
+                        let var_path = var_path.clone();
                         move |this, _, _window, cx| {
                             this.session.update(cx, |session, cx| {
                                 session.variables(var_ref, cx);
                             });
 
-                            this.toggle_variable(var_ref, cx);
+                            this.toggle_variable(&var_path, cx);
                         }
                     }))
                 })
@@ -588,11 +608,12 @@ impl Render for VariableList {
         // todo(debugger): We are reconstructing the variable list list state every frame
         // which is very bad!! We should only reconstruct the variable list state when necessary.
         // Will fix soon
-        div()
+        v_flex()
             .key_context("VariableList")
             .id("variable-list")
             .group("variable-list")
             .size_full()
+            .overflow_y_scroll()
             .track_focus(&self.focus_handle(cx))
             // .on_action(cx.listener(Self::select_first))
             // .on_action(cx.listener(Self::select_last))
@@ -607,7 +628,7 @@ impl Render for VariableList {
                     // this.cancel_set_variable_value(cx)
                 }),
             )
-            .child(list(self.list.clone()).gap_1_5().size_full())
+            .child(list(self.list.clone()).gap_1_5().size_full().flex_grow())
             .children(self.open_context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
                     anchored()
