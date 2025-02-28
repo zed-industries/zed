@@ -98,7 +98,8 @@ pub enum Event {
         ids: Vec<ExcerptId>,
     },
     ExcerptsEdited {
-        ids: Vec<ExcerptId>,
+        excerpt_ids: Vec<ExcerptId>,
+        buffer_ids: Vec<BufferId>,
     },
     DiffHunksToggled,
     Edited {
@@ -767,7 +768,9 @@ impl MultiBuffer {
                 this.convert_edits_to_buffer_edits(edits, &snapshot, &original_start_columns);
             drop(snapshot);
 
+            let mut buffer_ids = Vec::new();
             for (buffer_id, mut edits) in buffer_edits {
+                buffer_ids.push(buffer_id);
                 edits.sort_by_key(|edit| edit.range.start);
                 this.buffers.borrow()[&buffer_id]
                     .buffer
@@ -844,7 +847,8 @@ impl MultiBuffer {
             }
 
             cx.emit(Event::ExcerptsEdited {
-                ids: edited_excerpt_ids,
+                excerpt_ids: edited_excerpt_ids,
+                buffer_ids,
             });
         }
     }
@@ -1004,7 +1008,9 @@ impl MultiBuffer {
                 this.convert_edits_to_buffer_edits(edits, &snapshot, &[]);
             drop(snapshot);
 
+            let mut buffer_ids = Vec::new();
             for (buffer_id, mut edits) in buffer_edits {
+                buffer_ids.push(buffer_id);
                 edits.sort_unstable_by_key(|edit| edit.range.start);
 
                 let mut ranges: Vec<Range<usize>> = Vec::new();
@@ -1026,7 +1032,8 @@ impl MultiBuffer {
             }
 
             cx.emit(Event::ExcerptsEdited {
-                ids: edited_excerpt_ids,
+                excerpt_ids: edited_excerpt_ids,
+                buffer_ids,
             });
         }
     }
@@ -2410,7 +2417,7 @@ impl MultiBuffer {
         let snapshot = self.read(cx);
         let mut cursor = snapshot.diff_transforms.cursor::<usize>(&());
         let offset_range = range.to_offset(&snapshot);
-        cursor.seek(&offset_range.start, Bias::Right, &());
+        cursor.seek(&offset_range.start, Bias::Left, &());
         while let Some(item) = cursor.item() {
             if *cursor.start() >= offset_range.end && *cursor.start() > offset_range.start {
                 break;
@@ -4528,7 +4535,6 @@ impl MultiBufferSnapshot {
                     base_text_byte_range,
                     ..
                 }) => {
-                    let mut in_deleted_hunk = false;
                     if let Some(diff_base_anchor) = &anchor.diff_base_anchor {
                         if let Some(base_text) =
                             self.diffs.get(buffer_id).and_then(|diff| diff.base_text())
@@ -4543,16 +4549,12 @@ impl MultiBufferSnapshot {
                                             base_text_byte_range.start..base_text_offset,
                                         );
                                     position.add_assign(&position_in_hunk);
-                                    in_deleted_hunk = true;
                                 } else if at_transform_end {
                                     diff_transforms.next(&());
                                     continue;
                                 }
                             }
                         }
-                    }
-                    if !in_deleted_hunk {
-                        position = diff_transforms.end(&()).1 .0;
                     }
                 }
                 _ => {

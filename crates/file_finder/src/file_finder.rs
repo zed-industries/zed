@@ -1195,6 +1195,7 @@ impl PickerDelegate for FileFinderDelegate {
                                     None,
                                     true,
                                     allow_preview,
+                                    true,
                                     window,
                                     cx,
                                 )

@@ -254,18 +254,28 @@ impl RenderOnce for PastThread {
         );
 
         ListItem::new(SharedString::from(self.thread.id.to_string()))
-            .outlined()
+            .rounded()
             .toggle_state(self.selected)
-            .start_slot(
-                Icon::new(IconName::MessageCircle)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
-            )
             .spacing(ListItemSpacing::Sparse)
-            .child(Label::new(summary).size(LabelSize::Small).text_ellipsis())
+            .start_slot(
+                div()
+                    .max_w_4_5()
+                    .child(Label::new(summary).size(LabelSize::Small).text_ellipsis()),
+            )
             .end_slot(
                 h_flex()
                     .gap_1p5()
+                    .child(
+                        Label::new("Thread")
+                            .color(Color::Muted)
+                            .size(LabelSize::XSmall),
+                    )
+                    .child(
+                        div()
+                            .size(px(3.))
+                            .rounded_full()
+                            .bg(cx.theme().colors().text_disabled),
+                    )
                     .child(
                         Label::new(thread_timestamp)
                             .color(Color::Muted)
@@ -340,18 +350,28 @@ impl RenderOnce for PastContext {
         ListItem::new(SharedString::from(
             self.context.path.to_string_lossy().to_string(),
         ))
-        .outlined()
+        .rounded()
         .toggle_state(self.selected)
-        .start_slot(
-            Icon::new(IconName::Code)
-                .size(IconSize::Small)
-                .color(Color::Muted),
-        )
         .spacing(ListItemSpacing::Sparse)
-        .child(Label::new(summary).size(LabelSize::Small).text_ellipsis())
+        .start_slot(
+            div()
+                .max_w_4_5()
+                .child(Label::new(summary).size(LabelSize::Small).text_ellipsis()),
+        )
         .end_slot(
             h_flex()
                 .gap_1p5()
+                .child(
+                    Label::new("Prompt Editor")
+                        .color(Color::Muted)
+                        .size(LabelSize::XSmall),
+                )
+                .child(
+                    div()
+                        .size(px(3.))
+                        .rounded_full()
+                        .bg(cx.theme().colors().text_disabled),
+                )
                 .child(
                     Label::new(context_timestamp)
                         .color(Color::Muted)

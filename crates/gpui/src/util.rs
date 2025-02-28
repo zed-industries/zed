@@ -40,6 +40,19 @@ pub trait FluentBuilder {
             }
         })
     }
+    /// Conditionally unwrap and modify self with the given closure, if the given option is Some.
+    fn when_none<T>(self, option: &Option<T>, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| {
+            if let Some(_) = option {
+                this
+            } else {
+                then(this)
+            }
+        })
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]

@@ -820,6 +820,7 @@ impl BufferSearchBar {
         }
 
         self.dismissed = false;
+        self.adjust_query_regex_language(cx);
         handle.search_bar_visibility_changed(true, window, cx);
         cx.notify();
         cx.emit(Event::UpdateLocation);
