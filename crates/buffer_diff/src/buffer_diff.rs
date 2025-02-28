@@ -109,7 +109,7 @@ impl sum_tree::Summary for DiffHunkSummary {
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, DiffHunkSummary, DiffHunkSummary> for Anchor {
+impl sum_tree::SeekTarget<'_, DiffHunkSummary, DiffHunkSummary> for Anchor {
     fn cmp(&self, cursor_location: &DiffHunkSummary, buffer: &text::BufferSnapshot) -> Ordering {
         if self
             .cmp(&cursor_location.buffer_range.start, buffer)

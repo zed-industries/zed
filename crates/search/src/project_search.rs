@@ -894,6 +894,7 @@ impl ProjectSearchView {
                             editor.set_text(old_query.as_str(), window, cx);
                         });
                         search_view.search_options = SearchOptions::from_query(&old_query);
+                        search_view.adjust_query_regex_language(cx);
                     }
                 }
                 new_query

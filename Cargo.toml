@@ -405,10 +405,10 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 cocoa = "0.26"
 cocoa-foundation = "0.2.0"
-convert_case = "0.7.0"
+convert_case = "0.8.0"
 core-foundation = "0.9.3"
 core-foundation-sys = "0.8.6"
-ctor = "0.3.0"
+ctor = "0.4.0"
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
@@ -455,7 +455,6 @@ nanoid = "0.4"
 nbformat = { version = "0.10.0" }
 nix = "0.29"
 num-format = "0.4.4"
-once_cell = "1.20"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
@@ -709,6 +708,9 @@ inherits = "release"
 debug = "full"
 lto = false
 codegen-units = 16
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "allow" }
 
 [workspace.lints.clippy]
 dbg_macro = "deny"
