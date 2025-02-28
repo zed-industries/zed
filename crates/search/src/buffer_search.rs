@@ -924,7 +924,7 @@ impl BufferSearchBar {
                     query_buffer.edit([(0..len, query)], None, cx);
                 });
             });
-            self.search_options = options;
+            self.set_search_options(options, cx);
             self.clear_matches(window, cx);
             cx.notify();
         }
@@ -978,6 +978,7 @@ impl BufferSearchBar {
 
     pub fn set_search_options(&mut self, search_options: SearchOptions, cx: &mut Context<Self>) {
         self.search_options = search_options;
+        self.adjust_query_regex_language(cx);
         cx.notify();
     }
 
