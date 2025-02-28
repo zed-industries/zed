@@ -139,7 +139,7 @@ While `tab` and `alt-tab` are supported on Linux, `alt-l` is displayed instead. 
 
 ### Missing keybind {#edit-predictions-missing-keybinding}
 
-Zed requires at least one keybinding for the {#action editor::AcceptEditPrediction} in both the `Editor && edit_prediction` and `Editor && edit_prediction_conflict` contexts ([learn more above](#edit-predictions-keybinding)).
+Zed requires at least one keybinding for the {#action editor::AcceptEditPrediction} action in both the `Editor && edit_prediction` and `Editor && edit_prediction_conflict` contexts ([learn more above](#edit-predictions-keybinding)).
 
 If you have previously bound the default keybindings to different actions in the global context, you will not be able to preview or accept edit predictions. For example:
 
