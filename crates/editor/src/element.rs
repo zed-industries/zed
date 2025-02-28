@@ -26,7 +26,7 @@ use crate::{
     FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
-use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
+use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
 use file_icons::FileIcons;
@@ -4365,7 +4365,7 @@ impl EditorElement {
                             hunk_bounds,
                             cx.theme().colors().version_control_modified,
                             Corners::all(px(0.)),
-                            DiffHunkSecondaryStatus::None,
+                            DiffHunkStatus::modified_none(),
                         ))
                     }
                     DisplayDiffHunk::Unfolded {
@@ -4377,19 +4377,19 @@ impl EditorElement {
                             hunk_hitbox.bounds,
                             cx.theme().colors().version_control_added,
                             Corners::all(px(0.)),
-                            status.secondary,
+                            *status,
                         ),
                         DiffHunkStatusKind::Modified => (
                             hunk_hitbox.bounds,
                             cx.theme().colors().version_control_modified,
                             Corners::all(px(0.)),
-                            status.secondary,
+                            *status,
                         ),
                         DiffHunkStatusKind::Deleted if !display_row_range.is_empty() => (
                             hunk_hitbox.bounds,
                             cx.theme().colors().version_control_deleted,
                             Corners::all(px(0.)),
-                            status.secondary,
+                            *status,
                         ),
                         DiffHunkStatusKind::Deleted => (
                             Bounds::new(
@@ -4401,19 +4401,18 @@ impl EditorElement {
                             ),
                             cx.theme().colors().version_control_deleted,
                             Corners::all(1. * line_height),
-                            status.secondary,
+                            *status,
                         ),
                     }),
                 };
 
-                if let Some((hunk_bounds, background_color, corner_radii, secondary_status)) =
+                if let Some((hunk_bounds, mut background_color, corner_radii, secondary_status)) =
                     hunk_to_paint
                 {
-                    let background_color = if secondary_status != DiffHunkSecondaryStatus::None {
-                        background_color.opacity(if is_light { 0.2 } else { 0.32 })
-                    } else {
-                        background_color.opacity(1.0)
-                    };
+                    if secondary_status.has_secondary_hunk() {
+                        background_color =
+                            background_color.opacity(if is_light { 0.2 } else { 0.32 });
+                    }
                     window.paint_quad(quad(
                         hunk_bounds,
                         corner_radii,
@@ -6728,12 +6727,11 @@ impl Element for EditorElement {
                                 continue;
                             }
                         };
-                        let background_color =
-                            if diff_status.secondary == DiffHunkSecondaryStatus::None {
-                                background_color.opacity(staged_opacity)
-                            } else {
-                                background_color.opacity(unstaged_opacity)
-                            };
+                        let background_color = if diff_status.has_secondary_hunk() {
+                            background_color.opacity(unstaged_opacity)
+                        } else {
+                            background_color.opacity(staged_opacity)
+                        };
 
                         highlighted_rows
                             .entry(start_row + DisplayRow(ix as u32))
@@ -8780,65 +8778,62 @@ fn diff_hunk_controls(
         .rounded_b_lg()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
-        .when(status.secondary == DiffHunkSecondaryStatus::None, |el| {
-            el.child(
-                Button::new("unstage", "Unstage")
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Unstage Hunk",
-                                &::git::ToggleStaged,
-                                &focus_handle,
+        .child(if status.has_secondary_hunk() {
+            Button::new(("stage", row as u64), "Stage")
+                .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Stage Hunk",
+                            &::git::ToggleStaged,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.stage_or_unstage_diff_hunks(
+                                true,
+                                &[hunk_range.start..hunk_range.start],
                                 window,
                                 cx,
-                            )
-                        }
-                    })
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_event, window, cx| {
-                            editor.update(cx, |editor, cx| {
-                                editor.stage_or_unstage_diff_hunks(
-                                    false,
-                                    &[hunk_range.start..hunk_range.start],
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }
-                    }),
-            )
-        })
-        .when(status.secondary != DiffHunkSecondaryStatus::None, |el| {
-            el.child(
-                Button::new("stage", "Stage")
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Stage Hunk",
-                                &::git::ToggleStaged,
-                                &focus_handle,
+                            );
+                        });
+                    }
+                })
+        } else {
+            Button::new(("unstage", row as u64), "Unstage")
+                .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Unstage Hunk",
+                            &::git::ToggleStaged,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.stage_or_unstage_diff_hunks(
+                                false,
+                                &[hunk_range.start..hunk_range.start],
                                 window,
                                 cx,
-                            )
-                        }
-                    })
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_event, window, cx| {
-                            editor.update(cx, |editor, cx| {
-                                editor.stage_or_unstage_diff_hunks(
-                                    true,
-                                    &[hunk_range.start..hunk_range.start],
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }
-                    }),
-            )
+                            );
+                        });
+                    }
+                })
         })
         .child(
             Button::new("discard", "Restore")

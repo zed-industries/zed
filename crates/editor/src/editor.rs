@@ -52,7 +52,7 @@ pub use actions::{AcceptEditPrediction, OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
-use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus};
+use buffer_diff::DiffHunkStatus;
 use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -7720,11 +7720,6 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) {
         let mut revert_changes = HashMap::default();
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let Some(project) = &self.project else {
-            return;
-        };
-
         let chunk_by = self
             .snapshot(window, cx)
             .hunks_for_ranges(ranges.into_iter())
@@ -7735,15 +7730,7 @@ impl Editor {
             for hunk in &hunks {
                 self.prepare_restore_change(&mut revert_changes, hunk, cx);
             }
-            Self::do_stage_or_unstage(
-                project,
-                false,
-                buffer_id,
-                hunks.into_iter(),
-                &snapshot,
-                window,
-                cx,
-            );
+            self.do_stage_or_unstage(false, buffer_id, hunks.into_iter(), window, cx);
         }
         drop(chunk_by);
         if !revert_changes.is_empty() {
@@ -7788,7 +7775,6 @@ impl Editor {
         let original_text = diff
             .read(cx)
             .base_text()
-            .as_ref()?
             .as_rope()
             .slice(hunk.diff_base_byte_range.clone());
         let buffer_snapshot = buffer.snapshot();
@@ -13524,7 +13510,7 @@ impl Editor {
         snapshot: &MultiBufferSnapshot,
     ) -> bool {
         let mut hunks = self.diff_hunks_in_ranges(ranges, &snapshot);
-        hunks.any(|hunk| hunk.secondary_status != DiffHunkSecondaryStatus::None)
+        hunks.any(|hunk| hunk.status().has_secondary_hunk())
     }
 
     pub fn toggle_staged_selected_diff_hunks(
@@ -13565,15 +13551,11 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let Some(project) = &self.project else {
-            return;
-        };
-
         let chunk_by = self
             .diff_hunks_in_ranges(&ranges, &snapshot)
             .chunk_by(|hunk| hunk.buffer_id);
         for (buffer_id, hunks) in &chunk_by {
-            Self::do_stage_or_unstage(project, stage, buffer_id, hunks, &snapshot, window, cx);
+            self.do_stage_or_unstage(stage, buffer_id, hunks, window, cx);
         }
     }
 
@@ -13647,16 +13629,20 @@ impl Editor {
     }
 
     fn do_stage_or_unstage(
-        project: &Entity<Project>,
+        &self,
         stage: bool,
         buffer_id: BufferId,
         hunks: impl Iterator<Item = MultiBufferDiffHunk>,
-        snapshot: &MultiBufferSnapshot,
         window: &mut Window,
         cx: &mut App,
     ) {
+        let Some(project) = self.project.as_ref() else {
+            return;
+        };
         let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
-            log::debug!("no buffer for id");
+            return;
+        };
+        let Some(diff) = self.buffer.read(cx).diff_for(buffer_id) else {
             return;
         };
         let buffer_snapshot = buffer.read(cx).snapshot();
@@ -13670,37 +13656,31 @@ impl Editor {
             log::debug!("no git repo for buffer id");
             return;
         };
-        let Some(diff) = snapshot.diff_for_buffer_id(buffer_id) else {
-            log::debug!("no diff for buffer id");
-            return;
-        };
 
-        let new_index_text = if !stage && diff.is_single_insertion || stage && !file_exists {
-            log::debug!("removing from index");
-            None
-        } else {
-            diff.new_secondary_text_for_stage_or_unstage(
+        let new_index_text = diff.update(cx, |diff, cx| {
+            diff.stage_or_unstage_hunks(
                 stage,
-                hunks.filter_map(|hunk| {
-                    if stage && hunk.secondary_status == DiffHunkSecondaryStatus::None {
-                        return None;
-                    } else if !stage
-                        && hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk
-                    {
-                        return None;
-                    }
-                    Some((hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone()))
-                }),
+                &hunks
+                    .map(|hunk| buffer_diff::DiffHunk {
+                        buffer_range: hunk.buffer_range,
+                        diff_base_byte_range: hunk.diff_base_byte_range,
+                        secondary_status: hunk.secondary_status,
+                        row_range: 0..0, // unused
+                    })
+                    .collect::<Vec<_>>(),
                 &buffer_snapshot,
+                file_exists,
                 cx,
             )
-        };
+        });
+
         if file_exists {
             let buffer_store = project.read(cx).buffer_store().clone();
             buffer_store
                 .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
                 .detach_and_log_err(cx);
         }
+
         let recv = repo
             .read(cx)
             .set_index_text(&path, new_index_text.map(|rope| rope.to_string()));

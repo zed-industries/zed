@@ -1,6 +1,4 @@
-use std::any::{Any, TypeId};
-
-use ::git::UnstageAndNext;
+use crate::git_panel::{GitPanel, GitPanelAddon, GitStatusEntry};
 use anyhow::Result;
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::HashSet;
@@ -11,14 +9,17 @@ use editor::{
 };
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
-use git::{status::FileStatus, Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll};
+use git::{
+    status::FileStatus, Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
+};
 use gpui::{
     actions, Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity,
     EventEmitter, FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, Capability, OffsetRangeExt, Point};
+use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{git::GitStore, Project, ProjectPath};
+use std::any::{Any, TypeId};
 use theme::ActiveTheme;
 use ui::{prelude::*, vertical_divider, Tooltip};
 use util::ResultExt as _;
@@ -28,8 +29,6 @@ use workspace::{
     ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
 };
-
-use crate::git_panel::{GitPanel, GitPanelAddon, GitStatusEntry};
 
 actions!(git, [Diff]);
 
@@ -230,14 +229,16 @@ impl ProjectDiff {
         let mut has_unstaged_hunks = false;
         for hunk in editor.diff_hunks_in_ranges(&ranges, &snapshot) {
             match hunk.secondary_status {
-                DiffHunkSecondaryStatus::HasSecondaryHunk => {
+                DiffHunkSecondaryStatus::HasSecondaryHunk
+                | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
                     has_unstaged_hunks = true;
                 }
                 DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
                     has_staged_hunks = true;
                     has_unstaged_hunks = true;
                 }
-                DiffHunkSecondaryStatus::None => {
+                DiffHunkSecondaryStatus::None
+                | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => {
                     has_staged_hunks = true;
                 }
             }
@@ -378,13 +379,10 @@ impl ProjectDiff {
 
         let snapshot = buffer.read(cx).snapshot();
         let diff = diff.read(cx);
-        let diff_hunk_ranges = if diff.base_text().is_none() {
-            vec![Point::zero()..snapshot.max_point()]
-        } else {
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-                .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
-                .collect::<Vec<_>>()
-        };
+        let diff_hunk_ranges = diff
+            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
+            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
+            .collect::<Vec<_>>();
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
             let was_empty = multibuffer.is_empty();
@@ -971,7 +969,7 @@ mod tests {
             path!("/project"),
             json!({
                 ".git": {},
-                "foo": "FOO\n",
+                "foo.txt": "FOO\n",
             }),
         )
         .await;
@@ -985,11 +983,15 @@ mod tests {
 
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("foo".into(), "foo\n".into())],
+            &[("foo.txt".into(), "foo\n".into())],
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("foo.txt".into(), "foo\n".into())],
         );
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.statuses = HashMap::from_iter([(
-                "foo".into(),
+                "foo.txt".into(),
                 TrackedStatus {
                     index_status: StatusCode::Unmodified,
                     worktree_status: StatusCode::Modified,
@@ -1020,7 +1022,7 @@ mod tests {
 
         assert_state_with_diff(&editor, cx, &"ˇ".unindent());
 
-        let text = String::from_utf8(fs.read_file_sync("/project/foo").unwrap()).unwrap();
+        let text = String::from_utf8(fs.read_file_sync("/project/foo.txt").unwrap()).unwrap();
         assert_eq!(text, "foo\n");
     }
 

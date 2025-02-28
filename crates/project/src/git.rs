@@ -18,14 +18,13 @@ use language::{Buffer, LanguageRegistry};
 use rpc::proto::{git_reset, ToProto};
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use settings::WorktreeId;
+use std::collections::VecDeque;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use text::BufferId;
 use util::{maybe, ResultExt};
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
-
-type GitJob = Box<dyn FnOnce(&mut AsyncApp) -> Task<()>>;
 
 pub struct GitStore {
     buffer_store: Entity<BufferStore>,
@@ -62,6 +61,16 @@ pub enum GitEvent {
     ActiveRepositoryChanged,
     FileSystemUpdated,
     GitStateUpdated,
+}
+
+struct GitJob {
+    job: Box<dyn FnOnce(&mut AsyncApp) -> Task<()>>,
+    key: Option<GitJobKey>,
+}
+
+#[derive(PartialEq, Eq)]
+enum GitJobKey {
+    WriteIndex(RepoPath),
 }
 
 impl EventEmitter<GitEvent> for GitStore {}
@@ -223,9 +232,29 @@ impl GitStore {
 
     fn spawn_git_worker(cx: &mut Context<'_, GitStore>) -> mpsc::UnboundedSender<GitJob> {
         let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
+
         cx.spawn(|_, mut cx| async move {
-            while let Some(job) = job_rx.next().await {
-                job(&mut cx).await
+            let mut jobs = VecDeque::new();
+            loop {
+                while let Ok(Some(next_job)) = job_rx.try_next() {
+                    jobs.push_back(next_job);
+                }
+
+                if let Some(job) = jobs.pop_front() {
+                    if let Some(current_key) = &job.key {
+                        if jobs
+                            .iter()
+                            .any(|other_job| other_job.key.as_ref() == Some(current_key))
+                        {
+                            continue;
+                        }
+                    }
+                    (job.job)(&mut cx).await;
+                } else if let Some(job) = job_rx.next().await {
+                    jobs.push_back(job);
+                } else {
+                    break;
+                }
             }
         })
         .detach();
@@ -572,16 +601,28 @@ impl Repository {
         Fut: Future<Output = R> + Send + 'static,
         R: Send + 'static,
     {
+        self.send_keyed_job(None, job)
+    }
+
+    fn send_keyed_job<F, Fut, R>(&self, key: Option<GitJobKey>, job: F) -> oneshot::Receiver<R>
+    where
+        F: FnOnce(GitRepo) -> Fut + 'static,
+        Fut: Future<Output = R> + Send + 'static,
+        R: Send + 'static,
+    {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
         let git_repo = self.git_repo.clone();
         self.job_sender
-            .unbounded_send(Box::new(|cx: &mut AsyncApp| {
-                let job = job(git_repo);
-                cx.background_spawn(async move {
-                    let result = job.await;
-                    result_tx.send(result).ok();
-                })
-            }))
+            .unbounded_send(GitJob {
+                key,
+                job: Box::new(|cx: &mut AsyncApp| {
+                    let job = job(git_repo);
+                    cx.background_spawn(async move {
+                        let result = job.await;
+                        result_tx.send(result).ok();
+                    })
+                }),
+            })
             .ok();
         result_rx
     }
@@ -1144,28 +1185,31 @@ impl Repository {
         content: Option<String>,
     ) -> oneshot::Receiver<anyhow::Result<()>> {
         let path = path.clone();
-        self.send_job(|git_repo| async move {
-            match git_repo {
-                GitRepo::Local(repo) => repo.set_index_text(&path, content),
-                GitRepo::Remote {
-                    project_id,
-                    client,
-                    worktree_id,
-                    work_directory_id,
-                } => {
-                    client
-                        .request(proto::SetIndexText {
-                            project_id: project_id.0,
-                            worktree_id: worktree_id.to_proto(),
-                            work_directory_id: work_directory_id.to_proto(),
-                            path: path.as_ref().to_proto(),
-                            text: content,
-                        })
-                        .await?;
-                    Ok(())
+        self.send_keyed_job(
+            Some(GitJobKey::WriteIndex(path.clone())),
+            |git_repo| async move {
+                match git_repo {
+                    GitRepo::Local(repo) => repo.set_index_text(&path, content),
+                    GitRepo::Remote {
+                        project_id,
+                        client,
+                        worktree_id,
+                        work_directory_id,
+                    } => {
+                        client
+                            .request(proto::SetIndexText {
+                                project_id: project_id.0,
+                                worktree_id: worktree_id.to_proto(),
+                                work_directory_id: work_directory_id.to_proto(),
+                                path: path.as_ref().to_proto(),
+                                text: content,
+                            })
+                            .await?;
+                        Ok(())
+                    }
                 }
-            }
-        })
+            },
+        )
     }
 
     pub fn get_remotes(
