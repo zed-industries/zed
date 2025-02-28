@@ -1257,40 +1257,39 @@ impl GitPanel {
 
     /// Suggests a commit message based on the changed files and their statuses
     pub fn suggest_commit_message(&self) -> Option<String> {
-        let entries = self
+        if self.total_staged_count() != 1 {
+            return None;
+        }
+
+        let entry = self
             .entries
             .iter()
-            .filter_map(|entry| {
-                if let GitListEntry::GitStatusEntry(status_entry) = entry {
-                    Some(status_entry)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<&GitStatusEntry>>();
+            .find(|entry| match entry.status_entry() {
+                Some(entry) => entry.is_staged.unwrap_or(false),
+                _ => false,
+            })?;
 
-        if entries.is_empty() {
-            None
-        } else if entries.len() == 1 {
-            let entry = &entries[0];
-            let file_name = entry
-                .repo_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy();
+        let GitListEntry::GitStatusEntry(git_status_entry) = entry.clone() else {
+            return None;
+        };
 
-            if entry.status.is_deleted() {
-                Some(format!("Delete {}", file_name))
-            } else if entry.status.is_created() {
-                Some(format!("Create {}", file_name))
-            } else if entry.status.is_modified() {
-                Some(format!("Update {}", file_name))
-            } else {
-                None
-            }
+        let action_text = if git_status_entry.status.is_deleted() {
+            Some("Delete")
+        } else if git_status_entry.status.is_created() {
+            Some("Create")
+        } else if git_status_entry.status.is_modified() {
+            Some("Update")
         } else {
             None
-        }
+        };
+
+        let file_name = git_status_entry
+            .repo_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
+
+        Some(format!("{} {}", action_text?, file_name))
     }
 
     fn update_editor_placeholder(&mut self, cx: &mut Context<Self>) {
