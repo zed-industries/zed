@@ -489,8 +489,8 @@ impl Zeta {
                                         NotificationId::unique::<ZedUpdateRequiredError>(),
                                         cx,
                                         |cx| {
-                                            cx.new(|_| {
-                                                ErrorMessagePrompt::new(err.to_string())
+                                            cx.new(|cx| {
+                                                ErrorMessagePrompt::new(err.to_string(), cx)
                                                     .with_link_button(
                                                         "Update Zed",
                                                         "https://zed.dev/releases",

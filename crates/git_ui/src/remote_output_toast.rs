@@ -2,8 +2,8 @@ use std::{ops::Range, time::Duration};
 
 use git::repository::{Remote, RemoteCommandOutput};
 use gpui::{
-    DismissEvent, EventEmitter, HighlightStyle, InteractiveText, StyledText, Task, UnderlineStyle,
-    WeakEntity,
+    DismissEvent, EventEmitter, FocusHandle, Focusable, HighlightStyle, InteractiveText,
+    StyledText, Task, UnderlineStyle, WeakEntity,
 };
 use itertools::Itertools;
 use linkify::{LinkFinder, LinkKind};
@@ -12,7 +12,10 @@ use ui::{
     IconName, InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ParentElement,
     Render, SharedString, Styled, StyledExt, Window,
 };
-use workspace::{notifications::NotificationId, Workspace};
+use workspace::{
+    notifications::{Notification, NotificationId},
+    Workspace,
+};
 
 pub enum RemoteAction {
     Fetch,
@@ -32,7 +35,16 @@ pub struct RemoteOutputToast {
     message: SharedString,
     remote_info: Option<InfoFromRemote>,
     dismiss_task: Task<()>,
+    focus_handle: FocusHandle,
 }
+
+impl Focusable for RemoteOutputToast {
+    fn focus_handle(&self, _cx: &ui::App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Notification for RemoteOutputToast {}
 
 const REMOTE_OUTPUT_TOAST_SECONDS: u64 = 5;
 
@@ -96,6 +108,7 @@ impl RemoteOutputToast {
             message,
             remote_info: remote,
             dismiss_task: task,
+            focus_handle: cx.focus_handle(),
         }
     }
 }
