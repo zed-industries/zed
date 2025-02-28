@@ -3176,6 +3176,12 @@ impl Editor {
             config: language::JsxTagAutoCloseConfig,
             edits: Vec<Range<usize>>,
         }
+        
+        self.buffer.read(cx).for_each_buffer(|buffer| {
+            buffer.read(cx).snapshot().syntax_layers().for_each(|layer| {
+                layer.language.
+            })
+        });
 
         let mut edit_contexts =
             HashMap::<(BufferId, language::LanguageId), JsxAutoCloseEditContext>::default();
@@ -3218,25 +3224,21 @@ impl Editor {
                 edits: edited_ranges,
             } = auto_close_context;
 
-            let buffer_version_initial = buffer.read_with(cx, |buffer, _| buffer.version());
-
-            let (reparsed_tx, reparsed_rx) = futures::channel::oneshot::channel();
-            let subscription = {
-                let mut reparsed_tx = Some(reparsed_tx);
-                cx.subscribe(
-                    &self.buffer.read(cx).buffer(buffer_id).unwrap(),
-                    move |_, _, evt: &language::BufferEvent, _| {
-                        if *evt == language::BufferEvent::Reparsed {
-                            reparsed_tx.take().map(|tx| tx.send(()).log_err());
-                        }
-                    },
-                )
-            };
+            let (buffer_version_initial, mut buffer_parse_status_rx) =
+                buffer.read_with(cx, |buffer, _| (buffer.version(), buffer.parse_status()));
 
             cx.spawn_in(window, |this, mut cx| async move {
-                let reparsed_result = reparsed_rx.await;
-                drop(subscription);
-                reparsed_result.ok()?;
+                let Some(buffer_parse_status) = dbg!(buffer_parse_status_rx.recv().await.ok())
+                else {
+                    return Some(());
+                };
+                if buffer_parse_status == language::ParseStatus::Parsing {
+                    let Some(language::ParseStatus::Idle) =
+                        dbg!(buffer_parse_status_rx.recv().await.ok())
+                    else {
+                        return Some(());
+                    };
+                }
 
                 let buffer_snapshot = buffer.read_with(&cx, |buf, _| buf.snapshot()).ok()?;
 
