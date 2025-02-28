@@ -1,6 +1,5 @@
 mod prompts;
 
-pub use prompts::*;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
@@ -13,6 +12,7 @@ use heed::{
     Database, RoTxn,
 };
 use parking_lot::RwLock;
+pub use prompts::*;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
 use std::{
