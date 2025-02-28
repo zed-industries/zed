@@ -27,7 +27,7 @@ use workspace::{
     CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, Workspace, WorkspaceId,
     WORKSPACE_DB,
 };
-use zed_actions::{OpenRecent, OpenRemote};
+use zed_actions::{OpenRecent, ToggleRecent, ToggleRemote};
 
 pub fn init(cx: &mut App) {
     SshSettings::register(cx);
@@ -100,6 +100,11 @@ impl RecentProjects {
                     .picker
                     .update(cx, |picker, cx| picker.cycle_selection(window, cx))
             });
+        });
+
+        workspace.register_action(|workspace, _: &ToggleRecent, window, cx| {
+            let active_modal = workspace.active_modal::<Self>(cx);
+            Self::open(workspace, active_modal.is_none(), window, cx);
         });
     }
 
@@ -465,9 +470,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child(
                     Button::new("remote", "Open Remote Folder")
-                        .key_binding(KeyBinding::for_action(&OpenRemote, window, cx))
+                        .key_binding(KeyBinding::for_action(&ToggleRemote, window, cx))
                         .on_click(|_, window, cx| {
-                            window.dispatch_action(OpenRemote.boxed_clone(), cx)
+                            window.dispatch_action(ToggleRemote.boxed_clone(), cx)
                         }),
                 )
                 .child(
