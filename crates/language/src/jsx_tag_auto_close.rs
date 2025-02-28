@@ -24,15 +24,6 @@ pub fn should_auto_close(
         let Some(layer) = dbg!(buffer.syntax_layer_at(edited_range.start)) else {
             continue;
         };
-        let language_name = dbg!(layer.language.name());
-        if dbg!(
-            !(language_name.as_ref().eq_ignore_ascii_case("jsx")
-                || language_name.as_ref().eq_ignore_ascii_case("tsx"))
-        ) {
-            continue;
-        }
-        dbg!(layer.node().to_sexp());
-        // todo! if buffer.settings_at
         let Some(node) = dbg!(layer
             .node()
             .descendant_for_byte_range(edited_range.start, edited_range.end))
