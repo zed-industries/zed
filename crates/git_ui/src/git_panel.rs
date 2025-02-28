@@ -2167,23 +2167,14 @@ impl GitPanel {
             };
             let editor_focus_handle = self.commit_editor.focus_handle(cx);
 
-            let commit_button = panel_filled_button(title)
-                .tooltip(move |window, cx| {
-                    Tooltip::for_action_in(tooltip, &Commit, &editor_focus_handle, window, cx)
-                })
-                .disabled(!can_commit)
-                .on_click({
-                    cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        this.commit_changes(window, cx)
-                    })
-                });
-
             let branch = active_repo.read(cx).current_branch()?;
 
             let footer_size = px(32.);
             let gap = px(8.0);
 
             let max_height = window.line_height() * 5. + gap + footer_size;
+
+            let expand_button_size = px(16.);
 
             let git_panel = cx.entity().clone();
             let footer = v_flex()
@@ -2206,27 +2197,58 @@ impl GitPanel {
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             window.focus(&this.commit_editor.focus_handle(cx));
                         }))
-                        .when(!self.modal_open, |el| {
-                            el.child(EditorElement::new(&self.commit_editor, panel_editor_style))
+                        .child(
+                            h_flex()
+                                .id("commit-footer")
+                                .absolute()
+                                .bottom_0()
+                                .right_2()
+                                .h(footer_size)
+                                .flex_none()
+                                .children(enable_coauthors)
                                 .child(
-                                    h_flex()
-                                        .absolute()
-                                        .bottom_0()
-                                        .left_2()
-                                        .h(footer_size)
-                                        .flex_none(), // .child(branch_selector),
-                                )
+                                    panel_filled_button(title)
+                                        .tooltip(move |window, cx| {
+                                            Tooltip::for_action_in(
+                                                tooltip,
+                                                &Commit,
+                                                &editor_focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                        })
+                                        .disabled(!can_commit || self.modal_open)
+                                        .on_click({
+                                            cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                                this.commit_changes(window, cx)
+                                            })
+                                        }),
+                                ),
+                        )
+                        // .when(!self.modal_open, |el| {
+                        .child(EditorElement::new(&self.commit_editor, panel_editor_style))
+                        .child(
+                            div()
+                                .absolute()
+                                .top_1()
+                                .right_2()
+                                .opacity(0.5)
+                                .hover(|this| this.opacity(1.0))
+                                .w(expand_button_size)
                                 .child(
-                                    h_flex()
-                                        .absolute()
-                                        .bottom_0()
-                                        .right_2()
-                                        .h(footer_size)
-                                        .flex_none()
-                                        .children(enable_coauthors)
-                                        .child(commit_button),
-                                )
-                        }),
+                                    panel_icon_button("expand-commit-editor", IconName::Maximize)
+                                        .icon_size(IconSize::Small)
+                                        .style(ButtonStyle::Transparent)
+                                        .width(expand_button_size.into())
+                                        .on_click(cx.listener({
+                                            move |_, _, window, cx| {
+                                                // this.set_modal_open(true, cx);
+                                                window
+                                                    .dispatch_action(git::Commit.boxed_clone(), cx)
+                                            }
+                                        })),
+                                ),
+                        ),
                 );
 
             Some(footer)
@@ -3158,20 +3180,6 @@ fn render_git_action_menu(id: impl Into<ElementId>) -> impl IntoElement {
         })
         .anchor(Corner::TopRight)
 }
-
-// TODO:
-//
-// https://www.figma.com/design/sKk3aa7XPwBoE8fdlgp7E8/Git-integration?node-id=1624-3032&t=jki6SC8bshbAhpOa-11
-//
-// [ ] Add PanelRepoHeader
-//   - Render repo/branch
-//     - Ensure proper alignment (lower vs uppercase)
-//     - Only show branch when just one repo?
-//   - RelevantAction split button
-//     - Primary button is dynamic based on current state of the repo
-//     - Secondary menu contains other actions: Push, Pull, Sync, and variants
-// [ ] Update commit editor
-// [ ] Update undo section, move to bottom
 
 #[derive(IntoElement, IntoComponent)]
 #[component(scope = "git_panel")]
