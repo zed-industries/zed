@@ -151,7 +151,7 @@ If you have previously bound the default keybindings to different actions in the
       // Binds `alt-tab` to a different action globally
       "alt-tab": "menu::SelectNext"
     }
-  },
+  }
 ]
 ```
 
