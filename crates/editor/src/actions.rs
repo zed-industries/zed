@@ -348,6 +348,7 @@ gpui::actions!(
         OpenPermalinkToLine,
         OpenSelectionsInMultibuffer,
         OpenUrl,
+        OrganizeImports,
         Outdent,
         AutoIndent,
         PageDown,

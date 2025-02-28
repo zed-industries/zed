@@ -52,7 +52,7 @@ pub use actions::{AcceptEditPrediction, OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
-use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus};
+use buffer_diff::DiffHunkStatus;
 use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -120,8 +120,8 @@ use task::{ResolvedTask, TaskTemplate, TaskVariables};
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
 pub use lsp::CompletionContext;
 use lsp::{
-    CompletionItemKind, CompletionTriggerKind, DiagnosticSeverity, InsertTextFormat,
-    LanguageServerId, LanguageServerName,
+    CodeActionKind, CompletionItemKind, CompletionTriggerKind, DiagnosticSeverity,
+    InsertTextFormat, LanguageServerId, LanguageServerName,
 };
 
 use language::BufferSnapshot;
@@ -203,6 +203,7 @@ pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 
+pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -1031,6 +1032,7 @@ pub enum GotoDefinitionKind {
 
 #[derive(Debug, Clone)]
 enum InlayHintRefreshReason {
+    ModifiersChanged(bool),
     Toggle(bool),
     SettingsChange(InlayHintSettings),
     NewLinesShown,
@@ -1042,6 +1044,7 @@ enum InlayHintRefreshReason {
 impl InlayHintRefreshReason {
     fn description(&self) -> &'static str {
         match self {
+            Self::ModifiersChanged(_) => "modifiers changed",
             Self::Toggle(_) => "toggle",
             Self::SettingsChange(_) => "settings change",
             Self::NewLinesShown => "new lines shown",
@@ -3668,7 +3671,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.refresh_inlay_hints(
-            InlayHintRefreshReason::Toggle(!self.inlay_hint_cache.enabled),
+            InlayHintRefreshReason::Toggle(!self.inlay_hints_enabled()),
             cx,
         );
     }
@@ -3690,21 +3693,44 @@ impl Editor {
                 | InlayHintRefreshReason::ExcerptsRemoved(_)
         );
         let (invalidate_cache, required_languages) = match reason {
+            InlayHintRefreshReason::ModifiersChanged(enabled) => {
+                match self.inlay_hint_cache.modifiers_override(enabled) {
+                    Some(enabled) => {
+                        if enabled {
+                            (InvalidationStrategy::RefreshRequested, None)
+                        } else {
+                            self.splice_inlays(
+                                &self
+                                    .visible_inlay_hints(cx)
+                                    .iter()
+                                    .map(|inlay| inlay.id)
+                                    .collect::<Vec<InlayId>>(),
+                                Vec::new(),
+                                cx,
+                            );
+                            return;
+                        }
+                    }
+                    None => return,
+                }
+            }
             InlayHintRefreshReason::Toggle(enabled) => {
-                self.inlay_hint_cache.enabled = enabled;
-                if enabled {
-                    (InvalidationStrategy::RefreshRequested, None)
+                if self.inlay_hint_cache.toggle(enabled) {
+                    if enabled {
+                        (InvalidationStrategy::RefreshRequested, None)
+                    } else {
+                        self.splice_inlays(
+                            &self
+                                .visible_inlay_hints(cx)
+                                .iter()
+                                .map(|inlay| inlay.id)
+                                .collect::<Vec<InlayId>>(),
+                            Vec::new(),
+                            cx,
+                        );
+                        return;
+                    }
                 } else {
-                    self.inlay_hint_cache.clear();
-                    self.splice_inlays(
-                        &self
-                            .visible_inlay_hints(cx)
-                            .iter()
-                            .map(|inlay| inlay.id)
-                            .collect::<Vec<InlayId>>(),
-                        Vec::new(),
-                        cx,
-                    );
                     return;
                 }
             }
@@ -5005,7 +5031,7 @@ impl Editor {
                 return Some(true);
             };
             let settings = all_language_settings(Some(file), cx);
-            Some(settings.inline_completions_enabled_for_path(file.path()))
+            Some(settings.edit_predictions_enabled_for_file(file, cx))
         })
         .unwrap_or(false)
     }
@@ -7694,11 +7720,6 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) {
         let mut revert_changes = HashMap::default();
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let Some(project) = &self.project else {
-            return;
-        };
-
         let chunk_by = self
             .snapshot(window, cx)
             .hunks_for_ranges(ranges.into_iter())
@@ -7709,15 +7730,7 @@ impl Editor {
             for hunk in &hunks {
                 self.prepare_restore_change(&mut revert_changes, hunk, cx);
             }
-            Self::do_stage_or_unstage(
-                project,
-                false,
-                buffer_id,
-                hunks.into_iter(),
-                &snapshot,
-                window,
-                cx,
-            );
+            self.do_stage_or_unstage(false, buffer_id, hunks.into_iter(), window, cx);
         }
         drop(chunk_by);
         if !revert_changes.is_empty() {
@@ -7762,7 +7775,6 @@ impl Editor {
         let original_text = diff
             .read(cx)
             .base_text()
-            .as_ref()?
             .as_rope()
             .slice(hunk.diff_base_byte_range.clone());
         let buffer_snapshot = buffer.snapshot();
@@ -12469,11 +12481,64 @@ impl Editor {
                             buffer.push_transaction(&transaction.0, cx);
                         }
                     }
-
                     cx.notify();
                 })
                 .ok();
 
+            Ok(())
+        })
+    }
+
+    fn organize_imports(
+        &mut self,
+        _: &OrganizeImports,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let project = match &self.project {
+            Some(project) => project.clone(),
+            None => return None,
+        };
+        Some(self.perform_code_action_kind(
+            project,
+            CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+            window,
+            cx,
+        ))
+    }
+
+    fn perform_code_action_kind(
+        &mut self,
+        project: Entity<Project>,
+        kind: CodeActionKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let buffer = self.buffer.clone();
+        let buffers = buffer.read(cx).all_buffers();
+        let mut timeout = cx.background_executor().timer(CODE_ACTION_TIMEOUT).fuse();
+        let apply_action = project.update(cx, |project, cx| {
+            project.apply_code_action_kind(buffers, kind, true, cx)
+        });
+        cx.spawn_in(window, |_, mut cx| async move {
+            let transaction = futures::select_biased! {
+                () = timeout => {
+                    log::warn!("timed out waiting for executing code action");
+                    None
+                }
+                transaction = apply_action.log_err().fuse() => transaction,
+            };
+            buffer
+                .update(&mut cx, |buffer, cx| {
+                    // check if we need this
+                    if let Some(transaction) = transaction {
+                        if !buffer.is_singleton() {
+                            buffer.push_transaction(&transaction.0, cx);
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
             Ok(())
         })
     }
@@ -13445,7 +13510,7 @@ impl Editor {
         snapshot: &MultiBufferSnapshot,
     ) -> bool {
         let mut hunks = self.diff_hunks_in_ranges(ranges, &snapshot);
-        hunks.any(|hunk| hunk.secondary_status != DiffHunkSecondaryStatus::None)
+        hunks.any(|hunk| hunk.status().has_secondary_hunk())
     }
 
     pub fn toggle_staged_selected_diff_hunks(
@@ -13486,15 +13551,11 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let Some(project) = &self.project else {
-            return;
-        };
-
         let chunk_by = self
             .diff_hunks_in_ranges(&ranges, &snapshot)
             .chunk_by(|hunk| hunk.buffer_id);
         for (buffer_id, hunks) in &chunk_by {
-            Self::do_stage_or_unstage(project, stage, buffer_id, hunks, &snapshot, window, cx);
+            self.do_stage_or_unstage(stage, buffer_id, hunks, window, cx);
         }
     }
 
@@ -13568,16 +13629,20 @@ impl Editor {
     }
 
     fn do_stage_or_unstage(
-        project: &Entity<Project>,
+        &self,
         stage: bool,
         buffer_id: BufferId,
         hunks: impl Iterator<Item = MultiBufferDiffHunk>,
-        snapshot: &MultiBufferSnapshot,
         window: &mut Window,
         cx: &mut App,
     ) {
+        let Some(project) = self.project.as_ref() else {
+            return;
+        };
         let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
-            log::debug!("no buffer for id");
+            return;
+        };
+        let Some(diff) = self.buffer.read(cx).diff_for(buffer_id) else {
             return;
         };
         let buffer_snapshot = buffer.read(cx).snapshot();
@@ -13591,37 +13656,31 @@ impl Editor {
             log::debug!("no git repo for buffer id");
             return;
         };
-        let Some(diff) = snapshot.diff_for_buffer_id(buffer_id) else {
-            log::debug!("no diff for buffer id");
-            return;
-        };
 
-        let new_index_text = if !stage && diff.is_single_insertion || stage && !file_exists {
-            log::debug!("removing from index");
-            None
-        } else {
-            diff.new_secondary_text_for_stage_or_unstage(
+        let new_index_text = diff.update(cx, |diff, cx| {
+            diff.stage_or_unstage_hunks(
                 stage,
-                hunks.filter_map(|hunk| {
-                    if stage && hunk.secondary_status == DiffHunkSecondaryStatus::None {
-                        return None;
-                    } else if !stage
-                        && hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk
-                    {
-                        return None;
-                    }
-                    Some((hunk.buffer_range.clone(), hunk.diff_base_byte_range.clone()))
-                }),
+                &hunks
+                    .map(|hunk| buffer_diff::DiffHunk {
+                        buffer_range: hunk.buffer_range,
+                        diff_base_byte_range: hunk.diff_base_byte_range,
+                        secondary_status: hunk.secondary_status,
+                        row_range: 0..0, // unused
+                    })
+                    .collect::<Vec<_>>(),
                 &buffer_snapshot,
+                file_exists,
                 cx,
             )
-        };
+        });
+
         if file_exists {
             let buffer_store = project.read(cx).buffer_store().clone();
             buffer_store
                 .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
                 .detach_and_log_err(cx);
         }
+
         let recv = repo
             .read(cx)
             .set_index_text(&path, new_index_text.map(|rope| rope.to_string()));
@@ -15839,11 +15898,12 @@ impl Editor {
         &mut self,
         event: FocusOutEvent,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         if event.blurred != self.focus_handle {
             self.last_focused_descendant = Some(event.blurred);
         }
+        self.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(false), cx);
     }
 
     pub fn handle_blur(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -17367,7 +17427,7 @@ impl Focusable for Editor {
 }
 
 impl Render for Editor {
-    fn render<'a>(&mut self, _: &mut Window, cx: &mut Context<'a, Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
 
         let mut text_style = match self.mode {

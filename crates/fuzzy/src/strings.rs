@@ -145,7 +145,7 @@ pub async fn match_strings(
     let query_char_bag = CharBag::from(&lowercase_query[..]);
 
     let num_cpus = executor.num_cpus().min(candidates.len());
-    let segment_size = (candidates.len() + num_cpus - 1) / num_cpus;
+    let segment_size = candidates.len().div_ceil(num_cpus);
     let mut segment_results = (0..num_cpus)
         .map(|_| Vec::with_capacity(max_results.min(candidates.len())))
         .collect::<Vec<_>>();

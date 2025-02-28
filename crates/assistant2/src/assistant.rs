@@ -16,6 +16,7 @@ mod terminal_inline_assistant;
 mod thread;
 mod thread_history;
 mod thread_store;
+mod tool_use;
 mod ui;
 
 use std::sync::Arc;
@@ -38,7 +39,6 @@ actions!(
         NewThread,
         NewPromptEditor,
         ToggleContextPicker,
-        ToggleModelSelector,
         RemoveAllContext,
         OpenHistory,
         OpenConfiguration,

@@ -327,7 +327,10 @@ message Envelope {
         Fetch fetch = 305;
         GetRemotes get_remotes = 306;
         GetRemotesResponse get_remotes_response = 307;
-        Pull pull = 308; // current max
+        Pull pull = 308;
+
+        ApplyCodeActionKind apply_code_action_kind = 309;
+        ApplyCodeActionKindResponse apply_code_action_kind_response = 310; // current max
     }
 
     reserved 87 to 88;
@@ -914,6 +917,16 @@ message ChannelBufferVersion {
     uint64 channel_id = 1;
     repeated VectorClockEntry version = 2;
     uint64 epoch = 3;
+}
+
+message ApplyCodeActionKind {
+    uint64 project_id = 1;
+    string kind = 2;
+    repeated uint64 buffer_ids = 3;
+}
+
+message ApplyCodeActionKindResponse {
+    ProjectTransaction transaction = 1;
 }
 
 enum FormatTrigger {

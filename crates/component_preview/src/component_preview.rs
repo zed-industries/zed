@@ -93,7 +93,7 @@ impl ComponentPreview {
         &self,
         ix: usize,
         window: &mut Window,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let component = self.get_component(ix);
 

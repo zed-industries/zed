@@ -7,7 +7,7 @@ use crate::{
     },
     JoinLines,
 };
-use buffer_diff::{BufferDiff, DiffHunkStatus, DiffHunkStatusKind};
+use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use futures::StreamExt;
 use gpui::{
     div, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
@@ -7876,6 +7876,157 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
+            FormatterList(vec![Formatter::LanguageServer { name: None }].into()),
+        ))
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.ts"), Default::default()).await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(Arc::new(Language::new(
+        LanguageConfig {
+            name: "TypeScript".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["ts".to_string()],
+                ..Default::default()
+            },
+            ..LanguageConfig::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+    )));
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.prettier = Some(PrettierSettings {
+            allowed: true,
+            ..PrettierSettings::default()
+        });
+    });
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.ts"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text(
+            "import { a } from 'module';\nimport { b } from 'module';\n\nconst x = a;\n",
+            window,
+            cx,
+        )
+    });
+
+    cx.executor().start_waiting();
+    let fake_server = fake_servers.next().await.unwrap();
+
+    let format = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_code_action_kind(
+                project.clone(),
+                CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    fake_server
+        .handle_request::<lsp::request::CodeActionRequest, _, _>(move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path(path!("/file.ts")).unwrap()
+            );
+            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                lsp::CodeAction {
+                    title: "Organize Imports".to_string(),
+                    kind: Some(lsp::CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
+                    edit: Some(lsp::WorkspaceEdit {
+                        changes: Some(
+                            [(
+                                params.text_document.uri.clone(),
+                                vec![lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(1, 0),
+                                        lsp::Position::new(2, 0),
+                                    ),
+                                    "".to_string(),
+                                )],
+                            )]
+                            .into_iter()
+                            .collect(),
+                        ),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )]))
+        })
+        .next()
+        .await;
+    cx.executor().start_waiting();
+    format.await;
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "import { a } from 'module';\n\nconst x = a;\n"
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text(
+            "import { a } from 'module';\nimport { b } from 'module';\n\nconst x = a;\n",
+            window,
+            cx,
+        )
+    });
+    // Ensure we don't lock if code action hangs.
+    fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+        move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path(path!("/file.ts")).unwrap()
+            );
+            futures::future::pending::<()>().await;
+            unreachable!()
+        },
+    );
+    let format = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_code_action_kind(
+                project,
+                CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    cx.executor().advance_clock(super::CODE_ACTION_TIMEOUT);
+    cx.executor().start_waiting();
+    format.await;
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "import { a } from 'module';\nimport { b } from 'module';\n\nconst x = a;\n"
+    );
+}
+
+#[gpui::test]
 async fn test_concurrent_format_requests(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -12404,7 +12555,7 @@ async fn test_addition_reverts(cx: &mut TestAppContext) {
                    struct Row9.2;
                    struct Row9.3;
                    struct Row10;"#},
-        vec![DiffHunkStatus::added_none(), DiffHunkStatus::added_none()],
+        vec![DiffHunkStatusKind::Added, DiffHunkStatusKind::Added],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row1.1;
@@ -12442,7 +12593,7 @@ async fn test_addition_reverts(cx: &mut TestAppContext) {
                    struct Row8;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::added_none(), DiffHunkStatus::added_none()],
+        vec![DiffHunkStatusKind::Added, DiffHunkStatusKind::Added],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row2;
@@ -12489,11 +12640,11 @@ async fn test_addition_reverts(cx: &mut TestAppContext) {
                    «ˇ// something on bottom»
                    struct Row10;"#},
         vec![
-            DiffHunkStatus::added_none(),
-            DiffHunkStatus::added_none(),
-            DiffHunkStatus::added_none(),
-            DiffHunkStatus::added_none(),
-            DiffHunkStatus::added_none(),
+            DiffHunkStatusKind::Added,
+            DiffHunkStatusKind::Added,
+            DiffHunkStatusKind::Added,
+            DiffHunkStatusKind::Added,
+            DiffHunkStatusKind::Added,
         ],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
@@ -12541,10 +12692,7 @@ async fn test_modification_reverts(cx: &mut TestAppContext) {
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
-        vec![
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-        ],
+        vec![DiffHunkStatusKind::Modified, DiffHunkStatusKind::Modified],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -12571,10 +12719,7 @@ async fn test_modification_reverts(cx: &mut TestAppContext) {
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
-        vec![
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-        ],
+        vec![DiffHunkStatusKind::Modified, DiffHunkStatusKind::Modified],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -12603,12 +12748,12 @@ async fn test_modification_reverts(cx: &mut TestAppContext) {
                    struct Row9;
                    struct Row1011;ˇ"#},
         vec![
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
+            DiffHunkStatusKind::Modified,
+            DiffHunkStatusKind::Modified,
+            DiffHunkStatusKind::Modified,
+            DiffHunkStatusKind::Modified,
+            DiffHunkStatusKind::Modified,
+            DiffHunkStatusKind::Modified,
         ],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
@@ -12686,10 +12831,7 @@ struct Row10;"#};
                    ˇ
                    struct Row8;
                    struct Row10;"#},
-        vec![
-            DiffHunkStatus::deleted_none(),
-            DiffHunkStatus::deleted_none(),
-        ],
+        vec![DiffHunkStatusKind::Deleted, DiffHunkStatusKind::Deleted],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -12712,10 +12854,7 @@ struct Row10;"#};
                    ˇ»
                    struct Row8;
                    struct Row10;"#},
-        vec![
-            DiffHunkStatus::deleted_none(),
-            DiffHunkStatus::deleted_none(),
-        ],
+        vec![DiffHunkStatusKind::Deleted, DiffHunkStatusKind::Deleted],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -12740,10 +12879,7 @@ struct Row10;"#};
 
                    struct Row8;ˇ
                    struct Row10;"#},
-        vec![
-            DiffHunkStatus::deleted_none(),
-            DiffHunkStatus::deleted_none(),
-        ],
+        vec![DiffHunkStatusKind::Deleted, DiffHunkStatusKind::Deleted],
         indoc! {r#"struct Row;
                    struct Row1;
                    ˇstruct Row2;
@@ -12768,9 +12904,9 @@ struct Row10;"#};
                    struct Row8;ˇ»
                    struct Row10;"#},
         vec![
-            DiffHunkStatus::deleted_none(),
-            DiffHunkStatus::deleted_none(),
-            DiffHunkStatus::deleted_none(),
+            DiffHunkStatusKind::Deleted,
+            DiffHunkStatusKind::Deleted,
+            DiffHunkStatusKind::Deleted,
         ],
         indoc! {r#"struct Row;
                    struct Row1;
@@ -15085,6 +15221,78 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_toggle_deletion_hunk_at_start_of_file(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        a
+        b
+        c
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        ˇb
+        c
+        "#
+        .unindent(),
+    );
+    cx.set_head_text(&diff_base);
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+
+    let hunk_expanded = r#"
+        - a
+          ˇb
+          c
+        "#
+    .unindent();
+
+    cx.assert_state_with_diff(hunk_expanded.clone());
+
+    let hunk_ranges = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let hunks = editor
+            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot)
+            .collect::<Vec<_>>();
+        let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
+        let buffer_id = hunks[0].buffer_id;
+        hunks
+            .into_iter()
+            .map(|hunk| Anchor::range_in_buffer(excerpt_id, buffer_id, hunk.buffer_range.clone()))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(hunk_ranges.len(), 1);
+
+    cx.update_editor(|editor, _, cx| {
+        editor.toggle_single_diff_hunk(hunk_ranges[0].clone(), cx);
+    });
+    executor.run_until_parked();
+
+    let hunk_collapsed = r#"
+          ˇb
+          c
+        "#
+    .unindent();
+
+    cx.assert_state_with_diff(hunk_collapsed);
+
+    cx.update_editor(|editor, _, cx| {
+        editor.toggle_single_diff_hunk(hunk_ranges[0].clone(), cx);
+    });
+    executor.run_until_parked();
+
+    cx.assert_state_with_diff(hunk_expanded.clone());
+}
+
+#[gpui::test]
 async fn test_display_diff_hunks(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -16615,14 +16823,13 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
 #[track_caller]
 fn assert_hunk_revert(
     not_reverted_text_with_selections: &str,
-    expected_hunk_statuses_before: Vec<DiffHunkStatus>,
+    expected_hunk_statuses_before: Vec<DiffHunkStatusKind>,
     expected_reverted_text_with_selections: &str,
     base_text: &str,
     cx: &mut EditorLspTestContext,
 ) {
     cx.set_state(not_reverted_text_with_selections);
     cx.set_head_text(base_text);
-    cx.clear_index_text();
     cx.executor().run_until_parked();
 
     let actual_hunk_statuses_before = cx.update_editor(|editor, window, cx| {
@@ -16630,7 +16837,7 @@ fn assert_hunk_revert(
         let reverted_hunk_statuses = snapshot
             .buffer_snapshot
             .diff_hunks_in_range(0..snapshot.buffer_snapshot.len())
-            .map(|hunk| hunk.status())
+            .map(|hunk| hunk.status().kind)
             .collect::<Vec<_>>();
 
         editor.git_restore(&Default::default(), window, cx);
