@@ -1632,9 +1632,9 @@ impl BufferStore {
                     // file in the Cargo registry (presumably opened with go-to-definition
                     // from a normal Rust file). If so, we can put together a permalink
                     // using crate metadata.
-                    if !buffer
+                    if buffer
                         .language()
-                        .is_some_and(|lang| lang.name() == "Rust".into())
+                        .is_none_or(|lang| lang.name() != "Rust".into())
                     {
                         return Task::ready(Err(anyhow!("no permalink available")));
                     }

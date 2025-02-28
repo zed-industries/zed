@@ -509,7 +509,7 @@ impl fmt::Debug for ChunkRenderer {
     }
 }
 
-impl<'a, 'b> Deref for ChunkRendererContext<'a, 'b> {
+impl Deref for ChunkRendererContext<'_, '_> {
     type Target = App;
 
     fn deref(&self) -> &Self::Target {
@@ -517,7 +517,7 @@ impl<'a, 'b> Deref for ChunkRendererContext<'a, 'b> {
     }
 }
 
-impl<'a, 'b> DerefMut for ChunkRendererContext<'a, 'b> {
+impl DerefMut for ChunkRendererContext<'_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.context
     }
@@ -4137,7 +4137,7 @@ impl Deref for BufferSnapshot {
     }
 }
 
-unsafe impl<'a> Send for BufferChunks<'a> {}
+unsafe impl Send for BufferChunks<'_> {}
 
 impl<'a> BufferChunks<'a> {
     pub(crate) fn new(

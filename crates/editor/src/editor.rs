@@ -17393,7 +17393,7 @@ impl Focusable for Editor {
 }
 
 impl Render for Editor {
-    fn render<'a>(&mut self, _: &mut Window, cx: &mut Context<'a, Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
 
         let mut text_style = match self.mode {

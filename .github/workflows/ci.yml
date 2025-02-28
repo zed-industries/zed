@@ -240,7 +240,7 @@ jobs:
     timeout-minutes: 60
     name: (Windows) Run Clippy and tests
     if: github.repository_owner == 'zed-industries'
-    runs-on: hosted-windows-1
+    runs-on: hosted-windows-2
     steps:
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
       - name: Enable longer pathnames for git

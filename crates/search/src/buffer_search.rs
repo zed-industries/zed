@@ -1909,7 +1909,7 @@ mod tests {
         .unindent();
         let expected_query_matches_count = buffer_text
             .chars()
-            .filter(|c| c.to_ascii_lowercase() == 'a')
+            .filter(|c| c.eq_ignore_ascii_case(&'a'))
             .count();
         assert!(
             expected_query_matches_count > 1,
