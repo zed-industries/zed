@@ -171,17 +171,12 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 fn main() {
     let args = Args::parse();
 
-    #[cfg(target_os = "windows")]
-    let run_foreground = args.foreground;
-
     #[cfg(all(not(debug_assertions), target_os = "windows"))]
-    if run_foreground {
-        unsafe {
-            use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+    unsafe {
+        use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
 
-            if run_foreground {
-                let _ = AttachConsole(ATTACH_PARENT_PROCESS);
-            }
+        if args.foreground {
+            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
         }
     }
 
@@ -235,7 +230,7 @@ fn main() {
             {
                 !crate::zed::windows_only_instance::check_single_instance(
                     open_listener.clone(),
-                    run_foreground,
+                    args.foreground,
                 )
             }
 
