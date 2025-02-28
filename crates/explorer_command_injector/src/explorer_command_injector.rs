@@ -134,11 +134,11 @@ impl IClassFactory_Impl for ExplorerCommandInjectorFactory_Impl {
     }
 }
 
-#[cfg(feature = "stable")]
+#[cfg(all(feature = "stable", not(feature = "preview"), not(feature = "nightly")))]
 const MODULE_ID: GUID = GUID::from_u128(0x6a1f6b13_3b82_48a1_9e06_7bb0a6d0bffd);
-#[cfg(feature = "preview")]
+#[cfg(all(feature = "preview", not(feature = "stable"), not(feature = "nightly")))]
 const MODULE_ID: GUID = GUID::from_u128(0xaf8e85ea_fb20_4db2_93cf_56513c1ec697);
-#[cfg(feature = "nightly")]
+#[cfg(all(feature = "nightly", not(feature = "stable"), not(feature = "preview")))]
 const MODULE_ID: GUID = GUID::from_u128(0x266f2cfe_1653_42af_b55c_fe3590c83871);
 
 #[no_mangle]
@@ -198,11 +198,11 @@ fn get_zed_cli_path() -> Option<String> {
 
 #[inline]
 fn retrieve_command_description() -> windows_core::Result<HSTRING> {
-    #[cfg(feature = "stable")]
+    #[cfg(all(feature = "stable", not(feature = "preview"), not(feature = "nightly")))]
     const REG_PATH: &str = "Software\\Classes\\ZedEditorContextMenu";
-    #[cfg(feature = "preview")]
+    #[cfg(all(feature = "preview", not(feature = "stable"), not(feature = "nightly")))]
     const REG_PATH: &str = "Software\\Classes\\ZedEditorPreviewContextMenu";
-    #[cfg(feature = "nightly")]
+    #[cfg(all(feature = "nightly", not(feature = "stable"), not(feature = "preview")))]
     const REG_PATH: &str = "Software\\Classes\\ZedEditorNightlyContextMenu";
     let key = windows_registry::CURRENT_USER.open(REG_PATH)?;
     key.get_hstring("Title")
