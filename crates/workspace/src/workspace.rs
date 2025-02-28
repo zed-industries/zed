@@ -123,6 +123,23 @@ static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
 actions!(assistant, [ShowConfiguration]);
 
 actions!(
+    debugger,
+    [
+        Start,
+        Continue,
+        Disconnect,
+        Pause,
+        Restart,
+        StepInto,
+        StepOver,
+        StepOut,
+        StepBack,
+        Stop,
+        ToggleIgnoreBreakpoints
+    ]
+);
+
+actions!(
     workspace,
     [
         ActivateNextPane,
@@ -150,6 +167,7 @@ actions!(
         ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
+        ShutdownDebugAdapters,
         ToggleBottomDock,
         ToggleCenteredLayout,
         ToggleLeftDock,
@@ -1199,6 +1217,7 @@ impl Workspace {
             // Get project paths for all of the abs_paths
             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
                 Vec::with_capacity(paths_to_open.len());
+
             for path in paths_to_open.into_iter() {
                 if let Some((_, project_entry)) = cx
                     .update(|cx| {
@@ -3387,10 +3406,10 @@ impl Workspace {
                 serialize_workspace = false;
             }
             pane::Event::RemoveItem { .. } => {}
-            pane::Event::RemovedItem { item_id } => {
+            pane::Event::RemovedItem { item } => {
                 cx.emit(Event::ActiveItemChanged);
                 self.update_window_edited(window, cx);
-                if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
+                if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(item.item_id()) {
                     if entry.get().entity_id() == pane.entity_id() {
                         entry.remove();
                     }
