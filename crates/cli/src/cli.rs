@@ -17,6 +17,8 @@ pub enum CliRequest {
         open_new_workspace: Option<bool>,
         env: Option<HashMap<String, String>>,
     },
+    /// Only used on Windows for now.
+    DockAction { action: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

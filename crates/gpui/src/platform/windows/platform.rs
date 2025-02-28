@@ -274,26 +274,6 @@ impl WindowsPlatform {
         jump_list.SaveAsync()?.get()?;
         Ok(())
     }
-
-    fn handle_instance_message(&self) {
-        let msg = read_dock_action_argument(*self.dock_action_shared_memory);
-
-        let mut lock = self.state.borrow_mut();
-        if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
-            let Some(action) = lock
-                .dock_menu_actions
-                .get(&msg)
-                .map(|action| action.boxed_clone())
-            else {
-                lock.callbacks.app_menu_action = Some(callback);
-                log::error!("Dock menu {msg} not found");
-                return;
-            };
-            drop(lock);
-            callback(&*action);
-            self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
-        }
-    }
 }
 
 impl Platform for WindowsPlatform {
@@ -662,6 +642,24 @@ impl Platform for WindowsPlatform {
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
         Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
+    }
+
+    fn perform_dock_menu_action(&self, action: String) {
+        let mut lock = self.state.borrow_mut();
+        if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
+            let Some(action) = lock
+                .dock_menu_actions
+                .get(&action)
+                .map(|action| action.boxed_clone())
+            else {
+                lock.callbacks.app_menu_action = Some(callback);
+                log::error!("Dock menu {action} not found");
+                return;
+            };
+            drop(lock);
+            callback(&*action);
+            self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
+        }
     }
 }
 
