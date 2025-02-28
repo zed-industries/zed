@@ -1797,20 +1797,19 @@ impl GitPanel {
         });
     }
 
-    // FIXME restore this
-    // fn render_spinner(&self) -> Option<impl IntoElement> {
-    //     (!self.pending_remote_operations.borrow().is_empty()).then(|| {
-    //         Icon::new(IconName::ArrowCircle)
-    //             .size(IconSize::XSmall)
-    //             .color(Color::Info)
-    //             .with_animation(
-    //                 "arrow-circle",
-    //                 Animation::new(Duration::from_secs(2)).repeat(),
-    //                 |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-    //             )
-    //             .into_any_element()
-    //     })
-    // }
+    fn render_spinner(&self) -> Option<impl IntoElement> {
+        (!self.pending_remote_operations.borrow().is_empty()).then(|| {
+            Icon::new(IconName::ArrowCircle)
+                .size(IconSize::XSmall)
+                .color(Color::Info)
+                .with_animation(
+                    "arrow-circle",
+                    Animation::new(Duration::from_secs(2)).repeat(),
+                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                )
+                .into_any_element()
+        })
+    }
 
     pub fn can_commit(&self) -> bool {
         (self.has_staged_changes() || self.has_tracked_changes()) && !self.has_unstaged_conflicts()
@@ -2909,9 +2908,6 @@ impl PanelRepoHeader {
         }
     }
 
-    // populate the secondary menu
-    // port over all cases from git_panel
-
     fn render_push_button(&self, id: SharedString, ahead: u32, cx: &mut App) -> SplitButton {
         let panel_focus_handle = self.panel_focus_handle(cx);
 
@@ -3113,6 +3109,11 @@ impl RenderOnce for PanelRepoHeader {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
             });
 
+        let spinner = self
+            .git_panel
+            .as_ref()
+            .and_then(|git_panel| git_panel.read(cx).render_spinner());
+
         h_flex()
             .w_full()
             .px_2()
@@ -3151,6 +3152,7 @@ impl RenderOnce for PanelRepoHeader {
             .child(
                 h_flex()
                     .gap_1()
+                    .children(spinner)
                     .child(self.render_overflow_menu(overflow_menu_id))
                     .when_some(branch, |this, branch| {
                         let button = self.render_relevant_button(self.id.clone(), &branch, cx);
