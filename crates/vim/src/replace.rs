@@ -170,7 +170,7 @@ impl Vim {
     pub fn clear_exchange(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, _, cx| {
-            editor.clear_highlights::<VimExchange>(cx);
+            editor.clear_background_highlights::<VimExchange>(cx);
         });
         self.clear_operator(window, cx);
     }
