@@ -1,7 +1,7 @@
 // #![allow(unused, dead_code)]
 
 use crate::git_panel::{commit_message_editor, GitPanel};
-use git::Commit;
+use git::{Commit, ExpandCommitEditor};
 use panel::{panel_button, panel_editor_style, panel_filled_button};
 use ui::{prelude::*, KeybindingHint, Tooltip};
 
@@ -107,12 +107,13 @@ struct RestoreDock {
 
 impl CommitModal {
     pub fn register(workspace: &mut Workspace, _: &mut Window, _cx: &mut Context<Workspace>) {
-        workspace.register_action(|workspace, _: &Commit, window, cx| {
+        workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
             let Some(git_panel) = workspace.panel::<GitPanel>(cx) else {
                 return;
             };
 
-            let (can_commit, conflict) = git_panel.update(cx, |git_panel, _cx| {
+            let (can_commit, conflict) = git_panel.update(cx, |git_panel, cx| {
+                git_panel.set_modal_open(true, cx);
                 let can_commit = git_panel.can_commit();
                 let conflict = git_panel.has_unstaged_conflicts();
                 (can_commit, conflict)

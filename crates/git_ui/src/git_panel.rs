@@ -2242,9 +2242,10 @@ impl GitPanel {
                                         .width(expand_button_size.into())
                                         .on_click(cx.listener({
                                             move |_, _, window, cx| {
-                                                // this.set_modal_open(true, cx);
-                                                window
-                                                    .dispatch_action(git::Commit.boxed_clone(), cx)
+                                                window.dispatch_action(
+                                                    git::ExpandCommitEditor.boxed_clone(),
+                                                    cx,
+                                                )
                                             }
                                         })),
                                 ),
