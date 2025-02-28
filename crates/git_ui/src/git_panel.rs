@@ -3143,6 +3143,7 @@ fn render_git_action_menu(id: impl Into<ElementId>) -> impl IntoElement {
         .menu(move |window, cx| {
             Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                 context_menu
+                    .action("Fetch", git::Fetch.boxed_clone())
                     .action("Pull", git::Pull.boxed_clone())
                     .separator()
                     .action("Push", git::Push { options: None }.boxed_clone())
