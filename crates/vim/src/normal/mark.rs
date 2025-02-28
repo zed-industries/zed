@@ -33,6 +33,10 @@ impl Vim {
                 .iter()
                 .map(|s| if tail { s.tail() } else { s.head() })
                 .collect::<Vec<_>>();
+            if text.starts_with(|c: char| c == '^') {
+                vim.special_marks.insert(text.to_string(), anchors);
+                return;
+            }
             if let Some(workspace) = vim.workspace(window) {
                 if let Some(id) = workspace.read(cx).database_id() {
                     let multi_buffer = editor.buffer();
@@ -94,18 +98,8 @@ impl Vim {
                 );
                 reversed.push(selection.reversed)
             }
-            let Some(workspace) = editor.workspace() else {
-                return;
-            };
-            let Some(wid) = workspace.read(cx).database_id() else {
-                return;
-            };
-            let multi_buffer = editor.buffer();
-            let Some(buffer) = multi_buffer.read(cx).as_singleton() else {
-                return;
-            };
-            vim.set_mark("<".to_string(), starts, &buffer, wid, cx);
-            vim.set_mark(">".to_string(), ends, &buffer, wid, cx);
+            vim.special_marks.insert("<".to_string(), starts);
+            vim.special_marks.insert(">".to_string(), ends);
         });
 
         self.stored_visual_mode.replace((mode, reversed));

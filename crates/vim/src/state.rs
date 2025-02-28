@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
 use std::ffi::OsString;
-use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 use std::{fmt::Display, ops::Range, sync::Arc};
 use ui::{Context, KeyBinding, SharedString};
@@ -384,7 +383,7 @@ impl MarksCollection {
                 .spawn(DB.set_mark(
                     workspace_id,
                     name.clone(),
-                    path.to_path_buf().into_os_string().into_vec(),
+                    path.as_os_str().as_encoded_bytes().to_vec(),
                     value,
                 ))
                 .detach_and_log_err(cx);
@@ -424,7 +423,10 @@ impl MarksState {
             let Some(value) = serde_json::from_str::<Vec<(u32, u32)>>(&values).log_err() else {
                 continue;
             };
-            let path = Arc::from(PathBuf::from(OsString::from_vec(path)));
+            let Ok(s) = String::from_utf8(path) else {
+                return;
+            };
+            let path = Arc::from(PathBuf::from(OsString::from(s)));
 
             let points: Vec<Point> = value
                 .into_iter()
@@ -442,7 +444,10 @@ impl MarksState {
         }
 
         for (path, name) in global_mark_paths {
-            let path: Arc<Path> = Arc::from(PathBuf::from(OsString::from_vec(path)));
+            let Ok(s) = String::from_utf8(path) else {
+                continue;
+            };
+            let path: Arc<Path> = Arc::from(PathBuf::from(OsString::from(s)));
             self.global_marks.insert(name, path);
         }
     }
@@ -616,7 +621,7 @@ impl MarksState {
                 .spawn(DB.set_global_mark_path(
                     self.workspace_id,
                     name.clone(),
-                    path.to_path_buf().into_os_string().into_vec(),
+                    path.as_os_str().as_encoded_bytes().to_vec(),
                 ))
                 .detach_and_log_err(cx);
             return;
@@ -635,7 +640,7 @@ impl MarksState {
                 .spawn(DB.set_global_mark_path(
                     self.workspace_id,
                     name.clone(),
-                    path.to_path_buf().into_os_string().into_vec(),
+                    path.as_os_str().as_encoded_bytes().to_vec(),
                 ))
                 .detach_and_log_err(cx);
         }
@@ -649,7 +654,7 @@ impl MarksState {
             .spawn(DB.set_mark(
                 self.workspace_id,
                 name,
-                path.to_path_buf().into_os_string().into_vec(),
+                path.as_os_str().as_encoded_bytes().to_vec(),
                 value,
             ))
             .detach_and_log_err(cx);
@@ -706,7 +711,7 @@ impl MarksState {
                 .spawn(DB.set_global_mark_path(
                     workspace_id,
                     name.clone(),
-                    path.to_path_buf().into_os_string().into_vec(),
+                    path.as_os_str().as_encoded_bytes().to_vec(),
                 ))
                 .detach_and_log_err(cx);
         }

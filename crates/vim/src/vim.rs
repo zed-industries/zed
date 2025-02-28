@@ -316,6 +316,7 @@ pub(crate) struct Vim {
     operator_stack: Vec<Operator>,
     pub(crate) replacements: Vec<(Range<editor::Anchor>, String)>,
 
+    pub(crate) special_marks: HashMap<String, Vec<Anchor>>,
     pub(crate) stored_visual_mode: Option<(Mode, Vec<bool>)>,
     pub(crate) change_list: Vec<Vec<Anchor>>,
     pub(crate) change_list_position: Option<usize>,
@@ -363,6 +364,7 @@ impl Vim {
             operator_stack: Vec::new(),
             replacements: Vec::new(),
 
+            special_marks: HashMap::default(),
             stored_visual_mode: None,
             change_list: Vec::new(),
             change_list_position: None,
