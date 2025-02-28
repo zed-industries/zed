@@ -3222,14 +3222,8 @@ impl PanelRepoHeader {
     }
 
     // populate the secondary menu
-    // add a method for each split button
     // port over all cases from git_panel
-    // add tooltips to left buttons
-    //  - This does a thing
-    //  - `git thing`
 
-    // fn render_push_button(&self, )
-    //
     fn render_push_button(&self, id: SharedString, ahead: u32, cx: &mut App) -> SplitButton {
         let panel_focus_handle = self.panel_focus_handle(cx);
 
@@ -3376,13 +3370,11 @@ impl PanelRepoHeader {
             Some(Upstream {
                 tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus { ahead, behind }),
                 ..
-            }) => {
-                if *ahead > 0 && *behind == 0 {
-                    self.render_push_button(id, *ahead, cx)
-                } else {
-                    self.render_pull_button(id, *ahead, *behind, cx)
-                }
-            }
+            }) => match (*ahead, *behind) {
+                (0, 0) => self.render_fetch_button(id, cx),
+                (ahead, 0) => self.render_push_button(id, ahead, cx),
+                (ahead, behind) => self.render_pull_button(id, ahead, behind, cx),
+            },
             Some(Upstream {
                 tracking: UpstreamTracking::Gone,
                 ..
@@ -3501,6 +3493,14 @@ impl ComponentPreview for PanelRepoHeader {
             .into(),
         );
 
+        let not_ahead_or_behind_upstream = Some(
+            UpstreamTrackingStatus {
+                ahead: 0,
+                behind: 0,
+            }
+            .into(),
+        );
+
         fn branch(upstream: Option<UpstreamTracking>) -> Branch {
             Branch {
                 is_head: true,
@@ -3532,19 +3532,8 @@ impl ComponentPreview for PanelRepoHeader {
                             .w(px(180.))
                             .child(PanelRepoHeader::new_preview(
                                 "no-branch",
-                                active_repository(0).clone(),
-                                None,
-                            ))
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "No Remote Upstream",
-                        div()
-                            .w(px(180.))
-                            .child(PanelRepoHeader::new_preview(
-                                "no-remote-upstream",
                                 active_repository(1).clone(),
-                                Some(branch(no_remote_upstream)),
+                                None,
                             ))
                             .into_any_element(),
                     ),
@@ -3560,12 +3549,34 @@ impl ComponentPreview for PanelRepoHeader {
                             .into_any_element(),
                     ),
                     single_example(
+                        "No Remote Upstream",
+                        div()
+                            .w(px(180.))
+                            .child(PanelRepoHeader::new_preview(
+                                "no-remote-upstream",
+                                active_repository(3).clone(),
+                                Some(branch(no_remote_upstream)),
+                            ))
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "Not Ahead or Behind",
+                        div()
+                            .w(px(180.))
+                            .child(PanelRepoHeader::new_preview(
+                                "not-ahead-or-behind",
+                                active_repository(4).clone(),
+                                Some(branch(not_ahead_or_behind_upstream)),
+                            ))
+                            .into_any_element(),
+                    ),
+                    single_example(
                         "Behind remote",
                         div()
                             .w(px(180.))
                             .child(PanelRepoHeader::new_preview(
                                 "behind-remote",
-                                active_repository(3).clone(),
+                                active_repository(5).clone(),
                                 Some(branch(behind_upstream)),
                             ))
                             .into_any_element(),
@@ -3576,7 +3587,7 @@ impl ComponentPreview for PanelRepoHeader {
                             .w(px(180.))
                             .child(PanelRepoHeader::new_preview(
                                 "ahead-of-remote",
-                                active_repository(4).clone(),
+                                active_repository(6).clone(),
                                 Some(branch(ahead_of_upstream)),
                             ))
                             .into_any_element(),
@@ -3587,7 +3598,7 @@ impl ComponentPreview for PanelRepoHeader {
                             .w(px(180.))
                             .child(PanelRepoHeader::new_preview(
                                 "ahead-and-behind",
-                                active_repository(5).clone(),
+                                active_repository(7).clone(),
                                 Some(branch(ahead_and_behind_upstream)),
                             ))
                             .into_any_element(),
