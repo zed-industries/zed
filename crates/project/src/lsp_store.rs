@@ -3955,9 +3955,7 @@ impl LspStore {
         push_to_history: bool,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
-        dbg!(&kind);
         if let Some(_) = self.as_local() {
-            dbg!("local");
             cx.spawn(move |lsp_store, mut cx| async move {
                 let result = LocalLspStore::execute_code_action_kind_locally(
                     lsp_store.clone(),
@@ -3973,7 +3971,6 @@ impl LspStore {
                 result
             })
         } else if let Some((client, project_id)) = self.upstream_client() {
-            dbg!("remote");
             let buffer_store = self.buffer_store();
             cx.spawn(move |lsp_store, mut cx| async move {
                 let result = client
@@ -3984,7 +3981,6 @@ impl LspStore {
                     })
                     .await
                     .and_then(|result| result.transaction.context("missing transaction"));
-                dbg!(&result);
                 lsp_store.update(&mut cx, |lsp_store, _| {
                     lsp_store.update_last_formatting_failure(&result);
                 })?;
