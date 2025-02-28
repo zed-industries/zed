@@ -2843,7 +2843,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prometheus",
- "prompt_library",
+ "prompt_store",
  "prost 0.9.0",
  "rand 0.8.5",
  "recent_projects",
