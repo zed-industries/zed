@@ -2768,17 +2768,6 @@ impl Project {
         })
     }
 
-    pub fn organize_imports(
-        &mut self,
-        buffers: HashSet<Entity<Buffer>>,
-        push_to_history: bool,
-        cx: &mut Context<Project>,
-    ) -> Task<anyhow::Result<ProjectTransaction>> {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.organize_imports(buffers, push_to_history, cx)
-        })
-    }
-
     #[inline(never)]
     fn definition_impl(
         &mut self,
@@ -3037,6 +3026,18 @@ impl Project {
     ) -> Task<Result<ProjectTransaction>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.apply_code_action(buffer_handle, action, push_to_history, cx)
+        })
+    }
+
+    pub fn apply_code_action_kind(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        kind: CodeActionKind,
+        push_to_history: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<ProjectTransaction>> {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.apply_code_action_kind(buffer_handle, kind, push_to_history, cx)
         })
     }
 
