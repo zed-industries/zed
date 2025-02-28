@@ -3003,7 +3003,6 @@ dependencies = [
  "collections",
  "gpui",
  "linkme",
- "once_cell",
  "parking_lot",
  "theme",
 ]
@@ -16966,7 +16965,7 @@ dependencies = [
 
 [[package]]
 name = "zed_html"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

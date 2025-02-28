@@ -344,7 +344,7 @@ mod tests {
         have_json.push('\n');
 
         let update = std::env::var("UPDATE_GOLDEN")
-            .map(|val| val.to_ascii_lowercase() == "true")
+            .map(|val| val.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
 
         if update {

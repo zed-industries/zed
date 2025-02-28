@@ -509,7 +509,7 @@ impl fmt::Debug for ChunkRenderer {
     }
 }
 
-impl<'a, 'b> Deref for ChunkRendererContext<'a, 'b> {
+impl Deref for ChunkRendererContext<'_, '_> {
     type Target = App;
 
     fn deref(&self) -> &Self::Target {
@@ -517,7 +517,7 @@ impl<'a, 'b> Deref for ChunkRendererContext<'a, 'b> {
     }
 }
 
-impl<'a, 'b> DerefMut for ChunkRendererContext<'a, 'b> {
+impl DerefMut for ChunkRendererContext<'_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.context
     }
@@ -4137,7 +4137,7 @@ impl Deref for BufferSnapshot {
     }
 }
 
-unsafe impl<'a> Send for BufferChunks<'a> {}
+unsafe impl Send for BufferChunks<'_> {}
 
 impl<'a> BufferChunks<'a> {
     pub(crate) fn new(
@@ -4477,6 +4477,7 @@ impl IndentSize {
 pub struct TestFile {
     pub path: Arc<Path>,
     pub root_name: String,
+    pub local_root: Option<PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -4490,7 +4491,11 @@ impl File for TestFile {
     }
 
     fn as_local(&self) -> Option<&dyn LocalFile> {
-        None
+        if self.local_root.is_some() {
+            Some(self)
+        } else {
+            None
+        }
     }
 
     fn disk_state(&self) -> DiskState {
@@ -4515,6 +4520,23 @@ impl File for TestFile {
 
     fn is_private(&self) -> bool {
         false
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl LocalFile for TestFile {
+    fn abs_path(&self, _cx: &App) -> PathBuf {
+        PathBuf::from(self.local_root.as_ref().unwrap())
+            .join(&self.root_name)
+            .join(self.path.as_ref())
+    }
+
+    fn load(&self, _cx: &App) -> Task<Result<String>> {
+        unimplemented!()
+    }
+
+    fn load_bytes(&self, _cx: &App) -> Task<Result<Vec<u8>>> {
+        unimplemented!()
     }
 }
 

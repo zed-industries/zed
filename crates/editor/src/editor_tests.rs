@@ -15085,6 +15085,78 @@ async fn test_adjacent_diff_hunks(executor: BackgroundExecutor, cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_toggle_deletion_hunk_at_start_of_file(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let diff_base = r#"
+        a
+        b
+        c
+        "#
+    .unindent();
+
+    cx.set_state(
+        &r#"
+        ˇb
+        c
+        "#
+        .unindent(),
+    );
+    cx.set_head_text(&diff_base);
+    cx.update_editor(|editor, window, cx| {
+        editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
+    });
+    executor.run_until_parked();
+
+    let hunk_expanded = r#"
+        - a
+          ˇb
+          c
+        "#
+    .unindent();
+
+    cx.assert_state_with_diff(hunk_expanded.clone());
+
+    let hunk_ranges = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let hunks = editor
+            .diff_hunks_in_ranges(&[Anchor::min()..Anchor::max()], &snapshot.buffer_snapshot)
+            .collect::<Vec<_>>();
+        let excerpt_id = editor.buffer.read(cx).excerpt_ids()[0];
+        let buffer_id = hunks[0].buffer_id;
+        hunks
+            .into_iter()
+            .map(|hunk| Anchor::range_in_buffer(excerpt_id, buffer_id, hunk.buffer_range.clone()))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(hunk_ranges.len(), 1);
+
+    cx.update_editor(|editor, _, cx| {
+        editor.toggle_single_diff_hunk(hunk_ranges[0].clone(), cx);
+    });
+    executor.run_until_parked();
+
+    let hunk_collapsed = r#"
+          ˇb
+          c
+        "#
+    .unindent();
+
+    cx.assert_state_with_diff(hunk_collapsed);
+
+    cx.update_editor(|editor, _, cx| {
+        editor.toggle_single_diff_hunk(hunk_ranges[0].clone(), cx);
+    });
+    executor.run_until_parked();
+
+    cx.assert_state_with_diff(hunk_expanded.clone());
+}
+
+#[gpui::test]
 async fn test_display_diff_hunks(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

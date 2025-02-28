@@ -975,7 +975,7 @@ impl Server {
     }
 }
 
-impl<'a> Deref for ConnectionPoolGuard<'a> {
+impl Deref for ConnectionPoolGuard<'_> {
     type Target = ConnectionPool;
 
     fn deref(&self) -> &Self::Target {
@@ -983,13 +983,13 @@ impl<'a> Deref for ConnectionPoolGuard<'a> {
     }
 }
 
-impl<'a> DerefMut for ConnectionPoolGuard<'a> {
+impl DerefMut for ConnectionPoolGuard<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.guard
     }
 }
 
-impl<'a> Drop for ConnectionPoolGuard<'a> {
+impl Drop for ConnectionPoolGuard<'_> {
     fn drop(&mut self) {
         #[cfg(test)]
         self.check_invariants();

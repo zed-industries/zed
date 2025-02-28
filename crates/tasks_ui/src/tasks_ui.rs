@@ -5,7 +5,7 @@ use ::settings::Settings;
 use editor::Editor;
 use gpui::{App, AppContext as _, Context, Entity, Task, Window};
 use modal::{TaskOverrides, TasksModal};
-use project::{Location, TaskContexts, Worktree, WorktreeId};
+use project::{Location, TaskContexts, Worktree};
 use task::{RevealTarget, TaskContext, TaskId, TaskVariables, VariableName};
 use workspace::tasks::schedule_task;
 use workspace::{tasks::schedule_resolved_task, Workspace};
@@ -49,20 +49,19 @@ pub fn init(cx: &mut App) {
                             let task_contexts = task_contexts(workspace, window, cx);
                             cx.spawn_in(window, |workspace, mut cx| async move {
                                 let task_contexts = task_contexts.await;
+                                let default_context = TaskContext::default();
                                 workspace
-                                    .update_in(&mut cx, |workspace, window, cx| {
-                                        if let Some(task_context) = task_contexts.active_context() {
-                                            schedule_task(
-                                                workspace,
-                                                task_source_kind,
-                                                &original_task,
-                                                task_context,
-                                                false,
-                                                cx,
-                                            )
-                                        } else {
-                                            toggle_modal(workspace, None, window, cx).detach();
-                                        }
+                                    .update_in(&mut cx, |workspace, _, cx| {
+                                        schedule_task(
+                                            workspace,
+                                            task_source_kind,
+                                            &original_task,
+                                            task_contexts
+                                                .active_context()
+                                                .unwrap_or(&default_context),
+                                            false,
+                                            cx,
+                                        )
                                     })
                                     .ok()
                             })
@@ -175,8 +174,8 @@ fn spawn_task_with_name(
             else {
                 return Vec::new();
             };
-            let (worktree, location) = active_item_selection_properties(workspace, cx);
-            let (file, language) = location
+            let (file, language) = task_contexts
+                .location()
                 .map(|location| {
                     let buffer = location.buffer.read(cx);
                     (
@@ -187,7 +186,7 @@ fn spawn_task_with_name(
                 .unwrap_or_default();
             task_inventory
                 .read(cx)
-                .list_tasks(file, language, worktree, cx)
+                .list_tasks(file, language, task_contexts.worktree(), cx)
         })?;
 
         let did_spawn = workspace
@@ -231,42 +230,6 @@ fn spawn_task_with_name(
     })
 }
 
-fn active_item_selection_properties(
-    workspace: &Workspace,
-    cx: &mut App,
-) -> (Option<WorktreeId>, Option<Location>) {
-    let active_item = workspace.active_item(cx);
-    let worktree_id = active_item
-        .as_ref()
-        .and_then(|item| item.project_path(cx))
-        .map(|path| path.worktree_id)
-        .filter(|worktree_id| {
-            workspace
-                .project()
-                .read(cx)
-                .worktree_for_id(*worktree_id, cx)
-                .map_or(false, |worktree| is_visible_directory(&worktree, cx))
-        });
-    let location = active_item
-        .and_then(|active_item| active_item.act_as::<Editor>(cx))
-        .and_then(|editor| {
-            editor.update(cx, |editor, cx| {
-                let selection = editor.selections.newest_anchor();
-                let multi_buffer = editor.buffer().clone();
-                let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-                let (buffer_snapshot, buffer_offset) =
-                    multi_buffer_snapshot.point_to_buffer_offset(selection.head())?;
-                let buffer_anchor = buffer_snapshot.anchor_before(buffer_offset);
-                let buffer = multi_buffer.read(cx).buffer(buffer_snapshot.remote_id())?;
-                Some(Location {
-                    buffer,
-                    range: buffer_anchor..buffer_anchor,
-                })
-            })
-        });
-    (worktree_id, location)
-}
-
 fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Task<TaskContexts> {
     let active_item = workspace.active_item(cx);
     let active_worktree = active_item
@@ -281,12 +244,27 @@ fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Ta
                 .map_or(false, |worktree| is_visible_directory(&worktree, cx))
         });
 
-    let editor_context_task =
-        active_item
-            .and_then(|item| item.act_as::<Editor>(cx))
-            .map(|active_editor| {
-                active_editor.update(cx, |editor, cx| editor.task_context(window, cx))
-            });
+    let active_editor = active_item.and_then(|item| item.act_as::<Editor>(cx));
+
+    let editor_context_task = active_editor.as_ref().map(|active_editor| {
+        active_editor.update(cx, |editor, cx| editor.task_context(window, cx))
+    });
+
+    let location = active_editor.as_ref().and_then(|editor| {
+        editor.update(cx, |editor, cx| {
+            let selection = editor.selections.newest_anchor();
+            let multi_buffer = editor.buffer().clone();
+            let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+            let (buffer_snapshot, buffer_offset) =
+                multi_buffer_snapshot.point_to_buffer_offset(selection.head())?;
+            let buffer_anchor = buffer_snapshot.anchor_before(buffer_offset);
+            let buffer = multi_buffer.read(cx).buffer(buffer_snapshot.remote_id())?;
+            Some(Location {
+                buffer,
+                range: buffer_anchor..buffer_anchor,
+            })
+        })
+    });
 
     let mut worktree_abs_paths = workspace
         .worktrees(cx)
@@ -302,7 +280,8 @@ fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Ta
 
         if let Some(editor_context_task) = editor_context_task {
             if let Some(editor_context) = editor_context_task.await {
-                task_contexts.active_item_context = Some((active_worktree, editor_context));
+                task_contexts.active_item_context =
+                    Some((active_worktree, location, editor_context));
             }
         }
 
