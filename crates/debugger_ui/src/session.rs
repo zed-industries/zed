@@ -47,26 +47,6 @@ pub enum ThreadItem {
     Variables,
 }
 
-impl ThreadItem {
-    fn _to_proto(&self) -> proto::DebuggerThreadItem {
-        match self {
-            ThreadItem::Console => proto::DebuggerThreadItem::Console,
-            ThreadItem::LoadedSource => proto::DebuggerThreadItem::LoadedSource,
-            ThreadItem::Modules => proto::DebuggerThreadItem::Modules,
-            ThreadItem::Variables => proto::DebuggerThreadItem::Variables,
-        }
-    }
-
-    fn from_proto(active_thread_item: proto::DebuggerThreadItem) -> Self {
-        match active_thread_item {
-            proto::DebuggerThreadItem::Console => ThreadItem::Console,
-            proto::DebuggerThreadItem::LoadedSource => ThreadItem::LoadedSource,
-            proto::DebuggerThreadItem::Modules => ThreadItem::Modules,
-            proto::DebuggerThreadItem::Variables => ThreadItem::Variables,
-        }
-    }
-}
-
 impl DebugSession {
     pub(super) fn inert(
         project: Entity<Project>,

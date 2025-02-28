@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use dap::StackFrameId;
 use gpui::{
     list, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, Subscription, Task,
     WeakEntity,
@@ -13,12 +14,9 @@ use project::{ProjectItem, ProjectPath};
 use ui::{prelude::*, Tooltip};
 use workspace::Workspace;
 
-pub type StackFrameId = u64;
-
 #[derive(Debug)]
 pub enum StackFrameListEvent {
     SelectedStackFrameChanged(StackFrameId),
-    StackFramesUpdated,
 }
 
 pub struct StackFrameList {
@@ -106,7 +104,7 @@ impl StackFrameList {
             .collect()
     }
 
-    pub fn get_main_stack_frame_id(&self, cx: &mut Context<Self>) -> u64 {
+    pub fn _get_main_stack_frame_id(&self, cx: &mut Context<Self>) -> u64 {
         self.stack_frames(cx)
             .first()
             .map(|stack_frame| stack_frame.dap.id)
@@ -117,7 +115,7 @@ impl StackFrameList {
         self.current_stack_frame_id
     }
 
-    pub fn current_thread_id(&self) -> Option<ThreadId> {
+    pub fn _current_thread_id(&self) -> Option<ThreadId> {
         self.thread_id
     }
 

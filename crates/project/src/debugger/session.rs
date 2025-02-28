@@ -10,20 +10,22 @@ use super::dap_command::{
 };
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
-use collections::{HashMap, IndexMap};
+use collections::{HashMap, HashSet, IndexMap};
 use dap::adapters::{DebugAdapter, DebugAdapterBinary};
 use dap::OutputEventCategory;
 use dap::{
     adapters::{DapDelegate, DapStatus},
     client::{DebugAdapterClient, SessionId},
     messages::{Events, Message},
-    Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, SteppingGranularity,
-    StoppedEvent, SourceBreakpoint
+    Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, SourceBreakpoint,
+    StackFrameId, SteppingGranularity, StoppedEvent, VariableReference,
 };
 use dap_adapters::build_adapter;
 use futures::channel::oneshot;
 use futures::{future::join_all, future::Shared, FutureExt};
-use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, Task, WeakEntity};
+use gpui::{
+    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Task, WeakEntity,
+};
 use rpc::AnyProtoClient;
 use serde_json::{json, Value};
 use settings::Settings;
@@ -50,60 +52,10 @@ impl ThreadId {
     pub const MAX: ThreadId = ThreadId(u64::MAX);
 }
 
-pub enum VariableListContainer {
-    Scope(Scope),
-    Variable(Variable),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ToggledState {
-    Toggled,
-    UnToggled,
-    Leaf,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Variable {
-    pub dap: dap::Variable,
-    pub toggled_state: ToggledState,
-    pub depth: u8,
-}
-
-impl From<dap::Variable> for Variable {
-    fn from(dap: dap::Variable) -> Self {
-        Self {
-            toggled_state: if dap.variables_reference == 0 {
-                ToggledState::Leaf
-            } else {
-                ToggledState::UnToggled
-            },
-            dap,
-            depth: 2,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Scope {
-    pub dap: dap::Scope,
-    pub variables: Vec<Variable>,
-    pub is_toggled: bool,
-}
-
-impl From<dap::Scope> for Scope {
-    fn from(scope: dap::Scope) -> Self {
-        Self {
-            dap: scope,
-            variables: vec![],
-            is_toggled: true,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct StackFrame {
     pub dap: dap::StackFrame,
-    pub scopes: Vec<Scope>,
+    pub scopes: Vec<dap::Scope>,
 }
 
 impl From<dap::StackFrame> for StackFrame {
@@ -124,21 +76,19 @@ pub enum ThreadStatus {
     Ended,
 }
 
-type StackFrameId = u64;
-
 #[derive(Debug)]
 pub struct Thread {
     dap: dap::Thread,
-    stack_frames: IndexMap<StackFrameId, StackFrame>,
-    has_stopped: bool,
+    stack_frame_ids: HashSet<StackFrameId>,
+    _has_stopped: bool,
 }
 
 impl From<dap::Thread> for Thread {
     fn from(dap: dap::Thread) -> Self {
         Self {
             dap,
-            stack_frames: IndexMap::new(),
-            has_stopped: false,
+            stack_frame_ids: Default::default(),
+            _has_stopped: false,
         }
     }
 }
@@ -257,7 +207,6 @@ impl LocalMode {
                 &mut cx,
             )
             .await
-
         })
     }
 
@@ -330,7 +279,7 @@ impl LocalMode {
         // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
         let launch = this.request(Launch { raw }, cx.background_executor().clone());
         let that = this.clone();
-        let breakpoints = breakpoints.update(cx, |this, cx| this.all_breakpoints( cx))?;
+        let breakpoints = breakpoints.update(cx, |this, cx| this.all_breakpoints(cx))?;
 
         let configuration_done_supported = ConfigurationDone::is_supported(&capabilities);
         let configuration_sequence = async move {
@@ -472,8 +421,6 @@ impl ThreadStates {
     }
 }
 
-type VariableId = u64;
-
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
 pub struct Session {
     mode: Mode,
@@ -488,10 +435,11 @@ pub struct Session {
     last_processed_output: usize,
     output: Vec<dap::OutputEvent>,
     threads: IndexMap<ThreadId, Thread>,
-    requests: HashMap<RequestSlot, Shared<Task<Option<()>>>>,
-    variables: HashMap<VariableId, Vec<Variable>>,
+    variables: HashMap<VariableReference, Vec<dap::Variable>>,
+    stack_frames: IndexMap<StackFrameId, StackFrame>,
     thread_states: ThreadStates,
     is_session_terminated: bool,
+    requests: HashMap<RequestSlot, Shared<Task<Option<()>>>>,
     _background_tasks: Vec<Task<()>>,
 }
 
@@ -569,6 +517,13 @@ impl CompletionsQuery {
         }
     }
 }
+
+pub enum SessionEvent {
+    Invalidate,
+}
+
+impl EventEmitter<SessionEvent> for Session {}
+
 // local session will send breakpoint updates to DAP for all new breakpoints
 // remote side will only send breakpoint updates when it is a breakpoint created by that peer
 // BreakpointStore notifies session on breakpoint changes
@@ -632,6 +587,7 @@ impl Session {
                     modules: Vec::default(),
                     loaded_sources: Vec::default(),
                     threads: IndexMap::default(),
+                    stack_frames: IndexMap::default(),
                     _background_tasks,
                     is_session_terminated: false,
                 }
@@ -657,6 +613,7 @@ impl Session {
             breakpoint_store,
             ignore_breakpoints,
             variables: Default::default(),
+            stack_frames: Default::default(),
             thread_states: ThreadStates::default(),
             last_processed_output: 0,
             output: Vec::default(),
@@ -964,37 +921,38 @@ impl Session {
         // todo(debugger): We need to propagate this change to downstream sessions and send a message to upstream sessions
         todo!();
         /*
-        let mut tasks: Vec<Task<()>> = Vec::new();
+                let mut tasks: Vec<Task<()>> = Vec::new();
+        >>>>>>> debugger
 
-        for (abs_path, serialized_breakpoints) in self
-            .breakpoint_store
-            .read_with(cx, |store, cx| store.all_breakpoints(true, cx))
-            .into_iter()
-        {
-            let source_breakpoints = if self.ignore_breakpoints {
-                serialized_breakpoints
-                    .iter()
-                    .map(|bp| bp.to_source_breakpoint())
-                    .collect::<Vec<_>>()
-            } else {
-                vec![]
-            };
+                for (_abs_path, serialized_breakpoints) in self
+                    .breakpoint_store
+                    .read_with(cx, |store, cx| store.all_breakpoints(true, cx))
+                    .into_iter()
+                {
+                    let _source_breakpoints = if self.ignore_breakpoints {
+                        serialized_breakpoints
+                            .iter()
+                            .map(|bp| bp.to_source_breakpoint())
+                            .collect::<Vec<_>>()
+                    } else {
+                        vec![]
+                    };
 
-            todo!(
-                r#"tasks.push(self.send_breakpoints(
-                abs_path,
-                source_breakpoints,
-                self.ignore_breakpoints,
-                false,
-                cx,
-                ));"#
-            );
-        }
+                    todo!(
+                        r#"tasks.push(self.send_breakpoints(
+                        abs_path,
+                        source_breakpoints,
+                        self.ignore_breakpoints,
+                        false,
+                        cx,
+                        ));"#
+                    );
+                }
 
-        cx.background_executor().spawn(async move {
-            join_all(tasks).await;
-            Ok(())
-        })*/
+                cx.background_executor().spawn(async move {
+                    join_all(tasks).await;
+                    Ok(())
+                })*/
     }
 
     pub fn breakpoints_enabled(&self) -> bool {
@@ -1235,17 +1193,23 @@ impl Session {
                 },
                 move |this, stack_frames, cx| {
                     let entry = this.threads.entry(thread_id).and_modify(|thread| {
-                        thread.stack_frames = stack_frames
-                            .iter()
-                            .cloned()
-                            .map(|frame| (frame.id, frame.into()))
-                            .collect();
+                        thread.stack_frame_ids =
+                            stack_frames.iter().map(|frame| frame.id).collect();
                     });
+
+                    this.stack_frames.extend(
+                        stack_frames
+                            .into_iter()
+                            .cloned()
+                            .map(|frame| (frame.id, StackFrame::from(frame))),
+                    );
+
                     debug_assert!(
                         matches!(entry, indexmap::map::Entry::Occupied(_)),
                         "Sent request for thread_id that doesn't exist"
                     );
 
+                    cx.emit(SessionEvent::Invalidate);
                     cx.notify();
                 },
                 cx,
@@ -1254,72 +1218,56 @@ impl Session {
 
         self.threads
             .get(&thread_id)
-            .map(|thread| thread.stack_frames.values().cloned().collect())
-            .unwrap_or_default()
-    }
-
-    pub fn scopes(
-        &mut self,
-        thread_id: ThreadId,
-        stack_frame_id: u64,
-        cx: &mut Context<Self>,
-    ) -> Vec<Scope> {
-        self.fetch(
-            ScopesCommand {
-                thread_id: thread_id.0,
-                stack_frame_id,
-            },
-            move |this, scopes, cx| {
-                this.threads.entry(thread_id).and_modify(|thread| {
-                    if let Some(stack_frame) = thread.stack_frames.get_mut(&stack_frame_id) {
-                        stack_frame.scopes = scopes.iter().cloned().map(From::from).collect();
-                        cx.notify();
-                    }
-                });
-            },
-            cx,
-        );
-        self.threads
-            .get(&thread_id)
-            .and_then(|thread| {
+            .map(|thread| {
                 thread
-                    .stack_frames
-                    .get(&stack_frame_id)
-                    .map(|stack_frame| stack_frame.scopes.clone())
+                    .stack_frame_ids
+                    .iter()
+                    .filter_map(|id| self.stack_frames.get(id))
+                    .cloned()
+                    .collect()
             })
             .unwrap_or_default()
     }
 
-    fn find_scope(
-        &mut self,
-        thread_id: ThreadId,
-        stack_frame_id: u64,
-        variables_reference: u64,
-    ) -> Option<&mut Scope> {
-        self.threads.get_mut(&thread_id).and_then(|thread| {
-            thread
-                .stack_frames
-                .get_mut(&stack_frame_id)
-                .and_then(|frame| {
-                    frame
-                        .scopes
-                        .iter_mut()
-                        .find(|scope| scope.dap.variables_reference == variables_reference)
-                })
-        })
+    pub fn scopes(&mut self, stack_frame_id: u64, cx: &mut Context<Self>) -> &[dap::Scope] {
+        self.fetch(
+            ScopesCommand { stack_frame_id },
+            move |this, scopes, cx| {
+
+                for scope in scopes {
+                    this.variables(scope.variables_reference, cx);
+                }
+
+                let entry = this
+                    .stack_frames
+                    .entry(stack_frame_id)
+                    .and_modify(|stack_frame| {
+                        stack_frame.scopes = scopes.clone();
+                    });
+
+                cx.emit(SessionEvent::Invalidate);
+
+                debug_assert!(
+                    matches!(entry, indexmap::map::Entry::Occupied(_)),
+                    "Sent scopes request for stack_frame_id that doesn't exist or hasn't been fetched"
+                );
+            },
+            cx,
+        );
+
+        self.stack_frames
+            .get(&stack_frame_id)
+            .map(|frame| frame.scopes.as_slice())
+            .unwrap_or_default()
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn variables(
         &mut self,
-        thread_id: ThreadId,
-        stack_frame_id: u64,
-        variables_reference: u64,
+        variables_reference: VariableReference,
         cx: &mut Context<Self>,
-    ) -> Vec<Variable> {
+    ) -> Vec<dap::Variable> {
         let command = VariablesCommand {
-            stack_frame_id,
-            thread_id: thread_id.0,
             variables_reference,
             filter: None,
             start: None,
@@ -1330,20 +1278,17 @@ impl Session {
         self.fetch(
             command,
             move |this, variables, cx| {
-                if let Some(scope) = this.find_scope(thread_id, stack_frame_id, variables_reference)
-                {
-                    this.variables.insert(
-                        variables_reference,
-                        variables.iter().cloned().map(From::from).collect(),
-                    );
-                    cx.notify();
-                }
+                this.variables
+                    .insert(variables_reference, variables.clone());
+
+                cx.emit(SessionEvent::Invalidate);
             },
             cx,
         );
 
-        self.find_scope(thread_id, stack_frame_id, variables_reference)
-            .map(|scope| scope.variables.clone())
+        self.variables
+            .get(&variables_reference)
+            .cloned()
             .unwrap_or_default()
     }
 
@@ -1430,45 +1375,5 @@ impl Session {
             )
             .detach();
         }
-    }
-
-    pub fn variable_list(
-        &mut self,
-        selected_thread_id: ThreadId,
-        stack_frame_id: u64,
-        cx: &mut Context<Self>,
-    ) -> Vec<VariableListContainer> {
-        self.scopes(selected_thread_id, stack_frame_id, cx)
-            .iter()
-            .cloned()
-            .flat_map(|scope| {
-                if scope.is_toggled {
-                    self.variables(
-                        selected_thread_id,
-                        stack_frame_id,
-                        scope.dap.variables_reference,
-                        cx,
-                    );
-                }
-
-                let mut stack = vec![scope.dap.variables_reference];
-                let head = VariableListContainer::Scope(scope);
-                let mut variables = vec![head];
-
-                while let Some(reference) = stack.pop() {
-                    if let Some(children) = self.variables.get(&reference) {
-                        for variable in children {
-                            if variable.toggled_state == ToggledState::Toggled {
-                                stack.push(variable.dap.variables_reference);
-                            }
-
-                            variables.push(VariableListContainer::Variable(variable.clone()));
-                        }
-                    }
-                }
-
-                variables
-            })
-            .collect()
     }
 }

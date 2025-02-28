@@ -146,93 +146,98 @@ impl DapStore {
             while let Some((session_id, message)) = message_rx.next().await {
                 match message {
                     Message::Request(request) => {
-                        let _ = this.update(&mut cx, |this, cx| {
-                            if request.command == StartDebugging::COMMAND {
-                                let Some(parent_session) = this.session_by_id(session_id) else {
-                                    return;
-                                };
-
-                                let args =
-                                    serde_json::from_value::<StartDebuggingRequestArguments>(
-                                        request.arguments.unwrap_or_default(),
-                                    )
-                                    .expect("To parse StartDebuggingRequestArguments");
-
-                                let worktree = worktree_store
-                                    .update(cx, |this, _| this.worktrees().next())
-                                    .expect("worktree-less project");
-
-                                let config = parent_session.read(cx).configuration();
-                                let new_session_task = this.new_session(
-                                    DebugAdapterConfig {
-                                        label: config.label,
-                                        kind: config.kind,
-                                        request: match &args.request {
-                                            StartDebuggingRequestArgumentsRequest::Launch => {
-                                                DebugRequestType::Launch
-                                            }
-                                            StartDebuggingRequestArgumentsRequest::Attach => {
-                                                DebugRequestType::Attach(
-                                                    if let DebugRequestType::Attach(attach_config) =
-                                                        &config.request
-                                                    {
-                                                        attach_config.clone()
-                                                    } else {
-                                                        AttachConfig::default()
-                                                    },
-                                                )
-                                            }
-                                        },
-                                        program: config.program,
-                                        cwd: config.cwd,
-                                        initialize_args: Some(args.configuration),
-                                        supports_attach: config.supports_attach,
-                                    },
-                                    &worktree,
-                                    Some(parent_session.clone()),
-                                    cx,
-                                );
-
-                                let request_seq = request.seq;
-                                cx.spawn(|this, mut cx| async move {
-                                    let (success, body) = match new_session_task.await {
-                                        Ok(_) => (true, None),
-                                        Err(error) => (
-                                            false,
-                                            Some(serde_json::to_value(ErrorResponse {
-                                                error: Some(dap::Message {
-                                                    id: request_seq,
-                                                    format: error.to_string(),
-                                                    variables: None,
-                                                    send_telemetry: None,
-                                                    show_user: None,
-                                                    url: None,
-                                                    url_label: None,
-                                                }),
-                                            })?),
-                                        ),
+                        let _ = this
+                            .update(&mut cx, |this, cx| {
+                                if request.command == StartDebugging::COMMAND {
+                                    let Some(parent_session) = this.session_by_id(session_id)
+                                    else {
+                                        return;
                                     };
 
-                                    parent_session
-                                        .update(&mut cx, |session, cx| {
-                                            session.respond_to_client(
-                                                dap::messages::Response {
-                                                    seq: request_seq + 1,
-                                                    request_seq,
-                                                    success,
-                                                    command: StartDebugging::COMMAND.to_string(),
-                                                    body,
-                                                },
-                                                cx,
-                                            )
-                                        })?
-                                        .await
-                                })
-                                .detach_and_log_err(cx);
-                            } else if request.command == RunInTerminal::COMMAND {
-                                // spawn terminal
-                            }
-                        });
+                                    let args =
+                                        serde_json::from_value::<StartDebuggingRequestArguments>(
+                                            request.arguments.unwrap_or_default(),
+                                        )
+                                        .expect("To parse StartDebuggingRequestArguments");
+
+                                    let worktree = worktree_store
+                                        .update(cx, |this, _| this.worktrees().next())
+                                        .expect("worktree-less project");
+
+                                    let config = parent_session.read(cx).configuration();
+                                    let new_session_task = this.new_session(
+                                        DebugAdapterConfig {
+                                            label: config.label,
+                                            kind: config.kind,
+                                            request: match &args.request {
+                                                StartDebuggingRequestArgumentsRequest::Launch => {
+                                                    DebugRequestType::Launch
+                                                }
+                                                StartDebuggingRequestArgumentsRequest::Attach => {
+                                                    DebugRequestType::Attach(
+                                                        if let DebugRequestType::Attach(
+                                                            attach_config,
+                                                        ) = &config.request
+                                                        {
+                                                            attach_config.clone()
+                                                        } else {
+                                                            AttachConfig::default()
+                                                        },
+                                                    )
+                                                }
+                                            },
+                                            program: config.program,
+                                            cwd: config.cwd,
+                                            initialize_args: Some(args.configuration),
+                                            supports_attach: config.supports_attach,
+                                        },
+                                        &worktree,
+                                        Some(parent_session.clone()),
+                                        cx,
+                                    );
+
+                                    let request_seq = request.seq;
+                                    cx.spawn(|this, mut cx| async move {
+                                        let (success, body) = match new_session_task.await {
+                                            Ok(_) => (true, None),
+                                            Err(error) => (
+                                                false,
+                                                Some(serde_json::to_value(ErrorResponse {
+                                                    error: Some(dap::Message {
+                                                        id: request_seq,
+                                                        format: error.to_string(),
+                                                        variables: None,
+                                                        send_telemetry: None,
+                                                        show_user: None,
+                                                        url: None,
+                                                        url_label: None,
+                                                    }),
+                                                })?),
+                                            ),
+                                        };
+
+                                        parent_session
+                                            .update(&mut cx, |session, cx| {
+                                                session.respond_to_client(
+                                                    dap::messages::Response {
+                                                        seq: request_seq + 1,
+                                                        request_seq,
+                                                        success,
+                                                        command: StartDebugging::COMMAND
+                                                            .to_string(),
+                                                        body,
+                                                    },
+                                                    cx,
+                                                )
+                                            })?
+                                            .await
+                                    })
+                                    .detach_and_log_err(cx);
+                                } else if request.command == RunInTerminal::COMMAND {
+                                    // spawn terminal
+                                }
+                            })
+                            .log_err();
                     }
                     _ => {}
                 }
@@ -374,7 +379,7 @@ impl DapStore {
         cx: &mut Context<Self>,
     ) {
         if let Some(client) = self.session_by_id(session_id) {
-            client.update(cx, |this, cx| {
+            client.update(cx, |this, _cx| {
                 this.capabilities = this.capabilities.merge(capabilities.clone());
             });
         }

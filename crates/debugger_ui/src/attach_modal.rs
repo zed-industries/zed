@@ -11,24 +11,24 @@ use ui::{ListItem, ListItemSpacing};
 use workspace::ModalView;
 
 #[derive(Debug, Clone)]
-struct Candidate {
+struct _Candidate {
     pid: u32,
     name: String,
     command: Vec<String>,
 }
 
-pub(crate) struct AttachModalDelegate {
+pub(crate) struct _AttachModalDelegate {
     selected_index: usize,
     matches: Vec<StringMatch>,
     session_id: SessionId,
     placeholder_text: Arc<str>,
     dap_store: Entity<DapStore>,
     client_id: SessionId,
-    candidates: Option<Vec<Candidate>>,
+    candidates: Option<Vec<_Candidate>>,
 }
 
-impl AttachModalDelegate {
-    pub fn new(session_id: SessionId, client_id: SessionId, dap_store: Entity<DapStore>) -> Self {
+impl _AttachModalDelegate {
+    pub fn _new(session_id: SessionId, client_id: SessionId, dap_store: Entity<DapStore>) -> Self {
         Self {
             client_id,
             dap_store,
@@ -41,13 +41,13 @@ impl AttachModalDelegate {
     }
 }
 
-pub(crate) struct AttachModal {
+pub(crate) struct _AttachModal {
     _subscription: Subscription,
-    pub(crate) picker: Entity<Picker<AttachModalDelegate>>,
+    pub(crate) picker: Entity<Picker<_AttachModalDelegate>>,
 }
 
-impl AttachModal {
-    pub fn new(
+impl _AttachModal {
+    pub fn _new(
         session_id: &SessionId,
         client_id: SessionId,
         dap_store: Entity<DapStore>,
@@ -56,7 +56,7 @@ impl AttachModal {
     ) -> Self {
         let picker = cx.new(|cx| {
             Picker::uniform_list(
-                AttachModalDelegate::new(*session_id, client_id, dap_store),
+                _AttachModalDelegate::_new(*session_id, client_id, dap_store),
                 window,
                 cx,
             )
@@ -71,7 +71,7 @@ impl AttachModal {
     }
 }
 
-impl Render for AttachModal {
+impl Render for _AttachModal {
     fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl ui::IntoElement {
         v_flex()
             .key_context("AttachModal")
@@ -80,17 +80,17 @@ impl Render for AttachModal {
     }
 }
 
-impl EventEmitter<DismissEvent> for AttachModal {}
+impl EventEmitter<DismissEvent> for _AttachModal {}
 
-impl Focusable for AttachModal {
+impl Focusable for _AttachModal {
     fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
         self.picker.read(cx).focus_handle(cx)
     }
 }
 
-impl ModalView for AttachModal {}
+impl ModalView for _AttachModal {}
 
-impl PickerDelegate for AttachModalDelegate {
+impl PickerDelegate for _AttachModalDelegate {
     type ListItem = ListItem;
 
     fn match_count(&self) -> usize {
@@ -126,7 +126,7 @@ impl PickerDelegate for AttachModalDelegate {
                     if let Some(processes) = this.delegate.candidates.clone() {
                         processes
                     } else {
-                        let Some(client) = this.delegate.dap_store.update(cx, |store, cx| {
+                        let Some(_client) = this.delegate.dap_store.update(cx, |store, cx| {
                             store
                                 .session_by_id(&this.delegate.client_id)
                                 .and_then(|client| client.read(cx).adapter_client())
@@ -134,26 +134,27 @@ impl PickerDelegate for AttachModalDelegate {
                             return Vec::new();
                         };
 
-                        let system = System::new_all();
+                        let _system = System::new_all();
+
                         todo!("client.adapter().attach_processes(&system.processes())");
-                        let processes: Vec<(&sysinfo::Pid, &sysinfo::Process)> = vec![];
+                        // let processes: Vec<(&sysinfo::Pid, &sysinfo::Process)> = vec![];
 
-                        let processes = processes
-                            .into_iter()
-                            .map(|(pid, process)| Candidate {
-                                pid: pid.as_u32(),
-                                name: process.name().to_string_lossy().into_owned(),
-                                command: process
-                                    .cmd()
-                                    .iter()
-                                    .map(|s| s.to_string_lossy().to_string())
-                                    .collect::<Vec<_>>(),
-                            })
-                            .collect::<Vec<Candidate>>();
+                        // let processes = processes
+                        //     .into_iter()
+                        //     .map(|(pid, process)| _Candidate {
+                        //         pid: pid.as_u32(),
+                        //         name: process.name().to_string_lossy().into_owned(),
+                        //         command: process
+                        //             .cmd()
+                        //             .iter()
+                        //             .map(|s| s.to_string_lossy().to_string())
+                        //             .collect::<Vec<_>>(),
+                        //     })
+                        //     .collect::<Vec<_Candidate>>();
 
-                        let _ = this.delegate.candidates.insert(processes.clone());
+                        // let _ = this.delegate.candidates.insert(processes.clone());
 
-                        processes
+                        // processes
                     }
                 })
                 .ok()
@@ -211,7 +212,7 @@ impl PickerDelegate for AttachModalDelegate {
                 let ix = current_match.candidate_id;
                 self.candidates.as_ref().map(|candidates| &candidates[ix])
             });
-        let Some(candidate) = candidate else {
+        let Some(_candidate) = candidate else {
             return cx.emit(DismissEvent);
         };
 
@@ -291,7 +292,7 @@ impl PickerDelegate for AttachModalDelegate {
 
 #[allow(dead_code)]
 #[cfg(any(test, feature = "test-support"))]
-pub(crate) fn procss_names(modal: &AttachModal, cx: &mut Context<AttachModal>) -> Vec<String> {
+pub(crate) fn procss_names(modal: &_AttachModal, cx: &mut Context<_AttachModal>) -> Vec<String> {
     modal.picker.update(cx, |picker, _| {
         picker
             .delegate

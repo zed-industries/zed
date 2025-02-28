@@ -2,6 +2,7 @@ use super::{
     stack_frame_list::{StackFrameList, StackFrameListEvent},
     variable_list::VariableList,
 };
+use collections::HashMap;
 use dap::{OutputEvent, OutputEventGroup};
 use editor::{
     display_map::{Crease, CreaseId},
@@ -16,7 +17,7 @@ use project::{
     Completion,
 };
 use settings::Settings;
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc, usize};
+use std::{cell::RefCell, rc::Rc, sync::Arc, usize};
 use theme::ThemeSettings;
 use ui::{prelude::*, ButtonLike, Disclosure, ElevationIndex};
 
@@ -129,7 +130,6 @@ impl Console {
     ) {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged(_) => cx.notify(),
-            StackFrameListEvent::StackFramesUpdated => {}
         }
     }
 
@@ -405,8 +405,8 @@ impl ConsoleQueryBarCompletionProvider {
             for variable in console.variable_list.update(cx, |variable_list, cx| {
                 variable_list.completion_variables(cx)
             }) {
-                if let Some(evaluate_name) = &variable.variable.dap.evaluate_name {
-                    variables.insert(evaluate_name.clone(), variable.variable.dap.value.clone());
+                if let Some(evaluate_name) = &variable.evaluate_name {
+                    variables.insert(evaluate_name.clone(), variable.value.clone());
                     string_matches.push(StringMatchCandidate {
                         id: 0,
                         string: evaluate_name.clone(),
@@ -414,15 +414,12 @@ impl ConsoleQueryBarCompletionProvider {
                     });
                 }
 
-                variables.insert(
-                    variable.variable.dap.name.clone(),
-                    variable.variable.dap.value.clone(),
-                );
+                variables.insert(variable.name.clone(), variable.value.clone());
 
                 string_matches.push(StringMatchCandidate {
                     id: 0,
-                    string: variable.variable.dap.name.clone(),
-                    char_bag: variable.variable.dap.name.chars().collect(),
+                    string: variable.name.clone(),
+                    char_bag: variable.name.chars().collect(),
                 });
             }
 

@@ -28,7 +28,7 @@ pub struct RunningState {
     thread: Option<(ThreadId, String)>,
     console: Entity<console::Console>,
     focus_handle: FocusHandle,
-    remote_id: Option<ViewId>,
+    _remote_id: Option<ViewId>,
     show_console_indicator: bool,
     module_list: Entity<module_list::ModuleList>,
     active_thread_item: ThreadItem,
@@ -370,8 +370,7 @@ impl RunningState {
         let _subscriptions = vec![cx.subscribe(
             &stack_frame_list,
             move |this: &mut Self, _, event: &StackFrameListEvent, cx| match event {
-                StackFrameListEvent::SelectedStackFrameChanged(_)
-                | StackFrameListEvent::StackFramesUpdated => this.clear_highlights(cx),
+                StackFrameListEvent::SelectedStackFrameChanged(_) => this.clear_highlights(cx),
             },
         )];
 
@@ -384,7 +383,7 @@ impl RunningState {
             variable_list,
             _subscriptions,
             thread: None,
-            remote_id: None,
+            _remote_id: None,
             stack_frame_list,
             loaded_source_list,
             session_id,
@@ -501,7 +500,7 @@ impl RunningState {
         // }
     }
 
-    pub fn go_to_current_stack_frame(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn _go_to_current_stack_frame(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.stack_frame_list.update(cx, |stack_frame_list, cx| {
             if let Some(stack_frame) = stack_frame_list
                 .stack_frames(cx)
