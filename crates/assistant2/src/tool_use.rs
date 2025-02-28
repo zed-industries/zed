@@ -100,9 +100,8 @@ impl ToolUseState {
             .or_default()
             .push(tool_use.clone());
 
-        // The tool use is being requested by the
-        // Assistant, so we want to attach the tool
-        // results to the next user message.
+        // The tool use is being requested by the Assistant, so we want to
+        // attach the tool results to the next user message.
         let next_user_message_id = MessageId(assistant_message_id.0 + 1);
         self.tool_uses_by_user_message
             .entry(next_user_message_id)
