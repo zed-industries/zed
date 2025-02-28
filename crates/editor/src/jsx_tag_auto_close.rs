@@ -1,7 +1,8 @@
 use anyhow::Result;
 use std::ops::Range;
 
-use crate::{Anchor, BufferSnapshot, JsxTagAutoCloseConfig};
+use language::{BufferSnapshot, JsxTagAutoCloseConfig};
+use text::Anchor;
 
 pub struct JsxTagCompletionState {
     edit_index: usize,

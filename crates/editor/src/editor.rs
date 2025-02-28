@@ -28,6 +28,7 @@ mod hover_popover;
 mod indent_guides;
 mod inlay_hint_cache;
 pub mod items;
+mod jsx_tag_auto_close;
 mod linked_editing_ranges;
 mod lsp_ext;
 mod mouse_context_menu;
@@ -3176,12 +3177,6 @@ impl Editor {
             config: language::JsxTagAutoCloseConfig,
             edits: Vec<Range<usize>>,
         }
-        
-        self.buffer.read(cx).for_each_buffer(|buffer| {
-            buffer.read(cx).snapshot().syntax_layers().for_each(|layer| {
-                layer.language.
-            })
-        });
 
         let mut edit_contexts =
             HashMap::<(BufferId, language::LanguageId), JsxAutoCloseEditContext>::default();
@@ -3244,7 +3239,7 @@ impl Editor {
 
                 let jsx_tag_auto_close = config;
 
-                let Some(edit_behavior_state) = language::jsx_tag_auto_close::should_auto_close(
+                let Some(edit_behavior_state) = jsx_tag_auto_close::should_auto_close(
                     &buffer_snapshot,
                     &edited_ranges,
                     &jsx_tag_auto_close,
@@ -3283,7 +3278,7 @@ impl Editor {
                     .spawn({
                         let buffer_snapshot = buffer_snapshot.clone();
                         async move {
-                            language::jsx_tag_auto_close::generate_auto_close_edits(
+                            jsx_tag_auto_close::generate_auto_close_edits(
                                 &buffer_snapshot,
                                 &edited_ranges,
                                 &jsx_tag_auto_close,

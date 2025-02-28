@@ -9,7 +9,6 @@
 mod buffer;
 mod diagnostic_set;
 mod highlight_map;
-pub mod jsx_tag_auto_close;
 mod language_registry;
 pub mod language_settings;
 mod outline;
