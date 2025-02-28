@@ -2700,23 +2700,29 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.try_cancel(window, cx) {
+            cx.propagate();
+        }
+    }
+
+    pub fn try_cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.selection_mark_mode = false;
 
         if self.clear_expanded_diff_hunks(cx) {
             cx.notify();
-            return;
+            return true;
         }
         if self.dismiss_menus_and_popups(true, window, cx) {
-            return;
+            return true;
         }
 
         if self.mode == EditorMode::Full
             && self.change_selections(Some(Autoscroll::fit()), window, cx, |s| s.try_cancel())
         {
-            return;
+            return true;
         }
 
-        cx.propagate();
+        return false;
     }
 
     pub fn dismiss_menus_and_popups(
