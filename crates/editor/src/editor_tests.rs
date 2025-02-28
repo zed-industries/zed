@@ -16576,7 +16576,7 @@ mod autoclose_tags {
     );
 
     check!(
-        multi_cursor_autoclose_different_tags,
+        test_multi_cursor_autoclose_different_tags,
         r#"
         <divˇ
         <spanˇ
@@ -16589,7 +16589,7 @@ mod autoclose_tags {
     );
 
     check!(
-        multi_cursor_autoclose_some_dont_autoclose_others,
+        test_multi_cursor_autoclose_some_dont_autoclose_others,
         r#"
         <divˇ
         <div /ˇ
@@ -16609,6 +16609,11 @@ mod autoclose_tags {
         <Component<T>>ˇ</Component>
         >ˇ
         "#
+    );
+
+    check!(
+        test_doesnt_mess_up_trailing_text,
+        "<divˇfoobar" + ">" => "<div>ˇ</div>foobar"
     );
 
     #[gpui::test]
