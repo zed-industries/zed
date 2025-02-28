@@ -845,12 +845,7 @@ impl LocalBufferStore {
                     diff_state_updates
                         .into_iter()
                         .filter_map(
-                            |(
-                                buffer_snapshot,
-                                path,
-                                mut current_index_text,
-                                mut current_head_text,
-                            )| {
+                            |(buffer_snapshot, path, current_index_text, current_head_text)| {
                                 let local_repo = snapshot.local_repo_for_path(&path)?;
                                 let relative_path = local_repo.relativize(&path).ok()?;
                                 let index_text = if current_index_text.is_some() {
@@ -864,16 +859,14 @@ impl LocalBufferStore {
                                     None
                                 };
 
-                                // Avoid triggering a diff update if the base text
-                                // has not changed.
-                                if let Some(current) = &current_index_text {
-                                    if current.as_deref() == index_text.as_ref() {
-                                        current_index_text.take();
-                                    }
-                                }
-                                if let Some(current) = &current_head_text {
-                                    if current.as_deref() == head_text.as_ref() {
-                                        current_head_text.take();
+                                // Avoid triggering a diff update if the base text has not changed.
+                                if let Some((current_index, current_head)) =
+                                    current_index_text.as_ref().zip(current_head_text.as_ref())
+                                {
+                                    if current_index.as_deref() == index_text.as_ref()
+                                        && current_head.as_deref() == head_text.as_ref()
+                                    {
+                                        return None;
                                     }
                                 }
 
