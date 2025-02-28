@@ -4,7 +4,7 @@ use anyhow::Context;
 use clap::Parser;
 use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
 use parking_lot::Mutex;
-use release_channel::APP_IDENTIFIER;
+use release_channel::app_identifier;
 use util::ResultExt;
 use windows::{
     core::HSTRING,
@@ -31,7 +31,7 @@ pub fn check_single_instance(opener: OpenListener, run_foreground: bool) -> bool
         CreateMutexW(
             None,
             false,
-            &HSTRING::from(format!("{}-Instance-Mutex", *APP_IDENTIFIER)),
+            &HSTRING::from(format!("{}-Instance-Mutex", app_identifier())),
         )
         .expect("Unable to create instance sync event")
     };
@@ -51,7 +51,7 @@ pub fn check_single_instance(opener: OpenListener, run_foreground: bool) -> bool
 fn with_pipe(f: impl Fn(String)) {
     let pipe = unsafe {
         CreateNamedPipeW(
-            &HSTRING::from(format!("\\\\.\\pipe\\{}-Named-Pipe", *APP_IDENTIFIER)),
+            &HSTRING::from(format!("\\\\.\\pipe\\{}-Named-Pipe", app_identifier())),
             PIPE_ACCESS_INBOUND,
             PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
             1,
@@ -152,7 +152,7 @@ fn send_args_to_instance() -> anyhow::Result<()> {
 
     unsafe {
         let pipe = CreateFileW(
-            &HSTRING::from(format!("\\\\.\\pipe\\{}-Named-Pipe", *APP_IDENTIFIER)),
+            &HSTRING::from(format!("\\\\.\\pipe\\{}-Named-Pipe", app_identifier())),
             GENERIC_WRITE.0,
             FILE_SHARE_MODE::default(),
             None,

@@ -170,7 +170,7 @@ pub struct GitPanel {
     pending_remote_operations: RemoteOperations,
     pub(crate) active_repository: Option<Entity<Repository>>,
     commit_editor: Entity<Editor>,
-    suggested_commit_message: Option<String>,
+    pub(crate) suggested_commit_message: Option<String>,
     conflicted_count: usize,
     conflicted_staged_count: usize,
     current_modifiers: Modifiers,
@@ -212,6 +212,7 @@ impl Drop for RemoteOperationGuard {
 
 pub(crate) fn commit_message_editor(
     commit_message_buffer: Entity<Buffer>,
+    placeholder: Option<&str>,
     project: Entity<Project>,
     in_panel: bool,
     window: &mut Window,
@@ -232,7 +233,8 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_gutter(false, cx);
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
-    commit_editor.set_placeholder_text("Enter commit message", cx);
+    let placeholder = placeholder.unwrap_or("Enter commit message");
+    commit_editor.set_placeholder_text(placeholder, cx);
     commit_editor
 }
 
@@ -260,7 +262,7 @@ impl GitPanel {
             // Once the active git repo is set, this buffer will be replaced.
             let temporary_buffer = cx.new(|cx| Buffer::local("", cx));
             let commit_editor = cx.new(|cx| {
-                commit_message_editor(temporary_buffer, project.clone(), true, window, cx)
+                commit_message_editor(temporary_buffer, None, project.clone(), true, window, cx)
             });
             commit_editor.update(cx, |editor, cx| {
                 editor.clear(window, cx);
@@ -551,7 +553,7 @@ impl GitPanel {
     }
 
     fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.entries.first().is_some() {
+        if !self.entries.is_empty() {
             self.selected_entry = Some(1);
             self.scroll_to_selected_entry(cx);
         }
@@ -840,7 +842,7 @@ impl GitPanel {
         .detach();
     }
 
-    fn discard_tracked_changes(
+    fn restore_tracked_files(
         &mut self,
         _: &RestoreTrackedFiles,
         window: &mut Window,
@@ -870,8 +872,8 @@ impl GitPanel {
 
         #[derive(strum::EnumIter, strum::VariantNames)]
         #[strum(serialize_all = "title_case")]
-        enum DiscardCancel {
-            DiscardTrackedChanges,
+        enum RestoreCancel {
+            RestoreTrackedFiles,
             Cancel,
         }
         let prompt = prompt(
@@ -882,7 +884,7 @@ impl GitPanel {
         );
         cx.spawn(|this, mut cx| async move {
             match prompt.await {
-                Ok(DiscardCancel::DiscardTrackedChanges) => {
+                Ok(RestoreCancel::RestoreTrackedFiles) => {
                     this.update(&mut cx, |this, cx| {
                         let repo_paths = entries.into_iter().map(|entry| entry.repo_path).collect();
                         this.perform_checkout(repo_paths, cx);
@@ -1255,51 +1257,50 @@ impl GitPanel {
 
     /// Suggests a commit message based on the changed files and their statuses
     pub fn suggest_commit_message(&self) -> Option<String> {
-        let entries = self
+        if self.total_staged_count() != 1 {
+            return None;
+        }
+
+        let entry = self
             .entries
             .iter()
-            .filter_map(|entry| {
-                if let GitListEntry::GitStatusEntry(status_entry) = entry {
-                    Some(status_entry)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<&GitStatusEntry>>();
+            .find(|entry| match entry.status_entry() {
+                Some(entry) => entry.is_staged.unwrap_or(false),
+                _ => false,
+            })?;
 
-        if entries.is_empty() {
-            None
-        } else if entries.len() == 1 {
-            let entry = &entries[0];
-            let file_name = entry
-                .repo_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy();
+        let GitListEntry::GitStatusEntry(git_status_entry) = entry.clone() else {
+            return None;
+        };
 
-            if entry.status.is_deleted() {
-                Some(format!("Delete {}", file_name))
-            } else if entry.status.is_created() {
-                Some(format!("Create {}", file_name))
-            } else if entry.status.is_modified() {
-                Some(format!("Update {}", file_name))
-            } else {
-                None
-            }
+        let action_text = if git_status_entry.status.is_deleted() {
+            Some("Delete")
+        } else if git_status_entry.status.is_created() {
+            Some("Create")
+        } else if git_status_entry.status.is_modified() {
+            Some("Update")
         } else {
             None
-        }
+        };
+
+        let file_name = git_status_entry
+            .repo_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
+
+        Some(format!("{} {}", action_text?, file_name))
     }
 
     fn update_editor_placeholder(&mut self, cx: &mut Context<Self>) {
         let suggested_commit_message = self.suggest_commit_message();
-        self.suggested_commit_message = suggested_commit_message.clone();
+        let suggested_commit_message = suggested_commit_message
+            .as_deref()
+            .unwrap_or("Enter commit message");
 
-        if let Some(suggested_commit_message) = suggested_commit_message {
-            self.commit_editor.update(cx, |editor, cx| {
-                editor.set_placeholder_text(Arc::from(suggested_commit_message), cx)
-            });
-        }
+        self.commit_editor.update(cx, |editor, cx| {
+            editor.set_placeholder_text(Arc::from(suggested_commit_message), cx)
+        });
 
         cx.notify();
     }
@@ -1581,7 +1582,14 @@ impl GitPanel {
                     != Some(&buffer)
                 {
                     git_panel.commit_editor = cx.new(|cx| {
-                        commit_message_editor(buffer, git_panel.project.clone(), true, window, cx)
+                        commit_message_editor(
+                            buffer,
+                            git_panel.suggested_commit_message.as_deref(),
+                            git_panel.project.clone(),
+                            true,
+                            window,
+                            cx,
+                        )
                     });
                 }
             })
@@ -2377,17 +2385,15 @@ impl GitPanel {
         } else {
             "Stage File"
         };
-        let revert_title = if entry.status.is_deleted() {
-            "Restore file"
-        } else if entry.status.is_created() {
-            "Trash file"
+        let restore_title = if entry.status.is_created() {
+            "Trash File"
         } else {
-            "Discard changes"
+            "Restore File"
         };
         let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
             context_menu
                 .action(stage_title, ToggleStaged.boxed_clone())
-                .action(revert_title, git::RestoreFile.boxed_clone())
+                .action(restore_title, git::RestoreFile.boxed_clone())
                 .separator()
                 .action("Open Diff", Confirm.boxed_clone())
                 .action("Open File", SecondaryConfirm.boxed_clone())
@@ -2404,7 +2410,7 @@ impl GitPanel {
                 .separator()
                 .action("Open Diff", project_diff::Diff.boxed_clone())
                 .separator()
-                .action("Discard Tracked Changes", RestoreTrackedFiles.boxed_clone())
+                .action("Restore Tracked Files", RestoreTrackedFiles.boxed_clone())
                 .action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
         })
     }
@@ -2488,6 +2494,7 @@ impl GitPanel {
 
         let id: ElementId = ElementId::Name(format!("entry_{}", display_name).into());
 
+        let is_entry_staged = self.entry_is_staged(entry);
         let mut is_staged: ToggleState = self.entry_is_staged(entry).into();
 
         if !self.has_staged_changes() && !self.has_conflicts() && !entry.status.is_created() {
@@ -2511,18 +2518,23 @@ impl GitPanel {
                 })
             });
 
-        let start_slot =
-            h_flex()
-                .id(("start-slot", ix))
-                .gap(DynamicSpacing::Base04.rems(cx))
-                .child(checkbox.tooltip(|window, cx| {
-                    Tooltip::for_action("Stage File", &ToggleStaged, window, cx)
-                }))
-                .child(git_status_icon(status, cx))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                    // prevent the list item active state triggering when toggling checkbox
-                    cx.stop_propagation();
-                });
+        let start_slot = h_flex()
+            .id(("start-slot", ix))
+            .gap(DynamicSpacing::Base04.rems(cx))
+            .child(checkbox.tooltip(move |window, cx| {
+                let tooltip_name = if is_entry_staged.unwrap_or(false) {
+                    "Unstage"
+                } else {
+                    "Stage"
+                };
+
+                Tooltip::for_action(tooltip_name, &ToggleStaged, window, cx)
+            }))
+            .child(git_status_icon(status, cx))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                // prevent the list item active state triggering when toggling checkbox
+                cx.stop_propagation();
+            });
 
         div()
             .w_full()
@@ -2682,7 +2694,7 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::toggle_staged_for_selected))
             .on_action(cx.listener(Self::stage_all))
             .on_action(cx.listener(Self::unstage_all))
-            .on_action(cx.listener(Self::discard_tracked_changes))
+            .on_action(cx.listener(Self::restore_tracked_files))
             .on_action(cx.listener(Self::clean_all))
             .on_action(cx.listener(Self::fetch))
             .on_action(cx.listener(Self::pull))

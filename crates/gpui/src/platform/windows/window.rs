@@ -1221,10 +1221,10 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
     unsafe {
         type SetWindowCompositionAttributeType =
             unsafe extern "system" fn(HWND, *mut WINDOWCOMPOSITIONATTRIBDATA) -> BOOL;
-        let module_name = PCSTR::from_raw("user32.dll\0".as_ptr());
+        let module_name = PCSTR::from_raw(c"user32.dll".as_ptr() as *const u8);
         let user32 = GetModuleHandleA(module_name);
         if user32.is_ok() {
-            let func_name = PCSTR::from_raw("SetWindowCompositionAttribute\0".as_ptr());
+            let func_name = PCSTR::from_raw(c"SetWindowCompositionAttribute".as_ptr() as *const u8);
             let set_window_composition_attribute: SetWindowCompositionAttributeType =
                 std::mem::transmute(GetProcAddress(user32.unwrap(), func_name));
             let mut color = color.unwrap_or_default();
@@ -1238,7 +1238,7 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
                 gradient_color: (color.0 as u32)
                     | ((color.1 as u32) << 8)
                     | ((color.2 as u32) << 16)
-                    | (color.3 as u32) << 24,
+                    | ((color.3 as u32) << 24),
                 animation_id: 0,
             };
             let mut data = WINDOWCOMPOSITIONATTRIBDATA {
