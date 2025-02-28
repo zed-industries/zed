@@ -1,6 +1,6 @@
 //! This module contains all actions supported by [`Editor`].
 use super::*;
-use gpui::{action_as, action_with_deprecated_aliases};
+use gpui::{action_as, actions_with_deprecated_aliases};
 use schemars::JsonSchema;
 use util::serde::default_true;
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -426,6 +426,20 @@ gpui::actions!(
 
 action_as!(go_to_line, ToggleGoToLine as Toggle);
 
-action_with_deprecated_aliases!(editor, OpenSelectedFilename, ["editor::OpenFile"]);
-action_with_deprecated_aliases!(editor, ToggleSelectedDiffHunks, ["editor::ToggleHunkDiff"]);
-action_with_deprecated_aliases!(editor, ExpandAllDiffHunks, ["editor::ExpandAllHunkDiffs"]);
+// TODO: dedup editor
+// TODO: make it in a way this is formated as expected, maybe use tuples here? don't know if it's possible nope
+actions_with_deprecated_aliases!(
+    editor,
+    OpenSelectedFilename,
+    ["editor::OpenFile"],
+    editor,
+    ToggleSelectedDiffHunks,
+    ["editor::ToggleHunkDiff"],
+    editor,
+    ExpandAllDiffHunks,
+    ["editor::ExpandAllHunkDiffs"],
+);
+
+pub fn show_it() {
+    dbg!(DEPRECATED_ALIASES);
+}

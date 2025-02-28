@@ -2048,6 +2048,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        crate::actions::show_it();
         window.invalidate_character_coordinates();
 
         // Copy selections to primary selection buffer

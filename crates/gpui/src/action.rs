@@ -357,6 +357,23 @@ macro_rules! action_as {
     };
 }
 
+/// Same as `action_with_deprecated_aliases`, but, also creates a const array of all deprecated
+/// aliases it has seen.
+#[macro_export]
+macro_rules! actions_with_deprecated_aliases {
+    ( $( $namespace:path, $name:ident, [$($alias:literal),* $(,)?] ),* $(,)? ) => {
+        $(
+            // Use action_with_deprecated_aliases for each action
+            gpui::action_with_deprecated_aliases!($namespace, $name, [$($alias),*]);
+        )*
+
+        // Create a static array with all deprecated aliases
+        pub const DEPRECATED_ALIASES: &[&str] = &[
+            $( $( $alias ),* ),*
+        ];
+    };
+}
+
 /// Defines and registers a unit struct that can be used as an action, with some deprecated aliases.
 #[macro_export]
 macro_rules! action_with_deprecated_aliases {
