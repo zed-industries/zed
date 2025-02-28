@@ -1089,6 +1089,64 @@ impl LocalLspStore {
         self.language_servers_for_buffer(buffer, cx).next()
     }
 
+    async fn execute_code_action_kind_locally(
+        lsp_store: WeakEntity<LspStore>,
+        mut buffers: Vec<Entity<Buffer>>,
+        kind: CodeActionKind,
+        push_to_history: bool,
+        mut cx: AsyncApp,
+    ) -> anyhow::Result<ProjectTransaction> {
+        // Do not allow multiple concurrent code actions requests for the
+        // same buffer.
+        lsp_store.update(&mut cx, |this, cx| {
+            let this = this.as_local_mut().unwrap();
+            buffers.retain(|buffer| {
+                this.buffers_being_formatted
+                    .insert(buffer.read(cx).remote_id())
+            });
+        })?;
+        let _cleanup = defer({
+            let this = lsp_store.clone();
+            let mut cx = cx.clone();
+            let buffers = &buffers;
+            move || {
+                this.update(&mut cx, |this, cx| {
+                    let this = this.as_local_mut().unwrap();
+                    for buffer in buffers {
+                        this.buffers_being_formatted
+                            .remove(&buffer.read(cx).remote_id());
+                    }
+                })
+                .ok();
+            }
+        });
+        let mut project_transaction = ProjectTransaction::default();
+
+        for buffer in &buffers {
+            let adapters_and_servers = lsp_store.update(&mut cx, |lsp_store, cx| {
+                buffer.update(cx, |buffer, cx| {
+                    lsp_store
+                        .as_local()
+                        .unwrap()
+                        .language_servers_for_buffer(buffer, cx)
+                        .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
+                        .collect::<Vec<_>>()
+                })
+            })?;
+            Self::execute_code_actions_on_servers(
+                &lsp_store,
+                &adapters_and_servers,
+                vec![kind.clone()],
+                &buffer,
+                push_to_history,
+                &mut project_transaction,
+                &mut cx,
+            )
+            .await?;
+        }
+        Ok(project_transaction)
+    }
+
     async fn format_locally(
         lsp_store: WeakEntity<LspStore>,
         mut buffers: Vec<FormattableBuffer>,
@@ -2900,6 +2958,7 @@ impl LspStore {
         client.add_entity_message_handler(Self::handle_language_server_log);
         client.add_entity_message_handler(Self::handle_update_diagnostic_summary);
         client.add_entity_request_handler(Self::handle_format_buffers);
+        client.add_entity_request_handler(Self::handle_apply_code_action_kind);
         client.add_entity_request_handler(Self::handle_resolve_completion_documentation);
         client.add_entity_request_handler(Self::handle_apply_code_action);
         client.add_entity_request_handler(Self::handle_inlay_hints);
@@ -3888,6 +3947,65 @@ impl LspStore {
             })
         } else {
             Task::ready(Err(anyhow!("no upstream client and not local")))
+        }
+    }
+
+    pub fn apply_code_action_kind(
+        &mut self,
+        buffers: HashSet<Entity<Buffer>>,
+        kind: CodeActionKind,
+        push_to_history: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<ProjectTransaction>> {
+        if let Some(_) = self.as_local() {
+            cx.spawn(move |lsp_store, mut cx| async move {
+                let buffers = buffers.into_iter().collect::<Vec<_>>();
+                let result = LocalLspStore::execute_code_action_kind_locally(
+                    lsp_store.clone(),
+                    buffers,
+                    kind,
+                    push_to_history,
+                    cx.clone(),
+                )
+                .await;
+                lsp_store.update(&mut cx, |lsp_store, _| {
+                    lsp_store.update_last_formatting_failure(&result);
+                })?;
+                result
+            })
+        } else if let Some((client, project_id)) = self.upstream_client() {
+            let buffer_store = self.buffer_store();
+            cx.spawn(move |lsp_store, mut cx| async move {
+                let result = client
+                    .request(proto::ApplyCodeActionKind {
+                        project_id,
+                        kind: kind.as_str().to_owned(),
+                        buffer_ids: buffers
+                            .iter()
+                            .map(|buffer| {
+                                buffer.update(&mut cx, |buffer, _| buffer.remote_id().into())
+                            })
+                            .collect::<Result<_>>()?,
+                    })
+                    .await
+                    .and_then(|result| result.transaction.context("missing transaction"));
+                lsp_store.update(&mut cx, |lsp_store, _| {
+                    lsp_store.update_last_formatting_failure(&result);
+                })?;
+
+                let transaction_response = result?;
+                buffer_store
+                    .update(&mut cx, |buffer_store, cx| {
+                        buffer_store.deserialize_project_transaction(
+                            transaction_response,
+                            push_to_history,
+                            cx,
+                        )
+                    })?
+                    .await
+            })
+        } else {
+            Task::ready(Ok(ProjectTransaction::default()))
         }
     }
 
@@ -7225,6 +7343,48 @@ impl LspStore {
             })
         })?;
         Ok(proto::FormatBuffersResponse {
+            transaction: Some(project_transaction),
+        })
+    }
+
+    async fn handle_apply_code_action_kind(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ApplyCodeActionKind>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ApplyCodeActionKindResponse> {
+        let sender_id = envelope.original_sender_id().unwrap_or_default();
+        let format = this.update(&mut cx, |this, cx| {
+            let mut buffers = HashSet::default();
+            for buffer_id in &envelope.payload.buffer_ids {
+                let buffer_id = BufferId::new(*buffer_id)?;
+                buffers.insert(this.buffer_store.read(cx).get_existing(buffer_id)?);
+            }
+            let kind = match envelope.payload.kind.as_str() {
+                "" => Ok(CodeActionKind::EMPTY),
+                "quickfix" => Ok(CodeActionKind::QUICKFIX),
+                "refactor" => Ok(CodeActionKind::REFACTOR),
+                "refactor.extract" => Ok(CodeActionKind::REFACTOR_EXTRACT),
+                "refactor.inline" => Ok(CodeActionKind::REFACTOR_INLINE),
+                "refactor.rewrite" => Ok(CodeActionKind::REFACTOR_REWRITE),
+                "source" => Ok(CodeActionKind::SOURCE),
+                "source.organizeImports" => Ok(CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
+                "source.fixAll" => Ok(CodeActionKind::SOURCE_FIX_ALL),
+                _ => Err(anyhow!("Invalid code action kind")),
+            }?;
+            anyhow::Ok(this.apply_code_action_kind(buffers, kind, false, cx))
+        })??;
+
+        let project_transaction = format.await?;
+        let project_transaction = this.update(&mut cx, |this, cx| {
+            this.buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store.serialize_project_transaction_for_peer(
+                    project_transaction,
+                    sender_id,
+                    cx,
+                )
+            })
+        })?;
+        Ok(proto::ApplyCodeActionKindResponse {
             transaction: Some(project_transaction),
         })
     }

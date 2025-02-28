@@ -749,4 +749,4 @@ should_implement_trait = { level = "allow" }
 let_underscore_future = "allow"
 
 [workspace.metadata.cargo-machete]
-ignored = ["bindgen", "cbindgen", "prost_build", "serde"]
+ignored = ["bindgen", "cbindgen", "prost_build", "serde", "component", "linkme"]

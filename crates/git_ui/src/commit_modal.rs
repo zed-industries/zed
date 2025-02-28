@@ -2,7 +2,7 @@
 
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{commit_message_editor, GitPanel};
-use git::Commit;
+use git::{Commit, ExpandCommitEditor};
 use panel::{panel_button, panel_editor_style, panel_filled_button};
 use project::Project;
 use ui::{prelude::*, KeybindingHint, PopoverButton, Tooltip, TriggerablePopover};
@@ -110,14 +110,17 @@ struct RestoreDock {
 
 impl CommitModal {
     pub fn register(workspace: &mut Workspace, _: &mut Window, _cx: &mut Context<Workspace>) {
-        workspace.register_action(|workspace, _: &Commit, window, cx| {
+        workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
             let Some(git_panel) = workspace.panel::<GitPanel>(cx) else {
                 return;
             };
 
-            let (can_commit, conflict) = git_panel.update(cx, |git_panel, _cx| {
+            let (can_commit, conflict) = git_panel.update(cx, |git_panel, cx| {
                 let can_commit = git_panel.can_commit();
                 let conflict = git_panel.has_unstaged_conflicts();
+                if can_commit {
+                    git_panel.set_modal_open(true, cx);
+                }
                 (can_commit, conflict)
             });
             if !can_commit {
@@ -131,6 +134,7 @@ impl CommitModal {
                     prompt.await.ok();
                 })
                 .detach();
+                return;
             }
 
             let dock = workspace.dock_at_position(git_panel.position(window, cx));

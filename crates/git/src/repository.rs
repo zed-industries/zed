@@ -74,6 +74,12 @@ impl UpstreamTracking {
     }
 }
 
+impl From<UpstreamTrackingStatus> for UpstreamTracking {
+    fn from(status: UpstreamTrackingStatus) -> Self {
+        UpstreamTracking::Tracked(status)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub struct UpstreamTrackingStatus {
     pub ahead: u32,
