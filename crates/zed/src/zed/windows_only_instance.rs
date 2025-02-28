@@ -26,7 +26,7 @@ use windows::{
 
 use crate::{Args, OpenListener};
 
-pub fn check_single_instance(opener: OpenListener, run_foreground: bool) -> bool {
+pub fn check_single_instance(opener: OpenListener, args: &Args) -> bool {
     unsafe {
         CreateMutexW(
             None,
@@ -40,9 +40,9 @@ pub fn check_single_instance(opener: OpenListener, run_foreground: bool) -> bool
     if first_instance {
         // We are the first instance, listen for messages sent from other instances
         std::thread::spawn(move || with_pipe(|url| opener.open_urls(vec![url])));
-    } else if !run_foreground {
+    } else if !args.foreground {
         // We are not the first instance, send args to the first instance
-        send_args_to_instance().log_err();
+        send_args_to_instance(args).log_err();
     }
 
     first_instance
@@ -95,31 +95,44 @@ fn retrieve_message_from_pipe_inner(pipe: HANDLE) -> anyhow::Result<String> {
 }
 
 // This part of code is mostly from crates/cli/src/main.rs
-fn send_args_to_instance() -> anyhow::Result<()> {
-    let Args { paths_or_urls, .. } = Args::parse();
+fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
     let (server, server_name) =
         IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
     let url = format!("zed-cli://{server_name}");
 
-    let mut paths = vec![];
-    let mut urls = vec![];
-    for path in paths_or_urls.into_iter() {
-        match std::fs::canonicalize(&path) {
-            Ok(path) => paths.push(path.to_string_lossy().to_string()),
-            Err(error) => {
-                if path.starts_with("zed://")
-                    || path.starts_with("http://")
-                    || path.starts_with("https://")
-                    || path.starts_with("file://")
-                    || path.starts_with("ssh://")
-                {
-                    urls.push(path);
-                } else {
-                    log::error!("error parsing path argument: {}", error);
+    let request = if let Some(ref action) = args.dock_action {
+        CliRequest::DockAction {
+            action: action.clone(),
+        }
+    } else {
+        let mut paths = vec![];
+        let mut urls = vec![];
+        for path in args.paths_or_urls.iter() {
+            match std::fs::canonicalize(&path) {
+                Ok(path) => paths.push(path.to_string_lossy().to_string()),
+                Err(error) => {
+                    if path.starts_with("zed://")
+                        || path.starts_with("http://")
+                        || path.starts_with("https://")
+                        || path.starts_with("file://")
+                        || path.starts_with("ssh://")
+                    {
+                        urls.push(path.clone());
+                    } else {
+                        log::error!("error parsing path argument: {}", error);
+                    }
                 }
             }
         }
-    }
+        CliRequest::Open {
+            paths,
+            urls,
+            wait: false,
+            open_new_workspace: None,
+            env: None,
+        }
+    };
+
     let exit_status = Arc::new(Mutex::new(None));
     let sender: JoinHandle<anyhow::Result<()>> = std::thread::spawn({
         let exit_status = exit_status.clone();
@@ -127,13 +140,7 @@ fn send_args_to_instance() -> anyhow::Result<()> {
             let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
             let (tx, rx) = (handshake.requests, handshake.responses);
 
-            tx.send(CliRequest::Open {
-                paths,
-                urls,
-                wait: false,
-                open_new_workspace: None,
-                env: None,
-            })?;
+            tx.send(request)?;
 
             while let Ok(response) = rx.recv() {
                 match response {
