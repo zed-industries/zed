@@ -650,7 +650,6 @@ impl Project {
         SettingsObserver::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
-        BreakpointStore::init(&client);
         DapStore::init(&client);
     }
 
@@ -686,8 +685,7 @@ impl Project {
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
-            let breakpoint_store = cx
-                .new(|cx| BreakpointStore::local(buffer_store.clone(), worktree_store.clone(), cx));
+            let breakpoint_store = cx.new(|cx| BreakpointStore::local());
 
             let dap_store = cx.new(|cx| {
                 DapStore::new_local(
@@ -878,15 +876,8 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let breakpoint_store = cx.new(|cx| {
-                BreakpointStore::remote(
-                    SSH_PROJECT_ID,
-                    client.clone().into(),
-                    buffer_store.clone(),
-                    worktree_store.clone(),
-                    cx,
-                )
-            });
+            let breakpoint_store =
+                cx.new(|cx| BreakpointStore::remote(SSH_PROJECT_ID, client.clone().into(), cx));
 
             let dap_store = cx.new(|_| {
                 DapStore::new_remote(
@@ -986,7 +977,6 @@ impl Project {
             SettingsObserver::init(&ssh_proto);
             TaskStore::init(Some(&ssh_proto));
             ToolchainStore::init(&ssh_proto);
-            BreakpointStore::init(&ssh_proto);
             DapStore::init(&ssh_proto);
             GitStore::init(&ssh_proto);
 
@@ -1079,17 +1069,8 @@ impl Project {
         let environment = cx.update(|cx| ProjectEnvironment::new(&worktree_store, None, cx))?;
 
         let breakpoint_store = cx.new(|cx| {
-            let mut bp_store = {
-                BreakpointStore::remote(
-                    remote_id,
-                    client.clone().into(),
-                    buffer_store.clone(),
-                    worktree_store.clone(),
-                    cx,
-                )
-            };
+            let bp_store = { BreakpointStore::remote(remote_id, client.clone().into(), cx) };
 
-            bp_store.set_breakpoints_from_proto(response.payload.breakpoints, cx);
             bp_store
         })?;
 
@@ -1909,9 +1890,6 @@ impl Project {
         self.set_collaborators_from_proto(message.collaborators, cx)?;
         self.lsp_store.update(cx, |lsp_store, _| {
             lsp_store.set_language_server_statuses_from_proto(message.language_servers)
-        });
-        self.breakpoint_store.update(cx, |breakpoint_store, cx| {
-            breakpoint_store.set_breakpoints_from_proto(message.breakpoints, cx);
         });
         self.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
             .unwrap();

@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use gpui::{
@@ -6,8 +7,9 @@ use gpui::{
     WeakEntity,
 };
 
+use language::Point;
 use project::debugger::session::{Session, StackFrame, ThreadId};
-use project::ProjectPath;
+use project::{ProjectItem, ProjectPath};
 use ui::{prelude::*, Tooltip};
 use workspace::Workspace;
 
@@ -212,62 +214,67 @@ impl StackFrameList {
 
         let row = (stack_frame.line.saturating_sub(1)) as u32;
 
-        let Some(project_path) = self.project_path_from_stack_frame(&stack_frame, cx) else {
+        let Some(abs_path) = self.abs_path_from_stack_frame(&stack_frame, cx) else {
             return Task::ready(Err(anyhow!("Project path not found")));
         };
 
         cx.spawn_in(window, {
             // let client_id = self.client_id;
             move |this, mut cx| async move {
+                let buffer = this
+                    .update(&mut cx, |this, cx| {
+                        this.workspace.update(cx, |workspace, cx| {
+                            workspace
+                                .project()
+                                .update(cx, |this, cx| this.open_local_buffer(abs_path.clone(), cx))
+                        })
+                    })??
+                    .await?;
+                let position = buffer.update(&mut cx, |this, _| {
+                    this.snapshot().anchor_before(Point::new(row, 0))
+                })?;
                 this.update_in(&mut cx, |this, window, cx| {
                     this.workspace.update(cx, |workspace, cx| {
-                        workspace.open_path_preview(
-                            project_path.clone(),
+                        let project_path = buffer.read(cx).project_path(cx).ok_or_else(|| {
+                            anyhow!("Could not select a stack frame for unnamed buffer")
+                        })?;
+                        Result::<_, anyhow::Error>::Ok(workspace.open_path_preview(
+                            project_path,
                             None,
                             false,
                             true,
                             window,
                             cx,
-                        )
+                        ))
                     })
-                })??
+                })???
                 .await?;
 
                 // TODO(debugger): make this work again
                 this.update(&mut cx, |this, cx| {
                     this.workspace.update(cx, |workspace, cx| {
-                        workspace
-                            .project()
-                            .read(cx)
-                            .dap_store()
-                            .update(cx, |store, cx| {
-                                store.set_active_debug_line(
-                                    this.session.read(cx).session_id(),
-                                    &project_path,
-                                    row,
-                                    cx,
-                                );
-                            })
+                        let breakpoint_store = workspace.project().read(cx).breakpoint_store();
+
+                        breakpoint_store.update(cx, |store, cx| {
+                            let _ = store.set_active_position(Some((abs_path, position)));
+                            cx.notify();
+                        })
                     })
                 })?
             }
         })
     }
 
-    fn project_path_from_stack_frame(
+    fn abs_path_from_stack_frame(
         &self,
         stack_frame: &dap::StackFrame,
         cx: &mut Context<Self>,
-    ) -> Option<ProjectPath> {
-        let path = stack_frame.source.as_ref().and_then(|s| s.path.as_ref())?;
-
-        self.workspace
-            .update(cx, |workspace, cx| {
-                workspace.project().read_with(cx, |project, cx| {
-                    project.project_path_for_absolute_path(&Path::new(path), cx)
-                })
-            })
-            .ok()?
+    ) -> Option<Arc<Path>> {
+        stack_frame.source.as_ref().and_then(|s| {
+            s.path
+                .as_deref()
+                .map(|path| Arc::<Path>::from(Path::new(path)))
+        })
     }
 
     pub fn restart_stack_frame(&mut self, stack_frame_id: u64, cx: &mut Context<Self>) {

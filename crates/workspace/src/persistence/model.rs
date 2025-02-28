@@ -265,8 +265,6 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
     pub(crate) session_id: Option<String>,
-    /// The key of this hashmap is an absolute worktree path that owns the breakpoint
-    pub(crate) breakpoints: HashMap<Arc<Path>, Vec<SerializedBreakpoint>>,
     pub(crate) window_id: Option<u64>,
 }
 

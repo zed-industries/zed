@@ -54,7 +54,7 @@ use multi_buffer::{
 };
 use project::{
     debugger::breakpoint_store::{Breakpoint, BreakpointKind},
-    project_settings::{self,GitGutterSetting, ProjectSettings},
+    project_settings::{self, GitGutterSetting, ProjectSettings},
 };
 use settings::Settings;
 use smallvec::{smallvec, SmallVec};
@@ -94,6 +94,14 @@ enum DisplayDiffHunk {
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
     },
+}
+
+/// Determines what kinds of highlights should be applied to a lines background.
+#[derive(Clone, Copy, Default)]
+struct LineHighlightSpec {
+    selection: bool,
+    breakpoint: bool,
+    active_stack_frame: bool,
 }
 
 struct SelectionLayout {
@@ -968,7 +976,7 @@ impl EditorElement {
         cx: &mut App,
     ) -> (
         Vec<(PlayerColor, Vec<SelectionLayout>)>,
-        BTreeMap<DisplayRow, bool>,
+        BTreeMap<DisplayRow, LineHighlightSpec>,
         Option<DisplayPoint>,
     ) {
         let mut selections: Vec<(PlayerColor, Vec<SelectionLayout>)> = Vec::new();
@@ -998,9 +1006,10 @@ impl EditorElement {
                     for row in cmp::max(layout.active_rows.start.0, start_row.0)
                         ..=cmp::min(layout.active_rows.end.0, end_row.0)
                     {
-                        let contains_non_empty_selection =
-                            active_rows.entry(DisplayRow(row)).or_insert(!is_empty);
-                        *contains_non_empty_selection |= !is_empty;
+                        let contains_non_empty_selection = active_rows
+                            .entry(DisplayRow(row))
+                            .or_insert_with(LineHighlightSpec::default);
+                        contains_non_empty_selection.selection |= !is_empty;
                     }
                     layouts.push(layout);
                 }
@@ -2060,21 +2069,17 @@ impl EditorElement {
         gutter_hitbox: &Hitbox,
         rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
         snapshot: &EditorSnapshot,
-        breakpoints: HashMap<DisplayRow, Breakpoint>,
+        breakpoints: HashMap<DisplayRow, (text::Anchor, Breakpoint)>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
-            if editor.dap_store.is_none() {
-                return Vec::new();
-            };
-
             breakpoints
-                .iter()
-                .filter_map(|(point, bp)| {
+                .into_iter()
+                .filter_map(|(point, (text_anchor, bp))| {
                     let row = MultiBufferRow { 0: point.0 };
 
-                    if range.start > *point || range.end < *point {
+                    if range.start > point || range.end < point {
                         return None;
                     }
 
@@ -2082,20 +2087,11 @@ impl EditorElement {
                         return None;
                     }
 
-                    let backup_position = snapshot
-                        .display_point_to_breakpoint_anchor(DisplayPoint::new(*point, 0))
-                        .text_anchor;
-
-                    let button = editor.render_breakpoint(
-                        bp.active_position.unwrap_or(backup_position),
-                        *point,
-                        &bp.kind,
-                        cx,
-                    );
+                    let button = editor.render_breakpoint(text_anchor, point, &bp.kind, cx);
 
                     let button = prepaint_gutter_button(
                         button,
-                        *point,
+                        point,
                         line_height,
                         gutter_dimensions,
                         scroll_pixel_position,
@@ -2120,7 +2116,7 @@ impl EditorElement {
         gutter_hitbox: &Hitbox,
         rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
         snapshot: &EditorSnapshot,
-        breakpoints: &mut HashMap<DisplayRow, Breakpoint>,
+        breakpoints: &mut HashMap<DisplayRow, (text::Anchor, Breakpoint)>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
@@ -2216,7 +2212,7 @@ impl EditorElement {
         gutter_dimensions: &GutterDimensions,
         gutter_hitbox: &Hitbox,
         rows_with_hunk_bounds: &HashMap<DisplayRow, Bounds<Pixels>>,
-        breakpoint_points: &mut HashMap<DisplayRow, Breakpoint>,
+        breakpoint_points: &mut HashMap<DisplayRow, (text::Anchor, Breakpoint)>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
@@ -2321,10 +2317,9 @@ impl EditorElement {
         scroll_position: gpui::Point<f32>,
         rows: Range<DisplayRow>,
         buffer_rows: &[RowInfo],
-        active_rows: &BTreeMap<DisplayRow, bool>,
+        active_rows: &BTreeMap<DisplayRow, LineHighlightSpec>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
-        breakpoint_rows: &HashMap<DisplayRow, Breakpoint>,
         window: &mut Window,
         cx: &mut App,
     ) -> Arc<HashMap<MultiBufferRow, LineNumberLayout>> {
@@ -2378,13 +2373,18 @@ impl EditorElement {
                     return None;
                 }
 
-                let color = if breakpoint_rows.contains_key(&display_row) {
-                    cx.theme().colors().debugger_accent
-                } else if active_rows.contains_key(&display_row) {
-                    cx.theme().colors().editor_active_line_number
-                } else {
-                    cx.theme().colors().editor_line_number
-                };
+                let color = active_rows
+                    .get(&display_row)
+                    .and_then(|spec| {
+                        if spec.breakpoint {
+                            Some(cx.theme().colors().debugger_accent)
+                        } else if spec.selection {
+                            Some(cx.theme().colors().editor_active_line_number)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| cx.theme().colors().editor_line_number);
                 let shaped_line = self
                     .shape_line_number(SharedString::from(&line_number), color, window)
                     .log_err()?;
@@ -2426,7 +2426,7 @@ impl EditorElement {
         &self,
         rows: Range<DisplayRow>,
         row_infos: &[RowInfo],
-        active_rows: &BTreeMap<DisplayRow, bool>,
+        active_rows: &BTreeMap<DisplayRow, LineHighlightSpec>,
         snapshot: &EditorSnapshot,
         window: &mut Window,
         cx: &mut App,
@@ -4164,14 +4164,14 @@ impl EditorElement {
                         .peek()
                         .map_or(false, |(active_row, has_selection)| {
                             active_row.0 == end_row + 1
-                                && *has_selection == contains_non_empty_selection
+                                && has_selection.selection == contains_non_empty_selection.selection
                         })
                     {
                         active_rows.next().unwrap();
                         end_row += 1;
                     }
 
-                    if !contains_non_empty_selection {
+                    if !contains_non_empty_selection.selection {
                         let highlight_h_range =
                             match layout.position_map.snapshot.current_line_highlight {
                                 CurrentLineHighlight::Gutter => Some(Range {
@@ -6621,10 +6621,6 @@ impl Element for EditorElement {
         window.set_view_id(self.editor.entity_id());
         window.set_focus_handle(&focus_handle, cx);
 
-        let mut breakpoint_rows = self
-            .editor
-            .update(cx, |editor, cx| editor.active_breakpoint_points(window, cx));
-
         let rem_size = self.rem_size(cx);
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
@@ -6866,17 +6862,23 @@ impl Element for EditorElement {
                         (selections, selected_buffer_ids)
                     });
 
-                    let (selections, active_rows, newest_selection_head) = self.layout_selections(
-                        start_anchor,
-                        end_anchor,
-                        &local_selections,
-                        &snapshot,
-                        start_row,
-                        end_row,
-                        window,
-                        cx,
-                    );
-
+                    let (selections, mut active_rows, newest_selection_head) = self
+                        .layout_selections(
+                            start_anchor,
+                            end_anchor,
+                            &local_selections,
+                            &snapshot,
+                            start_row,
+                            end_row,
+                            window,
+                            cx,
+                        );
+                    let mut breakpoint_rows = self.editor.update(cx, |editor, cx| {
+                        editor.active_breakpoints(start_row..end_row, window, cx)
+                    });
+                    for display_row in breakpoint_rows.keys() {
+                        active_rows.entry(*display_row).or_default().breakpoint = true;
+                    }
                     let line_numbers = self.layout_line_numbers(
                         Some(&gutter_hitbox),
                         gutter_dimensions,
@@ -6887,7 +6889,6 @@ impl Element for EditorElement {
                         &active_rows,
                         newest_selection_head,
                         &snapshot,
-                        &breakpoint_rows,
                         window,
                         cx,
                     );
@@ -6903,22 +6904,11 @@ impl Element for EditorElement {
                             .or_insert_with(|| {
                                 let position = snapshot
                                     .display_point_to_breakpoint_anchor(gutter_breakpoint_point);
-                                let mut breakpoint = Breakpoint {
-                                    active_position: Some(position.text_anchor),
-                                    cached_position: NonZeroU32::new(u32::MAX).unwrap(),
+                                let breakpoint = Breakpoint {
                                     kind: BreakpointKind::Standard,
                                 };
-                                let buffer = snapshot
-                                    .buffer_snapshot
-                                    .buffer_for_excerpt(position.excerpt_id);
-                                if let Some(buffer) = buffer {
-                                    breakpoint.cached_position = NonZeroU32::new(
-                                        breakpoint.point_for_buffer(buffer).row + 1,
-                                    )
-                                    .unwrap();
-                                }
 
-                                breakpoint
+                                (position.text_anchor, breakpoint)
                             });
                     }
 
@@ -7725,7 +7715,7 @@ pub struct EditorLayout {
     wrap_guides: SmallVec<[(Pixels, bool); 2]>,
     indent_guides: Option<Vec<IndentGuideLayout>>,
     visible_display_row_range: Range<DisplayRow>,
-    active_rows: BTreeMap<DisplayRow, bool>,
+    active_rows: BTreeMap<DisplayRow, LineHighlightSpec>,
     highlighted_rows: BTreeMap<DisplayRow, gpui::Background>,
     line_elements: SmallVec<[AnyElement; 1]>,
     line_numbers: Arc<HashMap<MultiBufferRow, LineNumberLayout>>,
