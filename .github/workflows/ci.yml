@@ -273,7 +273,6 @@ jobs:
 
       - name: cargo clippy
         working-directory: ${{ env.ZED_WORKSPACE }}
-        # Windows can't run shell scripts, so we need to use `cargo xtask`.
         run: ./script/clippy.ps1
 
       - name: Run tests
