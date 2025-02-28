@@ -7876,6 +7876,157 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
+            FormatterList(vec![Formatter::LanguageServer { name: None }].into()),
+        ))
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.ts"), Default::default()).await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(Arc::new(Language::new(
+        LanguageConfig {
+            name: "TypeScript".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["ts".to_string()],
+                ..Default::default()
+            },
+            ..LanguageConfig::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+    )));
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.prettier = Some(PrettierSettings {
+            allowed: true,
+            ..PrettierSettings::default()
+        });
+    });
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.ts"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text(
+            "import { a } from 'module';\nimport { b } from 'module';\n\nconst x = a;\n",
+            window,
+            cx,
+        )
+    });
+
+    cx.executor().start_waiting();
+    let fake_server = fake_servers.next().await.unwrap();
+
+    let format = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_code_action_kind(
+                project.clone(),
+                CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    fake_server
+        .handle_request::<lsp::request::CodeActionRequest, _, _>(move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path(path!("/file.ts")).unwrap()
+            );
+            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                lsp::CodeAction {
+                    title: "Organize Imports".to_string(),
+                    kind: Some(lsp::CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
+                    edit: Some(lsp::WorkspaceEdit {
+                        changes: Some(
+                            [(
+                                params.text_document.uri.clone(),
+                                vec![lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(1, 0),
+                                        lsp::Position::new(2, 0),
+                                    ),
+                                    "".to_string(),
+                                )],
+                            )]
+                            .into_iter()
+                            .collect(),
+                        ),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )]))
+        })
+        .next()
+        .await;
+    cx.executor().start_waiting();
+    format.await;
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "import { a } from 'module';\n\nconst x = a;\n"
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text(
+            "import { a } from 'module';\nimport { b } from 'module';\n\nconst x = a;\n",
+            window,
+            cx,
+        )
+    });
+    // Ensure we don't lock if code action hangs.
+    fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+        move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path(path!("/file.ts")).unwrap()
+            );
+            futures::future::pending::<()>().await;
+            unreachable!()
+        },
+    );
+    let format = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_code_action_kind(
+                project,
+                CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    cx.executor().advance_clock(super::CODE_ACTION_TIMEOUT);
+    cx.executor().start_waiting();
+    format.await;
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "import { a } from 'module';\nimport { b } from 'module';\n\nconst x = a;\n"
+    );
+}
+
+#[gpui::test]
 async fn test_concurrent_format_requests(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

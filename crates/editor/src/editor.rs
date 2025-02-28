@@ -120,8 +120,8 @@ use task::{ResolvedTask, TaskTemplate, TaskVariables};
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
 pub use lsp::CompletionContext;
 use lsp::{
-    CompletionItemKind, CompletionTriggerKind, DiagnosticSeverity, InsertTextFormat,
-    LanguageServerId, LanguageServerName,
+    CodeActionKind, CompletionItemKind, CompletionTriggerKind, DiagnosticSeverity,
+    InsertTextFormat, LanguageServerId, LanguageServerName,
 };
 
 use language::BufferSnapshot;
@@ -203,6 +203,7 @@ pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 
+pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -12494,11 +12495,64 @@ impl Editor {
                             buffer.push_transaction(&transaction.0, cx);
                         }
                     }
-
                     cx.notify();
                 })
                 .ok();
 
+            Ok(())
+        })
+    }
+
+    fn organize_imports(
+        &mut self,
+        _: &OrganizeImports,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let project = match &self.project {
+            Some(project) => project.clone(),
+            None => return None,
+        };
+        Some(self.perform_code_action_kind(
+            project,
+            CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+            window,
+            cx,
+        ))
+    }
+
+    fn perform_code_action_kind(
+        &mut self,
+        project: Entity<Project>,
+        kind: CodeActionKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let buffer = self.buffer.clone();
+        let buffers = buffer.read(cx).all_buffers();
+        let mut timeout = cx.background_executor().timer(CODE_ACTION_TIMEOUT).fuse();
+        let apply_action = project.update(cx, |project, cx| {
+            project.apply_code_action_kind(buffers, kind, true, cx)
+        });
+        cx.spawn_in(window, |_, mut cx| async move {
+            let transaction = futures::select_biased! {
+                () = timeout => {
+                    log::warn!("timed out waiting for executing code action");
+                    None
+                }
+                transaction = apply_action.log_err().fuse() => transaction,
+            };
+            buffer
+                .update(&mut cx, |buffer, cx| {
+                    // check if we need this
+                    if let Some(transaction) = transaction {
+                        if !buffer.is_singleton() {
+                            buffer.push_transaction(&transaction.0, cx);
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
             Ok(())
         })
     }
