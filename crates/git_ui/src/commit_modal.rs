@@ -116,9 +116,11 @@ impl CommitModal {
             };
 
             let (can_commit, conflict) = git_panel.update(cx, |git_panel, cx| {
-                git_panel.set_modal_open(true, cx);
                 let can_commit = git_panel.can_commit();
                 let conflict = git_panel.has_unstaged_conflicts();
+                if can_commit {
+                    git_panel.set_modal_open(true, cx);
+                }
                 (can_commit, conflict)
             });
             if !can_commit {
@@ -132,6 +134,7 @@ impl CommitModal {
                     prompt.await.ok();
                 })
                 .detach();
+                return;
             }
 
             let dock = workspace.dock_at_position(git_panel.position(window, cx));
