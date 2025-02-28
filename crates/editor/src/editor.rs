@@ -6602,6 +6602,7 @@ impl Editor {
                             .elevation_2(cx)
                             .border(BORDER_WIDTH)
                             .border_color(cx.theme().colors().border)
+                            .when(accept_keystroke.is_none(), |el| el.border_color(cx.theme().status().error))
                             .rounded(RADIUS)
                             .rounded_tl(px(0.))
                             .overflow_hidden()
@@ -6630,16 +6631,31 @@ impl Editor {
                                         el.child(
                                             Label::new("Hold")
                                                 .size(LabelSize::Small)
+                                                .when(accept_keystroke.is_none(), |el| el.strikethrough())
                                                 .line_height_style(LineHeightStyle::UiLabel),
                                         )
                                     })
-                                    .child(h_flex().children(ui::render_modifiers(
-                                        &accept_keystroke?.modifiers,
-                                        PlatformStyle::platform(),
-                                        Some(Color::Default),
-                                        Some(IconSize::XSmall.rems().into()),
-                                        false,
-                                    ))),
+                                    .id("edit_prediction_cursor_popover_keybind")
+                                    .when(accept_keystroke.is_none(), |el| {
+                                        let status_colors = cx.theme().status();
+
+                                        el.bg(status_colors.error_background)
+                                            .border_color(status_colors.error.opacity(0.6))
+                                            .child(Icon::new(IconName::Info).color(Color::Error))
+                                            .cursor_default()
+                                            .hoverable_tooltip(move |_window, cx| {
+                                                cx.new(|_| MissingEditPredictionKeybindingTooltip).into()
+                                            })
+                                    })
+                                    .when_some(accept_keystroke.as_ref(), |el, accept_keystroke|
+                                        el.child(h_flex().children(ui::render_modifiers(
+                                            &accept_keystroke.modifiers,
+                                            PlatformStyle::platform(),
+                                            Some(Color::Default),
+                                            Some(IconSize::XSmall.rems().into()),
+                                            false,
+                                        )))
+                                    )
                             )
                             .into_any(),
                     );
