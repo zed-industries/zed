@@ -518,13 +518,18 @@ define_connection! {
         ALTER TABLE toolchains ADD COLUMN raw_json TEXT DEFAULT "{}";
     ),
     sql!(
-        CREATE TABLE breakpoints (
-            path BLOB NOT NULL,
-            breakpoint_location INTEGER NOT NULL,
-            kind INTEGER NOT NULL,
-            log_message TEXT
-        );
-    ),
+            CREATE TABLE breakpoints (
+                workspace_id INTEGER NOT NULL,
+                worktree_path BLOB NOT NULL,
+                relative_path BLOB NOT NULL,
+                breakpoint_location INTEGER NOT NULL,
+                kind INTEGER NOT NULL,
+                log_message TEXT,
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                ON DELETE CASCADE
+                ON UPDATE CASCADE
+            );
+        ),
     ];
 }
 
