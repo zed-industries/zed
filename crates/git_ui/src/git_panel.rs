@@ -1969,7 +1969,7 @@ impl GitPanel {
                                         .on_click(cx.listener({
                                             move |_, _, window, cx| {
                                                 window.dispatch_action(
-                                                    git::ExpandCommitEditor.boxed_clone(),
+                                                    git::ShowCommitEditor.boxed_clone(),
                                                     cx,
                                                 )
                                             }
