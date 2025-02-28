@@ -191,7 +191,7 @@ impl BreakpointStore {
                             position.cmp(&range.start, &buffer_snapshot).is_ge()
                                 && position.cmp(&range.end, &buffer_snapshot).is_le()
                         } else {
-                            false
+                            true
                         }
                     }
                 })
