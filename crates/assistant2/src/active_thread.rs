@@ -15,10 +15,9 @@ use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure};
 use workspace::Workspace;
 
-use crate::thread::{
-    MessageId, RequestKind, Thread, ThreadError, ThreadEvent, ToolUse, ToolUseStatus,
-};
+use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
 use crate::thread_store::ThreadStore;
+use crate::tool_use::{ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
 
 pub struct ActiveThread {
