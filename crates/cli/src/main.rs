@@ -2,10 +2,6 @@
     any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
     allow(dead_code)
 )]
-#![cfg_attr(
-    all(not(debug_assertions), target_os = "windows"),
-    windows_subsystem = "windows"
-)]
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
@@ -649,7 +645,6 @@ mod flatpak {
 mod windows {
     use anyhow::Context;
     use release_channel::app_identifier;
-    use windows::Win32::System::Threading::CreateMutexW;
     use windows::{
         Win32::{
             Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GENERIC_WRITE, GetLastError},
@@ -665,26 +660,6 @@ mod windows {
     use std::io;
     use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
-
-    #[inline]
-    fn retrieve_app_identifier() -> &'static str {
-        match *release_channel::RELEASE_CHANNEL {
-            ReleaseChannel::Dev => "Zed-Editor-Dev",
-            ReleaseChannel::Nightly => "Zed-Editor-Nightly",
-            ReleaseChannel::Preview => "Zed-Editor-Preview",
-            ReleaseChannel::Stable => "Zed-Editor-Stable",
-        }
-    }
-
-    #[inline]
-    fn generate_identifier(name: &str) -> HSTRING {
-        HSTRING::from(format!("{}-{}", retrieve_app_identifier(), name))
-    }
-
-    #[inline]
-    fn generate_identifier_with_prefix(prefix: &str, name: &str) -> HSTRING {
-        HSTRING::from(format!("{}{}-{}", prefix, retrieve_app_identifier(), name))
-    }
 
     fn check_single_instance() -> bool {
         let mutex = unsafe {
