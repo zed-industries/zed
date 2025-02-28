@@ -2924,7 +2924,7 @@ impl PanelRepoHeader {
             |_, _, cx| cx.dispatch_action(&git::Push { options: None }),
             move |window, cx| {
                 git_action_tooltip(
-                    "Push commited changes to remote",
+                    "Push committed changes to remote",
                     &git::Push { options: None },
                     "git push",
                     panel_focus_handle.clone(),
