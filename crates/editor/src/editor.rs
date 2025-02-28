@@ -171,8 +171,8 @@ use theme::{
     ThemeColors, ThemeSettings,
 };
 use ui::{
-    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
-    IconWithIndicator, Indicator, Key, Tooltip,
+    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize, Key,
+    Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
@@ -6267,6 +6267,9 @@ impl Editor {
 
         const BORDER_WIDTH: Pixels = px(1.);
 
+        let keybind = self.render_edit_prediction_accept_keybind(window, cx);
+        let has_keybind = keybind.is_some();
+
         let mut element = h_flex()
             .items_start()
             .child(
@@ -6297,7 +6300,19 @@ impl Editor {
                     .border(BORDER_WIDTH)
                     .border_color(cx.theme().colors().border)
                     .rounded_r_lg()
-                    .children(self.render_edit_prediction_accept_keybind(window, cx)),
+                    .id("edit_prediction_diff_popover_keybind")
+                    .when(!has_keybind, |el| {
+                        let status_colors = cx.theme().status();
+
+                        el.bg(status_colors.error_background)
+                            .border_color(status_colors.error.opacity(0.6))
+                            .child(Icon::new(IconName::Info).color(Color::Error))
+                            .cursor_default()
+                            .hoverable_tooltip(move |_window, cx| {
+                                cx.new(|_| MissingEditPredictionKeybindingTooltip).into()
+                            })
+                    })
+                    .children(keybind),
             )
             .into_any();
 
@@ -6462,7 +6477,18 @@ impl Editor {
             .bg(Self::edit_prediction_line_popover_bg_color(cx))
             .border_color(Self::edit_prediction_callout_popover_border_color(cx))
             .shadow_sm()
-            .when(!has_keybind, |el| missing_edit_prediction_keybind(el, cx))
+            .when(!has_keybind, |el| {
+                let status_colors = cx.theme().status();
+
+                el.bg(status_colors.error_background)
+                    .border_color(status_colors.error.opacity(0.6))
+                    .pl_2()
+                    .child(Icon::new(IconName::ZedPredictError).color(Color::Error))
+                    .cursor_default()
+                    .hoverable_tooltip(move |_window, cx| {
+                        cx.new(|_| MissingEditPredictionKeybindingTooltip).into()
+                    })
+            })
             .children(keybind)
             .child(
                 Label::new(label)
@@ -18227,19 +18253,6 @@ fn all_edits_insertions_or_deletions(
         }
     }
     all_insertions || all_deletions
-}
-
-fn missing_edit_prediction_keybind(div: Stateful<Div>, cx: &App) -> Stateful<Div> {
-    let status_colors = cx.theme().status();
-
-    div.bg(status_colors.error_background)
-        .border_color(status_colors.error.opacity(0.6))
-        .pl_2()
-        .child(Icon::new(IconName::ZedPredictError).color(Color::Error))
-        .cursor_default()
-        .hoverable_tooltip(move |_window, cx| {
-            cx.new(|_| MissingEditPredictionKeybindingTooltip).into()
-        })
 }
 
 struct MissingEditPredictionKeybindingTooltip;
