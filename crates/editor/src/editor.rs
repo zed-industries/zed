@@ -6602,7 +6602,9 @@ impl Editor {
                             .elevation_2(cx)
                             .border(BORDER_WIDTH)
                             .border_color(cx.theme().colors().border)
-                            .when(accept_keystroke.is_none(), |el| el.border_color(cx.theme().status().error))
+                            .when(accept_keystroke.is_none(), |el| {
+                                el.border_color(cx.theme().status().error)
+                            })
                             .rounded(RADIUS)
                             .rounded_tl(px(0.))
                             .overflow_hidden()
@@ -6631,7 +6633,9 @@ impl Editor {
                                         el.child(
                                             Label::new("Hold")
                                                 .size(LabelSize::Small)
-                                                .when(accept_keystroke.is_none(), |el| el.strikethrough())
+                                                .when(accept_keystroke.is_none(), |el| {
+                                                    el.strikethrough()
+                                                })
                                                 .line_height_style(LineHeightStyle::UiLabel),
                                         )
                                     })
@@ -6644,18 +6648,22 @@ impl Editor {
                                             .child(Icon::new(IconName::Info).color(Color::Error))
                                             .cursor_default()
                                             .hoverable_tooltip(move |_window, cx| {
-                                                cx.new(|_| MissingEditPredictionKeybindingTooltip).into()
+                                                cx.new(|_| MissingEditPredictionKeybindingTooltip)
+                                                    .into()
                                             })
                                     })
-                                    .when_some(accept_keystroke.as_ref(), |el, accept_keystroke|
-                                        el.child(h_flex().children(ui::render_modifiers(
-                                            &accept_keystroke.modifiers,
-                                            PlatformStyle::platform(),
-                                            Some(Color::Default),
-                                            Some(IconSize::XSmall.rems().into()),
-                                            false,
-                                        )))
-                                    )
+                                    .when_some(
+                                        accept_keystroke.as_ref(),
+                                        |el, accept_keystroke| {
+                                            el.child(h_flex().children(ui::render_modifiers(
+                                                &accept_keystroke.modifiers,
+                                                PlatformStyle::platform(),
+                                                Some(Color::Default),
+                                                Some(IconSize::XSmall.rems().into()),
+                                                false,
+                                            )))
+                                        },
+                                    ),
                             )
                             .into_any(),
                     );
@@ -18294,8 +18302,12 @@ impl Render for MissingEditPredictionKeybindingTooltip {
                         .gap_1()
                         .items_end()
                         .w_full()
-                        .child(Button::new("open-keymap", "Assign Keybinding").size(ButtonSize::Compact))
-                        .child(Button::new("see-docs", "See Docs").size(ButtonSize::Compact)),
+                        .child(Button::new("open-keymap", "Assign Keybinding").size(ButtonSize::Compact).on_click(|_ev, window, cx| {
+                            window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx)
+                        }))
+                        .child(Button::new("see-docs", "See Docs").size(ButtonSize::Compact).on_click(|_ev, _window, cx| {
+                            cx.open_url("https://zed.dev/docs/completions#edit-predictions-missing-keybinding");
+                        })),
                 )
         })
     }
