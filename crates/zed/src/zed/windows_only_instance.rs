@@ -100,10 +100,8 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
         IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
     let url = format!("zed-cli://{server_name}");
 
-    let request = if let Some(ref action) = args.dock_action {
-        CliRequest::DockAction {
-            action: action.clone(),
-        }
+    let request = if let Some(action) = args.dock_action {
+        CliRequest::DockAction { action }
     } else {
         let mut paths = vec![];
         let mut urls = vec![];

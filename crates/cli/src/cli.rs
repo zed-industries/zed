@@ -18,7 +18,7 @@ pub enum CliRequest {
         env: Option<HashMap<String, String>>,
     },
     /// Only used on Windows for now.
-    DockAction { action: String },
+    DockAction { action: usize },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

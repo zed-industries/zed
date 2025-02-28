@@ -1427,7 +1427,7 @@ impl App {
     }
 
     /// Performs the action associated with the given dock menu item, only used on Windows for now.
-    pub fn perform_dock_menu_action(&self, action: String) {
+    pub fn perform_dock_menu_action(&self, action: usize) {
         self.platform.perform_dock_menu_action(action);
     }
 
