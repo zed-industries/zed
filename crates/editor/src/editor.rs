@@ -18224,9 +18224,9 @@ fn missing_edit_prediction_keybind(div: Stateful<Div>, cx: &App) -> Stateful<Div
     let status_colors = cx.theme().status();
 
     div.bg(status_colors.error_background)
-        .border_color(status_colors.error_border)
+        .border_color(status_colors.error.opacity(0.6))
         .pl_2()
-        .child(Icon::new(IconName::ZedPredictDisabled).color(Color::Error))
+        .child(Icon::new(IconName::ZedPredictError).color(Color::Error))
         .cursor_default()
         .hoverable_tooltip(move |_window, cx| {
             cx.new(|_| MissingEditPredictionKeybindingTooltip).into()
@@ -18241,18 +18241,24 @@ impl Render for MissingEditPredictionKeybindingTooltip {
             container
                 .flex_shrink_0()
                 .max_w_80()
-                .min_h(rems_from_px(116.))
-                .gap_0p5()
-                .child(Label::new("Missing accept keybinding"))
-                .text_ui_sm(cx)
-                .child("Your keymap overrides the default keybinding for a different action. Please define at least one keybinding for the `editor::AcceptEditPrediction` action.")
-                .child(div().flex_1())
+                .min_h(rems_from_px(124.))
+                .justify_between()
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .text_ui_sm(cx)
+                        .text_color(cx.theme().colors().text_muted)
+                        .child(Label::new("Conflict with Accept Keybinding"))
+                        .child("Your keymap currently overrides the default accept keybinding. To continue, assign one keybinding for the `editor::AcceptEditPrediction` action.")
+                )
                 .child(
                     h_flex()
-                        .w_full()
+                        .pb_1()
+                        .gap_1()
                         .items_end()
-                        .child(Button::new("open-keymap", "Open Keymap").size(ButtonSize::Compact))
-                        .child(Button::new("see-docs", "See documentation").size(ButtonSize::Compact)),
+                        .w_full()
+                        .child(Button::new("open-keymap", "Assign Keybinding").size(ButtonSize::Compact))
+                        .child(Button::new("see-docs", "See Docs").size(ButtonSize::Compact)),
                 )
         })
     }
