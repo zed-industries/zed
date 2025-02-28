@@ -75,6 +75,7 @@ pub struct LocalDapStore {
     node_runtime: NodeRuntime,
     next_session_id: AtomicU32,
     http_client: Arc<dyn HttpClient>,
+    worktree_store: Entity<WorktreeStore>,
     environment: Entity<ProjectEnvironment>,
     language_registry: Arc<LanguageRegistry>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
@@ -149,94 +150,8 @@ impl DapStore {
                         let _ = this
                             .update(&mut cx, |this, cx| {
                                 if request.command == StartDebugging::COMMAND {
-                                    let Some(parent_session) = this.session_by_id(session_id)
-                                    else {
-                                        return;
-                                    };
-
-                                    let args =
-                                        serde_json::from_value::<StartDebuggingRequestArguments>(
-                                            request.arguments.unwrap_or_default(),
-                                        )
-                                        .expect("To parse StartDebuggingRequestArguments");
-
-                                    let worktree = worktree_store
-                                        .update(cx, |this, _| this.worktrees().next())
-                                        .expect("worktree-less project");
-
-                                    let Some(config) = parent_session.read(cx).configuration()
-                                    else {
-                                        return;
-                                    };
-
-                                    let new_session_task = this.new_session(
-                                        DebugAdapterConfig {
-                                            label: config.label,
-                                            kind: config.kind,
-                                            request: match &args.request {
-                                                StartDebuggingRequestArgumentsRequest::Launch => {
-                                                    DebugRequestType::Launch
-                                                }
-                                                StartDebuggingRequestArgumentsRequest::Attach => {
-                                                    DebugRequestType::Attach(
-                                                        if let DebugRequestType::Attach(
-                                                            attach_config,
-                                                        ) = &config.request
-                                                        {
-                                                            attach_config.clone()
-                                                        } else {
-                                                            AttachConfig::default()
-                                                        },
-                                                    )
-                                                }
-                                            },
-                                            program: config.program,
-                                            cwd: config.cwd,
-                                            initialize_args: Some(args.configuration),
-                                            supports_attach: config.supports_attach,
-                                        },
-                                        &worktree,
-                                        Some(parent_session.clone()),
-                                        cx,
-                                    );
-
-                                    let request_seq = request.seq;
-                                    cx.spawn(|_, mut cx| async move {
-                                        let (success, body) = match new_session_task.await {
-                                            Ok(_) => (true, None),
-                                            Err(error) => (
-                                                false,
-                                                Some(serde_json::to_value(ErrorResponse {
-                                                    error: Some(dap::Message {
-                                                        id: request_seq,
-                                                        format: error.to_string(),
-                                                        variables: None,
-                                                        send_telemetry: None,
-                                                        show_user: None,
-                                                        url: None,
-                                                        url_label: None,
-                                                    }),
-                                                })?),
-                                            ),
-                                        };
-
-                                        parent_session
-                                            .update(&mut cx, |session, cx| {
-                                                session.respond_to_client(
-                                                    dap::messages::Response {
-                                                        seq: request_seq + 1,
-                                                        request_seq,
-                                                        success,
-                                                        command: StartDebugging::COMMAND
-                                                            .to_string(),
-                                                        body,
-                                                    },
-                                                    cx,
-                                                )
-                                            })?
-                                            .await
-                                    })
-                                    .detach_and_log_err(cx);
+                                    this.handle_start_debugging_request(session_id, request, cx)
+                                        .detach_and_log_err(cx);
                                 } else if request.command == RunInTerminal::COMMAND {
                                     // spawn terminal
                                 }
@@ -253,11 +168,12 @@ impl DapStore {
                 environment,
                 http_client,
                 node_runtime,
+                worktree_store,
                 toolchain_store,
                 language_registry,
-                next_session_id: Default::default(),
                 start_debugging_tx,
                 _start_debugging_task,
+                next_session_id: Default::default(),
             }),
             downstream_client: None,
             breakpoint_store,
@@ -478,6 +394,95 @@ impl DapStore {
 
                 session
             })
+        })
+    }
+
+    fn handle_start_debugging_request(
+        &mut self,
+        session_id: SessionId,
+        request: dap::messages::Request,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some(local_store) = self.as_local() else {
+            unreachable!("Cannot response for non-local session");
+        };
+
+        let Some(parent_session) = self.session_by_id(session_id) else {
+            return Task::ready(Err(anyhow!("Session not found")));
+        };
+
+        let args = serde_json::from_value::<StartDebuggingRequestArguments>(
+            request.arguments.unwrap_or_default(),
+        )
+        .expect("To parse StartDebuggingRequestArguments");
+
+        let worktree = local_store
+            .worktree_store
+            .update(cx, |this, _| this.worktrees().next())
+            .expect("worktree-less project");
+
+        let Some(config) = parent_session.read(cx).configuration() else {
+            unreachable!("there must be a config for local sessions");
+        };
+
+        let new_session_task = self.new_session(
+            DebugAdapterConfig {
+                label: config.label,
+                kind: config.kind,
+                request: match &args.request {
+                    StartDebuggingRequestArgumentsRequest::Launch => DebugRequestType::Launch,
+                    StartDebuggingRequestArgumentsRequest::Attach => DebugRequestType::Attach(
+                        if let DebugRequestType::Attach(attach_config) = &config.request {
+                            attach_config.clone()
+                        } else {
+                            AttachConfig::default()
+                        },
+                    ),
+                },
+                program: config.program,
+                cwd: config.cwd,
+                initialize_args: Some(args.configuration),
+                supports_attach: config.supports_attach,
+            },
+            &worktree,
+            Some(parent_session.clone()),
+            cx,
+        );
+
+        let request_seq = request.seq;
+        cx.spawn(|_, mut cx| async move {
+            let (success, body) = match new_session_task.await {
+                Ok(_) => (true, None),
+                Err(error) => (
+                    false,
+                    Some(serde_json::to_value(ErrorResponse {
+                        error: Some(dap::Message {
+                            id: request_seq,
+                            format: error.to_string(),
+                            variables: None,
+                            send_telemetry: None,
+                            show_user: None,
+                            url: None,
+                            url_label: None,
+                        }),
+                    })?),
+                ),
+            };
+
+            parent_session
+                .update(&mut cx, |session, cx| {
+                    session.respond_to_client(
+                        dap::messages::Response {
+                            seq: request_seq + 1,
+                            request_seq,
+                            success,
+                            command: StartDebugging::COMMAND.to_string(),
+                            body,
+                        },
+                        cx,
+                    )
+                })?
+                .await
         })
     }
 

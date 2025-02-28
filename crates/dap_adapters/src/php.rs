@@ -7,8 +7,8 @@ use crate::*;
 
 pub(crate) struct PhpDebugAdapter {
     port: u16,
-    _host: Ipv4Addr,
-    _timeout: Option<u64>,
+    host: Ipv4Addr,
+    timeout: Option<u64>,
 }
 
 impl PhpDebugAdapter {
@@ -18,8 +18,8 @@ impl PhpDebugAdapter {
     pub(crate) async fn new(host: TCPHost) -> Result<Self> {
         Ok(PhpDebugAdapter {
             port: TcpTransport::port(&host).await?,
-            _host: host.host(),
-            _timeout: host.timeout,
+            host: host.host(),
+            timeout: host.timeout,
         })
     }
 }
@@ -90,8 +90,8 @@ impl DebugAdapter for PhpDebugAdapter {
             ]),
             connection: Some(TcpArguments {
                 port: self.port,
-                host: self._host,
-                timeout: self._timeout,
+                host: self.host,
+                timeout: self.timeout,
             }),
             cwd: config.cwd.clone(),
             envs: None,
