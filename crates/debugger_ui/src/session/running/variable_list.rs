@@ -6,11 +6,7 @@ use gpui::{
     ListState, MouseDownEvent, Point, Subscription,
 };
 use project::debugger::session::Session;
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 use ui::{prelude::*, ContextMenu, ListItem};
 use util::debug_panic;
 
@@ -195,16 +191,17 @@ impl VariableList {
         }
     }
 
-    // pub fn completion_variables(&self, cx: &mut Context<Self>) -> Vec<VariableContainer> {
-    //     let stack_frame_id = self
-    //         .stack_frame_list
-    //         .update(cx, |this, cx| this.get_main_stack_frame_id(cx));
-
-    //     self.variables
-    //         .range((stack_frame_id, u64::MIN)..(stack_frame_id, u64::MAX))
-    //         .flat_map(|(_, containers)| containers.variables.iter().cloned())
-    //         .collect()
-    // }
+    // debugger(todo): This only returns visible variables will need to change it to show all variables
+    // within a stack frame scope
+    pub fn completion_variables(&self, _cx: &mut Context<Self>) -> Vec<dap::Variable> {
+        self.entries
+            .iter()
+            .filter_map(|entry| match entry {
+                VariableListEntry::Variable((variable, ..)) => Some(variable.clone()),
+                _ => None,
+            })
+            .collect()
+    }
 
     fn render_entry(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let Some(entry) = self.entries.get(ix) else {
