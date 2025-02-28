@@ -26,7 +26,7 @@ use crate::{
     FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
-use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
+use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
 use file_icons::FileIcons;
@@ -8778,82 +8778,62 @@ fn diff_hunk_controls(
         .rounded_b_lg()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
-        .child(match status.secondary {
-            DiffHunkSecondaryStatus::None
-            | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => {
-                Button::new(("unstage", row as u64), "Unstage")
-                    .alpha(
-                        if status.secondary == DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
-                        {
-                            0.5
-                        } else {
-                            1.0
-                        },
-                    )
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Unstage Hunk",
-                                &::git::ToggleStaged,
-                                &focus_handle,
+        .child(if status.has_secondary_hunk() {
+            Button::new(("stage", row as u64), "Stage")
+                .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Stage Hunk",
+                            &::git::ToggleStaged,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.stage_or_unstage_diff_hunks(
+                                true,
+                                &[hunk_range.start..hunk_range.start],
                                 window,
                                 cx,
-                            )
-                        }
-                    })
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_event, window, cx| {
-                            editor.update(cx, |editor, cx| {
-                                editor.stage_or_unstage_diff_hunks(
-                                    false,
-                                    &[hunk_range.start..hunk_range.start],
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }
-                    })
-            }
-            DiffHunkSecondaryStatus::HasSecondaryHunk
-            | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
-            | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
-                Button::new(("stage", row as u64), "Stage")
-                    .alpha(
-                        if status.secondary == DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
-                        {
-                            0.5
-                        } else {
-                            1.0
-                        },
-                    )
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Stage Hunk",
-                                &::git::ToggleStaged,
-                                &focus_handle,
+                            );
+                        });
+                    }
+                })
+        } else {
+            Button::new(("unstage", row as u64), "Unstage")
+                .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Unstage Hunk",
+                            &::git::ToggleStaged,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            editor.stage_or_unstage_diff_hunks(
+                                false,
+                                &[hunk_range.start..hunk_range.start],
                                 window,
                                 cx,
-                            )
-                        }
-                    })
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_event, window, cx| {
-                            editor.update(cx, |editor, cx| {
-                                editor.stage_or_unstage_diff_hunks(
-                                    true,
-                                    &[hunk_range.start..hunk_range.start],
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }
-                    })
-            }
+                            );
+                        });
+                    }
+                })
         })
         .child(
             Button::new("discard", "Restore")

@@ -52,7 +52,7 @@ pub use actions::{AcceptEditPrediction, OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
-use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus};
+use buffer_diff::DiffHunkStatus;
 use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -13510,7 +13510,7 @@ impl Editor {
         snapshot: &MultiBufferSnapshot,
     ) -> bool {
         let mut hunks = self.diff_hunks_in_ranges(ranges, &snapshot);
-        hunks.any(|hunk| hunk.secondary_status != DiffHunkSecondaryStatus::None)
+        hunks.any(|hunk| hunk.status().has_secondary_hunk())
     }
 
     pub fn toggle_staged_selected_diff_hunks(

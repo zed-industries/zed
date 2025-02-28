@@ -1059,6 +1059,14 @@ impl DiffHunkStatus {
         )
     }
 
+    pub fn is_pending(&self) -> bool {
+        matches!(
+            self.secondary,
+            DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
+                | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
+        )
+    }
+
     pub fn is_deleted(&self) -> bool {
         self.kind == DiffHunkStatusKind::Deleted
     }
