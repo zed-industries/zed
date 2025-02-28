@@ -1225,7 +1225,7 @@ async fn test_it_send_breakpoint_request_if_breakpoint_buffer_is_unopened(
                         path: Arc::from(Path::new(&"main.rs")),
                     },
                     Breakpoint {
-                        active_position: None,
+                        position: None,
                         cached_position: 1,
                         kind: BreakpointKind::Standard,
                     },

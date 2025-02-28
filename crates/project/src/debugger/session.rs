@@ -17,8 +17,8 @@ use dap::{
     adapters::{DapDelegate, DapStatus},
     client::{DebugAdapterClient, SessionId},
     messages::{Events, Message},
-    Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, StackFrameId,
-    SteppingGranularity, StoppedEvent, VariableReference,
+    Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, SourceBreakpoint,
+    StackFrameId, SteppingGranularity, StoppedEvent, VariableReference,
 };
 use dap_adapters::build_adapter;
 use futures::channel::oneshot;
@@ -279,7 +279,7 @@ impl LocalMode {
         // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
         let launch = this.request(Launch { raw }, cx.background_executor().clone());
         let that = this.clone();
-        let breakpoints = breakpoints.update(cx, |this, cx| this.all_breakpoints(true, cx))?;
+        let breakpoints = breakpoints.update(cx, |this, cx| this.all_breakpoints(cx))?;
 
         let configuration_done_supported = ConfigurationDone::is_supported(&capabilities);
         let configuration_sequence = async move {
@@ -288,18 +288,24 @@ impl LocalMode {
             let mut breakpoint_tasks = Vec::new();
 
             for (path, breakpoints) in breakpoints.iter() {
-                breakpoint_tasks.push(
-                    that.request(
-                        dap_command::SetBreakpoints {
-                            source: client_source(&path),
-                            breakpoints: breakpoints
-                                .iter()
-                                .map(|breakpoint| breakpoint.to_source_breakpoint())
-                                .collect(),
-                        },
-                        cx.background_executor().clone(),
-                    ),
-                );
+                let breakpoints = breakpoints
+                    .into_iter()
+                    .map(|bp| SourceBreakpoint {
+                        line: bp.position as u64 + 1,
+                        column: None,
+                        condition: None,
+                        hit_condition: None,
+                        log_message: bp.kind.log_message().as_deref().map(Into::into),
+                        mode: None,
+                    })
+                    .collect();
+                breakpoint_tasks.push(that.request(
+                    dap_command::SetBreakpoints {
+                        source: client_source(&path),
+                        breakpoints,
+                    },
+                    cx.background_executor().clone(),
+                ));
             }
             let _ = futures::future::join_all(breakpoint_tasks).await;
 
@@ -911,41 +917,42 @@ impl Session {
                 "Can't set ignore breakpoint to state it's already at"
             )));
         }
-
-        // todo(debugger): We need to propagate this change to downstream sessions and send a message to upstream sessions
-
         self.ignore_breakpoints = ignore;
-        let tasks: Vec<Task<()>> = Vec::new();
+        // todo(debugger): We need to propagate this change to downstream sessions and send a message to upstream sessions
+        todo!();
+        /*
+                let mut tasks: Vec<Task<()>> = Vec::new();
+        >>>>>>> debugger
 
-        for (_abs_path, serialized_breakpoints) in self
-            .breakpoint_store
-            .read_with(cx, |store, cx| store.all_breakpoints(true, cx))
-            .into_iter()
-        {
-            let _source_breakpoints = if self.ignore_breakpoints {
-                serialized_breakpoints
-                    .iter()
-                    .map(|bp| bp.to_source_breakpoint())
-                    .collect::<Vec<_>>()
-            } else {
-                vec![]
-            };
+                for (_abs_path, serialized_breakpoints) in self
+                    .breakpoint_store
+                    .read_with(cx, |store, cx| store.all_breakpoints(true, cx))
+                    .into_iter()
+                {
+                    let _source_breakpoints = if self.ignore_breakpoints {
+                        serialized_breakpoints
+                            .iter()
+                            .map(|bp| bp.to_source_breakpoint())
+                            .collect::<Vec<_>>()
+                    } else {
+                        vec![]
+                    };
 
-            todo!(
-                r#"tasks.push(self.send_breakpoints(
-                abs_path,
-                source_breakpoints,
-                self.ignore_breakpoints,
-                false,
-                cx,
-                ));"#
-            );
-        }
+                    todo!(
+                        r#"tasks.push(self.send_breakpoints(
+                        abs_path,
+                        source_breakpoints,
+                        self.ignore_breakpoints,
+                        false,
+                        cx,
+                        ));"#
+                    );
+                }
 
-        cx.background_executor().spawn(async move {
-            join_all(tasks).await;
-            Ok(())
-        })
+                cx.background_executor().spawn(async move {
+                    join_all(tasks).await;
+                    Ok(())
+                })*/
     }
 
     pub fn breakpoints_enabled(&self) -> bool {

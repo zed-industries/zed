@@ -99,8 +99,7 @@ impl HeadlessProject {
             buffer_store
         });
 
-        let breakpoint_store =
-            cx.new(|cx| BreakpointStore::local(buffer_store.clone(), worktree_store.clone(), cx));
+        let breakpoint_store = cx.new(|cx| BreakpointStore::local());
 
         let dap_store = cx.new(|cx| {
             DapStore::new_local(
