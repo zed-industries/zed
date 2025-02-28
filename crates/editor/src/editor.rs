@@ -12478,6 +12478,45 @@ impl Editor {
         })
     }
 
+    fn organize_imports(
+        &mut self,
+        _: &OrganizeImports,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let project = match &self.project {
+            Some(project) => project.clone(),
+            None => return None,
+        };
+        let buffer = self.buffer.clone();
+        let buffers = buffer.read(cx).all_buffers();
+        let mut timeout = cx.background_executor().timer(FORMAT_TIMEOUT).fuse();
+        let organize = project.update(cx, |project, cx| {
+            project.organize_imports(buffers, true, cx)
+        });
+        Some(cx.spawn_in(window, |_, mut cx| async move {
+            let transaction = futures::select_biased! {
+                () = timeout => {
+                    log::warn!("timed out waiting for organizing imports");
+                    None
+                }
+                transaction = organize.log_err().fuse() => transaction,
+            };
+            buffer
+                .update(&mut cx, |buffer, cx| {
+                    if let Some(transaction) = transaction {
+                        if !buffer.is_singleton() {
+                            buffer.push_transaction(&transaction.0, cx);
+                        }
+                    }
+
+                    cx.notify();
+                })
+                .ok();
+            Ok(())
+        }))
+    }
+
     fn restart_language_server(
         &mut self,
         _: &RestartLanguageServer,

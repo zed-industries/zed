@@ -427,6 +427,13 @@ impl EditorElement {
                 cx.propagate();
             }
         });
+        register_action(editor, window, |editor, action, window, cx| {
+            if let Some(task) = editor.organize_imports(action, window, cx) {
+                task.detach_and_notify_err(window, cx);
+            } else {
+                cx.propagate();
+            }
+        });
         register_action(editor, window, Editor::restart_language_server);
         register_action(editor, window, Editor::show_character_palette);
         register_action(editor, window, |editor, action, window, cx| {

@@ -2768,6 +2768,17 @@ impl Project {
         })
     }
 
+    pub fn organize_imports(
+        &mut self,
+        buffers: HashSet<Entity<Buffer>>,
+        push_to_history: bool,
+        cx: &mut Context<Project>,
+    ) -> Task<anyhow::Result<ProjectTransaction>> {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.organize_imports(buffers, push_to_history, cx)
+        })
+    }
+
     #[inline(never)]
     fn definition_impl(
         &mut self,

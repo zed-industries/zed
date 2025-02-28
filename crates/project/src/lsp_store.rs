@@ -1089,6 +1089,65 @@ impl LocalLspStore {
         self.language_servers_for_buffer(buffer, cx).next()
     }
 
+    async fn organize_imports_locally(
+        lsp_store: WeakEntity<LspStore>,
+        mut buffers: Vec<FormattableBuffer>,
+        push_to_history: bool,
+        mut cx: AsyncApp,
+    ) -> anyhow::Result<ProjectTransaction> {
+        // Do not allow multiple concurrent formatting requests for the
+        // same buffer.
+        lsp_store.update(&mut cx, |this, cx| {
+            let this = this.as_local_mut().unwrap();
+            buffers.retain(|buffer| {
+                this.buffers_being_formatted
+                    .insert(buffer.handle.read(cx).remote_id())
+            });
+        })?;
+
+        let _cleanup = defer({
+            let this = lsp_store.clone();
+            let mut cx = cx.clone();
+            let buffers = &buffers;
+            move || {
+                this.update(&mut cx, |this, cx| {
+                    let this = this.as_local_mut().unwrap();
+                    for buffer in buffers {
+                        this.buffers_being_formatted
+                            .remove(&buffer.handle.read(cx).remote_id());
+                    }
+                })
+                .ok();
+            }
+        });
+
+        let mut project_transaction = ProjectTransaction::default();
+        for buffer in &buffers {
+            let adapters_and_servers = lsp_store.update(&mut cx, |lsp_store, cx| {
+                buffer.handle.update(cx, |buffer, cx| {
+                    lsp_store
+                        .as_local()
+                        .unwrap()
+                        .language_servers_for_buffer(buffer, cx)
+                        .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
+                        .collect::<Vec<_>>()
+                })
+            })?;
+            Self::execute_code_actions_on_servers(
+                &lsp_store,
+                &adapters_and_servers,
+                vec![lsp::CodeActionKind::SOURCE_ORGANIZE_IMPORTS],
+                &buffer.handle,
+                push_to_history,
+                &mut project_transaction,
+                &mut cx,
+            )
+            .await?;
+        }
+
+        Ok(project_transaction)
+    }
+
     async fn format_locally(
         lsp_store: WeakEntity<LspStore>,
         mut buffers: Vec<FormattableBuffer>,
@@ -7193,6 +7252,95 @@ impl LspStore {
                     })?
                     .await
             })
+        } else {
+            Task::ready(Ok(ProjectTransaction::default()))
+        }
+    }
+
+    pub fn organize_imports(
+        &mut self,
+        buffers: HashSet<Entity<Buffer>>,
+        push_to_history: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<ProjectTransaction>> {
+        if let Some(_) = self.as_local() {
+            let buffers = buffers
+                .into_iter()
+                .map(|buffer_handle| {
+                    let buffer = buffer_handle.read(cx);
+                    let buffer_abs_path = File::from_dyn(buffer.file())
+                        .and_then(|file| file.as_local().map(|f| f.abs_path(cx)));
+
+                    (buffer_handle, buffer_abs_path, buffer.remote_id())
+                })
+                .collect::<Vec<_>>();
+
+            cx.spawn(move |lsp_store, mut cx| async move {
+                let mut formattable_buffers = Vec::with_capacity(buffers.len());
+
+                for (handle, abs_path, id) in buffers {
+                    let env = lsp_store
+                        .update(&mut cx, |lsp_store, cx| {
+                            lsp_store.environment_for_buffer(&handle, cx)
+                        })?
+                        .await;
+
+                    let ranges = None;
+
+                    formattable_buffers.push(FormattableBuffer {
+                        handle,
+                        abs_path,
+                        env,
+                        ranges,
+                    });
+                }
+
+                let result = LocalLspStore::organize_imports_locally(
+                    lsp_store.clone(),
+                    formattable_buffers,
+                    push_to_history,
+                    cx.clone(),
+                )
+                .await;
+                lsp_store.update(&mut cx, |lsp_store, _| {
+                    lsp_store.update_last_formatting_failure(&result);
+                })?;
+
+                result
+            })
+        } else if let Some((client, project_id)) = self.upstream_client() {
+            // let buffer_store = self.buffer_store();
+            // cx.spawn(move |lsp_store, mut cx| async move {
+            //     let result = client
+            //         .request(proto::FormatBuffers {
+            //             project_id,
+            //             trigger: trigger as i32,
+            //             buffer_ids: buffers
+            //                 .iter()
+            //                 .map(|buffer| {
+            //                     buffer.update(&mut cx, |buffer, _| buffer.remote_id().into())
+            //                 })
+            //                 .collect::<Result<_>>()?,
+            //         })
+            //         .await
+            //         .and_then(|result| result.transaction.context("missing transaction"));
+
+            //     lsp_store.update(&mut cx, |lsp_store, _| {
+            //         lsp_store.update_last_formatting_failure(&result);
+            //     })?;
+
+            //     let transaction_response = result?;
+            //     buffer_store
+            //         .update(&mut cx, |buffer_store, cx| {
+            //             buffer_store.deserialize_project_transaction(
+            //                 transaction_response,
+            //                 push_to_history,
+            //                 cx,
+            //             )
+            //         })?
+            //         .await
+            // })
+            Task::ready(Ok(ProjectTransaction::default()))
         } else {
             Task::ready(Ok(ProjectTransaction::default()))
         }
