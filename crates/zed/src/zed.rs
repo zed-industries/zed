@@ -37,7 +37,7 @@ use outline_panel::OutlinePanel;
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use project::{DirectoryLister, ProjectItem};
 use project_panel::ProjectPanel;
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use quick_action_bar::QuickActionBar;
 use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, ReleaseChannel};

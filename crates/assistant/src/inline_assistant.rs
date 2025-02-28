@@ -39,7 +39,7 @@ use language_model_selector::{InlineLanguageModelSelector, LanguageModelSelector
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use rope::Rope;
 use settings::{update_settings_file, Settings, SettingsStore};
 use smol::future::FutureExt;

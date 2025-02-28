@@ -20,7 +20,8 @@ use gpui::{
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use project::Project;
-use prompt_library::{open_prompt_library, PromptBuilder, PromptLibrary};
+use prompt_library::{open_prompt_library, PromptLibrary};
+use prompt_store::PromptBuilder;
 use settings::{update_settings_file, Settings};
 use time::UtcOffset;
 use ui::{prelude::*, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip};
