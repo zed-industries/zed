@@ -1,5 +1,4 @@
 use crate::git_panel_settings::StatusStyle;
-use crate::project_diff::Diff;
 use crate::repository_selector::RepositorySelectorPopoverMenu;
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
@@ -16,7 +15,7 @@ use git::repository::{
     UpstreamTracking, UpstreamTrackingStatus,
 };
 use git::{repository::RepoPath, status::FileStatus, Commit, ToggleStaged};
-use git::{Push, RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
+use git::{RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::*;
 use itertools::Itertools;
 use language::{Buffer, File};
@@ -39,8 +38,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    prelude::*, ButtonLike, Checkbox, ContextMenu, Divider, DividerColor, ElevationIndex, ListItem,
-    ListItemSpacing, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
+    prelude::*, ButtonLike, Checkbox, ContextMenu, ElevationIndex, ListItem, ListItemSpacing,
+    PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
 use workspace::{
@@ -1798,207 +1797,20 @@ impl GitPanel {
         });
     }
 
-    pub fn panel_button(
-        &self,
-        id: impl Into<SharedString>,
-        label: impl Into<SharedString>,
-    ) -> Button {
-        let id = id.into().clone();
-        let label = label.into().clone();
-
-        Button::new(id, label)
-            .label_size(LabelSize::Small)
-            .layer(ElevationIndex::ElevatedSurface)
-            .size(ButtonSize::Compact)
-            .style(ButtonStyle::Filled)
-    }
-
-    pub fn indent_size(&self, window: &Window, cx: &mut Context<Self>) -> Pixels {
-        Checkbox::container_size(cx).to_pixels(window.rem_size())
-    }
-
-    pub fn render_divider(&self, _cx: &mut Context<Self>) -> impl IntoElement {
-        h_flex()
-            .items_center()
-            .h(px(8.))
-            .child(Divider::horizontal_dashed().color(DividerColor::Border))
-    }
-
-    pub fn render_panel_header(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement> {
-        let all_repositories = self
-            .project
-            .read(cx)
-            .git_store()
-            .read(cx)
-            .all_repositories();
-
-        let has_repo_above = all_repositories.iter().any(|repo| {
-            repo.read(cx)
-                .repository_entry
-                .work_directory
-                .is_above_project()
-        });
-
-        let has_visible_repo = all_repositories.len() > 0 || has_repo_above;
-
-        if has_visible_repo {
-            Some(
-                self.panel_header_container(window, cx)
-                    .child(
-                        Label::new("Repository")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .child(self.render_repository_selector(cx))
-                    .child(div().flex_grow()) // spacer
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_1()
-                            .children(self.render_spinner())
-                            .child(self.render_sync_button(cx))
-                            .child(self.render_pull_button(cx))
-                            .child(
-                                Button::new("diff", "+/-")
-                                    .tooltip(Tooltip::for_action_title("Open diff", &Diff))
-                                    .on_click(|_, _, cx| {
-                                        cx.defer(|cx| {
-                                            cx.dispatch_action(&Diff);
-                                        })
-                                    }),
-                            )
-                            .child(self.render_overflow_menu()),
-                    ),
-            )
-        } else {
-            None
-        }
-    }
-
-    pub fn render_spinner(&self) -> Option<impl IntoElement> {
-        (!self.pending_remote_operations.borrow().is_empty()).then(|| {
-            Icon::new(IconName::ArrowCircle)
-                .size(IconSize::XSmall)
-                .color(Color::Info)
-                .with_animation(
-                    "arrow-circle",
-                    Animation::new(Duration::from_secs(2)).repeat(),
-                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                )
-                .into_any_element()
-        })
-    }
-
-    pub fn render_overflow_menu(&self) -> impl IntoElement {
-        PopoverMenu::new("overflow-menu")
-            .trigger(
-                IconButton::new("overflow-menu-trigger", IconName::EllipsisVertical)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted),
-            )
-            .menu(move |window, cx| Some(git_panel_context_menu(window, cx)))
-            .anchor(Corner::TopRight)
-    }
-
-    pub fn render_sync_button(&self, cx: &Context<Self>) -> AnyElement {
-        let active_repository = self.project.read(cx).active_repository(cx);
-        active_repository
-            .as_ref()
-            .map(|_| {
-                panel_filled_button("Fetch")
-                    .icon(IconName::ArrowCircle)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .icon_position(IconPosition::Start)
-                    .tooltip(Tooltip::for_action_title("git fetch", &git::Fetch))
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.fetch(&git::Fetch, window, cx)),
-                    )
-                    .into_any_element()
-            })
-            .unwrap_or(div().into_any_element())
-    }
-
-    /// Renders the relevant action based on the state of the repository:
-    ///
-    /// Local committed changes -> push
-    /// Remote changes -> pull
-    /// Remote + local changes -> ??
-    /// No changes -> sync
-    pub fn render_relevant_action(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        self.active_repository
-            .as_ref()
-            .and_then(|repo| repo.read(cx).current_branch())
-            .map(|branch| {
-                let upstream = branch.upstream.as_ref();
-                if upstream.map_or(true, |upstream| matches!(upstream.tracking, UpstreamTracking::Tracked(ref status) if status.ahead > 0)) {
-                    self.render_push_button(branch, cx)
-                } else if upstream.map_or(false, |upstream| matches!(upstream.tracking, UpstreamTracking::Tracked(ref status) if status.behind > 0)) {
-                    self.render_pull_button(cx)
-                } else {
-                    self.render_sync_button(cx)
-                }
-            })
-    }
-
-    pub fn render_pull_button(&self, cx: &Context<Self>) -> AnyElement {
-        let active_repository = self.project.read(cx).active_repository(cx);
-        active_repository
-            .as_ref()
-            .and_then(|repo| repo.read(cx).current_branch())
-            .and_then(|branch| {
-                branch.upstream.as_ref().map(|upstream| {
-                    let status = &upstream.tracking;
-
-                    let disabled = status.is_gone();
-
-                    panel_filled_button(match status {
-                        git::repository::UpstreamTracking::Tracked(status) if status.behind > 0 => {
-                            format!("Pull ({})", status.behind)
-                        }
-                        _ => "Pull".to_string(),
-                    })
-                    .icon(IconName::ArrowDown)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .icon_position(IconPosition::Start)
-                    .disabled(status.is_gone())
-                    .tooltip(move |window, cx| {
-                        if disabled {
-                            Tooltip::simple("Upstream is gone", cx)
-                        } else {
-                            // TODO: Add <origin> and <branch> argument substitutions to this
-                            Tooltip::for_action("git pull", &git::Pull, window, cx)
-                        }
-                    })
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.pull(&git::Pull, window, cx)),
-                    )
-                    .into_any_element()
-                })
-            })
-            .unwrap_or(div().into_any_element())
-    }
-
-    pub fn render_repository_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let active_repository = self.project.read(cx).active_repository(cx);
-        let repository_display_name = active_repository
-            .as_ref()
-            .map(|repo| repo.read(cx).display_name(self.project.read(cx), cx))
-            .unwrap_or_default();
-
-        RepositorySelectorPopoverMenu::new(
-            self.repository_selector.clone(),
-            ButtonLike::new("active-repository")
-                .style(ButtonStyle::Subtle)
-                .child(Label::new(repository_display_name).size(LabelSize::Small)),
-            Tooltip::text("Select a repository"),
-        )
-    }
+    // FIXME restore this
+    // fn render_spinner(&self) -> Option<impl IntoElement> {
+    //     (!self.pending_remote_operations.borrow().is_empty()).then(|| {
+    //         Icon::new(IconName::ArrowCircle)
+    //             .size(IconSize::XSmall)
+    //             .color(Color::Info)
+    //             .with_animation(
+    //                 "arrow-circle",
+    //                 Animation::new(Duration::from_secs(2)).repeat(),
+    //                 |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+    //             )
+    //             .into_any_element()
+    //     })
+    // }
 
     pub fn can_commit(&self) -> bool {
         (self.has_staged_changes() || self.has_tracked_changes()) && !self.has_unstaged_conflicts()
@@ -2046,106 +1858,7 @@ impl GitPanel {
         }
     }
 
-    pub fn render_commit_editor(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let editor = self.commit_editor.clone();
-        let can_commit = self.can_commit()
-            && self.pending_commit.is_none()
-            && !editor.read(cx).is_empty(cx)
-            && self.has_write_access(cx);
-
-        let panel_editor_style = panel_editor_style(true, window, cx);
-        let enable_coauthors = self.render_co_authors(cx);
-
-        let tooltip = if self.has_staged_changes() {
-            "git commit"
-        } else {
-            "git commit --all"
-        };
-        let title = if self.has_staged_changes() {
-            "Commit"
-        } else {
-            "Commit Tracked"
-        };
-        let editor_focus_handle = self.commit_editor.focus_handle(cx);
-
-        let commit_button = panel_filled_button(title)
-            .tooltip(move |window, cx| {
-                Tooltip::for_action_in(tooltip, &Commit, &editor_focus_handle, window, cx)
-            })
-            .disabled(!can_commit)
-            .on_click({
-                cx.listener(move |this, _: &ClickEvent, window, cx| this.commit_changes(window, cx))
-            });
-
-        let branch = self
-            .active_repository
-            .as_ref()
-            .and_then(|repo| repo.read(cx).current_branch().map(|b| b.name.clone()))
-            .unwrap_or_else(|| "<no branch>".into());
-
-        let branch_selector = Button::new("branch-selector", branch)
-            .color(Color::Muted)
-            .style(ButtonStyle::Subtle)
-            .icon(IconName::GitBranch)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .size(ButtonSize::Compact)
-            .icon_position(IconPosition::Start)
-            .tooltip(Tooltip::for_action_title(
-                "Switch Branch",
-                &zed_actions::git::Branch,
-            ))
-            .on_click(cx.listener(|_, _, window, cx| {
-                window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
-            }))
-            .style(ButtonStyle::Transparent);
-
-        let footer_size = px(32.);
-        let gap = px(16.0);
-
-        let max_height = window.line_height() * 6. + gap + footer_size;
-
-        panel_editor_container(window, cx)
-            .id("commit-editor-container")
-            .relative()
-            .h(max_height)
-            .w_full()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            .bg(cx.theme().colors().editor_background)
-            .cursor_text()
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                window.focus(&this.commit_editor.focus_handle(cx));
-            }))
-            .when(!self.modal_open, |el| {
-                el.child(EditorElement::new(&self.commit_editor, panel_editor_style))
-                    .child(
-                        h_flex()
-                            .absolute()
-                            .bottom_0()
-                            .left_2()
-                            .h(footer_size)
-                            .flex_none()
-                            .child(branch_selector),
-                    )
-                    .child(
-                        h_flex()
-                            .absolute()
-                            .bottom_0()
-                            .right_2()
-                            .h(footer_size)
-                            .flex_none()
-                            .children(enable_coauthors)
-                            .child(commit_button),
-                    )
-            })
-    }
-
-    pub fn render_new_footer(
+    pub fn render_footer(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2401,7 +2114,7 @@ impl GitPanel {
         )
     }
 
-    pub fn render_buffer_header_controls(
+    fn render_buffer_header_controls(
         &self,
         entity: &Entity<Self>,
         file: &Arc<dyn File>,
@@ -2575,19 +2288,6 @@ impl GitPanel {
         self.set_context_menu(context_menu, position, window, cx);
     }
 
-    fn panel_context_menu(window: &mut Window, cx: &mut App) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |context_menu, _, _| {
-            context_menu
-                .action("Stage All", StageAll.boxed_clone())
-                .action("Unstage All", UnstageAll.boxed_clone())
-                .separator()
-                .action("Open Diff", project_diff::Diff.boxed_clone())
-                .separator()
-                .action("Restore Tracked Files", RestoreTrackedFiles.boxed_clone())
-                .action("Trash Untracked Files", TrashUntrackedFiles.boxed_clone())
-        })
-    }
-
     fn deploy_panel_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -2757,69 +2457,6 @@ impl GitPanel {
             .into_any_element()
     }
 
-    fn render_push_button(&self, branch: &Branch, cx: &Context<Self>) -> AnyElement {
-        let mut disabled = false;
-
-        // TODO: Add <origin> and <branch> argument substitutions to this
-        let button: SharedString;
-        let tooltip: SharedString;
-        let action: Option<Push>;
-        if let Some(upstream) = &branch.upstream {
-            match upstream.tracking {
-                UpstreamTracking::Gone => {
-                    button = "Republish".into();
-                    tooltip = "git push --set-upstream".into();
-                    action = Some(git::Push {
-                        options: Some(PushOptions::SetUpstream),
-                    });
-                }
-                UpstreamTracking::Tracked(tracking) => {
-                    if tracking.behind > 0 {
-                        disabled = true;
-                        button = "Push".into();
-                        tooltip = "Upstream is ahead of local branch".into();
-                        action = None;
-                    } else if tracking.ahead > 0 {
-                        button = format!("Push ({})", tracking.ahead).into();
-                        tooltip = "git push".into();
-                        action = Some(git::Push { options: None });
-                    } else {
-                        disabled = true;
-                        button = "Push".into();
-                        tooltip = "Upstream matches local branch".into();
-                        action = None;
-                    }
-                }
-            }
-        } else {
-            button = "Publish".into();
-            tooltip = "git push --set-upstream".into();
-            action = Some(git::Push {
-                options: Some(PushOptions::SetUpstream),
-            });
-        };
-
-        panel_filled_button(button)
-            .icon(IconName::ArrowUp)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .icon_position(IconPosition::Start)
-            .disabled(disabled)
-            .when_some(action, |this, action| {
-                this.on_click(
-                    cx.listener(move |this, _, window, cx| this.push(&action, window, cx)),
-                )
-            })
-            .tooltip(move |window, cx| {
-                if let Some(action) = action.as_ref() {
-                    Tooltip::for_action(tooltip.clone(), action, window, cx)
-                } else {
-                    Tooltip::simple(tooltip.clone(), cx)
-                }
-            })
-            .into_any_element()
-    }
-
     fn has_write_access(&self, cx: &App) -> bool {
         !self.project.read(cx).is_read_only(cx)
     }
@@ -2898,7 +2535,7 @@ impl Render for GitPanel {
                             this.child(self.render_empty_state(cx).into_any_element())
                         }
                     })
-                    .children(self.render_new_footer(window, cx))
+                    .children(self.render_footer(window, cx))
                     .children(self.render_previous_commit(cx))
                     .into_any_element(),
             )
