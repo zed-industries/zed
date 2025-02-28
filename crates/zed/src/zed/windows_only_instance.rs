@@ -1,7 +1,6 @@
 use std::{sync::Arc, thread::JoinHandle};
 
 use anyhow::Context;
-use clap::Parser;
 use cli::{ipc::IpcOneShotServer, CliRequest, CliResponse, IpcHandshake};
 use parking_lot::Mutex;
 use release_channel::app_identifier;

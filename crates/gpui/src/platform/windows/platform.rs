@@ -9,7 +9,6 @@ use std::{
 use ::util::{paths::SanitizedPath, ResultExt};
 use anyhow::{anyhow, Context as _, Result};
 use async_task::Runnable;
-use collections::FxHashMap;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -48,14 +47,12 @@ pub(crate) struct WindowsPlatform {
     bitmap_factory: ManuallyDrop<IWICImagingFactory>,
     validation_number: usize,
     main_thread_id_win32: u32,
-    dock_action_event: Owned<HANDLE>,
-    dock_action_shared_memory: Owned<HANDLE>,
 }
 
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
     menus: Vec<OwnedMenu>,
-    dock_menu_actions: FxHashMap<usize, Box<dyn Action>>,
+    dock_menu_actions: Vec<Box<dyn Action>>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: HCURSOR,
 }
@@ -73,7 +70,7 @@ struct PlatformCallbacks {
 impl WindowsPlatformState {
     fn new() -> Self {
         let callbacks = PlatformCallbacks::default();
-        let dock_menu_actions = FxHashMap::default();
+        let dock_menu_actions = Vec::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
 
         Self {
@@ -113,8 +110,6 @@ impl WindowsPlatform {
         let raw_window_handles = RwLock::new(SmallVec::new());
         let gpu_context = BladeContext::new().expect("Unable to init GPU context");
         let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
-        let dock_action_event = create_dock_action_event();
-        let dock_action_shared_memory = create_dock_action_shared_memory();
 
         Self {
             state,
@@ -129,8 +124,6 @@ impl WindowsPlatform {
             bitmap_factory,
             validation_number,
             main_thread_id_win32,
-            dock_action_event,
-            dock_action_shared_memory,
         }
     }
 
@@ -202,7 +195,7 @@ impl WindowsPlatform {
         if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
             let Some(action) = lock
                 .dock_menu_actions
-                .get(&action_idx)
+                .get(action_idx)
                 .map(|action| action.boxed_clone())
             else {
                 lock.callbacks.app_menu_action = Some(callback);
@@ -270,7 +263,8 @@ impl WindowsPlatform {
         let jump_list = JumpList::LoadCurrentAsync()?.get()?;
         let items = jump_list.Items()?;
         items.Clear()?;
-        for (idx, item) in menus.into_iter().enumerate() {
+        let mut actions = Vec::new();
+        for item in menus.into_iter() {
             let item = match item {
                 MenuItem::Separator => JumpListItem::CreateSeparator()?,
                 MenuItem::Submenu(_) => {
@@ -278,11 +272,9 @@ impl WindowsPlatform {
                     continue;
                 }
                 MenuItem::Action { name, action, .. } => {
-                    let item_args = format!("--{} {}", APP_DOCK_ACTION_ARGUMENT, idx);
-                    self.state
-                        .borrow_mut()
-                        .dock_menu_actions
-                        .insert(idx, action);
+                    let idx = actions.len();
+                    actions.push(action.boxed_clone());
+                    let item_args = format!("--dock-action {}", idx);
                     JumpListItem::CreateWithArguments(
                         &HSTRING::from(item_args),
                         &HSTRING::from(name.as_ref()),
@@ -292,6 +284,7 @@ impl WindowsPlatform {
             items.Append(&item)?;
         }
         jump_list.SaveAsync()?.get()?;
+        self.state.borrow_mut().dock_menu_actions = actions;
         Ok(())
     }
 }
