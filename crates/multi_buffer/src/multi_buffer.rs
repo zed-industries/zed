@@ -1060,10 +1060,6 @@ impl MultiBuffer {
         now: Instant,
         cx: &mut Context<Self>,
     ) -> Option<TransactionId> {
-        if let Some(buffer) = self.as_singleton() {
-            return buffer.update(cx, |buffer, _| buffer.start_transaction_at(now));
-        }
-
         for BufferState { buffer, .. } in self.buffers.borrow().values() {
             buffer.update(cx, |buffer, _| buffer.start_transaction_at(now));
         }
@@ -1079,10 +1075,6 @@ impl MultiBuffer {
         now: Instant,
         cx: &mut Context<Self>,
     ) -> Option<TransactionId> {
-        if let Some(buffer) = self.as_singleton() {
-            return buffer.update(cx, |buffer, cx| buffer.end_transaction_at(now, cx));
-        }
-
         let mut buffer_transactions = HashMap::default();
         for BufferState { buffer, .. } in self.buffers.borrow().values() {
             if let Some(transaction_id) =
@@ -1161,11 +1153,7 @@ impl MultiBuffer {
         destination: TransactionId,
         cx: &mut Context<Self>,
     ) {
-        if let Some(buffer) = self.as_singleton() {
-            buffer.update(cx, |buffer, _| {
-                buffer.merge_transactions(transaction, destination)
-            });
-        } else if let Some(transaction) = self.history.forget(transaction) {
+        if let Some(transaction) = self.history.forget(transaction) {
             if let Some(destination) = self.history.transaction_mut(destination) {
                 for (buffer_id, buffer_transaction_id) in transaction.buffer_transactions {
                     if let Some(destination_buffer_transaction_id) =
@@ -1212,13 +1200,7 @@ impl MultiBuffer {
         transaction_id: TransactionId,
         cx: &mut Context<Self>,
     ) {
-        if let Some(buffer) = self.as_singleton() {
-            buffer.update(cx, |buffer, _| {
-                buffer.group_until_transaction(transaction_id)
-            });
-        } else {
-            self.history.group_until(transaction_id);
-        }
+        self.history.group_until(transaction_id);
     }
 
     pub fn set_active_selections(
@@ -1308,27 +1290,23 @@ impl MultiBuffer {
 
     pub fn undo(&mut self, cx: &mut Context<Self>) -> Option<TransactionId> {
         let mut transaction_id = None;
-        if let Some(buffer) = self.as_singleton() {
-            transaction_id = buffer.update(cx, |buffer, cx| buffer.undo(cx));
-        } else {
-            while let Some(transaction) = self.history.pop_undo() {
-                let mut undone = false;
-                for (buffer_id, buffer_transaction_id) in &mut transaction.buffer_transactions {
-                    if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(buffer_id) {
-                        undone |= buffer.update(cx, |buffer, cx| {
-                            let undo_to = *buffer_transaction_id;
-                            if let Some(entry) = buffer.peek_undo_stack() {
-                                *buffer_transaction_id = entry.transaction_id();
-                            }
-                            buffer.undo_to_transaction(undo_to, cx)
-                        });
-                    }
+        while let Some(transaction) = self.history.pop_undo() {
+            let mut undone = false;
+            for (buffer_id, buffer_transaction_id) in &mut transaction.buffer_transactions {
+                if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(buffer_id) {
+                    undone |= buffer.update(cx, |buffer, cx| {
+                        let undo_to = *buffer_transaction_id;
+                        if let Some(entry) = buffer.peek_undo_stack() {
+                            *buffer_transaction_id = entry.transaction_id();
+                        }
+                        buffer.undo_to_transaction(undo_to, cx)
+                    });
                 }
+            }
 
-                if undone {
-                    transaction_id = Some(transaction.id);
-                    break;
-                }
+            if undone {
+                transaction_id = Some(transaction.id);
+                break;
             }
         }
 
@@ -1340,10 +1318,6 @@ impl MultiBuffer {
     }
 
     pub fn redo(&mut self, cx: &mut Context<Self>) -> Option<TransactionId> {
-        if let Some(buffer) = self.as_singleton() {
-            return buffer.update(cx, |buffer, cx| buffer.redo(cx));
-        }
-
         while let Some(transaction) = self.history.pop_redo() {
             let mut redone = false;
             for (buffer_id, buffer_transaction_id) in &mut transaction.buffer_transactions {
@@ -1367,9 +1341,7 @@ impl MultiBuffer {
     }
 
     pub fn undo_transaction(&mut self, transaction_id: TransactionId, cx: &mut Context<Self>) {
-        if let Some(buffer) = self.as_singleton() {
-            buffer.update(cx, |buffer, cx| buffer.undo_transaction(transaction_id, cx));
-        } else if let Some(transaction) = self.history.remove_from_undo(transaction_id) {
+        if let Some(transaction) = self.history.remove_from_undo(transaction_id) {
             for (buffer_id, transaction_id) in &transaction.buffer_transactions {
                 if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(buffer_id) {
                     buffer.update(cx, |buffer, cx| {
@@ -1381,11 +1353,7 @@ impl MultiBuffer {
     }
 
     pub fn forget_transaction(&mut self, transaction_id: TransactionId, cx: &mut Context<Self>) {
-        if let Some(buffer) = self.as_singleton() {
-            buffer.update(cx, |buffer, _| {
-                buffer.forget_transaction(transaction_id);
-            });
-        } else if let Some(transaction) = self.history.forget(transaction_id) {
+        if let Some(transaction) = self.history.forget(transaction_id) {
             for (buffer_id, buffer_transaction_id) in transaction.buffer_transactions {
                 if let Some(state) = self.buffers.borrow_mut().get_mut(&buffer_id) {
                     state.buffer.update(cx, |buffer, _| {
