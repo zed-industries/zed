@@ -11305,17 +11305,18 @@ impl Editor {
         hunk
     }
 
-    pub fn go_to_line<T: 'static>(
+    fn go_to_line<T: 'static>(
         &mut self,
-        row: u32,
+        position: Anchor,
         highlight_color: Option<Hsla>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.snapshot(window, cx).display_snapshot;
+        let position = position.to_point(&snapshot.buffer_snapshot);
         let start = snapshot
             .buffer_snapshot
-            .clip_point(Point::new(row, 0), Bias::Left);
+            .clip_point(Point::new(position.row, 0), Bias::Left);
         let end = start + Point::new(1, 0);
         let start = snapshot.buffer_snapshot.anchor_before(start);
         let end = snapshot.buffer_snapshot.anchor_before(end);
@@ -14065,28 +14066,39 @@ impl Editor {
         let _ = maybe!({
             let breakpoint_store = self.breakpoint_store.as_ref()?;
 
-            let project_path = self.project_path(cx)?;
-
-            let abs_path = self
+            let (path, active_position) = breakpoint_store.read(cx).active_position().cloned()?;
+            let snapshot = self
                 .project
                 .as_ref()?
                 .read(cx)
-                .absolute_path(&project_path, cx)?;
-            if let Some((path, position)) = breakpoint_store.read(cx).active_position() {
-                if path.as_ref() == abs_path {
-                    self.go_to_line::<DebugCurrentRowHighlight>(
-                        position,
-                        Some(cx.theme().colors().editor_debugger_active_line_background),
-                        window,
-                        cx,
-                    );
+                .buffer_for_id(active_position.buffer_id?, cx)?
+                .read(cx)
+                .snapshot();
 
-                    return Some(());
+            for (id, ExcerptRange { context, .. }) in self
+                .buffer
+                .read(cx)
+                .excerpts_for_buffer(active_position.buffer_id?, cx)
+            {
+                if context.start.cmp(&active_position, &snapshot).is_ge()
+                    || context.end.cmp(&active_position, &snapshot).is_lt()
+                {
+                    continue;
                 }
+                let snapshot = self.buffer.read(cx).snapshot(cx);
+                let multibuffer_anchor = snapshot.anchor_in_excerpt(id, active_position)?;
+
+                self.clear_row_highlights::<DebugCurrentRowHighlight>();
+                self.go_to_line::<DebugCurrentRowHighlight>(
+                    multibuffer_anchor,
+                    Some(cx.theme().colors().editor_debugger_active_line_background),
+                    window,
+                    cx,
+                );
+
+                cx.notify();
             }
 
-            self.clear_row_highlights::<DebugCurrentRowHighlight>();
-            cx.notify();
             Some(())
         });
     }

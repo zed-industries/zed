@@ -296,10 +296,21 @@ impl LocalMode {
                 let mut breakpoint_tasks = Vec::new();
 
                 for (path, breakpoints) in breakpoints {
+                    let breakpoints = breakpoints
+                        .into_iter()
+                        .map(|bp| SourceBreakpoint {
+                            line: bp.position as u64 + 1,
+                            column: None,
+                            condition: None,
+                            hit_condition: None,
+                            log_message: bp.kind.log_message().as_deref().map(Into::into),
+                            mode: None,
+                        })
+                        .collect();
                     breakpoint_tasks.push(that.request(
                         dap_command::SetBreakpoints {
                             source: client_source(&path),
-                            breakpoints: todo!(),
+                            breakpoints,
                         },
                         cx.background_executor().clone(),
                     ));

@@ -40,7 +40,7 @@ struct BreakpointsInFile {
 pub struct BreakpointStore {
     breakpoints: BTreeMap<Arc<Path>, BreakpointsInFile>,
     downstream_client: Option<(AnyProtoClient, u64)>,
-    active_stack_frames: HashMap<u64, (Arc<Path>, Point)>,
+    active_stack_frame: Option<(Arc<Path>, text::Anchor)>,
     // E.g ssh
     upstream_client: Option<RemoteBreakpointStore>,
 }
@@ -51,7 +51,7 @@ impl BreakpointStore {
             breakpoints: BTreeMap::new(),
             upstream_client: None,
             downstream_client: None,
-            active_stack_frames: Default::default(),
+            active_stack_frame: Default::default(),
         }
     }
 
@@ -67,7 +67,7 @@ impl BreakpointStore {
                 upstream_project_id,
             }),
             downstream_client: None,
-            active_stack_frames: Default::default(),
+            active_stack_frame: Default::default(),
         }
     }
 
@@ -83,17 +83,6 @@ impl BreakpointStore {
 
     fn upstream_client(&self) -> Option<RemoteBreakpointStore> {
         self.upstream_client.clone()
-    }
-
-    pub fn set_active_stack_frame(
-        &mut self,
-        thread_id: u64,
-        path: Arc<Path>,
-        position: Point,
-        cx: &mut Context<Self>,
-    ) {
-        self.active_stack_frames
-            .insert(thread_id, (path.clone(), position.clone()));
     }
 
     fn abs_path_from_buffer(buffer: &Entity<Buffer>, cx: &App) -> Option<Arc<Path>> {
@@ -198,54 +187,38 @@ impl BreakpointStore {
             })
     }
 
-    pub fn active_position(&self) -> Option<(Arc<Path>, u32)> {
-        // TODO: implement
-        None
+    pub fn active_position(&self) -> Option<&(Arc<Path>, text::Anchor)> {
+        self.active_stack_frame.as_ref()
     }
-    pub(crate) fn all_breakpoints(
+
+    pub fn set_active_position(&mut self, position: Option<(Arc<Path>, text::Anchor)>) {
+        self.active_stack_frame = position;
+    }
+
+    pub(super) fn all_breakpoints(
         &self,
         cx: &App,
     ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
-        let all_breakpoints: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
-        let as_abs_path = true;
-        /*
-
-        for (project_path, breakpoints) in &self.breakpoints {
-            let buffer = maybe!({
-                let buffer_store = self.buffer_store.read(cx);
-                let buffer_id = buffer_store.buffer_id_for_project_path(project_path)?;
-                let buffer = buffer_store.get(*buffer_id)?;
-                Some(buffer.read(cx))
-            });
-
-            let Some(path) = maybe!({
-                if as_abs_path {
-                    let worktree = self
-                        .worktree_store
-                        .read(cx)
-                        .worktree_for_id(project_path.worktree_id, cx)?;
-                    Some(Arc::from(
-                        worktree
-                            .read(cx)
-                            .absolutize(&project_path.path)
-                            .ok()?
-                            .as_path(),
-                    ))
-                } else {
-                    Some(project_path.path.clone())
-                }
-            }) else {
-                continue;
-            };
-
-            all_breakpoints.entry(path).or_default().extend(
-                breakpoints
-                    .into_iter()
-                    .map(|bp| bp.to_serialized(buffer, project_path.clone().path)),
-            );
-        }*/
-
-        all_breakpoints
+        self.breakpoints
+            .iter()
+            .map(|(path, bp)| {
+                let snapshot = bp.buffer.read(cx).snapshot();
+                (
+                    path.clone(),
+                    bp.breakpoints
+                        .iter()
+                        .map(|(position, breakpoint)| {
+                            let position = snapshot.summary_for_anchor::<Point>(position).row;
+                            SerializedBreakpoint {
+                                position,
+                                path: path.clone(),
+                                kind: breakpoint.kind.clone(),
+                            }
+                        })
+                        .collect(),
+                )
+            })
+            .collect()
     }
 
     #[cfg(any(test, feature = "test-support"))]
