@@ -1,5 +1,5 @@
 use crate::{task_inventory::TaskContexts, Event, *};
-use buffer_diff::{assert_hunks, DiffHunkSecondaryStatus, DiffHunkStatus};
+use buffer_diff::{assert_hunks, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use fs::FakeFs;
 use futures::{future, StreamExt};
 use gpui::{App, SemanticVersion, UpdateGlobal};
@@ -5954,16 +5954,16 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let committed_contents = r#"
-            fn main() {
-                println!("hello from HEAD");
-            }
-        "#
+        fn main() {
+            println!("hello from HEAD");
+        }
+    "#
     .unindent();
     let file_contents = r#"
-            fn main() {
-                println!("hello from the working copy");
-            }
-        "#
+        fn main() {
+            println!("hello from the working copy");
+        }
+    "#
     .unindent();
 
     let fs = FakeFs::new(cx.background_executor.clone());
@@ -5980,7 +5980,11 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
 
     fs.set_head_for_repo(
         Path::new("/dir/.git"),
-        &[("src/main.rs".into(), committed_contents)],
+        &[("src/main.rs".into(), committed_contents.clone())],
+    );
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs".into(), committed_contents.clone())],
     );
 
     let project = Project::test(fs.clone(), ["/dir/src/main.rs".as_ref()], cx).await;
@@ -6009,7 +6013,10 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
                 1..2,
                 "    println!(\"hello from HEAD\");\n",
                 "    println!(\"hello from the working copy\");\n",
-                DiffHunkStatus::modified_none(),
+                DiffHunkStatus {
+                    kind: DiffHunkStatusKind::Modified,
+                    secondary: DiffHunkSecondaryStatus::HasSecondaryHunk,
+                },
             )],
         );
     });

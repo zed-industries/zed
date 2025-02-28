@@ -203,7 +203,7 @@ impl BufferDiffInner {
                             new_status: DiffHunkSecondaryStatus::None,
                         },
                     );
-                    return Some(buffer.as_rope().clone());
+                    return file_exists.then(|| buffer.as_rope().clone());
                 } else {
                     log::debug!("unstage all");
                     self.pending_hunks.insert(
@@ -1011,7 +1011,7 @@ impl BufferDiff {
 
 impl DiffHunk {
     pub fn is_created_file(&self) -> bool {
-        self.diff_base_byte_range == (0..0) && self.buffer_range == (Anchor::MAX..Anchor::MAX)
+        self.diff_base_byte_range == (0..0) && self.buffer_range == (Anchor::MIN..Anchor::MAX)
     }
 
     pub fn status(&self) -> DiffHunkStatus {
