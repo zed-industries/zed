@@ -233,7 +233,8 @@ impl HeadlessProject {
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
         DapStore::init(&client);
-        BreakpointStore::init(&client);
+        // todo(debugger): Re init breakpoint store when we set it up for collab
+        // BreakpointStore::init(&client);
         GitStore::init(&client);
 
         HeadlessProject {
