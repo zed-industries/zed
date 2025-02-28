@@ -6468,9 +6468,18 @@ impl Editor {
                 Label::new(label)
                     .size(LabelSize::Small)
                     .when(!has_keybind, |el| {
-                        el.color(cx.theme().status().error.into())
+                        el.color(cx.theme().status().error.into()).strikethrough()
                     }),
             )
+            .when(!has_keybind, |el| {
+                el.child(
+                    div().ml_1().child(
+                        Icon::new(IconName::Info)
+                            .size(IconSize::XSmall)
+                            .color(cx.theme().status().error.into()),
+                    ),
+                )
+            })
             .when_some(icon, |element, icon| {
                 element.child(
                     div()
