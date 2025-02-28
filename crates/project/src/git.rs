@@ -252,6 +252,8 @@ impl GitStore {
                     (job.job)(&mut cx).await;
                 } else if let Some(job) = job_rx.next().await {
                     jobs.push_back(job);
+                } else {
+                    break;
                 }
             }
         })
