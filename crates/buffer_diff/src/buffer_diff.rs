@@ -1554,7 +1554,10 @@ mod tests {
                     .hunks_intersecting_range(hunk_range.clone(), &buffer, &cx)
                     .collect::<Vec<_>>();
                 for hunk in &hunks {
-                    assert_eq!(hunk.secondary_status, DiffHunkSecondaryStatus::None)
+                    assert_eq!(
+                        hunk.secondary_status,
+                        DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
+                    )
                 }
 
                 pretty_assertions::assert_eq!(

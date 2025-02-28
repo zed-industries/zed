@@ -969,7 +969,7 @@ mod tests {
             path!("/project"),
             json!({
                 ".git": {},
-                "foo": "FOO\n",
+                "foo.txt": "FOO\n",
             }),
         )
         .await;
@@ -983,11 +983,15 @@ mod tests {
 
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("foo".into(), "foo\n".into())],
+            &[("foo.txt".into(), "foo\n".into())],
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("foo.txt".into(), "foo\n".into())],
         );
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.statuses = HashMap::from_iter([(
-                "foo".into(),
+                "foo.txt".into(),
                 TrackedStatus {
                     index_status: StatusCode::Unmodified,
                     worktree_status: StatusCode::Modified,
@@ -1018,7 +1022,7 @@ mod tests {
 
         assert_state_with_diff(&editor, cx, &"ˇ".unindent());
 
-        let text = String::from_utf8(fs.read_file_sync("/project/foo").unwrap()).unwrap();
+        let text = String::from_utf8(fs.read_file_sync("/project/foo.txt").unwrap()).unwrap();
         assert_eq!(text, "foo\n");
     }
 
