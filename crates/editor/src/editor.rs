@@ -13018,11 +13018,11 @@ impl Editor {
             self.fold_creases(to_fold, true, window, cx);
         } else {
             let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-
-            let buffer_ids: HashSet<_> = multi_buffer_snapshot
-                .ranges_to_buffer_ranges(self.selections.disjoint_anchor_ranges())
-                .map(|(snapshot, _, _)| snapshot.remote_id())
-                .collect();
+            let buffer_ids = self
+                .selections
+                .disjoint_anchor_ranges()
+                .flat_map(|range| multi_buffer_snapshot.buffer_ids_for_range(range))
+                .collect::<HashSet<_>>();
             for buffer_id in buffer_ids {
                 self.fold_buffer(buffer_id, cx);
             }
@@ -13195,10 +13195,11 @@ impl Editor {
             self.unfold_ranges(&ranges, true, true, cx);
         } else {
             let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-            let buffer_ids: HashSet<_> = multi_buffer_snapshot
-                .ranges_to_buffer_ranges(self.selections.disjoint_anchor_ranges())
-                .map(|(snapshot, _, _)| snapshot.remote_id())
-                .collect();
+            let buffer_ids = self
+                .selections
+                .disjoint_anchor_ranges()
+                .flat_map(|range| multi_buffer_snapshot.buffer_ids_for_range(range))
+                .collect::<HashSet<_>>();
             for buffer_id in buffer_ids {
                 self.unfold_buffer(buffer_id, cx);
             }
