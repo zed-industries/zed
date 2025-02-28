@@ -37,8 +37,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    prelude::*, vertical_divider, ButtonLike, Checkbox, ContextMenu, Divider, DividerColor,
-    ElevationIndex, ListItem, ListItemSpacing, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
+    prelude::*, ButtonLike, Checkbox, ContextMenu, Divider, DividerColor, ElevationIndex, ListItem,
+    ListItemSpacing, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
 use workspace::{
@@ -2140,51 +2140,6 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
-        // let all_repositories = self
-        //     .project
-        //     .read(cx)
-        //     .git_store()
-        //     .read(cx)
-        //     .all_repositories();
-
-        // let has_repo_above = all_repositories.iter().any(|repo| {
-        //     repo.read(cx)
-        //         .repository_entry
-        //         .work_directory
-        //         .is_above_project()
-        // });
-
-        // let has_visible_repo = all_repositories.len() > 0 || has_repo_above;
-
-        // if has_visible_repo {
-        //     Some(
-        //         self.panel_header_container(window, cx)
-        //             .child(
-        //                 Label::new("Repository")
-        //                     .size(LabelSize::Small)
-        //                     .color(Color::Muted),
-        //             )
-        //             .child(self.render_repository_selector(cx))
-        //             .child(div().flex_grow()) // spacer
-        //             .child(
-        //                 div()
-        //                     .h_flex()
-        //                     .gap_1()
-        //                     .children(self.render_spinner(cx))
-        //                     .children(self.render_sync_button(cx))
-        //                     .children(self.render_pull_button(cx))
-        //                     .child(
-        //                         Button::new("diff", "+/-")
-        //                             .tooltip(Tooltip::for_action_title("Open diff", &Diff))
-        //                             .on_click(|_, _, cx| {
-        //                                 cx.defer(|cx| {
-        //                                     cx.dispatch_action(&Diff);
-        //                                 })
-        //                             }),
-        //                     )
-        //             ),
-        //     )
-
         let project = self.project.clone().read(cx);
         let active_repository = self.active_repository.clone();
         let panel_editor_style = panel_editor_style(true, window, cx);
@@ -2223,123 +2178,54 @@ impl GitPanel {
 
             let branch = active_repo.read(cx).current_branch()?;
 
-            let branch_name = branch.name.clone();
-
-            let repo_display_name = active_repo
-                .read(cx)
-                .display_name(project, cx)
-                .trim_end_matches('/')
-                .to_string();
-
-            // let repo_or_branch_has_uppercase = repo_display_name.chars().any(|c| c.is_uppercase())
-            //     || branch.chars().any(|c| c.is_uppercase());
-
-            let repo_selector = Button::new("repo-selector", repo_display_name.clone())
-                .style(ButtonStyle::Transparent)
-                .size(ButtonSize::None)
-                .label_size(LabelSize::Small)
-                .color(Color::Muted)
-                .tooltip(Tooltip::for_action_title(
-                    "Switch Active Repository",
-                    &zed_actions::git::Branch,
-                ))
-                .on_click(cx.listener(|_, _, window, cx| {
-                    window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
-                }));
-
-            let branch_selector = Button::new("branch-selector", branch_name)
-                .style(ButtonStyle::Transparent)
-                .size(ButtonSize::None)
-                .label_size(LabelSize::Small)
-                .tooltip(Tooltip::for_action_title(
-                    "Switch Branch",
-                    &zed_actions::git::Branch,
-                ))
-                .on_click(cx.listener(|_, _, window, cx| {
-                    window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
-                }));
-
             let footer_size = px(32.);
-            let gap = px(16.0);
+            let gap = px(8.0);
 
-            let max_height = window.line_height() * 6. + gap + footer_size;
+            let max_height = window.line_height() * 5. + gap + footer_size;
 
-            let repo_header = h_flex()
-                .px_2()
-                .h(px(32.))
-                .justify_between()
+            let git_panel = cx.entity().clone();
+            let footer = v_flex()
+                .child(PanelRepoHeader::new(
+                    "header-button",
+                    active_repo.read(cx).display_name(project, cx),
+                    Some(branch.clone()),
+                    Some(git_panel),
+                ))
                 .child(
-                    h_flex()
+                    panel_editor_container(window, cx)
+                        .id("commit-editor-container")
                         .relative()
-                        .items_center()
-                        .gap_0p5()
-                        .child(
-                            div()
-                                // .when(repo_or_branch_has_uppercase, |this| {
-                                //     this.relative().pt(px(2.))
-                                // })
+                        .h(max_height)
+                        .w_full()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border)
+                        .bg(cx.theme().colors().editor_background)
+                        .cursor_text()
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            window.focus(&this.commit_editor.focus_handle(cx));
+                        }))
+                        .when(!self.modal_open, |el| {
+                            el.child(EditorElement::new(&self.commit_editor, panel_editor_style))
                                 .child(
-                                    Icon::new(IconName::GitBranchSmall)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted),
-                                ),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_0p5()
-                                .child(repo_selector)
-                                .child(
-                                    div()
-                                        .text_color(cx.theme().colors().text_muted)
-                                        .text_sm()
-                                        .child("/"),
+                                    h_flex()
+                                        .absolute()
+                                        .bottom_0()
+                                        .left_2()
+                                        .h(footer_size)
+                                        .flex_none(), // .child(branch_selector),
                                 )
-                                .child(branch_selector),
-                        ),
-                )
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .children(self.render_spinner())
-                        .child(self.render_overflow_menu())
-                        .child(self.render_push_button(branch, cx)),
+                                .child(
+                                    h_flex()
+                                        .absolute()
+                                        .bottom_0()
+                                        .right_2()
+                                        .h(footer_size)
+                                        .flex_none()
+                                        .children(enable_coauthors)
+                                        .child(commit_button),
+                                )
+                        }),
                 );
-
-            let footer = v_flex().child(repo_header).child(
-                panel_editor_container(window, cx)
-                    .id("commit-editor-container")
-                    .relative()
-                    .h(max_height)
-                    .w_full()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .bg(cx.theme().colors().editor_background)
-                    .cursor_text()
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        window.focus(&this.commit_editor.focus_handle(cx));
-                    }))
-                    .when(!self.modal_open, |el| {
-                        el.child(EditorElement::new(&self.commit_editor, panel_editor_style))
-                            .child(
-                                h_flex()
-                                    .absolute()
-                                    .bottom_0()
-                                    .left_2()
-                                    .h(footer_size)
-                                    .flex_none(), // .child(branch_selector),
-                            )
-                            .child(
-                                h_flex()
-                                    .absolute()
-                                    .bottom_0()
-                                    .right_2()
-                                    .h(footer_size)
-                                    .flex_none()
-                                    .children(enable_coauthors)
-                                    .child(commit_button),
-                            )
-                    }),
-            );
 
             Some(footer)
         } else {
@@ -2400,8 +2286,7 @@ impl GitPanel {
                             &git::Uncommit,
                         ))
                         .on_click(cx.listener(|this, _, window, cx| this.uncommit(window, cx))),
-                )
-                .child(self.render_push_button(branch, cx)),
+                ),
         )
     }
 
@@ -2952,7 +2837,6 @@ impl Render for GitPanel {
             .child(
                 v_flex()
                     .size_full()
-                    .children(self.render_panel_header(window, cx))
                     .map(|this| {
                         if has_entries {
                             this.child(self.render_entries(has_write_access, window, cx))
@@ -2960,9 +2844,8 @@ impl Render for GitPanel {
                             this.child(self.render_empty_state(cx).into_any_element())
                         }
                     })
-                    .children(self.render_previous_commit(cx))
-                    .child(self.render_commit_editor(window, cx))
                     .children(self.render_new_footer(window, cx))
+                    .children(self.render_previous_commit(cx))
                     .into_any_element(),
             )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
@@ -3117,20 +3000,49 @@ impl Render for GitPanelMessageTooltip {
     }
 }
 
+fn git_action_tooltip(
+    label: impl Into<SharedString>,
+    action: &dyn Action,
+    command: impl Into<SharedString>,
+    focus_handle: Option<FocusHandle>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyView {
+    let label = label.into();
+    let command = command.into();
+
+    if let Some(handle) = focus_handle {
+        Tooltip::with_meta_in(
+            label.clone(),
+            Some(action),
+            command.clone(),
+            &handle,
+            window,
+            cx,
+        )
+    } else {
+        Tooltip::with_meta(label.clone(), Some(action), command.clone(), window, cx)
+    }
+}
+
 #[derive(IntoElement)]
 struct SplitButton {
     pub left: ButtonLike,
-    pub right: ButtonLike,
+    pub right: AnyElement,
 }
 
 impl SplitButton {
     fn new(
+        id: impl Into<SharedString>,
         left_label: impl Into<SharedString>,
         ahead_count: usize,
         behind_count: usize,
         left_icon: Option<IconName>,
         left_on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+        tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) -> Self {
+        let id = id.into();
+
         fn count(count: usize) -> impl IntoElement {
             h_flex()
                 .ml_neg_px()
@@ -3147,47 +3059,45 @@ impl SplitButton {
 
         let should_render_counts = left_icon.is_none() && (ahead_count > 0 || behind_count > 0);
 
-        let left = ui::ButtonLike::new_rounded_left("split-button-left")
-            .layer(ui::ElevationIndex::ModalSurface)
-            .size(ui::ButtonSize::Compact)
-            .when(should_render_counts, |this| {
-                this.child(
-                    h_flex()
-                        .ml_neg_0p5()
-                        .mr_1()
-                        .when(behind_count > 0, |this| {
-                            this.child(Icon::new(IconName::ArrowDown).size(IconSize::XSmall))
-                                .child(count(behind_count))
-                        })
-                        .when(ahead_count > 0, |this| {
-                            this.child(Icon::new(IconName::ArrowUp).size(IconSize::XSmall))
-                                .child(count(ahead_count))
-                        }),
-                )
-            })
-            .when_some(left_icon, |this, left_icon| {
-                this.child(
-                    h_flex()
-                        .ml_neg_0p5()
-                        .mr_1()
-                        .child(Icon::new(left_icon).size(IconSize::XSmall)),
-                )
-            })
-            .child(
-                div()
-                    .child(Label::new(left_label).size(LabelSize::Small))
-                    .mr_0p5(),
+        let left = ui::ButtonLike::new_rounded_left(ElementId::Name(
+            format!("split-button-left-{}", id).into(),
+        ))
+        .layer(ui::ElevationIndex::ModalSurface)
+        .size(ui::ButtonSize::Compact)
+        .when(should_render_counts, |this| {
+            this.child(
+                h_flex()
+                    .ml_neg_0p5()
+                    .mr_1()
+                    .when(behind_count > 0, |this| {
+                        this.child(Icon::new(IconName::ArrowDown).size(IconSize::XSmall))
+                            .child(count(behind_count))
+                    })
+                    .when(ahead_count > 0, |this| {
+                        this.child(Icon::new(IconName::ArrowUp).size(IconSize::XSmall))
+                            .child(count(ahead_count))
+                    }),
             )
-            .on_click(left_on_click);
+        })
+        .when_some(left_icon, |this, left_icon| {
+            this.child(
+                h_flex()
+                    .ml_neg_0p5()
+                    .mr_1()
+                    .child(Icon::new(left_icon).size(IconSize::XSmall)),
+            )
+        })
+        .child(
+            div()
+                .child(Label::new(left_label).size(LabelSize::Small))
+                .mr_0p5(),
+        )
+        .on_click(left_on_click)
+        .tooltip(tooltip);
 
-        let right = ui::ButtonLike::new_rounded_right("split-button-right")
-            .layer(ui::ElevationIndex::ModalSurface)
-            .size(ui::ButtonSize::None)
-            .child(
-                div()
-                    .px_1()
-                    .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
-            );
+        let right =
+            render_git_action_menu(ElementId::Name(format!("split-button-right-{}", id).into()))
+                .into_any_element();
         // .on_click(right_on_click);
 
         Self { left, right }
@@ -3218,6 +3128,26 @@ impl RenderOnce for SplitButton {
     }
 }
 
+fn render_git_action_menu(id: impl Into<ElementId>) -> impl IntoElement {
+    PopoverMenu::new(id.into())
+        .trigger(
+            ui::ButtonLike::new_rounded_right("split-button-right")
+                .layer(ui::ElevationIndex::ModalSurface)
+                .size(ui::ButtonSize::None)
+                .child(
+                    div()
+                        .px_1()
+                        .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
+                ),
+        )
+        .menu(move |window, cx| {
+            Some(ContextMenu::build(window, cx, |context_menu, _, _| {
+                context_menu.action("Push", git::Push { options: None }.boxed_clone())
+            }))
+        })
+        .anchor(Corner::TopRight)
+}
+
 // TODO:
 //
 // https://www.figma.com/design/sKk3aa7XPwBoE8fdlgp7E8/Git-integration?node-id=1624-3032&t=jki6SC8bshbAhpOa-11
@@ -3235,14 +3165,42 @@ impl RenderOnce for SplitButton {
 #[derive(IntoElement, IntoComponent)]
 #[component(scope = "git_panel")]
 pub struct PanelRepoHeader {
-    pub active_repository: SharedString,
-    pub branch: Option<Branch>,
+    id: SharedString,
+    active_repository: SharedString,
+    branch: Option<Branch>,
+    // Getting a GitPanel in previews will be difficult.
+    //
+    // For now just take an option here, and we won't bind handlers to buttons in previews.
+    git_panel: Option<Entity<GitPanel>>,
 }
 
 impl PanelRepoHeader {
-    // fn render_spinner(&self, cx: &App) -> Option<impl IntoElement> {
-    //     self.git_panel.read(cx).render_spinner()
-    // }
+    pub fn new(
+        id: impl Into<SharedString>,
+        active_repository: SharedString,
+        branch: Option<Branch>,
+        git_panel: Option<Entity<GitPanel>>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            active_repository,
+            branch,
+            git_panel,
+        }
+    }
+
+    pub fn new_preview(
+        id: impl Into<SharedString>,
+        active_repository: SharedString,
+        branch: Option<Branch>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            active_repository,
+            branch,
+            git_panel: None,
+        }
+    }
 
     fn render_overflow_menu(&self, id: impl Into<ElementId>) -> impl IntoElement {
         PopoverMenu::new(id.into())
@@ -3255,83 +3213,183 @@ impl PanelRepoHeader {
             .anchor(Corner::TopRight)
     }
 
-    fn render_relevant_button(&self, branch: &Branch, cx: &mut App) -> impl IntoElement {
+    fn panel_focus_handle(&self, cx: &App) -> Option<FocusHandle> {
+        if let Some(git_panel) = self.git_panel.clone() {
+            Some(git_panel.focus_handle(cx))
+        } else {
+            None
+        }
+    }
+
+    // populate the secondary menu
+    // add a method for each split button
+    // port over all cases from git_panel
+    // add tooltips to left buttons
+    //  - This does a thing
+    //  - `git thing`
+
+    // fn render_push_button(&self, )
+    //
+    fn render_push_button(&self, id: SharedString, ahead: u32, cx: &mut App) -> SplitButton {
+        let panel_focus_handle = self.panel_focus_handle(cx);
+
+        SplitButton::new(
+            id,
+            "Push",
+            ahead as usize,
+            0,
+            None,
+            |_, _, cx| cx.dispatch_action(&git::Push { options: None }),
+            move |window, cx| {
+                git_action_tooltip(
+                    "Push commited changes to remote",
+                    // FIXME options
+                    &git::Push { options: None },
+                    "git push",
+                    panel_focus_handle.clone(),
+                    window,
+                    cx,
+                )
+            },
+        )
+    }
+
+    fn render_pull_button(
+        &self,
+        id: SharedString,
+        ahead: u32,
+        behind: u32,
+        cx: &mut App,
+    ) -> SplitButton {
+        let panel_focus_handle = self.panel_focus_handle(cx);
+
+        SplitButton::new(
+            id,
+            "Pull",
+            ahead as usize,
+            behind as usize,
+            None,
+            |_, _, cx| cx.dispatch_action(&git::Pull),
+            move |window, cx| {
+                git_action_tooltip(
+                    "Pull",
+                    &git::Pull,
+                    "git pull",
+                    panel_focus_handle.clone(),
+                    window,
+                    cx,
+                )
+            },
+        )
+    }
+
+    fn render_fetch_button(&self, id: SharedString, cx: &mut App) -> SplitButton {
+        let panel_focus_handle = self.panel_focus_handle(cx);
+
+        SplitButton::new(
+            id,
+            "Fetch",
+            0,
+            0,
+            Some(IconName::ArrowCircle),
+            |_, _, cx| cx.dispatch_action(&git::Fetch),
+            move |window, cx| {
+                git_action_tooltip(
+                    "Fetch updates from remote",
+                    &git::Fetch,
+                    "git fetch",
+                    panel_focus_handle.clone(),
+                    window,
+                    cx,
+                )
+            },
+        )
+    }
+
+    fn render_publish_button(&self, id: SharedString, cx: &mut App) -> SplitButton {
+        let panel_focus_handle = self.panel_focus_handle(cx);
+
+        SplitButton::new(
+            id,
+            "Publish",
+            0,
+            0,
+            Some(IconName::ArrowUpFromLine),
+            |_, _, cx| {
+                cx.dispatch_action(&git::Push {
+                    options: Some(PushOptions::SetUpstream),
+                })
+            },
+            move |window, cx| {
+                git_action_tooltip(
+                    "Publish branch to remote",
+                    &git::Push {
+                        options: Some(PushOptions::SetUpstream),
+                    },
+                    "git push --set-upstream",
+                    panel_focus_handle.clone(),
+                    window,
+                    cx,
+                )
+            },
+        )
+    }
+
+    fn render_republish_button(&self, id: SharedString, cx: &mut App) -> SplitButton {
+        let panel_focus_handle = self.panel_focus_handle(cx);
+
+        SplitButton::new(
+            id,
+            "Republish",
+            0,
+            0,
+            Some(IconName::ArrowUpFromLine),
+            |_, _, cx| {
+                cx.dispatch_action(&git::Push {
+                    options: Some(PushOptions::SetUpstream),
+                })
+            },
+            move |window, cx| {
+                git_action_tooltip(
+                    "Re-publish branch to remote",
+                    &git::Push {
+                        options: Some(PushOptions::SetUpstream),
+                    },
+                    "git push --set-upstream",
+                    panel_focus_handle.clone(),
+                    window,
+                    cx,
+                )
+            },
+        )
+    }
+
+    fn render_relevant_button(
+        &self,
+        id: impl Into<SharedString>,
+        branch: &Branch,
+        cx: &mut App,
+    ) -> impl IntoElement {
+        let id = id.into();
         let upstream = branch.upstream.as_ref();
         match upstream {
             Some(Upstream {
                 tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus { ahead, behind }),
                 ..
-            }) if *ahead > 0 && *behind == 0 => {
-                return SplitButton::new("Push", *ahead as usize, 0, None, |_, _, cx| {
-                    cx.dispatch_action(&git::Push { options: None })
-                })
+            }) => {
+                if *ahead > 0 && *behind == 0 {
+                    self.render_push_button(id, *ahead, cx)
+                } else {
+                    self.render_pull_button(id, *ahead, *behind, cx)
+                }
             }
             Some(Upstream {
-                tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus { ahead, behind }),
+                tracking: UpstreamTracking::Gone,
                 ..
-            }) if *ahead > 0 => {
-                return SplitButton::new(
-                    "Pull",
-                    *ahead as usize,
-                    *behind as usize,
-                    None,
-                    |_, _, cx| cx.dispatch_action(&git::Pull),
-                )
-            }
-            Some(Upstream {
-                tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus { behind, .. }),
-                ..
-            }) if *behind > 0 => {
-                return SplitButton::new("Pull", 0, *behind as usize, None, |_, _, cx| {
-                    cx.dispatch_action(&git::Pull)
-                })
-            }
-            _ => {
-                return SplitButton::new("Sync", 0, 0, Some(IconName::ArrowCircle), |_, _, cx| {
-                    cx.dispatch_action(&git::Fetch)
-                })
-            }
+            }) => self.render_republish_button(id, cx),
+            None => self.render_publish_button(id, cx),
         }
     }
-
-    // fn render_pull_button(&self, remote_change_count: u32, _cx: &mut App) -> impl IntoElement {
-
-    //     panel_filled_button(label)
-    //         .icon(IconName::ArrowDown)
-    //         .icon_size(IconSize::Small)
-    //         .icon_color(Color::Muted)
-    //         .icon_position(IconPosition::Start)
-    // }
-
-    // fn render_push_button(
-    //     &self,
-    //     local_change_count: u32,
-    //     remote_change_count: u32,
-    //     _cx: &mut App,
-    // ) -> impl IntoElement {
-    //     let label = if local_change_count > 0 {
-    //         if remote_change_count > 0 {
-    //             format!("Push/Pull ({}/{})", local_change_count, remote_change_count)
-    //         } else {
-    //             format!("Push ({})", local_change_count)
-    //         }
-    //     } else {
-    //         "Push".to_string()
-    //     };
-
-    //     panel_filled_button(label)
-    //         .icon(IconName::ArrowUp)
-    //         .icon_size(IconSize::Small)
-    //         .icon_color(Color::Muted)
-    //         .icon_position(IconPosition::Start)
-    // }
-    // fn render_sync_button(&self, _cx: &mut App) -> impl IntoElement {
-    //     panel_filled_button("Sync")
-    //         .icon(IconName::ArrowCircle)
-    //         .icon_size(IconSize::Small)
-    //         .icon_color(Color::Muted)
-    //         .icon_position(IconPosition::Start)
-    // }
 }
 
 impl RenderOnce for PanelRepoHeader {
@@ -3410,7 +3468,7 @@ impl RenderOnce for PanelRepoHeader {
                     .gap_1()
                     .child(self.render_overflow_menu(overflow_menu_id))
                     .when_some(branch, |this, branch| {
-                        let button = self.render_relevant_button(&branch, cx);
+                        let button = self.render_relevant_button(self.id.clone(), &branch, cx);
                         this.child(button)
                     }),
             )
@@ -3420,7 +3478,7 @@ impl RenderOnce for PanelRepoHeader {
 impl ComponentPreview for PanelRepoHeader {
     fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         let unknown_upstream = None;
-        let _no_remote_upstream = Some(UpstreamTracking::Gone);
+        let no_remote_upstream = Some(UpstreamTracking::Gone);
         let ahead_of_upstream = Some(
             UpstreamTrackingStatus {
                 ahead: 2,
@@ -3463,12 +3521,6 @@ impl ComponentPreview for PanelRepoHeader {
             format!("repo-{}", id).into()
         }
 
-        // TODO: Render cases based on the current state of the repo:
-        //
-        // - Unknown (sync)
-        // - Remote changes (pull + count if possible)
-        // - Local changes + Unknown Remote Changes OR Local changes + No Remote changes (push + count)
-        // - Local changes + Known Remote Changes (pull + up count + down count + resolution options in dropdown)
         v_flex()
             .gap_6()
             .children(vec![example_group_with_title(
@@ -3478,50 +3530,66 @@ impl ComponentPreview for PanelRepoHeader {
                         "No Branch",
                         div()
                             .w(px(180.))
-                            .child(PanelRepoHeader {
-                                active_repository: active_repository(1).clone(),
-                                branch: None,
-                            })
+                            .child(PanelRepoHeader::new_preview(
+                                "no-branch",
+                                active_repository(0).clone(),
+                                None,
+                            ))
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "No Remote Upstream",
+                        div()
+                            .w(px(180.))
+                            .child(PanelRepoHeader::new_preview(
+                                "no-remote-upstream",
+                                active_repository(1).clone(),
+                                Some(branch(no_remote_upstream)),
+                            ))
                             .into_any_element(),
                     ),
                     single_example(
                         "Remote status unknown",
                         div()
                             .w(px(180.))
-                            .child(PanelRepoHeader {
-                                active_repository: active_repository(2).clone(),
-                                branch: Some(branch(unknown_upstream)),
-                            })
+                            .child(PanelRepoHeader::new_preview(
+                                "unknown-upstream",
+                                active_repository(2).clone(),
+                                Some(branch(unknown_upstream)),
+                            ))
                             .into_any_element(),
                     ),
                     single_example(
-                        "Changes on remote",
+                        "Behind remote",
                         div()
                             .w(px(180.))
-                            .child(PanelRepoHeader {
-                                active_repository: active_repository(3).clone(),
-                                branch: Some(branch(behind_upstream)),
-                            })
+                            .child(PanelRepoHeader::new_preview(
+                                "behind-remote",
+                                active_repository(3).clone(),
+                                Some(branch(behind_upstream)),
+                            ))
                             .into_any_element(),
                     ),
                     single_example(
-                        "Changes on local",
+                        "Ahead of remote",
                         div()
                             .w(px(180.))
-                            .child(PanelRepoHeader {
-                                active_repository: active_repository(4).clone(),
-                                branch: Some(branch(ahead_of_upstream)),
-                            })
+                            .child(PanelRepoHeader::new_preview(
+                                "ahead-of-remote",
+                                active_repository(4).clone(),
+                                Some(branch(ahead_of_upstream)),
+                            ))
                             .into_any_element(),
                     ),
                     single_example(
-                        "Changes on both local and remote",
+                        "Ahead and behind remote",
                         div()
                             .w(px(180.))
-                            .child(PanelRepoHeader {
-                                active_repository: active_repository(5).clone(),
-                                branch: Some(branch(ahead_and_behind_upstream)),
-                            })
+                            .child(PanelRepoHeader::new_preview(
+                                "ahead-and-behind",
+                                active_repository(5).clone(),
+                                Some(branch(ahead_and_behind_upstream)),
+                            ))
                             .into_any_element(),
                     ),
                 ],
