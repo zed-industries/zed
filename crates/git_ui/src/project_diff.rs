@@ -1,6 +1,4 @@
-use std::any::{Any, TypeId};
-
-use ::git::UnstageAndNext;
+use crate::git_panel::{GitPanel, GitPanelAddon, GitStatusEntry};
 use anyhow::Result;
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::HashSet;
@@ -11,14 +9,17 @@ use editor::{
 };
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
-use git::{status::FileStatus, Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll};
+use git::{
+    status::FileStatus, Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
+};
 use gpui::{
     actions, Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity,
     EventEmitter, FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, Capability, OffsetRangeExt, Point};
+use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{git::GitStore, Project, ProjectPath};
+use std::any::{Any, TypeId};
 use theme::ActiveTheme;
 use ui::{prelude::*, vertical_divider, Tooltip};
 use util::ResultExt as _;
@@ -28,8 +29,6 @@ use workspace::{
     ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
 };
-
-use crate::git_panel::{GitPanel, GitPanelAddon, GitStatusEntry};
 
 actions!(git, [Diff]);
 
@@ -377,13 +376,10 @@ impl ProjectDiff {
 
         let snapshot = buffer.read(cx).snapshot();
         let diff = diff.read(cx);
-        let diff_hunk_ranges = if diff.base_text().is_none() {
-            vec![Point::zero()..snapshot.max_point()]
-        } else {
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-                .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
-                .collect::<Vec<_>>()
-        };
+        let diff_hunk_ranges = diff
+            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
+            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
+            .collect::<Vec<_>>();
 
         let is_excerpt_newly_added = self.multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.set_excerpts_for_path(

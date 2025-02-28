@@ -12404,7 +12404,7 @@ async fn test_addition_reverts(cx: &mut TestAppContext) {
                    struct Row9.2;
                    struct Row9.3;
                    struct Row10;"#},
-        vec![DiffHunkStatus::added_none(), DiffHunkStatus::added_none()],
+        vec![DiffHunkStatusKind::Added, DiffHunkStatusKind::Added],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row1.1;
@@ -12442,7 +12442,7 @@ async fn test_addition_reverts(cx: &mut TestAppContext) {
                    struct Row8;
                    struct Row9;
                    struct Row10;"#},
-        vec![DiffHunkStatus::added_none(), DiffHunkStatus::added_none()],
+        vec![DiffHunkStatusKind::Added, DiffHunkStatusKind::Added],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row2;
@@ -12489,11 +12489,11 @@ async fn test_addition_reverts(cx: &mut TestAppContext) {
                    «ˇ// something on bottom»
                    struct Row10;"#},
         vec![
-            DiffHunkStatus::added_none(),
-            DiffHunkStatus::added_none(),
-            DiffHunkStatus::added_none(),
-            DiffHunkStatus::added_none(),
-            DiffHunkStatus::added_none(),
+            DiffHunkStatusKind::Added,
+            DiffHunkStatusKind::Added,
+            DiffHunkStatusKind::Added,
+            DiffHunkStatusKind::Added,
+            DiffHunkStatusKind::Added,
         ],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
@@ -12541,10 +12541,7 @@ async fn test_modification_reverts(cx: &mut TestAppContext) {
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
-        vec![
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-        ],
+        vec![DiffHunkStatusKind::Modified, DiffHunkStatusKind::Modified],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -12571,10 +12568,7 @@ async fn test_modification_reverts(cx: &mut TestAppContext) {
                    struct Row99;
                    struct Row9;
                    struct Row10;"#},
-        vec![
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-        ],
+        vec![DiffHunkStatusKind::Modified, DiffHunkStatusKind::Modified],
         indoc! {r#"struct Row;
                    struct Row1;
                    struct Row33;
@@ -12603,12 +12597,12 @@ async fn test_modification_reverts(cx: &mut TestAppContext) {
                    struct Row9;
                    struct Row1011;ˇ"#},
         vec![
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
-            DiffHunkStatus::modified_none(),
+            DiffHunkStatusKind::Modified,
+            DiffHunkStatusKind::Modified,
+            DiffHunkStatusKind::Modified,
+            DiffHunkStatusKind::Modified,
+            DiffHunkStatusKind::Modified,
+            DiffHunkStatusKind::Modified,
         ],
         indoc! {r#"struct Row;
                    ˇstruct Row1;
@@ -12686,10 +12680,7 @@ struct Row10;"#};
                    ˇ
                    struct Row8;
                    struct Row10;"#},
-        vec![
-            DiffHunkStatus::deleted_none(),
-            DiffHunkStatus::deleted_none(),
-        ],
+        vec![DiffHunkStatusKind::Deleted, DiffHunkStatusKind::Deleted],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -12712,10 +12703,7 @@ struct Row10;"#};
                    ˇ»
                    struct Row8;
                    struct Row10;"#},
-        vec![
-            DiffHunkStatus::deleted_none(),
-            DiffHunkStatus::deleted_none(),
-        ],
+        vec![DiffHunkStatusKind::Deleted, DiffHunkStatusKind::Deleted],
         indoc! {r#"struct Row;
                    struct Row2;
 
@@ -12740,10 +12728,7 @@ struct Row10;"#};
 
                    struct Row8;ˇ
                    struct Row10;"#},
-        vec![
-            DiffHunkStatus::deleted_none(),
-            DiffHunkStatus::deleted_none(),
-        ],
+        vec![DiffHunkStatusKind::Deleted, DiffHunkStatusKind::Deleted],
         indoc! {r#"struct Row;
                    struct Row1;
                    ˇstruct Row2;
@@ -12768,9 +12753,9 @@ struct Row10;"#};
                    struct Row8;ˇ»
                    struct Row10;"#},
         vec![
-            DiffHunkStatus::deleted_none(),
-            DiffHunkStatus::deleted_none(),
-            DiffHunkStatus::deleted_none(),
+            DiffHunkStatusKind::Deleted,
+            DiffHunkStatusKind::Deleted,
+            DiffHunkStatusKind::Deleted,
         ],
         indoc! {r#"struct Row;
                    struct Row1;
@@ -16615,14 +16600,13 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
 #[track_caller]
 fn assert_hunk_revert(
     not_reverted_text_with_selections: &str,
-    expected_hunk_statuses_before: Vec<DiffHunkStatus>,
+    expected_hunk_statuses_before: Vec<DiffHunkStatusKind>,
     expected_reverted_text_with_selections: &str,
     base_text: &str,
     cx: &mut EditorLspTestContext,
 ) {
     cx.set_state(not_reverted_text_with_selections);
     cx.set_head_text(base_text);
-    cx.clear_index_text();
     cx.executor().run_until_parked();
 
     let actual_hunk_statuses_before = cx.update_editor(|editor, window, cx| {
@@ -16630,7 +16614,7 @@ fn assert_hunk_revert(
         let reverted_hunk_statuses = snapshot
             .buffer_snapshot
             .diff_hunks_in_range(0..snapshot.buffer_snapshot.len())
-            .map(|hunk| hunk.status())
+            .map(|hunk| hunk.status().kind)
             .collect::<Vec<_>>();
 
         editor.git_restore(&Default::default(), window, cx);

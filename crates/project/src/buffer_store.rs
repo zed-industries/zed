@@ -1486,14 +1486,15 @@ impl BufferStore {
                     diff_state.language = language;
                     diff_state.language_registry = language_registry;
 
-                    let diff = cx.new(|_| BufferDiff::new(&text_snapshot));
+                    let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                     match kind {
                         DiffKind::Unstaged => diff_state.unstaged_diff = Some(diff.downgrade()),
                         DiffKind::Uncommitted => {
                             let unstaged_diff = if let Some(diff) = diff_state.unstaged_diff() {
                                 diff
                             } else {
-                                let unstaged_diff = cx.new(|_| BufferDiff::new(&text_snapshot));
+                                let unstaged_diff =
+                                    cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                                 diff_state.unstaged_diff = Some(unstaged_diff.downgrade());
                                 unstaged_diff
                             };
@@ -2394,8 +2395,7 @@ impl BufferStore {
                 shared.diff = Some(diff.clone());
             }
         })?;
-        let staged_text =
-            diff.read_with(&cx, |diff, _| diff.base_text().map(|buffer| buffer.text()))?;
+        let staged_text = diff.read_with(&cx, |diff, _| diff.base_text_string())?;
         Ok(proto::OpenUnstagedDiffResponse { staged_text })
     }
 
@@ -2425,22 +2425,25 @@ impl BufferStore {
         diff.read_with(&cx, |diff, cx| {
             use proto::open_uncommitted_diff_response::Mode;
 
-            let staged_buffer = diff
-                .secondary_diff()
-                .and_then(|diff| diff.read(cx).base_text());
+            let unstaged_diff = diff.secondary_diff();
+            let index_snapshot = unstaged_diff.and_then(|diff| {
+                let diff = diff.read(cx);
+                diff.base_text_exists().then(|| diff.base_text())
+            });
 
             let mode;
             let staged_text;
             let committed_text;
-            if let Some(committed_buffer) = diff.base_text() {
-                committed_text = Some(committed_buffer.text());
-                if let Some(staged_buffer) = staged_buffer {
-                    if staged_buffer.remote_id() == committed_buffer.remote_id() {
+            if diff.base_text_exists() {
+                let committed_snapshot = diff.base_text();
+                committed_text = Some(committed_snapshot.text());
+                if let Some(index_text) = index_snapshot {
+                    if index_text.remote_id() == committed_snapshot.remote_id() {
                         mode = Mode::IndexMatchesHead;
                         staged_text = None;
                     } else {
                         mode = Mode::IndexAndHead;
-                        staged_text = Some(staged_buffer.text());
+                        staged_text = Some(index_text.text());
                     }
                 } else {
                     mode = Mode::IndexAndHead;
@@ -2449,7 +2452,7 @@ impl BufferStore {
             } else {
                 mode = Mode::IndexAndHead;
                 committed_text = None;
-                staged_text = staged_buffer.as_ref().map(|buffer| buffer.text());
+                staged_text = index_snapshot.as_ref().map(|buffer| buffer.text());
             }
 
             proto::OpenUncommittedDiffResponse {

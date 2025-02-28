@@ -1999,8 +1999,8 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     let id_1 = buffer_1.read_with(cx, |buffer, _| buffer.remote_id());
     let id_2 = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
-    let base_id_1 = diff_1.read_with(cx, |diff, _| diff.base_text().as_ref().unwrap().remote_id());
-    let base_id_2 = diff_2.read_with(cx, |diff, _| diff.base_text().as_ref().unwrap().remote_id());
+    let base_id_1 = diff_1.read_with(cx, |diff, _| diff.base_text().remote_id());
+    let base_id_2 = diff_2.read_with(cx, |diff, _| diff.base_text().remote_id());
 
     let buffer_lines = (0..=snapshot.max_row().0)
         .map(|row| {
@@ -2221,8 +2221,7 @@ impl ReferenceMultibuffer {
             let buffer = excerpt.buffer.read(cx);
             let buffer_range = excerpt.range.to_offset(buffer);
             let diff = self.diffs.get(&buffer.remote_id()).unwrap().read(cx);
-            // let diff = diff.snapshot.clone();
-            let base_buffer = diff.base_text().unwrap();
+            let base_buffer = diff.base_text();
 
             let mut offset = buffer_range.start;
             let mut hunks = diff

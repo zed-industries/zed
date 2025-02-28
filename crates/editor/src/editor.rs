@@ -7749,7 +7749,6 @@ impl Editor {
         let original_text = diff
             .read(cx)
             .base_text()
-            .as_ref()?
             .as_rope()
             .slice(hunk.diff_base_byte_range.clone());
         let buffer_snapshot = buffer.snapshot();
@@ -13580,22 +13579,20 @@ impl Editor {
         };
 
         let new_index_text = diff.update(cx, |diff, cx| {
-            if stage && !file_exists {
-                log::debug!("removing from index");
-                None
-            } else {
-                diff.stage_or_unstage_hunks(
-                    stage,
-                    hunks.map(|hunk| buffer_diff::DiffHunk {
+            diff.stage_or_unstage_hunks(
+                stage,
+                &hunks
+                    .map(|hunk| buffer_diff::DiffHunk {
                         buffer_range: hunk.buffer_range,
                         diff_base_byte_range: hunk.diff_base_byte_range,
                         secondary_status: hunk.secondary_status,
                         row_range: 0..0, // unused
-                    }),
-                    &buffer_snapshot,
-                    cx,
-                )
-            }
+                    })
+                    .collect::<Vec<_>>(),
+                &buffer_snapshot,
+                file_exists,
+                cx,
+            )
         });
 
         if file_exists {

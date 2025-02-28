@@ -5818,7 +5818,7 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             unstaged_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
-            &unstaged_diff.base_text().unwrap().text(),
+            &unstaged_diff.base_text().text(),
             &[(
                 2..3,
                 "",
@@ -5893,10 +5893,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     uncommitted_diff.read_with(cx, |diff, _| {
-        assert_eq!(
-            diff.base_text().and_then(|base| base.language().cloned()),
-            Some(language)
-        )
+        assert_eq!(diff.base_text().language().cloned(), Some(language))
     });
 
     cx.run_until_parked();
@@ -5941,7 +5938,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             uncommitted_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
-            &uncommitted_diff.base_text().unwrap().text(),
+            &uncommitted_diff.base_text().text(),
             &[(
                 2..3,
                 "",
