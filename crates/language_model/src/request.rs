@@ -1,4 +1,5 @@
 use std::io::{Cursor, Write};
+use std::sync::Arc;
 
 use crate::role::Role;
 use crate::{LanguageModelToolUse, LanguageModelToolUseId};
@@ -167,7 +168,7 @@ impl LanguageModelImage {
 pub struct LanguageModelToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub is_error: bool,
-    pub content: String,
+    pub content: Arc<str>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -199,15 +200,16 @@ pub struct LanguageModelRequestMessage {
 
 impl LanguageModelRequestMessage {
     pub fn string_contents(&self) -> String {
-        let mut string_buffer = String::new();
+        let mut buffer = String::new();
         for string in self.content.iter().filter_map(|content| match content {
-            MessageContent::Text(text) => Some(text),
-            MessageContent::ToolResult(tool_result) => Some(&tool_result.content),
+            MessageContent::Text(text) => Some(text.as_str()),
+            MessageContent::ToolResult(tool_result) => Some(tool_result.content.as_ref()),
             MessageContent::ToolUse(_) | MessageContent::Image(_) => None,
         }) {
-            string_buffer.push_str(string.as_str())
+            buffer.push_str(string);
         }
-        string_buffer
+
+        buffer
     }
 
     pub fn contents_empty(&self) -> bool {

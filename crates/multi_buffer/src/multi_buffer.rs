@@ -2399,7 +2399,7 @@ impl MultiBuffer {
         let snapshot = self.read(cx);
         let mut cursor = snapshot.diff_transforms.cursor::<usize>(&());
         let offset_range = range.to_offset(&snapshot);
-        cursor.seek(&offset_range.start, Bias::Right, &());
+        cursor.seek(&offset_range.start, Bias::Left, &());
         while let Some(item) = cursor.item() {
             if *cursor.start() >= offset_range.end && *cursor.start() > offset_range.start {
                 break;
@@ -4517,7 +4517,6 @@ impl MultiBufferSnapshot {
                     base_text_byte_range,
                     ..
                 }) => {
-                    let mut in_deleted_hunk = false;
                     if let Some(diff_base_anchor) = &anchor.diff_base_anchor {
                         if let Some(base_text) =
                             self.diffs.get(buffer_id).map(|diff| diff.base_text())
@@ -4532,16 +4531,12 @@ impl MultiBufferSnapshot {
                                             base_text_byte_range.start..base_text_offset,
                                         );
                                     position.add_assign(&position_in_hunk);
-                                    in_deleted_hunk = true;
                                 } else if at_transform_end {
                                     diff_transforms.next(&());
                                     continue;
                                 }
                             }
                         }
-                    }
-                    if !in_deleted_hunk {
-                        position = diff_transforms.end(&()).1 .0;
                     }
                 }
                 _ => {
@@ -6880,7 +6875,7 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for ExcerptOffset {
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for ExcerptOffset {
+impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for ExcerptOffset {
     fn cmp(&self, cursor_location: &ExcerptSummary, _: &()) -> cmp::Ordering {
         Ord::cmp(&self.value, &cursor_location.text.len)
     }
@@ -6892,7 +6887,7 @@ impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, Option<&'a Locator>> for Locat
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for Locator {
+impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for Locator {
     fn cmp(&self, cursor_location: &ExcerptSummary, _: &()) -> cmp::Ordering {
         Ord::cmp(self, &cursor_location.excerpt_locator)
     }
@@ -6966,16 +6961,16 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for ExcerptPoint {
     }
 }
 
-impl<'a, D: TextDimension + Ord>
-    sum_tree::SeekTarget<'a, DiffTransformSummary, DiffTransformSummary> for ExcerptDimension<D>
+impl<D: TextDimension + Ord> sum_tree::SeekTarget<'_, DiffTransformSummary, DiffTransformSummary>
+    for ExcerptDimension<D>
 {
     fn cmp(&self, cursor_location: &DiffTransformSummary, _: &()) -> cmp::Ordering {
         Ord::cmp(&self.0, &D::from_text_summary(&cursor_location.input))
     }
 }
 
-impl<'a, D: TextDimension + Ord>
-    sum_tree::SeekTarget<'a, DiffTransformSummary, (OutputDimension<D>, ExcerptDimension<D>)>
+impl<D: TextDimension + Ord>
+    sum_tree::SeekTarget<'_, DiffTransformSummary, (OutputDimension<D>, ExcerptDimension<D>)>
     for ExcerptDimension<D>
 {
     fn cmp(
@@ -7037,14 +7032,14 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for Point {
     }
 }
 
-impl<'a> MultiBufferRows<'a> {
+impl MultiBufferRows<'_> {
     pub fn seek(&mut self, MultiBufferRow(row): MultiBufferRow) {
         self.point = Point::new(row, 0);
         self.cursor.seek(&self.point);
     }
 }
 
-impl<'a> Iterator for MultiBufferRows<'a> {
+impl Iterator for MultiBufferRows<'_> {
     type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -7288,7 +7283,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
     }
 }
 
-impl<'a> MultiBufferBytes<'a> {
+impl MultiBufferBytes<'_> {
     fn consume(&mut self, len: usize) {
         self.range.start += len;
         self.chunk = &self.chunk[len..];
@@ -7335,7 +7330,7 @@ impl<'a> Iterator for MultiBufferBytes<'a> {
     }
 }
 
-impl<'a> io::Read for MultiBufferBytes<'a> {
+impl io::Read for MultiBufferBytes<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let len = cmp::min(buf.len(), self.chunk.len());
         buf[..len].copy_from_slice(&self.chunk[..len]);
@@ -7346,7 +7341,7 @@ impl<'a> io::Read for MultiBufferBytes<'a> {
     }
 }
 
-impl<'a> io::Read for ReversedMultiBufferBytes<'a> {
+impl io::Read for ReversedMultiBufferBytes<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let len = cmp::min(buf.len(), self.chunk.len());
         buf[..len].copy_from_slice(&self.chunk[..len]);

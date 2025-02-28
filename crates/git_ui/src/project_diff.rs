@@ -105,7 +105,7 @@ impl ProjectDiff {
         };
         if let Some(entry) = entry {
             project_diff.update(cx, |project_diff, cx| {
-                project_diff.scroll_to(entry, window, cx);
+                project_diff.move_to_entry(entry, window, cx);
             })
         }
     }
@@ -167,7 +167,7 @@ impl ProjectDiff {
         }
     }
 
-    pub fn scroll_to(
+    pub fn move_to_entry(
         &mut self,
         entry: GitStatusEntry,
         window: &mut Window,
@@ -188,16 +188,16 @@ impl ProjectDiff {
 
         let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
 
-        self.scroll_to_path(path_key, window, cx)
+        self.move_to_path(path_key, window, cx)
     }
 
-    fn scroll_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
+    fn move_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
             self.editor.update(cx, |editor, cx| {
                 editor.change_selections(Some(Autoscroll::focused()), window, cx, |s| {
                     s.select_ranges([position..position]);
                 })
-            })
+            });
         } else {
             self.pending_scroll = Some(path_key);
         }
@@ -280,6 +280,7 @@ impl ProjectDiff {
                 let snapshot = multibuffer.snapshot(cx);
                 let mut point = anchor.to_point(&snapshot);
                 point.row = (point.row + 1).min(snapshot.max_row().0);
+                point.column = 0;
 
                 let Some((_, buffer, _)) = self.multibuffer.read(cx).excerpt_containing(point, cx)
                 else {
@@ -381,21 +382,28 @@ impl ProjectDiff {
             .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
             .collect::<Vec<_>>();
 
-        let is_excerpt_newly_added = self.multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.set_excerpts_for_path(
+        let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
+            let was_empty = multibuffer.is_empty();
+            let is_newly_added = multibuffer.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
                 diff_hunk_ranges,
                 editor::DEFAULT_MULTIBUFFER_CONTEXT,
                 cx,
-            )
+            );
+            (was_empty, is_newly_added)
         });
 
-        if is_excerpt_newly_added && diff_buffer.file_status.is_deleted() {
-            self.editor.update(cx, |editor, cx| {
+        self.editor.update(cx, |editor, cx| {
+            if was_empty {
+                editor.change_selections(None, window, cx, |selections| {
+                    selections.select_ranges([0..0])
+                });
+            }
+            if is_excerpt_newly_added && diff_buffer.file_status.is_deleted() {
                 editor.fold_buffer(snapshot.text.remote_id(), cx)
-            });
-        }
+            }
+        });
 
         if self.multibuffer.read(cx).is_empty()
             && self
@@ -411,7 +419,7 @@ impl ProjectDiff {
             });
         }
         if self.pending_scroll.as_ref() == Some(&path_key) {
-            self.scroll_to_path(path_key, window, cx);
+            self.move_to_path(path_key, window, cx);
         }
     }
 
@@ -923,6 +931,8 @@ impl Render for ProjectDiffToolbar {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use collections::HashMap;
     use editor::test::editor_test_context::assert_state_with_diff;
     use git::status::{StatusCode, TrackedStatus};
@@ -991,13 +1001,13 @@ mod tests {
             cx,
             &"
                 - foo
-                + FOO
-                  ˇ"
+                + ˇFOO
+            "
             .unindent(),
         );
 
         editor.update_in(cx, |editor, window, cx| {
-            editor.restore_file(&Default::default(), window, cx);
+            editor.git_restore(&Default::default(), window, cx);
         });
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.statuses = HashMap::default();
@@ -1008,5 +1018,99 @@ mod tests {
 
         let text = String::from_utf8(fs.read_file_sync("/project/foo").unwrap()).unwrap();
         assert_eq!(text, "foo\n");
+    }
+
+    #[gpui::test]
+    async fn test_scroll_to_beginning_with_deletion(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "bar": "BAR\n",
+                "foo": "FOO\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("bar".into(), "bar\n".into()),
+                ("foo".into(), "foo\n".into()),
+            ],
+        );
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.statuses = HashMap::from_iter([
+                (
+                    "bar".into(),
+                    TrackedStatus {
+                        index_status: StatusCode::Unmodified,
+                        worktree_status: StatusCode::Modified,
+                    }
+                    .into(),
+                ),
+                (
+                    "foo".into(),
+                    TrackedStatus {
+                        index_status: StatusCode::Unmodified,
+                        worktree_status: StatusCode::Modified,
+                    }
+                    .into(),
+                ),
+            ]);
+        });
+        cx.run_until_parked();
+
+        let editor = cx.update_window_entity(&diff, |diff, window, cx| {
+            diff.move_to_path(
+                PathKey::namespaced(TRACKED_NAMESPACE, Path::new("foo").into()),
+                window,
+                cx,
+            );
+            diff.editor.clone()
+        });
+        assert_state_with_diff(
+            &editor,
+            cx,
+            &"
+                - bar
+                + BAR
+
+                - ˇfoo
+                + FOO
+            "
+            .unindent(),
+        );
+
+        let editor = cx.update_window_entity(&diff, |diff, window, cx| {
+            diff.move_to_path(
+                PathKey::namespaced(TRACKED_NAMESPACE, Path::new("bar").into()),
+                window,
+                cx,
+            );
+            diff.editor.clone()
+        });
+        assert_state_with_diff(
+            &editor,
+            cx,
+            &"
+                - ˇbar
+                + BAR
+
+                - foo
+                + FOO
+            "
+            .unindent(),
+        );
     }
 }

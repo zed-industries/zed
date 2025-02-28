@@ -12,6 +12,7 @@ use crate::{
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
+    inlay_hint_settings,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
@@ -19,10 +20,11 @@ use crate::{
     DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk,
     GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
-    InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt,
-    RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap, StickyHeaderExcerpt,
-    ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
-    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown,
+    PageUp, Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap,
+    StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR,
+    FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use client::ParticipantIndex;
@@ -505,6 +507,25 @@ impl EditorElement {
                     return;
                 }
                 editor.update(cx, |editor, cx| {
+                    let inlay_hint_settings = inlay_hint_settings(
+                        editor.selections.newest_anchor().head(),
+                        &editor.buffer.read(cx).snapshot(cx),
+                        cx,
+                    );
+
+                    if let Some(inlay_modifiers) = inlay_hint_settings
+                        .toggle_on_modifiers_press
+                        .as_ref()
+                        .filter(|modifiers| modifiers.modified())
+                    {
+                        editor.refresh_inlay_hints(
+                            InlayHintRefreshReason::ModifiersChanged(
+                                inlay_modifiers == &event.modifiers,
+                            ),
+                            cx,
+                        );
+                    }
+
                     if editor.hover_state.focused(window, cx) {
                         return;
                     }
