@@ -197,23 +197,23 @@ impl WindowsPlatform {
         }
     }
 
-    // fn handle_dock_action_event(&self) {
-    //     let mut lock = self.state.borrow_mut();
-    //     if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
-    //         let Some(action) = lock
-    //             .dock_menu_actions
-    //             .get(&action)
-    //             .map(|action| action.boxed_clone())
-    //         else {
-    //             lock.callbacks.app_menu_action = Some(callback);
-    //             log::error!("Dock menu {action} not found");
-    //             return;
-    //         };
-    //         drop(lock);
-    //         callback(&*action);
-    //         self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
-    //     }
-    // }
+    fn handle_dock_action_event(&self, action_idx: usize) {
+        let mut lock = self.state.borrow_mut();
+        if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
+            let Some(action) = lock
+                .dock_menu_actions
+                .get(&action_idx)
+                .map(|action| action.boxed_clone())
+            else {
+                lock.callbacks.app_menu_action = Some(callback);
+                log::error!("Dock menu for index {action_idx} not found");
+                return;
+            };
+            drop(lock);
+            callback(&*action);
+            self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
+        }
+    }
 
     // Returns true if the app should quit.
     fn handle_events(&self) -> bool {
@@ -222,7 +222,9 @@ impl WindowsPlatform {
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                 match msg.message {
                     WM_QUIT => return true,
-                    WM_GPUI_CLOSE_ONE_WINDOW | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => {
+                    WM_GPUI_CLOSE_ONE_WINDOW
+                    | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
+                    | WM_GPUI_DOCK_MENU_ACTION => {
                         if self.handle_gpui_evnets(msg.message, msg.wParam, msg.lParam, &msg) {
                             return true;
                         }
@@ -258,6 +260,7 @@ impl WindowsPlatform {
                 }
             }
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
+            WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             _ => unreachable!(),
         }
         false
@@ -661,27 +664,16 @@ impl Platform for WindowsPlatform {
         Task::ready(Err(anyhow!("register_url_scheme unimplemented")))
     }
 
-    fn perform_dock_menu_action(&self, action: String) {
-        println!("perform_dock_menu_action: {}", action);
-        // self.foreground_executor
-        //     .spawn(|| async {
-        let mut lock = self.state.borrow_mut();
-        if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
-            let Some(action) = lock
-                .dock_menu_actions
-                .get(&action)
-                .map(|action| action.boxed_clone())
-            else {
-                lock.callbacks.app_menu_action = Some(callback);
-                log::error!("Dock menu {action} not found");
-                return;
-            };
-            drop(lock);
-            callback(&*action);
-            self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
+    fn perform_dock_menu_action(&self, action: usize) {
+        unsafe {
+            PostThreadMessageW(
+                self.main_thread_id_win32,
+                WM_GPUI_DOCK_MENU_ACTION,
+                WPARAM(self.validation_number),
+                LPARAM(action as isize),
+            )
+            .log_err();
         }
-        // })
-        // .detach();
     }
 }
 

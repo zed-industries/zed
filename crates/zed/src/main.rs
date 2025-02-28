@@ -240,10 +240,6 @@ fn main() {
     };
     if failed_single_instance_check {
         println!("zed is already running");
-        #[cfg(target_os = "windows")]
-        if let Some(ref argument) = args.dock_action {
-            gpui::send_dock_action_message(argument);
-        }
         return;
     }
 
@@ -953,7 +949,7 @@ struct Args {
     /// To developers: If you want rename this argument, you must also update the `APP_DOCK_ACTION_ARGUMENT` constant
     /// in `crates\gpui\src\platform\dock_action.rs`.
     #[arg(long)]
-    dock_action: Option<String>,
+    dock_action: Option<usize>,
 
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
