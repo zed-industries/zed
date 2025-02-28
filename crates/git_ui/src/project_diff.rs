@@ -10,7 +10,7 @@ use editor::{
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
 use git::{
-    status::FileStatus, Commit, ShowCommitEditor, StageAll, StageAndNext, ToggleStaged, UnstageAll,
+    status::FileStatus, ShowCommitEditor, StageAll, StageAndNext, ToggleStaged, UnstageAll,
     UnstageAndNext,
 };
 use gpui::{
