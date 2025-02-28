@@ -4819,7 +4819,7 @@ impl Editor {
                                 buffer.range_to_buffer_ranges(range)
                             {
                                 ranges.extend(
-                                    project::search::SearchQuery::text(
+                                    language::search::SearchQuery::text(
                                         query.clone(),
                                         false,
                                         false,

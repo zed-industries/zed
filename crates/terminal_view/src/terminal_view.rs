@@ -12,8 +12,9 @@ use gpui::{
     FocusHandle, Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
     Pixels, Render, ScrollWheelEvent, Stateful, Styled, Subscription, Task, WeakEntity,
 };
+use language::search::SearchQuery;
 use persistence::TERMINAL_DB;
-use project::{search::SearchQuery, terminals::TerminalKind, Fs, Metadata, Project};
+use project::{terminals::TerminalKind, Fs, Metadata, Project};
 use schemars::JsonSchema;
 use terminal::{
     alacritty_terminal::{
@@ -1083,7 +1084,7 @@ fn regex_to_literal(regex: &str) -> String {
         .collect()
 }
 
-pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<RegexSearch> {
+pub fn regex_search_for_query(query: &language::search::SearchQuery) -> Option<RegexSearch> {
     let query = query.as_str();
     if query == "." {
         return None;

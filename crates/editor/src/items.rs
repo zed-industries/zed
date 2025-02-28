@@ -15,13 +15,13 @@ use gpui::{
     IntoElement, ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window,
 };
 use language::{
-    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, DiskState, Point,
-    SelectionGoal,
+    proto::serialize_anchor as serialize_text_anchor, search::SearchQuery, Bias, Buffer, CharKind,
+    DiskState, Point, SelectionGoal,
 };
 use lsp::DiagnosticSeverity;
 use project::{
-    lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery, Project,
-    ProjectItem as _, ProjectPath,
+    lsp_store::FormatTrigger, project_settings::ProjectSettings, Project, ProjectItem as _,
+    ProjectPath,
 };
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
@@ -1527,7 +1527,7 @@ impl SearchableItem for Editor {
 
     fn find_matches(
         &mut self,
-        query: Arc<project::search::SearchQuery>,
+        query: Arc<language::search::SearchQuery>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Vec<Range<Anchor>>> {

@@ -9,13 +9,13 @@ use fs::{FakeFs, Fs as _};
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{BackgroundExecutor, Entity, TestAppContext};
 use language::{
-    range_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, PointUtf16,
+    range_to_lsp,
+    search::{SearchQuery, SearchResult},
+    FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, PointUtf16,
 };
 use lsp::FakeLanguageServer;
 use pretty_assertions::assert_eq;
-use project::{
-    search::SearchQuery, search::SearchResult, Project, ProjectPath, DEFAULT_COMPLETION_CONTEXT,
-};
+use project::{Project, ProjectPath, DEFAULT_COMPLETION_CONTEXT};
 use rand::{
     distributions::{Alphanumeric, DistString},
     prelude::*,

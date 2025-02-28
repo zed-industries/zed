@@ -1,3 +1,5 @@
+pub mod search;
+
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},

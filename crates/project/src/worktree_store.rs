@@ -32,7 +32,8 @@ use worktree::{
     WorktreeSettings,
 };
 
-use crate::{search::SearchQuery, ProjectPath};
+use crate::ProjectPath;
+use language::search::SearchQuery;
 
 struct MatchingEntry {
     worktree_path: Arc<Path>,

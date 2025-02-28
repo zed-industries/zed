@@ -10,14 +10,12 @@ use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     language_settings::{language_settings, AllLanguageSettings},
+    search::{SearchQuery, SearchResult},
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
 };
 use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::{
-    search::{SearchQuery, SearchResult},
-    Project, ProjectPath,
-};
+use project::{Project, ProjectPath};
 use remote::SshRemoteClient;
 use serde_json::json;
 use settings::{initial_server_settings_content, Settings, SettingsLocation, SettingsStore};

@@ -1,9 +1,8 @@
+use crate::{Buffer, BufferSnapshot, CharKind};
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
-use client::proto;
 use fancy_regex::{Captures, Regex, RegexBuilder};
 use gpui::Entity;
-use language::{Buffer, BufferSnapshot, CharKind};
 use smol::future::yield_now;
 use std::{
     borrow::Cow,
@@ -52,6 +51,7 @@ impl SearchInputs {
         &self.buffers
     }
 }
+
 #[derive(Clone, Debug)]
 pub enum SearchQuery {
     Text {
@@ -158,30 +158,6 @@ impl SearchQuery {
         })
     }
 
-    pub fn from_proto(message: proto::SearchQuery) -> Result<Self> {
-        if message.regex {
-            Self::regex(
-                message.query,
-                message.whole_word,
-                message.case_sensitive,
-                message.include_ignored,
-                deserialize_path_matches(&message.files_to_include)?,
-                deserialize_path_matches(&message.files_to_exclude)?,
-                None, // search opened only don't need search remote
-            )
-        } else {
-            Self::text(
-                message.query,
-                message.whole_word,
-                message.case_sensitive,
-                message.include_ignored,
-                deserialize_path_matches(&message.files_to_include)?,
-                deserialize_path_matches(&message.files_to_exclude)?,
-                None, // search opened only don't need search remote
-            )
-        }
-    }
-
     pub fn with_replacement(mut self, new_replacement: String) -> Self {
         match self {
             Self::Text {
@@ -198,22 +174,7 @@ impl SearchQuery {
         }
     }
 
-    pub fn to_proto(&self) -> proto::SearchQuery {
-        proto::SearchQuery {
-            query: self.as_str().to_string(),
-            regex: self.is_regex(),
-            whole_word: self.whole_word(),
-            case_sensitive: self.case_sensitive(),
-            include_ignored: self.include_ignored(),
-            files_to_include: self.files_to_include().sources().join(","),
-            files_to_exclude: self.files_to_exclude().sources().join(","),
-        }
-    }
-
-    pub(crate) fn detect(
-        &self,
-        mut reader: BufReader<Box<dyn Read + Send + Sync>>,
-    ) -> Result<bool> {
+    pub fn detect(&self, mut reader: BufReader<Box<dyn Read + Send + Sync>>) -> Result<bool> {
         if self.as_str().is_empty() {
             return Ok(false);
         }
@@ -257,6 +218,7 @@ impl SearchQuery {
             }
         }
     }
+
     /// Replaces search hits if replacement is set. `text` is assumed to be a string that matches this `SearchQuery` exactly, without any leftovers on either side.
     pub fn replacement_for<'a>(&self, text: &'a str) -> Option<Cow<'a, str>> {
         match self {
@@ -453,6 +415,7 @@ impl SearchQuery {
             }
         }
     }
+
     pub fn as_inner(&self) -> &SearchInputs {
         match self {
             Self::Regex { inner, .. } | Self::Text { inner, .. } => inner,

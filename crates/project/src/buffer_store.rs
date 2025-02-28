@@ -1,6 +1,5 @@
 use crate::{
     lsp_store::OpenLspBufferHandle,
-    search::SearchQuery,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     ProjectItem as _, ProjectPath,
 };
@@ -16,6 +15,7 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
 use http_client::Url;
+use language::search::SearchQuery;
 use language::{
     proto::{
         deserialize_line_ending, deserialize_version, serialize_line_ending, serialize_version,

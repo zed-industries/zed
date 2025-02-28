@@ -31,6 +31,7 @@ use gpui::{
 use indexed_docs::IndexedDocsStore;
 use language::{
     language_settings::{all_language_settings, SoftWrap},
+    search::SearchQuery,
     BufferSnapshot, LspAdapterDelegate, ToOffset,
 };
 use language_model::{
@@ -3049,7 +3050,7 @@ impl SearchableItem for ContextEditor {
     fn replace(
         &mut self,
         identifier: &Self::Match,
-        query: &project::search::SearchQuery,
+        query: &SearchQuery,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3060,7 +3061,7 @@ impl SearchableItem for ContextEditor {
 
     fn find_matches(
         &mut self,
-        query: Arc<project::search::SearchQuery>,
+        query: Arc<SearchQuery>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Vec<Self::Match>> {

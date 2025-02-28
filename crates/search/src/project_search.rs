@@ -16,13 +16,12 @@ use gpui::{
     ParentElement, Point, Render, SharedString, Styled, Subscription, Task, TextStyle,
     UpdateGlobal, WeakEntity, Window,
 };
-use language::{Buffer, Language};
-use menu::Confirm;
-use project::{
+use language::{
     search::{SearchInputKind, SearchQuery},
-    search_history::SearchHistoryCursor,
-    Project, ProjectPath,
+    Buffer, Language,
 };
+use menu::Confirm;
+use project::{search_history::SearchHistoryCursor, Project, ProjectPath};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
@@ -276,10 +275,10 @@ impl ProjectSearch {
                 let mut buffers_with_ranges = Vec::with_capacity(results.len());
                 for result in results {
                     match result {
-                        project::search::SearchResult::Buffer { buffer, ranges } => {
+                        language::search::SearchResult::Buffer { buffer, ranges } => {
                             buffers_with_ranges.push((buffer, ranges));
                         }
-                        project::search::SearchResult::LimitReached => {
+                        language::search::SearchResult::LimitReached => {
                             limit_reached = true;
                         }
                     }

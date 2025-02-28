@@ -25,7 +25,6 @@ test-support = [
 ]
 
 [dependencies]
-aho-corasick.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 client.workspace = true
@@ -73,7 +72,6 @@ toml.workspace = true
 util.workspace = true
 url.workspace = true
 which.workspace = true
-fancy-regex.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

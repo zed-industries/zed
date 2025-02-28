@@ -25,6 +25,7 @@ use language::{
     language_settings::{
         AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
     },
+    search::{SearchQuery, SearchResult},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticEntry, FakeLspAdapter,
     Language, LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
 };
@@ -32,7 +33,6 @@ use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use project::{
     lsp_store::{FormatTrigger, LspFormatTarget},
-    search::{SearchQuery, SearchResult},
     DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
 };
 use rand::prelude::*;
