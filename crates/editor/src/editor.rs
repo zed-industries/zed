@@ -1031,6 +1031,7 @@ pub enum GotoDefinitionKind {
 
 #[derive(Debug, Clone)]
 enum InlayHintRefreshReason {
+    ModifiersChanged(bool),
     Toggle(bool),
     SettingsChange(InlayHintSettings),
     NewLinesShown,
@@ -1042,6 +1043,7 @@ enum InlayHintRefreshReason {
 impl InlayHintRefreshReason {
     fn description(&self) -> &'static str {
         match self {
+            Self::ModifiersChanged(_) => "modifiers changed",
             Self::Toggle(_) => "toggle",
             Self::SettingsChange(_) => "settings change",
             Self::NewLinesShown => "new lines shown",
@@ -3668,7 +3670,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.refresh_inlay_hints(
-            InlayHintRefreshReason::Toggle(!self.inlay_hint_cache.enabled),
+            InlayHintRefreshReason::Toggle(!self.inlay_hints_enabled()),
             cx,
         );
     }
@@ -3690,21 +3692,44 @@ impl Editor {
                 | InlayHintRefreshReason::ExcerptsRemoved(_)
         );
         let (invalidate_cache, required_languages) = match reason {
+            InlayHintRefreshReason::ModifiersChanged(enabled) => {
+                match self.inlay_hint_cache.modifiers_override(enabled) {
+                    Some(enabled) => {
+                        if enabled {
+                            (InvalidationStrategy::RefreshRequested, None)
+                        } else {
+                            self.splice_inlays(
+                                &self
+                                    .visible_inlay_hints(cx)
+                                    .iter()
+                                    .map(|inlay| inlay.id)
+                                    .collect::<Vec<InlayId>>(),
+                                Vec::new(),
+                                cx,
+                            );
+                            return;
+                        }
+                    }
+                    None => return,
+                }
+            }
             InlayHintRefreshReason::Toggle(enabled) => {
-                self.inlay_hint_cache.enabled = enabled;
-                if enabled {
-                    (InvalidationStrategy::RefreshRequested, None)
+                if self.inlay_hint_cache.toggle(enabled) {
+                    if enabled {
+                        (InvalidationStrategy::RefreshRequested, None)
+                    } else {
+                        self.splice_inlays(
+                            &self
+                                .visible_inlay_hints(cx)
+                                .iter()
+                                .map(|inlay| inlay.id)
+                                .collect::<Vec<InlayId>>(),
+                            Vec::new(),
+                            cx,
+                        );
+                        return;
+                    }
                 } else {
-                    self.inlay_hint_cache.clear();
-                    self.splice_inlays(
-                        &self
-                            .visible_inlay_hints(cx)
-                            .iter()
-                            .map(|inlay| inlay.id)
-                            .collect::<Vec<InlayId>>(),
-                        Vec::new(),
-                        cx,
-                    );
                     return;
                 }
             }
@@ -15839,11 +15864,12 @@ impl Editor {
         &mut self,
         event: FocusOutEvent,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         if event.blurred != self.focus_handle {
             self.last_focused_descendant = Some(event.blurred);
         }
+        self.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(false), cx);
     }
 
     pub fn handle_blur(&mut self, window: &mut Window, cx: &mut Context<Self>) {
