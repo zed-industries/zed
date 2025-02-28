@@ -239,6 +239,8 @@ impl DiagnosticsView {
 
                 let task_workspace = task_workspace.clone();
                 let task_project_path = task_project_path.clone();
+                let task_sec_workspace = task_workspace.clone();
+                let task_sec_project_path = task_project_path.clone();
                 item_idx += 1;
                 ListItem::new(item_idx)
                     .child(icon)
@@ -271,15 +273,8 @@ impl DiagnosticsView {
                             .unwrap_or_else(|| diag.diagnostic.message.clone()),
                     ))
                     .on_secondary_mouse_down(cx.listener(move |_, _, window, cx| {
-                        dbg!("dispatch action");
-                        // TODO
-                        // cx.dispatch_action(&actions::ToggleCodeActions {
-                        //     deployed_from_indicator: None,
-                        // });
-                    }))
-                    .on_click(cx.listener(move |_, click: &ClickEvent, window, cx| {
-                        let task_workspace = task_workspace.clone();
-                        let task_project_path = task_project_path.clone();
+                        let task_workspace = task_sec_workspace.clone();
+                        let task_project_path = task_sec_project_path.clone();
 
                         cx.spawn_in(window, |_diagnostic_view, mut cx| async move {
                             let open_path = task_workspace
@@ -300,7 +295,70 @@ impl DiagnosticsView {
                                 active_editor
                                     .downgrade()
                                     .update_in(&mut cx, |editor, window, cx| {
-                                        editor.go_to_singleton_buffer_point(point.start, window, cx)
+                                        editor.go_to_singleton_buffer_point(
+                                            point.start,
+                                            window,
+                                            cx,
+                                        );
+                                        window.dispatch_action(
+                                            Box::new(actions::ToggleCodeActions {
+                                                deployed_from_indicator: Some(
+                                                    editor::display_map::DisplayRow(
+                                                        point.start.row,
+                                                    ),
+                                                ),
+                                            }),
+                                            cx,
+                                        );
+                                    })
+                                    .log_err()?;
+                            }
+
+                            Some(())
+                        })
+                        .detach();
+                    }))
+                    .on_click(cx.listener(move |_, click: &ClickEvent, window, cx| {
+                        let task_workspace = task_workspace.clone();
+                        let task_project_path = task_project_path.clone();
+                        let platofm_key_pressed = click.modifiers().platform;
+                        cx.spawn_in(window, |_diagnostic_view, mut cx| async move {
+                            let open_path = task_workspace
+                                .update_in(&mut cx, |workspace, window, cx| {
+                                    workspace.open_path(
+                                        task_project_path.clone(),
+                                        None,
+                                        true,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .log_err()?
+                                .await
+                                .log_err()?;
+
+                            if let Some(active_editor) = open_path.downcast::<Editor>() {
+                                active_editor
+                                    .downgrade()
+                                    .update_in(&mut cx, |editor, window, cx| {
+                                        editor.go_to_singleton_buffer_point(
+                                            point.start,
+                                            window,
+                                            cx,
+                                        );
+
+                                        if platofm_key_pressed {
+                                            window.dispatch_action(
+                                                Box::new(actions::ToggleCodeActions {
+                                                    deployed_from_indicator: Some(
+                                                        editor::display_map::DisplayRow(
+                                                            point.start.row,
+                                                        ),
+                                                    ),
+                                                }),
+                                                cx,
+                                            );
+                                        }
                                     })
                                     .log_err()?;
                             }
