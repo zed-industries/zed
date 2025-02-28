@@ -601,10 +601,6 @@ impl Focusable for VariableList {
 
 impl Render for VariableList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.build_entries(cx);
-        // todo(debugger): We are reconstructing the variable list list state every frame
-        // which is very bad!! We should only reconstruct the variable list state when necessary.
-        // Will fix soon
         v_flex()
             .key_context("VariableList")
             .id("variable-list")

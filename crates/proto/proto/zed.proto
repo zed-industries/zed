@@ -3010,9 +3010,8 @@ message UpdateDebugAdapter {
     oneof variant {
         DebuggerThreadState thread_state = 5;
         DebuggerStackFrameList stack_frame_list = 6;
-
-        DebuggerModuleList modules = 8;
-        DapOutputEvent output_event = 9;
+        DebuggerModuleList modules = 7;
+        DapOutputEvent output_event = 8;
     }
 }
 

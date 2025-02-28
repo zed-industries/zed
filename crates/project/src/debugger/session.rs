@@ -11,12 +11,14 @@ use super::dap_command::{
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, IndexMap};
+use dap::adapters::{DebugAdapter, DebugAdapterBinary};
+use dap::OutputEventCategory;
 use dap::{
     adapters::{DapDelegate, DapStatus},
     client::{DebugAdapterClient, SessionId},
-    messages::{self, Events, Message},
+    messages::{Events, Message},
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, StackFrameId,
-    SteppingGranularity, StoppedEvent,
+    SteppingGranularity, StoppedEvent, VariableReference,
 };
 use dap_adapters::build_adapter;
 use futures::channel::oneshot;
@@ -136,10 +138,6 @@ struct LocalMode {
     client: Arc<DebugAdapterClient>,
 }
 
-enum _ReverseRequest {
-    RunInTerminal(),
-}
-
 fn client_source(abs_path: &Path) -> dap::Source {
     dap::Source {
         name: abs_path
@@ -158,6 +156,7 @@ fn client_source(abs_path: &Path) -> dap::Source {
 impl LocalMode {
     fn new(
         session_id: SessionId,
+        parent_session: Option<Entity<Session>>,
         breakpoints: Entity<BreakpointStore>,
         disposition: DebugAdapterConfig,
         delegate: DapAdapterDelegate,
@@ -165,40 +164,8 @@ impl LocalMode {
         cx: AsyncApp,
     ) -> Task<Result<(Self, Capabilities)>> {
         cx.spawn(move |mut cx| async move {
-            let adapter = build_adapter(&disposition.kind).await?;
-
-            let binary = cx.update(|cx| {
-                ProjectSettings::get_global(cx)
-                    .dap
-                    .get(&adapter.name())
-                    .and_then(|s| s.binary.as_ref().map(PathBuf::from))
-            })?;
-
-            let binary = match adapter
-                .get_binary(&delegate, &disposition, binary, &mut cx)
-                .await
-            {
-                Err(error) => {
-                    delegate.update_status(
-                        adapter.name(),
-                        DapStatus::Failed {
-                            error: error.to_string(),
-                        },
-                    );
-
-                    return Err(error);
-                }
-                Ok(mut binary) => {
-                    delegate.update_status(adapter.name(), DapStatus::None);
-
-                    let shell_env = delegate.shell_env().await;
-                    let mut envs = binary.envs.unwrap_or_default();
-                    envs.extend(shell_env);
-                    binary.envs = Some(envs);
-
-                    binary
-                }
-            };
+            let (adapter, binary) =
+                Self::get_adapter_binary(&disposition, delegate, &mut cx).await?;
 
             let (initialized_tx, initialized_rx) = oneshot::channel();
             let mut initialized_tx = Some(initialized_tx);
@@ -208,69 +175,145 @@ impl LocalMode {
                     return;
                 };
                 if let Events::Initialized(_) = **event {
-                    initialized_tx
-                        .take()
-                        .expect("To receive just one Initialized event")
-                        .send(())
-                        .ok();
+                    if let Some(tx) = initialized_tx.take() {
+                        tx.send(()).ok();
+                    }
                 } else {
                     messages_tx.unbounded_send(message).ok();
                 }
             });
+
             let client = Arc::new(
-                DebugAdapterClient::start(session_id, binary, message_handler, cx.clone()).await?,
+                if let Some(client) = parent_session
+                    .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
+                    .flatten()
+                {
+                    client
+                        .reconnect(session_id, binary, message_handler, cx.clone())
+                        .await?
+                } else {
+                    DebugAdapterClient::start(session_id, binary, message_handler, cx.clone())
+                        .await?
+                },
             );
-            let this = Self { client };
-            let capabilities = this
-                .request(
-                    Initialize {
-                        adapter_id: adapter.name().to_string().to_owned(),
-                    },
-                    cx.background_executor().clone(),
-                )
-                .await?;
+            let session = Self { client };
 
-            let mut raw = adapter.request_args(&disposition);
-            merge_json_value_into(disposition.initialize_args.unwrap_or(json!({})), &mut raw);
-
-            // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
-            let launch = this.request(Launch { raw }, cx.background_executor().clone());
-            let that = this.clone();
-            let breakpoints =
-                breakpoints.update(&mut cx, |this, cx| this.all_breakpoints(true, cx))?;
-            let caps = &capabilities;
-            let configuration_sequence = async move {
-                let _ = initialized_rx.await?;
-
-                let mut breakpoint_tasks = Vec::new();
-
-                for (path, breakpoints) in breakpoints {
-                    breakpoint_tasks.push(
-                        that.request(
-                            dap_command::SetBreakpoints {
-                                source: client_source(&path),
-                                breakpoints: breakpoints
-                                    .iter()
-                                    .map(|breakpoint| breakpoint.to_source_breakpoint())
-                                    .collect(),
-                            },
-                            cx.background_executor().clone(),
-                        ),
-                    );
-                }
-                let _ = futures::future::join_all(breakpoint_tasks).await;
-
-                if ConfigurationDone::is_supported(caps) {
-                    that.request(ConfigurationDone, cx.background_executor().clone())
-                        .await?;
-                }
-
-                anyhow::Result::<_, anyhow::Error>::Ok(())
-            };
-            let _ = futures::future::join(configuration_sequence, launch).await;
-
-            Ok((this, capabilities))
+            Self::initialize(
+                session,
+                adapter,
+                &disposition,
+                breakpoints,
+                initialized_rx,
+                &mut cx,
+            )
+            .await
         })
+    }
+
+    async fn get_adapter_binary(
+        disposition: &DebugAdapterConfig,
+        delegate: DapAdapterDelegate,
+        cx: &mut AsyncApp,
+    ) -> Result<(Arc<dyn DebugAdapter>, DebugAdapterBinary)> {
+        let adapter = build_adapter(&disposition.kind).await?;
+
+        let binary = cx.update(|cx| {
+            ProjectSettings::get_global(cx)
+                .dap
+                .get(&adapter.name())
+                .and_then(|s| s.binary.as_ref().map(PathBuf::from))
+        })?;
+
+        let binary = match adapter
+            .get_binary(&delegate, &disposition, binary, cx)
+            .await
+        {
+            Err(error) => {
+                delegate.update_status(
+                    adapter.name(),
+                    DapStatus::Failed {
+                        error: error.to_string(),
+                    },
+                );
+
+                return Err(error);
+            }
+            Ok(mut binary) => {
+                delegate.update_status(adapter.name(), DapStatus::None);
+
+                let shell_env = delegate.shell_env().await;
+                let mut envs = binary.envs.unwrap_or_default();
+                envs.extend(shell_env);
+                binary.envs = Some(envs);
+
+                binary
+            }
+        };
+
+        Ok((adapter, binary))
+    }
+
+    async fn initialize(
+        this: Self,
+        adapter: Arc<dyn DebugAdapter>,
+        disposition: &DebugAdapterConfig,
+        breakpoints: Entity<BreakpointStore>,
+        initialized_rx: oneshot::Receiver<()>,
+        cx: &mut AsyncApp,
+    ) -> Result<(Self, Capabilities)> {
+        let capabilities = this
+            .request(
+                Initialize {
+                    adapter_id: adapter.name().to_string().to_owned(),
+                },
+                cx.background_executor().clone(),
+            )
+            .await?;
+
+        let mut raw = adapter.request_args(disposition);
+        merge_json_value_into(
+            disposition.initialize_args.clone().unwrap_or(json!({})),
+            &mut raw,
+        );
+
+        // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
+        let launch = this.request(Launch { raw }, cx.background_executor().clone());
+        let that = this.clone();
+        let breakpoints = breakpoints.update(cx, |this, cx| this.all_breakpoints(true, cx))?;
+
+        let configuration_done_supported = ConfigurationDone::is_supported(&capabilities);
+        let configuration_sequence = async move {
+            let _ = initialized_rx.await?;
+
+            let mut breakpoint_tasks = Vec::new();
+
+            for (path, breakpoints) in breakpoints.iter() {
+                breakpoint_tasks.push(
+                    that.request(
+                        dap_command::SetBreakpoints {
+                            source: client_source(&path),
+                            breakpoints: breakpoints
+                                .iter()
+                                .map(|breakpoint| breakpoint.to_source_breakpoint())
+                                .collect(),
+                        },
+                        cx.background_executor().clone(),
+                    ),
+                );
+            }
+            let _ = futures::future::join_all(breakpoint_tasks).await;
+
+            if configuration_done_supported {
+                that.request(ConfigurationDone, cx.background_executor().clone())
+                    .await?;
+            }
+
+            anyhow::Result::<_, anyhow::Error>::Ok(())
+        };
+
+        let _ = futures::future::join(configuration_sequence, launch).await;
+
+        Ok((this, capabilities))
     }
 
     fn request<R: LocalDapCommand>(
@@ -372,14 +415,13 @@ impl ThreadStates {
     }
 }
 
-type VariablesReference = u64;
-
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
 pub struct Session {
     mode: Mode,
     config: DebugAdapterConfig,
     pub(super) capabilities: Capabilities,
     id: SessionId,
+    parent_id: Option<SessionId>,
     breakpoint_store: Entity<BreakpointStore>,
     ignore_breakpoints: bool,
     modules: Vec<dap::Module>,
@@ -387,7 +429,7 @@ pub struct Session {
     last_processed_output: usize,
     output: Vec<dap::OutputEvent>,
     threads: IndexMap<ThreadId, Thread>,
-    variables: HashMap<VariablesReference, Vec<dap::Variable>>,
+    variables: HashMap<VariableReference, Vec<dap::Variable>>,
     stack_frames: IndexMap<StackFrameId, StackFrame>,
     thread_states: ThreadStates,
     is_session_terminated: bool,
@@ -483,6 +525,7 @@ impl Session {
     pub(crate) fn local(
         breakpoints: Entity<BreakpointStore>,
         session_id: SessionId,
+        parent_session: Option<Entity<Session>>,
         delegate: DapAdapterDelegate,
         config: DebugAdapterConfig,
         start_debugging_requests_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
@@ -493,6 +536,7 @@ impl Session {
         cx.spawn(move |mut cx| async move {
             let (mode, capabilities) = LocalMode::new(
                 session_id,
+                parent_session.clone(),
                 breakpoints.clone(),
                 config.clone(),
                 delegate,
@@ -524,6 +568,7 @@ impl Session {
                 Self {
                     mode: Mode::Local(mode),
                     id: session_id,
+                    parent_id: parent_session.map(|session| session.read(cx).id),
                     breakpoint_store: breakpoints,
                     variables: Default::default(),
                     config,
@@ -545,39 +590,43 @@ impl Session {
     }
 
     pub(crate) fn remote(
-        _session_id: SessionId,
-        _client: AnyProtoClient,
-        _upstream_project_id: u64,
-        _breakpoint_store: Entity<BreakpointStore>,
-        _ignore_breakpoints: bool,
+        session_id: SessionId,
+        client: AnyProtoClient,
+        upstream_project_id: u64,
+        breakpoint_store: Entity<BreakpointStore>,
+        ignore_breakpoints: bool,
     ) -> Self {
-        // Self {
-        //     mode: Mode::Remote(RemoteConnection {
-        //         client,
-        //         upstream_project_id,
-        //     }),
-        //     id: session_id,
-        //     capabilities: Capabilities::default(),
-        //     breakpoint_store,
-        //     ignore_breakpoints,
-        //     variables: Default::default(),
-        //     stack_frames: IndexMap::default(),
-        //     thread_states: ThreadStates::default(),
-        //     last_processed_output: 0,
-        //     output: Vec::default(),
-        //     requests: HashMap::default(),
-        //     modules: Vec::default(),
-        //     loaded_sources: Vec::default(),
-        //     threads: IndexMap::default(),
-        //     _background_tasks: Vec::default(),
-        //     is_session_terminated: false,
-        //     config: todo!(),
-        // }
-        todo!()
+        Self {
+            mode: Mode::Remote(RemoteConnection {
+                client,
+                upstream_project_id,
+            }),
+            id: session_id,
+            parent_id: None,
+            capabilities: Capabilities::default(),
+            breakpoint_store,
+            ignore_breakpoints,
+            variables: Default::default(),
+            stack_frames: Default::default(),
+            thread_states: ThreadStates::default(),
+            last_processed_output: 0,
+            output: Vec::default(),
+            requests: HashMap::default(),
+            modules: Vec::default(),
+            loaded_sources: Vec::default(),
+            threads: IndexMap::default(),
+            _background_tasks: Vec::default(),
+            config: todo!(),
+            is_session_terminated: false,
+        }
     }
 
     pub fn session_id(&self) -> SessionId {
         self.id
+    }
+
+    pub fn parent_id(&self) -> Option<SessionId> {
+        self.parent_id
     }
 
     pub fn capabilities(&self) -> &Capabilities {
@@ -596,6 +645,13 @@ impl Session {
         matches!(self.mode, Mode::Local(_))
     }
 
+    fn as_local(&self) -> Option<&LocalMode> {
+        match &self.mode {
+            Mode::Local(local_mode) => Some(local_mode),
+            Mode::Remote(_) => None,
+        }
+    }
+
     pub fn output(&self) -> Vec<dap::OutputEvent> {
         self.output.iter().cloned().collect()
     }
@@ -606,6 +662,23 @@ impl Session {
 
     pub fn set_last_processed_output(&mut self, last_processed_output: usize) {
         self.last_processed_output = last_processed_output;
+    }
+
+    pub(crate) fn respond_to_client(
+        &self,
+        response: dap::messages::Response,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some(local_session) = self.as_local().cloned() else {
+            unreachable!("Cannot respond to remote client");
+        };
+
+        cx.background_spawn(async move {
+            local_session
+                .client
+                .send_message(Message::Response(response))
+                .await
+        })
     }
 
     fn handle_stopped_event(&mut self, event: StoppedEvent, cx: &mut Context<Self>) {
@@ -657,6 +730,14 @@ impl Session {
                 self.invalidate_state(&ThreadsCommand.into());
             }
             Events::Output(event) => {
+                if event
+                    .category
+                    .as_ref()
+                    .is_some_and(|category| *category == OutputEventCategory::Telemetry)
+                {
+                    return;
+                }
+
                 self.output.push(event);
             }
             Events::Breakpoint(_) => {}
@@ -678,18 +759,6 @@ impl Session {
             Events::Invalidated(_) => {}
             Events::Other(_) => {}
         }
-    }
-
-    fn _handle_start_debugging_request(&mut self, _request: messages::Request) {}
-
-    fn _handle_run_in_terminal_request(&mut self, _request: messages::Request) {}
-
-    pub(crate) fn _wait_for_request<R: DapCommand + PartialEq + Eq + Hash>(
-        &self,
-        request: R,
-    ) -> Option<Shared<Task<Option<()>>>> {
-        let request_slot = RequestSlot::from(request);
-        self.requests.get(&request_slot).cloned()
     }
 
     /// Ensure that there's a request in flight for the given command, and if not, send it. Use this to run requests that are idempotent.
@@ -944,8 +1013,8 @@ impl Session {
         }
     }
 
-    pub(super) fn shutdown(&mut self, cx: &mut Context<Self>) {
-        if self
+    pub(super) fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let task = if self
             .capabilities
             .supports_terminate_request
             .unwrap_or_default()
@@ -957,7 +1026,6 @@ impl Session {
                 Self::empty_response,
                 cx,
             )
-            .detach();
         } else {
             self.request(
                 DisconnectCommand {
@@ -968,8 +1036,11 @@ impl Session {
                 Self::empty_response,
                 cx,
             )
-            .detach();
-        }
+        };
+
+        cx.background_spawn(async move {
+            let _ = task.await;
+        })
     }
 
     pub fn completions(
@@ -1105,15 +1176,6 @@ impl Session {
         self.request(command, Self::empty_response, cx).detach();
     }
 
-    pub fn handle_loaded_source_event(
-        &mut self,
-        _: &dap::LoadedSourceEvent,
-        cx: &mut Context<Self>,
-    ) {
-        self.invalidate_state(&LoadedSourcesCommand.into());
-        cx.notify();
-    }
-
     pub fn stack_frames(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) -> Vec<StackFrame> {
         if self.thread_states.thread_status(thread_id) == ThreadStatus::Stopped {
             self.fetch(
@@ -1195,7 +1257,7 @@ impl Session {
     #[allow(clippy::too_many_arguments)]
     pub fn variables(
         &mut self,
-        variables_reference: VariablesReference,
+        variables_reference: VariableReference,
         cx: &mut Context<Self>,
     ) -> Vec<dap::Variable> {
         let command = VariablesCommand {

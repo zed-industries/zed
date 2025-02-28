@@ -8,7 +8,7 @@ use super::{
     // },
     session::{self, Session},
 };
-use crate::{debugger, ProjectEnvironment, ProjectPath};
+use crate::{debugger, worktree_store::WorktreeStore, ProjectEnvironment, ProjectPath};
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
@@ -47,7 +47,7 @@ use std::{
 };
 use std::{collections::VecDeque, sync::atomic::AtomicU32};
 use task::{AttachConfig, DebugAdapterConfig, DebugRequestType};
-use util::{merge_json_value_into, ResultExt as _};
+use util::ResultExt as _;
 use worktree::Worktree;
 
 pub enum DapStoreEvent {
@@ -86,109 +86,6 @@ impl LocalDapStore {
     fn next_session_id(&self) -> SessionId {
         SessionId(self.next_session_id.fetch_add(1, SeqCst))
     }
-    pub fn respond_to_start_debugging(
-        &mut self,
-        session: &Entity<Session>,
-        seq: u64,
-        args: Option<StartDebuggingRequestArguments>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let config = session.read(cx).configuration();
-
-        let request_args = args.unwrap_or_else(|| StartDebuggingRequestArguments {
-            configuration: config.initialize_args.clone().unwrap_or_default(),
-            request: match config.request {
-                DebugRequestType::Launch => StartDebuggingRequestArgumentsRequest::Launch,
-                DebugRequestType::Attach(_) => StartDebuggingRequestArgumentsRequest::Attach,
-            },
-        });
-
-        // Merge the new configuration over the existing configuration
-        let mut initialize_args = config.initialize_args.clone().unwrap_or_default();
-        merge_json_value_into(request_args.configuration, &mut initialize_args);
-
-        let new_config = DebugAdapterConfig {
-            label: config.label.clone(),
-            kind: config.kind.clone(),
-            request: match &request_args.request {
-                StartDebuggingRequestArgumentsRequest::Launch => DebugRequestType::Launch,
-                StartDebuggingRequestArgumentsRequest::Attach => DebugRequestType::Attach(
-                    if let DebugRequestType::Attach(attach_config) = &config.request {
-                        attach_config.clone()
-                    } else {
-                        AttachConfig::default()
-                    },
-                ),
-            },
-            program: config.program.clone(),
-            cwd: config.cwd.clone(),
-            initialize_args: Some(initialize_args),
-            supports_attach: true,
-        };
-
-        cx.spawn(|this, mut cx| async move {
-            let (_success, _body) = {
-                let reconnect_task = this.update(&mut cx, |_store, _cx| {
-                    #[allow(unreachable_code)]
-                    if !unimplemented!("client.adapter().supports_attach()")
-                        && matches!(new_config.request, DebugRequestType::Attach(_))
-                    {
-                        Task::<Result<()>>::ready(Err(anyhow!(
-                            "Debug adapter does not support `attach` request"
-                        )))
-                    } else {
-                        unimplemented!(
-                            "store.reconnect_client(client.binary().clone(), new_config, cx)"
-                        );
-                    }
-                });
-
-                match reconnect_task {
-                    Ok(task) => match task.await {
-                        Ok(_) => (true, None),
-                        Err(error) => (
-                            false,
-                            Some(serde_json::to_value(ErrorResponse {
-                                error: Some(dap::Message {
-                                    id: seq,
-                                    format: error.to_string(),
-                                    variables: None,
-                                    send_telemetry: None,
-                                    show_user: None,
-                                    url: None,
-                                    url_label: None,
-                                }),
-                            })?),
-                        ),
-                    },
-                    Err(error) => (
-                        false,
-                        Some(serde_json::to_value(ErrorResponse {
-                            error: Some(dap::Message {
-                                id: seq,
-                                format: error.to_string(),
-                                variables: None,
-                                send_telemetry: None,
-                                show_user: None,
-                                url: None,
-                                url_label: None,
-                            }),
-                        })?),
-                    ),
-                }
-            };
-            unimplemented!();
-            /*client
-            .send_message(Message::Response(Response {
-                seq,
-                body,
-                success,
-                request_seq: seq,
-                command: StartDebugging::COMMAND.to_string(),
-            }))
-            .await*/
-        })
-    }
 }
 
 pub struct RemoteDapStore {
@@ -201,6 +98,7 @@ pub struct DapStore {
     mode: DapStoreMode,
     downstream_client: Option<(AnyProtoClient, u64)>,
     breakpoint_store: Entity<BreakpointStore>,
+    worktree_store: Entity<WorktreeStore>,
     active_debug_line: Option<(SessionId, ProjectPath, u32)>,
     sessions: BTreeMap<SessionId, Entity<Session>>,
 }
@@ -240,6 +138,7 @@ impl DapStore {
         environment: Entity<ProjectEnvironment>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         breakpoint_store: Entity<BreakpointStore>,
+        worktree_store: Entity<WorktreeStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.on_app_quit(Self::shutdown_sessions).detach();
@@ -248,21 +147,102 @@ impl DapStore {
             futures::channel::mpsc::unbounded::<(SessionId, Message)>();
 
         let _start_debugging_task = cx.spawn(move |this, mut cx| async move {
-            while let Some((_session_id, message)) = message_rx.next().await {
+            while let Some((session_id, message)) = message_rx.next().await {
                 match message {
                     Message::Request(request) => {
-                        this.update(&mut cx, |_this, _cx| {
-                            if request.command == StartDebugging::COMMAND {
-                                // this.sessions.get(1).update(|session, cx| {
-                                //     session.child(session_id, cx);
-                                // });
+                        let _ = this
+                            .update(&mut cx, |this, cx| {
+                                if request.command == StartDebugging::COMMAND {
+                                    let Some(parent_session) = this.session_by_id(session_id)
+                                    else {
+                                        return;
+                                    };
 
-                                // this.new_session(config, worktree, cx)
-                            } else if request.command == RunInTerminal::COMMAND {
-                                // spawn terminal
-                            }
-                        })
-                        .log_err();
+                                    let args =
+                                        serde_json::from_value::<StartDebuggingRequestArguments>(
+                                            request.arguments.unwrap_or_default(),
+                                        )
+                                        .expect("To parse StartDebuggingRequestArguments");
+
+                                    let worktree = this
+                                        .worktree_store
+                                        .update(cx, |this, _| this.worktrees().next())
+                                        .expect("worktree-less project");
+
+                                    let config = parent_session.read(cx).configuration();
+                                    let new_session_task = this.new_session(
+                                        DebugAdapterConfig {
+                                            label: config.label,
+                                            kind: config.kind,
+                                            request: match &args.request {
+                                                StartDebuggingRequestArgumentsRequest::Launch => {
+                                                    DebugRequestType::Launch
+                                                }
+                                                StartDebuggingRequestArgumentsRequest::Attach => {
+                                                    DebugRequestType::Attach(
+                                                        if let DebugRequestType::Attach(
+                                                            attach_config,
+                                                        ) = &config.request
+                                                        {
+                                                            attach_config.clone()
+                                                        } else {
+                                                            AttachConfig::default()
+                                                        },
+                                                    )
+                                                }
+                                            },
+                                            program: config.program,
+                                            cwd: config.cwd,
+                                            initialize_args: Some(args.configuration),
+                                            supports_attach: config.supports_attach,
+                                        },
+                                        &worktree,
+                                        Some(parent_session.clone()),
+                                        cx,
+                                    );
+
+                                    let request_seq = request.seq;
+                                    cx.spawn(|_this, mut cx| async move {
+                                        let (success, body) = match new_session_task.await {
+                                            Ok(_) => (true, None),
+                                            Err(error) => (
+                                                false,
+                                                Some(serde_json::to_value(ErrorResponse {
+                                                    error: Some(dap::Message {
+                                                        id: request_seq,
+                                                        format: error.to_string(),
+                                                        variables: None,
+                                                        send_telemetry: None,
+                                                        show_user: None,
+                                                        url: None,
+                                                        url_label: None,
+                                                    }),
+                                                })?),
+                                            ),
+                                        };
+
+                                        parent_session
+                                            .update(&mut cx, |session, cx| {
+                                                session.respond_to_client(
+                                                    dap::messages::Response {
+                                                        seq: request_seq + 1,
+                                                        request_seq,
+                                                        success,
+                                                        command: StartDebugging::COMMAND
+                                                            .to_string(),
+                                                        body,
+                                                    },
+                                                    cx,
+                                                )
+                                            })?
+                                            .await
+                                    })
+                                    .detach_and_log_err(cx);
+                                } else if request.command == RunInTerminal::COMMAND {
+                                    // spawn terminal
+                                }
+                            })
+                            .log_err();
                     }
                     _ => {}
                 }
@@ -283,6 +263,7 @@ impl DapStore {
             downstream_client: None,
             active_debug_line: None,
             breakpoint_store,
+            worktree_store,
             sessions: Default::default(),
         }
     }
@@ -291,6 +272,7 @@ impl DapStore {
         project_id: u64,
         upstream_client: AnyProtoClient,
         breakpoint_store: Entity<BreakpointStore>,
+        worktree_store: Entity<WorktreeStore>,
     ) -> Self {
         Self {
             mode: DapStoreMode::Remote(RemoteDapStore {
@@ -301,6 +283,7 @@ impl DapStore {
             downstream_client: None,
             active_debug_line: None,
             breakpoint_store,
+            worktree_store,
             sessions: Default::default(),
         }
     }
@@ -486,6 +469,7 @@ impl DapStore {
         &mut self,
         config: DebugAdapterConfig,
         worktree: &Entity<Worktree>,
+        parent_session: Option<Entity<Session>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
         let Some(local_store) = self.as_local() else {
@@ -509,6 +493,7 @@ impl DapStore {
         let start_client_task = Session::local(
             self.breakpoint_store.clone(),
             session_id,
+            parent_session,
             delegate,
             config,
             local_store.start_debugging_tx.clone(),
@@ -706,22 +691,31 @@ impl DapStore {
                     session_id: session_id.to_proto(),
                 });
 
-                return cx
-                    .background_executor()
-                    .spawn(async move { future.await.map(|_| ()) });
+                return cx.background_spawn(async move { future.await.map(|_| ()) });
             }
 
             return Task::ready(Err(anyhow!("Cannot shutdown session on remote side")));
         };
-        let Some(client) = self.sessions.remove(session_id) else {
+
+        let Some(session) = self.sessions.remove(session_id) else {
             return Task::ready(Err(anyhow!("Could not find session: {:?}", session_id)));
         };
 
-        client.update(cx, |this, cx| {
-            this.shutdown(cx);
-        });
+        let shutdown_parent_task = session
+            .read(cx)
+            .parent_id()
+            .map(|parent_id| self.shutdown_session(&parent_id, cx));
+        let shutdown_task = session.update(cx, |this, cx| this.shutdown(cx));
 
-        Task::ready(Ok(()))
+        cx.background_spawn(async move {
+            shutdown_task.await;
+
+            if let Some(parent_task) = shutdown_parent_task {
+                parent_task.await?;
+            }
+
+            Ok(())
+        })
     }
 
     // async fn _handle_dap_command_2<T: DapCommand + PartialEq + Eq + Hash>(
@@ -815,14 +809,16 @@ impl DapStore {
         this.update(&mut cx, |dap_store, cx| {
             let session_id = SessionId::from_proto(envelope.payload.session_id);
 
-            dap_store.session_by_id(session_id).map(|state| {
-                state.update(cx, |state, cx| {
-                    state.shutdown(cx);
-                })
-            });
+            let shutdown_task = dap_store.shutdown_session(&session_id, cx);
+            cx.spawn(|this, mut cx| async move {
+                let _ = shutdown_task.await.log_err();
 
-            cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
-            cx.notify();
+                this.update(&mut cx, |_, cx| {
+                    cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
+                    cx.notify();
+                })
+            })
+            .detach();
         })
     }
 

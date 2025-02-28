@@ -116,8 +116,9 @@ impl DebugSession {
             .ok()
             .flatten()
             .expect("worktree-less project");
-        let Ok(task) = dap_store.update(cx, |store, cx| store.new_session(config, &worktree, cx))
-        else {
+        let Ok(task) = dap_store.update(cx, |store, cx| {
+            store.new_session(config, &worktree, None, cx)
+        }) else {
             return;
         };
         let starting = cx.new(|cx| StartingState::new(task, cx));
