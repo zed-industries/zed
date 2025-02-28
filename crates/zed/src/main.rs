@@ -180,7 +180,6 @@ fn main() {
         }
     }
 
-    let args = Args::parse();
     menu::init();
     zed_actions::init();
 
