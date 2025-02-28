@@ -4,6 +4,7 @@ use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter};
 use language::{Language, LanguageRegistry};
 use rope::Rope;
 use std::cmp::Ordering;
+use std::mem;
 use std::{future::Future, iter, ops::Range, sync::Arc};
 use sum_tree::{SumTree, TreeMap};
 use text::ToOffset as _;
@@ -876,17 +877,22 @@ impl BufferDiff {
 
     fn set_state(
         &mut self,
-        inner: BufferDiffInner,
+        new_state: BufferDiffInner,
         buffer: &text::BufferSnapshot,
     ) -> Option<Range<Anchor>> {
-        let changed_range = match (self.inner.base_text.as_ref(), inner.base_text.as_ref()) {
-            (None, None) => None,
-            (Some(old), Some(new)) if old.remote_id() == new.remote_id() => {
-                inner.compare(&self.inner, buffer)
-            }
-            _ => Some(text::Anchor::MIN..text::Anchor::MAX),
-        };
-        self.inner = inner;
+        let (base_text_changed, changed_range) =
+            match (self.inner.base_text.as_ref(), new_state.base_text.as_ref()) {
+                (None, None) => (false, None),
+                (Some(old), Some(new)) if old.remote_id() == new.remote_id() => {
+                    (false, new_state.compare(&self.inner, buffer))
+                }
+                _ => (true, Some(text::Anchor::MIN..text::Anchor::MAX)),
+            };
+        let pending_hunks = mem::take(&mut self.inner.pending_hunks);
+        self.inner = new_state;
+        if !base_text_changed {
+            self.inner.pending_hunks = pending_hunks;
+        }
         changed_range
     }
 
