@@ -255,12 +255,7 @@ impl ActiveThread {
                         let task = tool.run(tool_use.input, self.workspace.clone(), window, cx);
 
                         self.thread.update(cx, |thread, cx| {
-                            thread.insert_tool_output(
-                                tool_use.assistant_message_id,
-                                tool_use.id.clone(),
-                                task,
-                                cx,
-                            );
+                            thread.insert_tool_output(tool_use.id.clone(), task, cx);
                         });
                     }
                 }
