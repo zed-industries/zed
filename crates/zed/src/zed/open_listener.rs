@@ -294,6 +294,10 @@ pub async fn handle_cli_connection(
                 let status = if open_workspace_result.is_err() { 1 } else { 0 };
                 responses.send(CliResponse::Exit { status }).log_err();
             }
+            CliRequest::DockAction { action } => {
+                cx.update(|cx| cx.perform_dock_menu_action(action))
+                    .log_err();
+            }
         }
     }
 }
