@@ -22,7 +22,9 @@ use itertools::Itertools;
 use language::{Buffer, File};
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use multi_buffer::ExcerptInfo;
-use panel::{panel_editor_container, panel_editor_style, panel_filled_button, PanelHeader};
+use panel::{
+    panel_editor_container, panel_editor_style, panel_filled_button, panel_icon_button, PanelHeader,
+};
 use project::{
     git::{GitEvent, Repository},
     Fs, Project, ProjectPath,
@@ -2196,9 +2198,9 @@ impl GitPanel {
                         .id("commit-editor-container")
                         .relative()
                         .h(max_height)
-                        .w_full()
-                        .border_t_1()
-                        .border_color(cx.theme().colors().border)
+                        // .w_full()
+                        // .border_t_1()
+                        // .border_color(cx.theme().colors().border)
                         .bg(cx.theme().colors().editor_background)
                         .cursor_text()
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -2242,10 +2244,10 @@ impl GitPanel {
         Some(
             h_flex()
                 .items_center()
-                .py_1p5()
+                .py_2()
                 .px(px(8.))
-                .bg(cx.theme().colors().background)
-                .border_t_1()
+                // .bg(cx.theme().colors().background)
+                // .border_t_1()
                 .border_color(cx.theme().colors().border)
                 .gap_1p5()
                 .child(
@@ -2272,11 +2274,9 @@ impl GitPanel {
                 )
                 .child(div().flex_1())
                 .child(
-                    panel_filled_button("Uncommit")
-                        .icon(IconName::Undo)
+                    panel_icon_button("undo", IconName::Undo)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
-                        .icon_position(IconPosition::Start)
                         .tooltip(Tooltip::for_action_title(
                             if self.has_staged_changes() {
                                 "git reset HEAD^ --soft"
@@ -3142,7 +3142,17 @@ fn render_git_action_menu(id: impl Into<ElementId>) -> impl IntoElement {
         )
         .menu(move |window, cx| {
             Some(ContextMenu::build(window, cx, |context_menu, _, _| {
-                context_menu.action("Push", git::Push { options: None }.boxed_clone())
+                context_menu
+                    .action("Pull", git::Pull.boxed_clone())
+                    .separator()
+                    .action("Push", git::Push { options: None }.boxed_clone())
+                    .action(
+                        "Force Push",
+                        git::Push {
+                            options: Some(PushOptions::Force),
+                        }
+                        .boxed_clone(),
+                    )
             }))
         })
         .anchor(Corner::TopRight)
@@ -3389,20 +3399,25 @@ impl RenderOnce for PanelRepoHeader {
         let active_repo = self.active_repository.clone();
         let overflow_menu_id: SharedString = format!("overflow-menu-{}", active_repo).into();
 
-        let active_repo_selector = Button::new("repo-selector", active_repo.clone())
-            .style(ButtonStyle::Transparent)
-            .size(ButtonSize::None)
-            .label_size(LabelSize::Small)
-            .color(Color::Muted)
-            // todo!("This isn't a branch selector")
-            .tooltip(Tooltip::for_action_title(
-                "Switch Active Repository",
-                &zed_actions::git::Branch,
-            ))
-            // todo!("This isn't a branch selector")
-            .on_click(|_, window, cx| {
-                window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
-            });
+        let repo_selector = if let Some(panel) = self.git_panel.clone() {
+            RepositorySelectorPopoverMenu::new(
+                panel.read(cx).repository_selector.clone(),
+                Button::new("repo-selector", active_repo.clone())
+                    .style(ButtonStyle::Transparent)
+                    .size(ButtonSize::None)
+                    .label_size(LabelSize::Small)
+                    .color(Color::Muted),
+                Tooltip::text("Choose a repository"),
+            )
+            .into_any_element()
+        } else {
+            Button::new("repo-selector", active_repo.clone())
+                .style(ButtonStyle::Transparent)
+                .size(ButtonSize::None)
+                .label_size(LabelSize::Small)
+                .color(Color::Muted)
+                .into_any_element()
+        };
 
         let branch = self.branch.clone();
         let branch_name = branch
@@ -3424,7 +3439,8 @@ impl RenderOnce for PanelRepoHeader {
         h_flex()
             .w_full()
             .px_2()
-            .h(px(32.))
+            .h(px(36.))
+            .items_center()
             .justify_between()
             .child(
                 h_flex()
@@ -3445,7 +3461,7 @@ impl RenderOnce for PanelRepoHeader {
                     .child(
                         h_flex()
                             .gap_0p5()
-                            .child(active_repo_selector)
+                            .child(repo_selector)
                             .child(
                                 div()
                                     .text_color(cx.theme().colors().text_muted)
