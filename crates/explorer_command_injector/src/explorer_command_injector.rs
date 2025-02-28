@@ -76,7 +76,7 @@ impl IExplorerCommand_Impl for ExplorerCommandInjector_Impl {
         let Some(items) = psiitemarray else {
             return Ok(());
         };
-        let Some(zed_cli_exe) = get_zed_cli_path() else {
+        let Some(zed_exe) = get_zed_exe_path() else {
             return Ok(());
         };
 
@@ -84,7 +84,7 @@ impl IExplorerCommand_Impl for ExplorerCommandInjector_Impl {
         for idx in 0..count {
             let item = unsafe { items.GetItemAt(idx)? };
             let item_path = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)?.to_string()? };
-            std::process::Command::new(&zed_cli_exe)
+            std::process::Command::new(&zed_exe)
                 .arg(&item_path)
                 .spawn()
                 .map_err(|_| E_INVALIDARG)?;
@@ -184,16 +184,6 @@ fn get_zed_install_folder() -> Option<PathBuf> {
 #[inline]
 fn get_zed_exe_path() -> Option<String> {
     get_zed_install_folder().map(|path| path.join("Zed.exe").to_string_lossy().to_string())
-}
-
-#[inline]
-fn get_zed_cli_path() -> Option<String> {
-    get_zed_install_folder().map(|path| {
-        path.join("bin")
-            .join("zed.exe")
-            .to_string_lossy()
-            .to_string()
-    })
 }
 
 #[inline]
