@@ -88,6 +88,31 @@ impl DebugAdapterClient {
         })
     }
 
+    pub async fn reconnect(
+        &self,
+        session_id: SessionId,
+        binary: DebugAdapterBinary,
+        message_handler: DapMessageHandler,
+        cx: AsyncApp,
+    ) -> Result<Self> {
+        let binary = match self.transport_delegate.transport() {
+            crate::transport::Transport::Tcp(tcp_transport) => DebugAdapterBinary {
+                command: binary.command,
+                arguments: binary.arguments,
+                envs: binary.envs,
+                cwd: binary.cwd,
+                connection: Some(crate::adapters::TcpArguments {
+                    host: tcp_transport.host,
+                    port: tcp_transport.port,
+                    timeout: Some(tcp_transport.timeout),
+                }),
+            },
+            _ => self.binary.clone(),
+        };
+
+        Self::start(session_id, binary, message_handler, cx).await
+    }
+
     async fn handle_receive_messages(
         client_id: SessionId,
         server_rx: Receiver<Message>,
@@ -221,8 +246,7 @@ impl DebugAdapterClient {
             + Send
             + FnMut(u64, R::Arguments) -> Result<R::Response, dap_types::ErrorResponse>,
     {
-        let transport = self.transport_delegate.transport();
-
+        let transport = self.transport_delegate.transport().as_fake();
         transport.on_request::<R, F>(handler).await;
     }
 
@@ -242,8 +266,7 @@ impl DebugAdapterClient {
     where
         F: 'static + Send + Fn(Response),
     {
-        let transport = self.transport_delegate.transport();
-
+        let transport = self.transport_delegate.transport().as_fake();
         transport.on_response::<R, F>(handler).await;
     }
 
@@ -268,7 +291,10 @@ mod tests {
     use gpui::TestAppContext;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
 
     pub fn init_test(cx: &mut gpui::TestAppContext) {
         if std::env::var("RUST_LOG").is_ok() {
@@ -286,21 +312,16 @@ mod tests {
     pub async fn test_initialize_client(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let mut client = DebugAdapterClient::start(
+        let client = DebugAdapterClient::start(
             crate::client::SessionId(1),
             DebugAdapterBinary {
                 command: "command".into(),
                 arguments: Default::default(),
                 envs: Default::default(),
-                connection: Some(crate::adapters::TcpArguments {
-                    host: Ipv4Addr::LOCALHOST,
-                    port: None,
-                    timeout: None,
-                }),
-                is_fake: true,
+                connection: None,
                 cwd: None,
             },
-            |_, _| panic!("Did not expect to hit this code path"),
+            Box::new(|_, _| panic!("Did not expect to hit this code path")),
             cx.to_async(),
         )
         .await
@@ -364,15 +385,10 @@ mod tests {
                 command: "command".into(),
                 arguments: Default::default(),
                 envs: Default::default(),
-                connection: Some(TcpArguments {
-                    host: Ipv4Addr::LOCALHOST,
-                    port: None,
-                    timeout: None,
-                }),
-                is_fake: true,
+                connection: None,
                 cwd: None,
             },
-            {
+            Box::new({
                 let called_event_handler = called_event_handler.clone();
                 move |event, _| {
                     called_event_handler.store(true, Ordering::SeqCst);
@@ -384,7 +400,7 @@ mod tests {
                         event
                     );
                 }
-            },
+            }),
             cx.to_async(),
         )
         .await
@@ -418,15 +434,10 @@ mod tests {
                 command: "command".into(),
                 arguments: Default::default(),
                 envs: Default::default(),
-                connection: Some(TcpArguments {
-                    host: Ipv4Addr::LOCALHOST,
-                    port: None,
-                    timeout: None,
-                }),
-                is_fake: true,
+                connection: None,
                 cwd: None,
             },
-            {
+            Box::new({
                 let called_event_handler = called_event_handler.clone();
                 move |event, _| {
                     called_event_handler.store(true, Ordering::SeqCst);
@@ -443,7 +454,7 @@ mod tests {
                         event
                     );
                 }
-            },
+            }),
             cx.to_async(),
         )
         .await

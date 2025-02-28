@@ -154,7 +154,7 @@ impl DebugPanel {
                     let (has_active_session, support_step_back) =
                         debug_panel.update(cx, |this, cx| {
                             this.active_debug_panel_item(cx)
-                                .map(|item| (true, false))
+                                .map(|_| (true, false))
                                 .unwrap_or((false, false))
                         });
 

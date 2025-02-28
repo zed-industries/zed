@@ -696,6 +696,7 @@ impl Project {
                     environment.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
                     breakpoint_store.clone(),
+                    worktree_store.clone(),
                     cx,
                 )
             });
@@ -883,6 +884,7 @@ impl Project {
                     SSH_PROJECT_ID,
                     client.clone().into(),
                     breakpoint_store.clone(),
+                    worktree_store.clone(),
                 )
             });
 
@@ -1073,7 +1075,12 @@ impl Project {
         })?;
 
         let dap_store = cx.new(|_cx| {
-            DapStore::new_remote(remote_id, client.clone().into(), breakpoint_store.clone())
+            DapStore::new_remote(
+                remote_id,
+                client.clone().into(),
+                breakpoint_store.clone(),
+                worktree_store.clone(),
+            )
         })?;
 
         let lsp_store = cx.new(|cx| {
@@ -1292,7 +1299,7 @@ impl Project {
         };
 
         self.dap_store.update(cx, |dap_store, cx| {
-            dap_store.new_session(config, worktree, cx)
+            dap_store.new_session(config, worktree, None, cx)
         })
     }
 

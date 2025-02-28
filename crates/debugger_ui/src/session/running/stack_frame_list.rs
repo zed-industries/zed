@@ -62,7 +62,7 @@ impl StackFrameList {
             },
         );
 
-        let _subscription = cx.observe(&session, |stack_frame_list, state, cx| {
+        let _subscription = cx.observe(&session, |stack_frame_list, _, cx| {
             stack_frame_list.build_entries(cx);
         });
 

@@ -43,8 +43,8 @@ impl Focusable for StartingState {
 impl Render for StartingState {
     fn render(
         &mut self,
-        window: &mut ui::Window,
-        cx: &mut ui::Context<'_, Self>,
+        _window: &mut ui::Window,
+        _cx: &mut ui::Context<'_, Self>,
     ) -> impl ui::IntoElement {
         v_flex()
             .size_full()

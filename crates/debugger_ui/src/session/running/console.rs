@@ -80,7 +80,7 @@ impl Console {
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
             cx.observe_in(&session, window, |console, session, window, cx| {
-                let (output, last_processed_ix) = session.update(cx, |session, cx| {
+                let (output, last_processed_ix) = session.update(cx, |session, _| {
                     (session.output(), session.last_processed_output())
                 });
 
@@ -89,7 +89,7 @@ impl Console {
                         console.add_message(event.clone(), window, cx);
                     }
 
-                    session.update(cx, |session, cx| {
+                    session.update(cx, |session, _| {
                         session.set_last_processed_output(output.len());
                     });
                 }
@@ -405,8 +405,8 @@ impl ConsoleQueryBarCompletionProvider {
             for variable in console.variable_list.update(cx, |variable_list, cx| {
                 variable_list.completion_variables(cx)
             }) {
-                if let Some(evaluate_name) = &variable.variable.evaluate_name {
-                    variables.insert(evaluate_name.clone(), variable.variable.value.clone());
+                if let Some(evaluate_name) = &variable.variable.dap.evaluate_name {
+                    variables.insert(evaluate_name.clone(), variable.variable.dap.value.clone());
                     string_matches.push(StringMatchCandidate {
                         id: 0,
                         string: evaluate_name.clone(),
@@ -415,14 +415,14 @@ impl ConsoleQueryBarCompletionProvider {
                 }
 
                 variables.insert(
-                    variable.variable.name.clone(),
-                    variable.variable.value.clone(),
+                    variable.variable.dap.name.clone(),
+                    variable.variable.dap.value.clone(),
                 );
 
                 string_matches.push(StringMatchCandidate {
                     id: 0,
-                    string: variable.variable.name.clone(),
-                    char_bag: variable.variable.name.chars().collect(),
+                    string: variable.variable.dap.name.clone(),
+                    char_bag: variable.variable.dap.name.chars().collect(),
                 });
             }
 

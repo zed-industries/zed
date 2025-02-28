@@ -7,7 +7,7 @@ use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
 use inert::{InertEvent, InertState};
-use project::debugger::{self, dap_store::DapStore, session::Session};
+use project::debugger::{dap_store::DapStore, session::Session};
 use project::worktree_store::WorktreeStore;
 use project::Project;
 use rpc::proto::{self, PeerId};
@@ -136,8 +136,9 @@ impl DebugSession {
             .ok()
             .flatten()
             .expect("worktree-less project");
-        let Ok(task) = dap_store.update(cx, |store, cx| store.new_session(config, &worktree, cx))
-        else {
+        let Ok(task) = dap_store.update(cx, |store, cx| {
+            store.new_session(config, &worktree, None, cx)
+        }) else {
             return;
         };
         let starting = cx.new(|cx| StartingState::new(task, cx));

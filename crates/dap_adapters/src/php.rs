@@ -89,14 +89,12 @@ impl DebugAdapter for PhpDebugAdapter {
                 format!("--server={}", self.port).into(),
             ]),
             connection: Some(TcpArguments {
-                port: Some(self.port),
-                host: Ipv4Addr::LOCALHOST,
-                timeout: None,
+                port: self.port,
+                host: self.host,
+                timeout: self.timeout,
             }),
             cwd: config.cwd.clone(),
             envs: None,
-            #[cfg(any(test, feature = "test-support"))]
-            is_fake: false,
         })
     }
 

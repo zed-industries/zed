@@ -2,7 +2,6 @@ use std::ffi::OsStr;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use dap::transport::{StdioTransport, Transport};
 use gpui::AsyncApp;
 use task::DebugAdapterConfig;
 
@@ -22,10 +21,6 @@ impl GdbDebugAdapter {
 impl DebugAdapter for GdbDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
-    }
-
-    fn transport(&self) -> Arc<dyn Transport> {
-        Arc::new(StdioTransport::new())
     }
 
     async fn get_binary(
@@ -56,6 +51,7 @@ impl DebugAdapter for GdbDebugAdapter {
             arguments: Some(vec!["-i=dap".into()]),
             envs: None,
             cwd: config.cwd.clone(),
+            connection: None,
         })
     }
 

@@ -90,7 +90,7 @@ impl<'a> From<&'a str> for DebugAdapterName {
 #[derive(Debug, Clone)]
 pub struct TcpArguments {
     pub host: Ipv4Addr,
-    pub port: Option<u16>,
+    pub port: u16,
     pub timeout: Option<u64>,
 }
 #[derive(Debug, Clone)]
@@ -100,9 +100,6 @@ pub struct DebugAdapterBinary {
     pub envs: Option<HashMap<String, String>>,
     pub cwd: Option<PathBuf>,
     pub connection: Option<TcpArguments>,
-    #[cfg(any(test, feature = "test-support"))]
-    // todo(debugger) Find a way to remove this. It's a hack for FakeTransport
-    pub is_fake: bool,
 }
 
 pub struct AdapterVersion {
@@ -332,12 +329,7 @@ impl DebugAdapter for FakeAdapter {
         Ok(DebugAdapterBinary {
             command: "command".into(),
             arguments: None,
-            connection: Some(TcpArguments {
-                host: Ipv4Addr::LOCALHOST,
-                port: None,
-                timeout: None,
-            }),
-            is_fake: true,
+            connection: None,
             envs: None,
             cwd: None,
         })

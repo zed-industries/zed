@@ -239,7 +239,7 @@ impl Render for RunningState {
                             .child(
                                 h_flex().p_1().mx_2().w_3_4().justify_end().child(
                                     DropdownMenu::new(
-                                        "thread-list",
+                                        ("thread-list", self.session_id.0),
                                         self.thread
                                             .as_ref()
                                             .map(|(_, name)| format!("Thread {name}"))
@@ -661,14 +661,14 @@ impl Item for RunningState {
 
     fn tab_content(
         &self,
-        params: workspace::item::TabContentParams,
+        _params: workspace::item::TabContentParams,
         _window: &Window,
-        cx: &App,
+        _cx: &App,
     ) -> AnyElement {
         todo!()
     }
 
-    fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
+    fn tab_tooltip_text(&self, _cx: &App) -> Option<SharedString> {
         todo!()
     }
 
