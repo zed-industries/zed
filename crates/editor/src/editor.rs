@@ -3221,7 +3221,7 @@ impl Editor {
         for ((buffer_id, _), auto_close_context) in edit_contexts {
             let JsxAutoCloseEditContext {
                 buffer,
-                config,
+                config: jsx_tag_auto_close_config,
                 edits: edited_ranges,
             } = auto_close_context;
 
@@ -3243,12 +3243,10 @@ impl Editor {
 
                 let buffer_snapshot = buffer.read_with(&cx, |buf, _| buf.snapshot()).ok()?;
 
-                let jsx_tag_auto_close = config;
-
                 let Some(edit_behavior_state) = jsx_tag_auto_close::should_auto_close(
                     &buffer_snapshot,
                     &edited_ranges,
-                    &jsx_tag_auto_close,
+                    &jsx_tag_auto_close_config,
                 ) else {
                     return Some(());
                 };
@@ -3287,7 +3285,7 @@ impl Editor {
                             jsx_tag_auto_close::generate_auto_close_edits(
                                 &buffer_snapshot,
                                 &edited_ranges,
-                                &jsx_tag_auto_close,
+                                &jsx_tag_auto_close_config,
                                 edit_behavior_state,
                             )
                         }
