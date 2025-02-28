@@ -3507,24 +3507,13 @@ impl BufferSnapshot {
             true,
         );
         let mut last_buffer_range_end = 0;
+
         for (buffer_range, is_name) in buffer_ranges {
-            if !text.is_empty() && buffer_range.start > last_buffer_range_end {
+            let space_added = !text.is_empty() && buffer_range.start > last_buffer_range_end;
+            if space_added {
                 text.push(' ');
             }
-            last_buffer_range_end = buffer_range.end;
-            if is_name {
-                let mut start = text.len();
-                let end = start + buffer_range.len();
-
-                // When multiple names are captured, then the matchable text
-                // includes the whitespace in between the names.
-                if !name_ranges.is_empty() {
-                    start -= 1;
-                }
-
-                name_ranges.push(start..end);
-            }
-
+            let before_append_len = text.len();
             let mut offset = buffer_range.start;
             chunks.seek(buffer_range.clone());
             for mut chunk in chunks.by_ref() {
@@ -3548,6 +3537,16 @@ impl BufferSnapshot {
                     break;
                 }
             }
+            if is_name {
+                let after_append_len = text.len();
+                let start = if space_added && !name_ranges.is_empty() {
+                    before_append_len - 1
+                } else {
+                    before_append_len
+                };
+                name_ranges.push(start..after_append_len);
+            }
+            last_buffer_range_end = buffer_range.end;
         }
 
         Some(OutlineItem {
@@ -4478,6 +4477,7 @@ impl IndentSize {
 pub struct TestFile {
     pub path: Arc<Path>,
     pub root_name: String,
+    pub local_root: Option<PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -4491,7 +4491,11 @@ impl File for TestFile {
     }
 
     fn as_local(&self) -> Option<&dyn LocalFile> {
-        None
+        if self.local_root.is_some() {
+            Some(self)
+        } else {
+            None
+        }
     }
 
     fn disk_state(&self) -> DiskState {
@@ -4516,6 +4520,23 @@ impl File for TestFile {
 
     fn is_private(&self) -> bool {
         false
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl LocalFile for TestFile {
+    fn abs_path(&self, _cx: &App) -> PathBuf {
+        PathBuf::from(self.local_root.as_ref().unwrap())
+            .join(&self.root_name)
+            .join(self.path.as_ref())
+    }
+
+    fn load(&self, _cx: &App) -> Task<Result<String>> {
+        unimplemented!()
+    }
+
+    fn load_bytes(&self, _cx: &App) -> Task<Result<Vec<u8>>> {
+        unimplemented!()
     }
 }
 
