@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use collections::IndexMap;
 use diagnostics::{IncludeWarnings, ToggleWarnings};
-use editor::Editor;
+use editor::{actions, Editor};
 use gpui::{
-    list, AppContext, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListAlignment,
-    ListState, Subscription, Task, WeakEntity,
+    list, AppContext, ClickEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    ListAlignment, ListState, MouseButton, Subscription, Task, WeakEntity,
 };
 use language::{
     Anchor, Buffer, DiagnosticEntry, DiagnosticSeverity, LanguageServerId, OffsetRangeExt,
@@ -54,12 +54,6 @@ impl DiagnosticsView {
 
             cx.observe_global_in::<IncludeWarnings>(window, |this, window, cx| {
                 this.include_warnings = cx.global::<IncludeWarnings>().0;
-                this.paths_to_update = this
-                    .project
-                    .read(cx)
-                    .diagnostic_summaries(false, cx)
-                    .map(|(path, lsp_id, _)| (path, Some(lsp_id)))
-                    .collect::<BTreeSet<_>>();
                 this.update_diagnostics(window, cx);
                 cx.notify();
             })
@@ -73,23 +67,15 @@ impl DiagnosticsView {
                         cx.notify();
                     }
                     project::Event::DiagnosticsUpdated { .. } => {
-                        this.paths_to_update = project
-                            .read(cx)
-                            .diagnostic_summaries(false, cx)
-                            .map(|(path, lsp_id, _)| (path, Some(lsp_id)))
-                            .collect::<BTreeSet<_>>();
-                        this.summary = project.read(cx).diagnostic_summary(false, cx);
-
                         this.update_diagnostics(window, cx);
                     }
                     _ => {}
                 },
             );
 
-            let summary = project.read(cx).diagnostic_summary(false, cx);
-
-            let paths_to_update = project
-                .read(cx)
+            let project_handle = project.read(cx);
+            let summary = project_handle.diagnostic_summary(false, cx);
+            let paths_to_update = project_handle
                 .diagnostic_summaries(false, cx)
                 .map(|(path, lsp_id, _)| (path, Some(lsp_id)))
                 .collect::<BTreeSet<_>>();
@@ -136,6 +122,12 @@ impl DiagnosticsView {
         if self.update_diagnostics_task.is_some() {
             return;
         }
+        let project = self.project.read(cx);
+        self.paths_to_update = project
+            .diagnostic_summaries(false, cx)
+            .map(|(path, lsp_id, _)| (path, Some(lsp_id)))
+            .collect::<BTreeSet<_>>();
+        self.summary = project.diagnostic_summary(false, cx);
         let project_handle = self.project.clone();
         self.update_diagnostics_task = Some(cx.spawn_in(window, |this, mut cx| async move {
             cx.background_executor()
@@ -212,12 +204,6 @@ impl DiagnosticsView {
     fn toggle_warnings(&mut self, _: &ToggleWarnings, window: &mut Window, cx: &mut Context<Self>) {
         self.include_warnings = !self.include_warnings;
         cx.set_global(IncludeWarnings(self.include_warnings));
-        self.paths_to_update = self
-            .project
-            .read(cx)
-            .diagnostic_summaries(false, cx)
-            .map(|(path, lsp_id, _)| (path, Some(lsp_id)))
-            .collect::<BTreeSet<_>>();
         self.update_diagnostics(window, cx);
         cx.notify();
     }
@@ -235,6 +221,7 @@ impl DiagnosticsView {
         if diags.is_empty() {
             return None;
         }
+        let mut item_idx = 0;
         let diags_per_file: Vec<ListItem> = diags
             .iter()
             .enumerate()
@@ -252,7 +239,8 @@ impl DiagnosticsView {
 
                 let task_workspace = task_workspace.clone();
                 let task_project_path = task_project_path.clone();
-                ListItem::new(idx)
+                item_idx += 1;
+                ListItem::new(item_idx)
                     .child(icon)
                     .child(
                         div().size_full().child(Label::new(
@@ -282,7 +270,14 @@ impl DiagnosticsView {
                             .map(|t| t.to_string())
                             .unwrap_or_else(|| diag.diagnostic.message.clone()),
                     ))
-                    .on_click(cx.listener(move |_, _, window, cx| {
+                    .on_secondary_mouse_down(cx.listener(move |_, _, window, cx| {
+                        dbg!("dispatch action");
+                        // TODO
+                        // cx.dispatch_action(&actions::ToggleCodeActions {
+                        //     deployed_from_indicator: None,
+                        // });
+                    }))
+                    .on_click(cx.listener(move |_, click: &ClickEvent, window, cx| {
                         let task_workspace = task_workspace.clone();
                         let task_project_path = task_project_path.clone();
 
@@ -318,6 +313,7 @@ impl DiagnosticsView {
             .collect();
 
         List::new()
+            .id(ix)
             .header(ListHeader::new(
                 project_path.path.to_string_lossy().to_string(),
             ))
