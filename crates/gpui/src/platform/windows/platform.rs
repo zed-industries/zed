@@ -257,35 +257,6 @@ impl WindowsPlatform {
                     continue;
                 }
                 MenuItem::Action { name, action, .. } => {
-                    let item_args = format!("--new-instance {}", action.arguments());
-                    self.state
-                        .borrow_mut()
-                        .dock_menu_actions
-                        .insert(action.arguments().to_string(), action);
-                    JumpListItem::CreateWithArguments(
-                        &HSTRING::from(item_args),
-                        &HSTRING::from(name.as_ref()),
-                    )?
-                }
-            };
-            items.Append(&item)?;
-        }
-        jump_list.SaveAsync()?.get()?;
-        Ok(())
-    }
-
-    fn configure_jump_list(&self, menus: Vec<MenuItem>) -> Result<()> {
-        let jump_list = JumpList::LoadCurrentAsync()?.get()?;
-        let items = jump_list.Items()?;
-        items.Clear()?;
-        for item in menus {
-            let item = match item {
-                MenuItem::Separator => JumpListItem::CreateSeparator()?,
-                MenuItem::Submenu(_) => {
-                    log::error!("Set `MenuItemSubmenu` for dock menu on Windows is not supported.");
-                    continue;
-                }
-                MenuItem::Action { name, action, .. } => {
                     let item_args =
                         format!("--{} {}", APP_DOCK_ACTION_ARGUMENT, action.arguments());
                     self.state
@@ -570,8 +541,6 @@ impl Platform for WindowsPlatform {
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
         Some(self.state.borrow().menus.clone())
     }
-
-    // todo(windows)
 
     fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {
         self.configure_jump_list(menus).log_err();
