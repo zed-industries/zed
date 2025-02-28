@@ -1762,6 +1762,23 @@ Or to set a `socks5` proxy:
 },
 ```
 
+## Use Smartcase Search
+
+- Description: When enabled, automatically adjusts search case sensitivity based on your query. If your search query contains any uppercase letters, the search becomes case-sensitive; if it contains only lowercase letters, the search becomes case-insensitive. \
+  This applies to both in-file searches and project-wide searches.
+
+  Examples:
+
+  - Searching for "function" would match "function", "Function", "FUNCTION", etc.
+  - Searching for "Function" would only match "Function", not "function" or "FUNCTION"
+
+- Setting: `use_smartcase_search`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Show Call Status Icon
 
 - Description: Whether or not to show the call status icon in the status bar.

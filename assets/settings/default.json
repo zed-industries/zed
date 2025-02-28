@@ -379,6 +379,9 @@
   // 3. Never populate the search query
   //    "never"
   "seed_search_query_from_cursor": "always",
+  // When enabled, automatically adjusts search case sensitivity based on your query.
+  // If your search query contains any uppercase letters, the search becomes case-sensitive;
+  // if it contains only lowercase letters, the search becomes case-insensitive.
   "use_smartcase_search": false,
   // Inlay hint related settings
   "inlay_hints": {
