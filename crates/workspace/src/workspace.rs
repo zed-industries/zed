@@ -941,6 +941,25 @@ impl Workspace {
                     );
                 }
 
+                project::Event::LanguageServerShowDocument(request) => {
+                    if request.external {
+                        cx.open_url(request.uri.as_str());
+                        let request = request.clone();
+                        cx.background_executor()
+                            .spawn(async move {
+                                request.respond(Ok(())).await;
+                            })
+                            .detach();
+                    } else {
+                        let request = request.clone();
+                        cx.background_executor()
+                            .spawn(async move {
+                                request.respond(Err(anyhow!("not implemented"))).await;
+                            })
+                            .detach();
+                    }
+                }
+
                 _ => {}
             }
             cx.notify()
