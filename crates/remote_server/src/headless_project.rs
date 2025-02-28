@@ -11,7 +11,6 @@ use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     git::GitStore,
     project_settings::SettingsObserver,
-    search::SearchQuery,
     task_store::TaskStore,
     worktree_store::WorktreeStore,
     LspStore, LspStoreEvent, PrettierStore, ProjectPath, ToolchainStore, WorktreeId,
@@ -517,7 +516,7 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::FindSearchCandidatesResponse> {
         let message = envelope.payload;
-        let query = SearchQuery::from_proto(
+        let query = project::search_query_from_proto(
             message
                 .query
                 .ok_or_else(|| anyhow!("missing query field"))?,

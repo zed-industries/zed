@@ -10,7 +10,6 @@ pub mod lsp_store;
 pub mod prettier_store;
 pub mod project_settings;
 mod project_tree;
-pub mod search;
 mod task_inventory;
 pub mod task_store;
 pub mod terminals;
@@ -56,6 +55,7 @@ use gpui::{
     Hsla, SharedString, Task, WeakEntity, Window,
 };
 use itertools::Itertools;
+use language::search::{deserialize_path_matches, SearchInputKind, SearchQuery, SearchResult};
 use language::{
     language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent, Capability,
     CodeLabel, File as _, Language, LanguageName, LanguageRegistry, PointUtf16, ToOffset,
@@ -76,7 +76,6 @@ use rpc::{
     proto::{FromProto, LanguageServerPromptResponse, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, ErrorCode,
 };
-use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsStore};
 use smol::channel::Receiver;
@@ -3279,7 +3278,7 @@ impl Project {
 
         let request = client.request(proto::FindSearchCandidates {
             project_id: remote_id,
-            query: Some(query.to_proto()),
+            query: Some(search_query_to_proto(query)),
             limit: limit as _,
         });
         let guard = self.retain_remotely_created_models(cx);
@@ -4050,7 +4049,7 @@ impl Project {
     ) -> Result<proto::FindSearchCandidatesResponse> {
         let peer_id = envelope.original_sender_id()?;
         let message = envelope.payload;
-        let query = SearchQuery::from_proto(
+        let query = search_query_from_proto(
             message
                 .query
                 .ok_or_else(|| anyhow!("missing query field"))?,
@@ -4483,6 +4482,42 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
                 path: &entry.path,
                 char_bag: entry.char_bag,
             })
+    }
+}
+
+fn search_query_to_proto(query: &SearchQuery) -> proto::SearchQuery {
+    proto::SearchQuery {
+        query: query.as_str().to_string(),
+        regex: query.is_regex(),
+        whole_word: query.whole_word(),
+        case_sensitive: query.case_sensitive(),
+        include_ignored: query.include_ignored(),
+        files_to_include: query.files_to_include().sources().join(","),
+        files_to_exclude: query.files_to_exclude().sources().join(","),
+    }
+}
+
+pub fn search_query_from_proto(message: proto::SearchQuery) -> Result<SearchQuery> {
+    if message.regex {
+        SearchQuery::regex(
+            message.query,
+            message.whole_word,
+            message.case_sensitive,
+            message.include_ignored,
+            deserialize_path_matches(&message.files_to_include)?,
+            deserialize_path_matches(&message.files_to_exclude)?,
+            None, // search opened only don't need search remote
+        )
+    } else {
+        SearchQuery::text(
+            message.query,
+            message.whole_word,
+            message.case_sensitive,
+            message.include_ignored,
+            deserialize_path_matches(&message.files_to_include)?,
+            deserialize_path_matches(&message.files_to_exclude)?,
+            None, // search opened only don't need search remote
+        )
     }
 }
 

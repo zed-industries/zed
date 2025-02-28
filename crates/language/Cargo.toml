@@ -25,12 +25,14 @@ test-support = [
 ]
 
 [dependencies]
+aho-corasick.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 async-watch.workspace = true
 clock.workspace = true
 collections.workspace = true
 ec4rs.workspace = true
+fancy-regex.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true

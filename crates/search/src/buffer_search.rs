@@ -18,11 +18,8 @@ use gpui::{
     FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
     Render, ScrollHandle, Styled, Subscription, Task, TextStyle, Window,
 };
-use language::{Language, LanguageRegistry};
-use project::{
-    search::SearchQuery,
-    search_history::{SearchHistory, SearchHistoryCursor},
-};
+use language::{search::SearchQuery, Language, LanguageRegistry};
+use project::search_history::{SearchHistory, SearchHistoryCursor};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;

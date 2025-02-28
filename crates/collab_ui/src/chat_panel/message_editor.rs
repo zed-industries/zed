@@ -9,10 +9,10 @@ use gpui::{
     HighlightStyle, IntoElement, Render, Task, TextStyle, WeakEntity, Window,
 };
 use language::{
-    language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
-    LanguageServerId, ToOffset,
+    language_settings::SoftWrap, search::SearchQuery, Anchor, Buffer, BufferSnapshot, CodeLabel,
+    LanguageRegistry, LanguageServerId, ToOffset,
 };
-use project::{search::SearchQuery, Completion};
+use project::Completion;
 use settings::Settings;
 use std::{
     cell::RefCell,

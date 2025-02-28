@@ -6,12 +6,12 @@ use gpui::{
     actions, div, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
     ParentElement, Render, Styled, Subscription, WeakEntity, Window,
 };
-use language::{language_settings::SoftWrap, LanguageServerId};
+use language::{language_settings::SoftWrap, search::SearchQuery, LanguageServerId};
 use lsp::{
     notification::SetTrace, IoKind, LanguageServer, LanguageServerName, MessageType,
     SetTraceParams, TraceValue,
 };
-use project::{search::SearchQuery, Project, WorktreeId};
+use project::{Project, WorktreeId};
 use std::{borrow::Cow, sync::Arc};
 use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, ToggleState};
 use workspace::{
@@ -1140,7 +1140,7 @@ impl SearchableItem for LspLogView {
 
     fn find_matches(
         &mut self,
-        query: Arc<project::search::SearchQuery>,
+        query: Arc<language::search::SearchQuery>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Task<Vec<Self::Match>> {

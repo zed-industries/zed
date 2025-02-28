@@ -2,7 +2,7 @@ use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
 use editor::SearchSettings;
 use gpui::{actions, Action, App, FocusHandle, IntoElement};
-use project::search::SearchQuery;
+use language::search::SearchQuery;
 pub use project_search::ProjectSearchView;
 use ui::{prelude::*, Tooltip};
 use ui::{ButtonStyle, IconButton, IconButtonShape};
