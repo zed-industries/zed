@@ -1,3 +1,4 @@
+use crate::branch_picker::{self, BranchList};
 use crate::git_panel_settings::StatusStyle;
 use crate::repository_selector::RepositorySelectorPopoverMenu;
 use crate::{
@@ -39,7 +40,7 @@ use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
     prelude::*, ButtonLike, Checkbox, ContextMenu, ElevationIndex, ListItem, ListItemSpacing,
-    PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
+    PopoverButton, PopoverMenu, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
 use workspace::{
@@ -1887,7 +1888,7 @@ impl GitPanel {
             };
             let editor_focus_handle = self.commit_editor.focus_handle(cx);
 
-            let branch = active_repo.read(cx).current_branch()?;
+            let branch = active_repo.read(cx).current_branch()?.clone();
 
             let footer_size = px(32.);
             let gap = px(8.0);
@@ -1903,12 +1904,14 @@ impl GitPanel {
                     .display_name(project, cx)
                     .trim_end_matches("/"),
             ));
+            let branches = branch_picker::popover(self.project.clone(), window, cx);
             let footer = v_flex()
                 .child(PanelRepoFooter::new(
                     "footer-button",
                     display_name,
-                    Some(branch.clone()),
+                    Some(branch),
                     Some(git_panel),
+                    Some(branches),
                 ))
                 .child(
                     panel_editor_container(window, cx)
@@ -2859,6 +2862,7 @@ pub struct PanelRepoFooter {
     //
     // For now just take an option here, and we won't bind handlers to buttons in previews.
     git_panel: Option<Entity<GitPanel>>,
+    branches: Option<Entity<BranchList>>,
 }
 
 impl PanelRepoFooter {
@@ -2867,12 +2871,14 @@ impl PanelRepoFooter {
         active_repository: SharedString,
         branch: Option<Branch>,
         git_panel: Option<Entity<GitPanel>>,
+        branches: Option<Entity<BranchList>>,
     ) -> Self {
         Self {
             id: id.into(),
             active_repository,
             branch,
             git_panel,
+            branches,
         }
     }
 
@@ -2886,6 +2892,7 @@ impl PanelRepoFooter {
             active_repository,
             branch,
             git_panel: None,
+            branches: None,
         }
     }
 
@@ -3068,7 +3075,7 @@ impl PanelRepoFooter {
 }
 
 impl RenderOnce for PanelRepoFooter {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let active_repo = self.active_repository.clone();
         let overflow_menu_id: SharedString = format!("overflow-menu-{}", active_repo).into();
 
@@ -3107,7 +3114,9 @@ impl RenderOnce for PanelRepoFooter {
             .as_ref()
             .map_or("<no branch>".into(), |branch| branch.name.clone());
 
-        let branch_selector = Button::new("branch-selector", branch_name)
+        let branches = self.branches.clone();
+
+        let branch_selector_button = Button::new("branch-selector", branch_name)
             .style(ButtonStyle::Transparent)
             .size(ButtonSize::None)
             .label_size(LabelSize::Small)
@@ -3118,6 +3127,19 @@ impl RenderOnce for PanelRepoFooter {
             .on_click(|_, window, cx| {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
             });
+
+        let branch_selector = if let Some(branches) = branches {
+            PopoverButton::new(
+                branches,
+                Corner::BottomLeft,
+                branch_selector_button,
+                Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),
+            )
+            .render(window, cx)
+            .into_any_element()
+        } else {
+            branch_selector_button.into_any_element()
+        };
 
         let spinner = self
             .git_panel
