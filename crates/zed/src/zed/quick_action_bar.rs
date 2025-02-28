@@ -307,9 +307,9 @@ impl Render for QuickActionBar {
                                 let mut inline_completion_entry = ContextMenuEntry::new("Edit Predictions")
                                     .toggleable(IconPosition::Start, edit_predictions_enabled_at_cursor && show_edit_predictions)
                                     .disabled(!edit_predictions_enabled_at_cursor)
-                                    .action(Some(
+                                    .action(
                                         editor::actions::ToggleEditPrediction.boxed_clone(),
-                                    )).handler({
+                                    ).handler({
                                         let editor = editor.clone();
                                         move |window, cx| {
                                             editor

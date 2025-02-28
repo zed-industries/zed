@@ -72,14 +72,13 @@ impl CloudModel {
     pub fn availability(&self) -> LanguageModelAvailability {
         match self {
             Self::Anthropic(model) => match model {
-                anthropic::Model::Claude3_5Sonnet => {
+                anthropic::Model::Claude3_5Sonnet | anthropic::Model::Claude3_7Sonnet => {
                     LanguageModelAvailability::RequiresPlan(Plan::Free)
                 }
                 anthropic::Model::Claude3Opus
                 | anthropic::Model::Claude3Sonnet
                 | anthropic::Model::Claude3Haiku
                 | anthropic::Model::Claude3_5Haiku
-                | anthropic::Model::Claude3_7Sonnet
                 | anthropic::Model::Custom { .. } => {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }
@@ -154,8 +153,8 @@ impl LlmApiToken {
         Self::fetch(self.0.write().await, client).await
     }
 
-    async fn fetch<'a>(
-        mut lock: RwLockWriteGuard<'a, Option<String>>,
+    async fn fetch(
+        mut lock: RwLockWriteGuard<'_, Option<String>>,
         client: &Arc<Client>,
     ) -> Result<String> {
         let response = client.request(proto::GetLlmToken {}).await?;

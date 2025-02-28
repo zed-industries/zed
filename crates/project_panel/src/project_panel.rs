@@ -485,6 +485,7 @@ impl ProjectPanel {
                                     None,
                                     focus_opened_item,
                                     allow_preview,
+                                    true,
                                     window, cx,
                                 )
                                 .detach_and_prompt_err("Failed to open file", window, cx, move |e, _, _| {
@@ -1034,6 +1035,7 @@ impl ProjectPanel {
                     editor.move_to_beginning_of_line(
                         &editor::actions::MoveToBeginningOfLine {
                             stop_at_soft_wraps: false,
+                            stop_at_indent: false,
                         },
                         window,
                         cx,
@@ -1095,6 +1097,7 @@ impl ProjectPanel {
         if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
                 self.open_entry(entry.id, focus_opened_item, allow_preview, cx);
+                cx.notify();
             } else {
                 self.toggle_expanded(entry.id, window, cx);
             }
@@ -2108,12 +2111,12 @@ impl ProjectPanel {
                     match task {
                         PasteTask::Rename(task) => {
                             if let Some(CreatedEntry::Included(entry)) = task.await.log_err() {
-                                last_succeed = Some(entry.id);
+                                last_succeed = Some(entry);
                             }
                         }
                         PasteTask::Copy(task) => {
                             if let Some(Some(entry)) = task.await.log_err() {
-                                last_succeed = Some(entry.id);
+                                last_succeed = Some(entry);
                                 if need_delete {
                                     need_delete_ids.push(entry_id);
                                 }
@@ -2133,17 +2136,31 @@ impl ProjectPanel {
                         .await?;
                 }
                 // update selection
-                if let Some(entry_id) = last_succeed {
+                if let Some(entry) = last_succeed {
                     project_panel
                         .update_in(&mut cx, |project_panel, window, cx| {
                             project_panel.selection = Some(SelectedEntry {
                                 worktree_id,
-                                entry_id,
+                                entry_id: entry.id,
                             });
 
-                            // if only one entry was pasted and it was disambiguated, open the rename editor
-                            if item_count == 1 && disambiguation_range.is_some() {
-                                project_panel.rename_impl(disambiguation_range, window, cx);
+                            if item_count == 1 {
+                                // open entry if not dir, and only focus if rename is not pending
+                                if !entry.is_dir() {
+                                    project_panel.open_entry(
+                                        entry.id,
+                                        disambiguation_range.is_none(),
+                                        false,
+                                        cx,
+                                    );
+                                }
+
+                                // if only one entry was pasted and it was disambiguated, open the rename editor
+                                if disambiguation_range.is_some() {
+                                    cx.defer_in(window, |this, window, cx| {
+                                        this.rename_impl(disambiguation_range, window, cx);
+                                    });
+                                }
                             }
                         })
                         .ok();
@@ -5877,7 +5894,7 @@ mod tests {
                 //
                 "v root1",
                 "      one.txt",
-                "      [EDITOR: 'one copy.txt']  <== selected",
+                "      [EDITOR: 'one copy.txt']  <== selected  <== marked",
                 "      one.two.txt",
             ]
         );
@@ -5905,7 +5922,7 @@ mod tests {
                 "v root1",
                 "      one.txt",
                 "      one copy.txt",
-                "      [EDITOR: 'one copy 1.txt']  <== selected",
+                "      [EDITOR: 'one copy 1.txt']  <== selected  <== marked",
                 "      one.two.txt",
             ]
         );
@@ -5978,7 +5995,7 @@ mod tests {
                 "    > b",
                 "      four.txt",
                 "      one.txt",
-                "      three.txt  <== selected",
+                "      three.txt  <== selected  <== marked",
                 "      two.txt",
             ]
         );
@@ -6006,7 +6023,7 @@ mod tests {
                 "    > b",
                 "      four.txt",
                 "      one.txt",
-                "      three.txt",
+                "      three.txt  <== marked",
                 "      two.txt",
             ]
         );
@@ -6076,7 +6093,7 @@ mod tests {
                 "    > b",
                 "      four.txt",
                 "      one.txt",
-                "      three.txt  <== selected",
+                "      three.txt  <== selected  <== marked",
                 "      two.txt",
             ]
         );
@@ -6106,7 +6123,7 @@ mod tests {
                 "      four.txt",
                 "      one.txt",
                 "      three.txt",
-                "      [EDITOR: 'three copy.txt']  <== selected",
+                "      [EDITOR: 'three copy.txt']  <== selected  <== marked",
                 "      two.txt",
             ]
         );

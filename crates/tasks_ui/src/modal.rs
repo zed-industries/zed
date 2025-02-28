@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::active_item_selection_properties;
+use crate::TaskContexts;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     rems, Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
@@ -30,7 +30,7 @@ pub(crate) struct TasksModalDelegate {
     selected_index: usize,
     workspace: WeakEntity<Workspace>,
     prompt: String,
-    task_context: TaskContext,
+    task_contexts: TaskContexts,
     placeholder_text: Arc<str>,
     /// If this delegate is responsible for running a scripting task or a debugger
     task_modal_type: TaskModal,
@@ -46,7 +46,7 @@ pub(crate) struct TaskOverrides {
 impl TasksModalDelegate {
     fn new(
         task_store: Entity<TaskStore>,
-        task_context: TaskContext,
+        task_contexts: TaskContexts,
         task_overrides: Option<TaskOverrides>,
         task_modal_type: TaskModal,
         workspace: WeakEntity<Workspace>,
@@ -68,7 +68,7 @@ impl TasksModalDelegate {
             divider_index: None,
             selected_index: 0,
             prompt: String::default(),
-            task_context,
+            task_contexts,
             task_modal_type,
             task_overrides,
             placeholder_text,
@@ -80,6 +80,11 @@ impl TasksModalDelegate {
             return None;
         }
 
+        let default_context = TaskContext::default();
+        let active_context = self
+            .task_contexts
+            .active_context()
+            .unwrap_or(&default_context);
         let source_kind = TaskSourceKind::UserInput;
         let id_base = source_kind.to_id_base();
         let mut new_oneshot = TaskTemplate {
@@ -95,7 +100,7 @@ impl TasksModalDelegate {
         }
         Some((
             source_kind,
-            new_oneshot.resolve_task(&id_base, &self.task_context)?,
+            new_oneshot.resolve_task(&id_base, active_context)?,
         ))
     }
 
@@ -126,7 +131,7 @@ pub(crate) struct TasksModal {
 impl TasksModal {
     pub(crate) fn new(
         task_store: Entity<TaskStore>,
-        task_context: TaskContext,
+        task_contexts: TaskContexts,
         task_overrides: Option<TaskOverrides>,
         workspace: WeakEntity<Workspace>,
         task_modal_type: TaskModal,
@@ -137,7 +142,7 @@ impl TasksModal {
             Picker::uniform_list(
                 TasksModalDelegate::new(
                     task_store,
-                    task_context,
+                    task_contexts,
                     task_overrides,
                     task_modal_type,
                     workspace,
@@ -216,13 +221,6 @@ impl PickerDelegate for TasksModalDelegate {
                     match &mut picker.delegate.candidates {
                         Some(candidates) => string_match_candidates(candidates.iter(), task_type),
                         None => {
-                            let Ok((worktree, location)) =
-                                picker.delegate.workspace.update(cx, |workspace, cx| {
-                                    active_item_selection_properties(workspace, cx)
-                                })
-                            else {
-                                return Vec::new();
-                            };
                             let Some(task_inventory) = picker
                                 .delegate
                                 .task_store
@@ -235,9 +233,7 @@ impl PickerDelegate for TasksModalDelegate {
 
                             let (used, current) =
                                 task_inventory.read(cx).used_and_current_resolved_tasks(
-                                    worktree,
-                                    location,
-                                    &picker.delegate.task_context,
+                                    &picker.delegate.task_contexts,
                                     cx,
                                 );
                             picker.delegate.last_used_candidate_index = if used.is_empty() {
@@ -696,8 +692,8 @@ mod tests {
         );
         assert_eq!(
             task_names(&tasks_picker, cx),
-            Vec::<String>::new(),
-            "With no global tasks and no open item, no tasks should be listed"
+            vec!["another one", "example task"],
+            "With no global tasks and no open item, a single worktree should be used and its tasks listed"
         );
         drop(tasks_picker);
 
@@ -856,8 +852,8 @@ mod tests {
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
             task_names(&tasks_picker, cx),
-            Vec::<String>::new(),
-            "Should list no file or worktree context-dependent when no file is open"
+            vec![concat!("opened now: ", path!("/dir")).to_string()],
+            "When no file is open for a single worktree, should autodetect all worktree-related tasks"
         );
         tasks_picker.update(cx, |_, cx| {
             cx.emit(DismissEvent);

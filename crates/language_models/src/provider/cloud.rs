@@ -263,6 +263,10 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                 anthropic::Model::Claude3_5Sonnet.id().to_string(),
                 CloudModel::Anthropic(anthropic::Model::Claude3_5Sonnet),
             );
+            models.insert(
+                anthropic::Model::Claude3_7Sonnet.id().to_string(),
+                CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet),
+            );
         }
 
         let llm_closed_beta_models = if cx.has_flag::<LlmClosedBeta>() {
@@ -382,17 +386,10 @@ fn render_accept_terms(
     let form = v_flex()
         .w_full()
         .gap_2()
-        .when(
-            view_kind == LanguageModelProviderTosView::ThreadEmptyState,
-            |form| form.items_center(),
-        )
         .child(
             h_flex()
                 .flex_wrap()
-                .when(
-                    view_kind == LanguageModelProviderTosView::ThreadEmptyState,
-                    |form| form.justify_center(),
-                )
+                .items_start()
                 .child(Label::new(text))
                 .child(terms_button),
         )
@@ -412,9 +409,11 @@ fn render_accept_terms(
             );
 
             match view_kind {
-                LanguageModelProviderTosView::ThreadEmptyState => button_container.justify_center(),
                 LanguageModelProviderTosView::PromptEditorPopup => button_container.justify_end(),
-                LanguageModelProviderTosView::Configuration => button_container.justify_start(),
+                LanguageModelProviderTosView::Configuration
+                | LanguageModelProviderTosView::ThreadEmptyState => {
+                    button_container.justify_start()
+                }
             }
         });
 

@@ -241,6 +241,7 @@ impl StackFrameList {
                             None,
                             false,
                             true,
+                            true,
                             window,
                             cx,
                         ))

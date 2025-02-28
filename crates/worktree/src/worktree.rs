@@ -827,17 +827,35 @@ impl Worktree {
             cx.spawn(|this, mut cx| async move {
                 while (snapshot_updated_rx.recv().await).is_some() {
                     this.update(&mut cx, |this, cx| {
+                        let mut git_repos_changed = false;
+                        let mut entries_changed = false;
                         let this = this.as_remote_mut().unwrap();
                         {
                             let mut lock = this.background_snapshot.lock();
                             this.snapshot = lock.0.clone();
-                            if let Some(tx) = &this.update_observer {
-                                for update in lock.1.drain(..) {
+                            for update in lock.1.drain(..) {
+                                if !update.updated_entries.is_empty()
+                                    || !update.removed_entries.is_empty()
+                                {
+                                    entries_changed = true;
+                                }
+                                if !update.updated_repositories.is_empty()
+                                    || !update.removed_repositories.is_empty()
+                                {
+                                    git_repos_changed = true;
+                                }
+                                if let Some(tx) = &this.update_observer {
                                     tx.unbounded_send(update).ok();
                                 }
                             }
                         };
-                        cx.emit(Event::UpdatedEntries(Arc::default()));
+
+                        if entries_changed {
+                            cx.emit(Event::UpdatedEntries(Arc::default()));
+                        }
+                        if git_repos_changed {
+                            cx.emit(Event::UpdatedGitRepositories(Arc::default()));
+                        }
                         cx.notify();
                         while let Some((scan_id, _)) = this.snapshot_subscriptions.front() {
                             if this.observed_snapshot(*scan_id) {
@@ -1480,9 +1498,7 @@ impl LocalWorktree {
                 };
 
                 scanner
-                    .run(Box::pin(
-                        events.map(|events| events.into_iter().map(Into::into).collect()),
-                    ))
+                    .run(Box::pin(events.map(|events| events.into_iter().collect())))
                     .await;
             }
         });
@@ -3612,7 +3628,7 @@ impl fmt::Debug for Snapshot {
         struct EntriesById<'a>(&'a SumTree<PathEntry>);
         struct EntriesByPath<'a>(&'a SumTree<Entry>);
 
-        impl<'a> fmt::Debug for EntriesByPath<'a> {
+        impl fmt::Debug for EntriesByPath<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.debug_map()
                     .entries(self.0.iter().map(|entry| (&entry.path, entry.id)))
@@ -3620,7 +3636,7 @@ impl fmt::Debug for Snapshot {
             }
         }
 
-        impl<'a> fmt::Debug for EntriesById<'a> {
+        impl fmt::Debug for EntriesById<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.debug_list().entries(self.0.iter()).finish()
             }
@@ -5451,7 +5467,6 @@ impl BackgroundScanner {
                 else {
                     return;
                 };
-
                 log::trace!(
                     "computed git statuses for repo {repository_name} in {:?}",
                     t0.elapsed()
@@ -5905,7 +5920,7 @@ struct TraversalProgress<'a> {
     non_ignored_file_count: usize,
 }
 
-impl<'a> TraversalProgress<'a> {
+impl TraversalProgress<'_> {
     fn count(&self, include_files: bool, include_dirs: bool, include_ignored: bool) -> usize {
         match (include_files, include_dirs, include_ignored) {
             (true, true, true) => self.count,
@@ -5933,7 +5948,7 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for TraversalProgress<'a> {
     }
 }
 
-impl<'a> Default for TraversalProgress<'a> {
+impl Default for TraversalProgress<'_> {
     fn default() -> Self {
         Self {
             max_path: Path::new(""),
@@ -5951,7 +5966,7 @@ pub struct GitEntryRef<'a> {
     pub git_summary: GitSummary,
 }
 
-impl<'a> GitEntryRef<'a> {
+impl GitEntryRef<'_> {
     pub fn to_owned(&self) -> GitEntry {
         GitEntry {
             entry: self.entry.clone(),
@@ -5960,7 +5975,7 @@ impl<'a> GitEntryRef<'a> {
     }
 }
 
-impl<'a> Deref for GitEntryRef<'a> {
+impl Deref for GitEntryRef<'_> {
     type Target = Entry;
 
     fn deref(&self) -> &Self::Target {
@@ -5968,7 +5983,7 @@ impl<'a> Deref for GitEntryRef<'a> {
     }
 }
 
-impl<'a> AsRef<Entry> for GitEntryRef<'a> {
+impl AsRef<Entry> for GitEntryRef<'_> {
     fn as_ref(&self) -> &Entry {
         self.entry
     }
@@ -6229,7 +6244,7 @@ enum PathTarget<'a> {
     Successor(&'a Path),
 }
 
-impl<'a> PathTarget<'a> {
+impl PathTarget<'_> {
     fn cmp_path(&self, other: &Path) -> Ordering {
         match self {
             PathTarget::Path(path) => path.cmp(&other),
@@ -6244,20 +6259,20 @@ impl<'a> PathTarget<'a> {
     }
 }
 
-impl<'a, 'b, S: Summary> SeekTarget<'a, PathSummary<S>, PathProgress<'a>> for PathTarget<'b> {
+impl<'a, S: Summary> SeekTarget<'a, PathSummary<S>, PathProgress<'a>> for PathTarget<'_> {
     fn cmp(&self, cursor_location: &PathProgress<'a>, _: &S::Context) -> Ordering {
         self.cmp_path(&cursor_location.max_path)
     }
 }
 
-impl<'a, 'b, S: Summary> SeekTarget<'a, PathSummary<S>, TraversalProgress<'a>> for PathTarget<'b> {
+impl<'a, S: Summary> SeekTarget<'a, PathSummary<S>, TraversalProgress<'a>> for PathTarget<'_> {
     fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &S::Context) -> Ordering {
         self.cmp_path(&cursor_location.max_path)
     }
 }
 
-impl<'a, 'b> SeekTarget<'a, PathSummary<GitSummary>, (TraversalProgress<'a>, GitSummary)>
-    for PathTarget<'b>
+impl<'a> SeekTarget<'a, PathSummary<GitSummary>, (TraversalProgress<'a>, GitSummary)>
+    for PathTarget<'_>
 {
     fn cmp(&self, cursor_location: &(TraversalProgress<'a>, GitSummary), _: &()) -> Ordering {
         self.cmp_path(&cursor_location.0.max_path)
@@ -6300,13 +6315,13 @@ impl<'a> TraversalTarget<'a> {
     }
 }
 
-impl<'a, 'b> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTarget<'b> {
+impl<'a> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTarget<'_> {
     fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &()) -> Ordering {
         self.cmp_progress(cursor_location)
     }
 }
 
-impl<'a, 'b> SeekTarget<'a, PathSummary<Unit>, TraversalProgress<'a>> for TraversalTarget<'b> {
+impl<'a> SeekTarget<'a, PathSummary<Unit>, TraversalProgress<'a>> for TraversalTarget<'_> {
     fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &()) -> Ordering {
         self.cmp_progress(cursor_location)
     }

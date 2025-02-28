@@ -214,6 +214,7 @@ pub fn indented_line_beginning(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
     stop_at_soft_boundaries: bool,
+    stop_at_indent: bool,
 ) -> DisplayPoint {
     let point = display_point.to_point(map);
     let soft_line_start = map.clip_point(DisplayPoint::new(display_point.row(), 0), Bias::Right);
@@ -229,7 +230,7 @@ pub fn indented_line_beginning(
     if stop_at_soft_boundaries && soft_line_start > indent_start && display_point != soft_line_start
     {
         soft_line_start
-    } else if stop_at_soft_boundaries && display_point != indent_start {
+    } else if stop_at_indent && display_point != indent_start {
         indent_start
     } else {
         line_start
@@ -237,7 +238,7 @@ pub fn indented_line_beginning(
 }
 
 /// Returns a position of the end of line.
-
+///
 /// If `stop_at_soft_boundaries` is true, the returned position is that of the
 /// displayed line (e.g. it could actually be in the middle of a text line if that line is soft-wrapped).
 /// Otherwise it's always going to be the end of a logical line.

@@ -909,7 +909,9 @@ impl FileFinderDelegate {
                 (normal, small)
             };
             let budget = full_path_budget(&file_name, normal_em, small_em, max_width);
-            if full_path.len() > budget {
+            // If the computed budget is zero, we certainly won't be able to achieve it,
+            // so no point trying to elide the path.
+            if budget > 0 && full_path.len() > budget {
                 let components = PathComponentSlice::new(&full_path);
                 if let Some(elided_range) =
                     components.elision_range(budget - 1, &full_path_positions)
@@ -1193,6 +1195,7 @@ impl PickerDelegate for FileFinderDelegate {
                                     None,
                                     true,
                                     allow_preview,
+                                    true,
                                     window,
                                     cx,
                                 )
@@ -1448,9 +1451,9 @@ impl<'a> PathComponentSlice<'a> {
                     matches.next();
                 }
                 if is_first_normal || is_last || !is_normal || contains_match {
-                    if !longest
+                    if longest
                         .as_ref()
-                        .is_some_and(|old| old.end - old.start > cur.end - cur.start)
+                        .is_none_or(|old| old.end - old.start <= cur.end - cur.start)
                     {
                         longest = Some(cur);
                     }
@@ -1459,9 +1462,9 @@ impl<'a> PathComponentSlice<'a> {
                     cur.end = i + 1;
                 }
             }
-            if !longest
+            if longest
                 .as_ref()
-                .is_some_and(|old| old.end - old.start > cur.end - cur.start)
+                .is_none_or(|old| old.end - old.start <= cur.end - cur.start)
             {
                 longest = Some(cur);
             }
