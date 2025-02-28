@@ -2185,10 +2185,16 @@ impl GitPanel {
             let expand_button_size = px(16.);
 
             let git_panel = cx.entity().clone();
+            let display_name = SharedString::from(Arc::from(
+                active_repo
+                    .read(cx)
+                    .display_name(project, cx)
+                    .trim_end_matches("/"),
+            ));
             let footer = v_flex()
                 .child(PanelRepoHeader::new(
                     "header-button",
-                    active_repo.read(cx).display_name(project, cx),
+                    display_name,
                     Some(branch.clone()),
                     Some(git_panel),
                 ))
@@ -3282,7 +3288,6 @@ impl PanelRepoHeader {
             move |window, cx| {
                 git_action_tooltip(
                     "Push commited changes to remote",
-                    // FIXME options
                     &git::Push { options: None },
                     "git push",
                     panel_focus_handle.clone(),
