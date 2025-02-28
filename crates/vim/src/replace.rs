@@ -172,6 +172,7 @@ impl Vim {
         self.update_editor(window, cx, |_, editor, _, cx| {
             editor.clear_highlights::<VimExchange>(cx);
         });
+        self.clear_operator(window, cx);
     }
 
     pub fn exchange_motion(
@@ -485,13 +486,21 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_clear_exchange_clears_operator(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇirrelevant", Mode::Normal);
+        cx.simulate_keystrokes("c x c");
+
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
     async fn test_clear_exchange(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.set_state("ˇhello world", Mode::Normal);
         cx.simulate_keystrokes("c x i w c x c");
-
-        assert_eq!(cx.active_operator(), None);
 
         cx.update_editor(|editor, window, cx| {
             let highlights = editor.all_text_background_highlights(window, cx);
