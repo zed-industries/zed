@@ -55,7 +55,7 @@ pub(crate) struct WindowsPlatform {
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
     menus: Vec<OwnedMenu>,
-    dock_menu_actions: FxHashMap<String, Box<dyn Action>>,
+    dock_menu_actions: FxHashMap<usize, Box<dyn Action>>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: HCURSOR,
 }
@@ -197,6 +197,24 @@ impl WindowsPlatform {
         }
     }
 
+    // fn handle_dock_action_event(&self) {
+    //     let mut lock = self.state.borrow_mut();
+    //     if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
+    //         let Some(action) = lock
+    //             .dock_menu_actions
+    //             .get(&action)
+    //             .map(|action| action.boxed_clone())
+    //         else {
+    //             lock.callbacks.app_menu_action = Some(callback);
+    //             log::error!("Dock menu {action} not found");
+    //             return;
+    //         };
+    //         drop(lock);
+    //         callback(&*action);
+    //         self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
+    //     }
+    // }
+
     // Returns true if the app should quit.
     fn handle_events(&self) -> bool {
         let mut msg = MSG::default();
@@ -249,7 +267,7 @@ impl WindowsPlatform {
         let jump_list = JumpList::LoadCurrentAsync()?.get()?;
         let items = jump_list.Items()?;
         items.Clear()?;
-        for item in menus {
+        for (idx, item) in menus.into_iter().enumerate() {
             let item = match item {
                 MenuItem::Separator => JumpListItem::CreateSeparator()?,
                 MenuItem::Submenu(_) => {
@@ -257,12 +275,11 @@ impl WindowsPlatform {
                     continue;
                 }
                 MenuItem::Action { name, action, .. } => {
-                    let item_args =
-                        format!("--{} {}", APP_DOCK_ACTION_ARGUMENT, action.arguments());
+                    let item_args = format!("--{} {}", APP_DOCK_ACTION_ARGUMENT, idx);
                     self.state
                         .borrow_mut()
                         .dock_menu_actions
-                        .insert(action.arguments().to_string(), action);
+                        .insert(idx, action);
                     JumpListItem::CreateWithArguments(
                         &HSTRING::from(item_args),
                         &HSTRING::from(name.as_ref()),
@@ -645,6 +662,9 @@ impl Platform for WindowsPlatform {
     }
 
     fn perform_dock_menu_action(&self, action: String) {
+        println!("perform_dock_menu_action: {}", action);
+        // self.foreground_executor
+        //     .spawn(|| async {
         let mut lock = self.state.borrow_mut();
         if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
             let Some(action) = lock
@@ -660,6 +680,8 @@ impl Platform for WindowsPlatform {
             callback(&*action);
             self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
         }
+        // })
+        // .detach();
     }
 }
 
