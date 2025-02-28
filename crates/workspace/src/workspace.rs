@@ -4611,6 +4611,10 @@ impl Workspace {
         };
 
         if let Some(location) = location {
+            let breakpoints = self.project.update(cx, |project, cx| {
+                project.breakpoint_store().read(cx).all_breakpoints(cx)
+            });
+
             let center_group = build_serialized_pane_group(&self.center.root, window, cx);
             let docks = build_serialized_docks(self, window, cx);
             let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
@@ -4623,6 +4627,7 @@ impl Workspace {
                 docks,
                 centered_layout: self.centered_layout,
                 session_id: self.session_id.clone(),
+                breakpoints,
                 window_id: Some(window.window_handle().window_id().as_u64()),
             };
             return window.spawn(cx, |_| persistence::DB.save_workspace(serialized_workspace));
@@ -4677,13 +4682,30 @@ impl Workspace {
     }
 
     pub(crate) fn load_workspace(
-        serialized_workspace: SerializedWorkspace,
+        mut serialized_workspace: SerializedWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
         cx.spawn_in(window, |workspace, mut cx| async move {
             let project = workspace.update(&mut cx, |workspace, _| workspace.project().clone())?;
+
+            workspace.update(&mut cx, |workspace, cx| {
+                workspace.project().update(cx, |project, cx| {
+                    project.dap_store().update(cx, |_store, cx| {
+                        for worktree in project.worktrees(cx) {
+                            let (_worktree_id, worktree_path) =
+                                worktree.read_with(cx, |tree, _cx| (tree.id(), tree.abs_path()));
+
+                            if let Some(_serialized_breakpoints) =
+                                serialized_workspace.breakpoints.remove(&worktree_path)
+                            {
+                                // store.deserialize_breakpoints(worktree_id, serialized_breakpoints);
+                            }
+                        }
+                    });
+                })
+            })?;
 
             let mut center_group = None;
             let mut center_items = None;

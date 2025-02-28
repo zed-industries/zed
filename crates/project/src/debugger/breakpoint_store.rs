@@ -180,10 +180,7 @@ impl BreakpointStore {
         self.active_stack_frame = position;
     }
 
-    pub(super) fn all_breakpoints(
-        &self,
-        cx: &App,
-    ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
+    pub fn all_breakpoints(&self, cx: &App) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
         self.breakpoints
             .iter()
             .map(|(path, bp)| {

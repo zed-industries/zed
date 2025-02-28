@@ -1,12 +1,18 @@
 pub mod model;
 
-use std::{borrow::Cow, path::Path, str::FromStr};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use client::DevServerProjectId;
+use collections::HashMap;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
-use project::debugger::breakpoint_store::BreakpointKind;
+use project::debugger::breakpoint_store::{BreakpointKind, SerializedBreakpoint};
 
 use language::{LanguageName, Toolchain};
 use project::WorktreeId;
@@ -606,7 +612,7 @@ impl WorkspaceDb {
             display,
             docks,
             session_id: None,
-
+            breakpoints: self.breakpoints(workspace_id),
             window_id,
         })
     }
@@ -660,11 +666,51 @@ impl WorkspaceDb {
                 .log_err()?,
             window_bounds,
             centered_layout: centered_layout.unwrap_or(false),
+            breakpoints: self.breakpoints(workspace_id),
             display,
             docks,
             session_id: None,
             window_id,
         })
+    }
+
+    fn breakpoints(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
+        let breakpoints: Result<Vec<(PathBuf, PathBuf, Breakpoint)>> = self
+            .select_bound(sql! {
+                SELECT worktree_path, relative_path, breakpoint_location, kind, log_message
+                FROM breakpoints
+                WHERE workspace_id = ?
+            })
+            .and_then(|mut prepared_statement| (prepared_statement)(workspace_id));
+
+        match breakpoints {
+            Ok(bp) => {
+                if bp.is_empty() {
+                    log::error!("Breakpoints are empty after querying database for them");
+                }
+
+                let mut map: HashMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
+
+                for (worktree_path, file_path, breakpoint) in bp {
+                    map.entry(Arc::from(worktree_path.as_path()))
+                        .or_default()
+                        .push(SerializedBreakpoint {
+                            position: breakpoint.position,
+                            path: Arc::from(file_path.as_path()),
+                            kind: breakpoint.kind,
+                        });
+                }
+
+                map
+            }
+            Err(msg) => {
+                log::error!("Breakpoints query failed with msg: {msg}");
+                Default::default()
+            }
+        }
     }
 
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
@@ -1349,6 +1395,25 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: {
+                let mut map = HashMap::default();
+                map.insert(
+                    Arc::from(worktree),
+                    vec![
+                        SerializedBreakpoint {
+                            position: breakpoint.position,
+                            path: Arc::from(path),
+                            kind: breakpoint.kind.clone(),
+                        },
+                        SerializedBreakpoint {
+                            position: log_breakpoint.position,
+                            path: Arc::from(path),
+                            kind: log_breakpoint.kind.clone(),
+                        },
+                    ],
+                );
+                map
+            },
             session_id: None,
             window_id: None,
         };
@@ -1445,6 +1510,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: None,
             window_id: None,
         };
@@ -1457,6 +1523,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: None,
             window_id: None,
         };
@@ -1561,6 +1628,7 @@ mod tests {
             ),
             center_group,
             window_bounds: Default::default(),
+            breakpoints: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
@@ -1595,6 +1663,7 @@ mod tests {
             ),
             center_group: Default::default(),
             window_bounds: Default::default(),
+            breakpoints: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
@@ -1610,6 +1679,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: None,
             window_id: Some(2),
         };
@@ -1649,6 +1719,7 @@ mod tests {
             ),
             center_group: Default::default(),
             window_bounds: Default::default(),
+            breakpoints: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
@@ -1688,6 +1759,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: Some("session-id-1".to_owned()),
             window_id: Some(10),
         };
@@ -1700,6 +1772,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: Some("session-id-1".to_owned()),
             window_id: Some(20),
         };
@@ -1712,6 +1785,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(30),
         };
@@ -1724,6 +1798,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: None,
             window_id: None,
         };
@@ -1741,6 +1816,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(50),
         };
@@ -1753,6 +1829,7 @@ mod tests {
             ),
             center_group: Default::default(),
             window_bounds: Default::default(),
+            breakpoints: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
@@ -1808,7 +1885,9 @@ mod tests {
             window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
+            breakpoints: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: None,
             window_id: None,
         }
@@ -1855,6 +1934,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("one-session".to_owned()),
+            breakpoints: Default::default(),
             window_id: Some(window_id),
         })
         .collect::<Vec<_>>();
@@ -1946,6 +2026,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("one-session".to_owned()),
+            breakpoints: Default::default(),
             window_id: Some(window_id),
         })
         .collect::<Vec<_>>();
