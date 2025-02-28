@@ -255,7 +255,7 @@ impl StackFrameList {
                         let breakpoint_store = workspace.project().read(cx).breakpoint_store();
 
                         breakpoint_store.update(cx, |store, cx| {
-                            let _ = store.set_active_position(Some((abs_path, position)));
+                            let _ = store.set_active_position(Some((abs_path, position)), cx);
                             cx.notify();
                         })
                     })

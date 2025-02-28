@@ -112,7 +112,7 @@ use linked_editing_ranges::refresh_linked_ranges;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
-    debugger::breakpoint_store::{BreakpointEditAction, BreakpointStore},
+    debugger::breakpoint_store::{BreakpointEditAction, BreakpointEvent, BreakpointStore},
     ProjectPath,
 };
 
@@ -1291,8 +1291,6 @@ impl Editor {
                                     }
                                 }
                             }
-                        } else if let project::Event::ActiveDebugLineChanged = event {
-                            editor.go_to_active_debug_line(window, cx);
                         }
                     },
                 ));
@@ -1310,7 +1308,17 @@ impl Editor {
                             editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
                         },
                     ));
-                }
+                };
+
+                project_subscriptions.push(cx.subscribe_in(
+                    &project.read(cx).breakpoint_store(),
+                    window,
+                    |editor, _, event, window, cx| match event {
+                        BreakpointEvent::ActiveDebugLineChanged => {
+                            editor.go_to_active_debug_line(window, cx);
+                        }
+                    },
+                ));
             }
         }
 

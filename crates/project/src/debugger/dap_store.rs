@@ -58,7 +58,6 @@ pub enum DapStoreEvent {
         message: Message,
     },
     Notification(String),
-    ActiveDebugLineChanged,
     RemoteHasInitialized,
     UpdateDebugAdapter(UpdateDebugAdapter),
     UpdateThreadStatus(UpdateThreadStatus),

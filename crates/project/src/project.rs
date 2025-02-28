@@ -272,7 +272,6 @@ pub enum Event {
     LanguageServerPrompt(LanguageServerPromptRequest),
     DebugClientStarted(SessionId),
     DebugClientShutdown(SessionId),
-    ActiveDebugLineChanged,
     DebugClientEvent {
         session_id: SessionId,
         message: Message,
@@ -2462,9 +2461,6 @@ impl Project {
                     notification_id: "dap".into(),
                     message: message.clone(),
                 });
-            }
-            DapStoreEvent::ActiveDebugLineChanged => {
-                cx.emit(Event::ActiveDebugLineChanged);
             }
             _ => {}
         }

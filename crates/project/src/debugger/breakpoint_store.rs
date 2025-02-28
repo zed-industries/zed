@@ -2,7 +2,7 @@
 //!
 //! Breakpoints are separate from a session because they're not associated with any particular debug session. They can also be set up without a session running.
 use collections::{BTreeMap, HashMap};
-use gpui::{App, Context, Entity};
+use gpui::{App, Context, Entity, EventEmitter};
 use language::{proto::serialize_anchor as serialize_text_anchor, Buffer, BufferSnapshot};
 use rpc::{proto, AnyProtoClient};
 use std::{
@@ -176,8 +176,13 @@ impl BreakpointStore {
         self.active_stack_frame.as_ref()
     }
 
-    pub fn set_active_position(&mut self, position: Option<(Arc<Path>, text::Anchor)>) {
+    pub fn set_active_position(
+        &mut self,
+        position: Option<(Arc<Path>, text::Anchor)>,
+        cx: &mut Context<Self>,
+    ) {
         self.active_stack_frame = position;
+        cx.emit(BreakpointEvent::ActiveDebugLineChanged);
     }
 
     pub fn all_breakpoints(&self, cx: &App) -> HashMap<Arc<Path>, Vec<SerializedBreakpoint>> {
@@ -208,6 +213,12 @@ impl BreakpointStore {
         &self.breakpoints
     }
 }
+
+pub enum BreakpointEvent {
+    ActiveDebugLineChanged,
+}
+
+impl EventEmitter<BreakpointEvent> for BreakpointStore {}
 
 type LogMessage = Arc<str>;
 
