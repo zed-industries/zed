@@ -187,9 +187,13 @@ impl Vim {
                 let direction = self.search.direction;
                 search_bar.has_active_match();
                 let new_head = new_selections.last().unwrap().start;
-                let old_head = self.search.prior_selections.last().unwrap().start;
+                let is_different_head = self
+                    .search
+                    .prior_selections
+                    .last()
+                    .map_or(true, |range| range.start != new_head);
 
-                if new_head != old_head && self.search.direction == Direction::Next {
+                if is_different_head && self.search.direction == Direction::Next {
                     count = count.saturating_sub(1)
                 }
                 self.search.count = 1;

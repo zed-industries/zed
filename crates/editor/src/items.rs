@@ -1739,6 +1739,7 @@ mod tests {
         let file = TestFile {
             path: Path::new("").into(),
             root_name: String::new(),
+            local_root: None,
         };
         assert_eq!(path_for_file(&file, 0, false, cx), None);
     }

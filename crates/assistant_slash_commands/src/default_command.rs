@@ -21,11 +21,11 @@ impl SlashCommand for DefaultSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert default prompt".into()
+        "Insert default prompt".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Default Prompt".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {

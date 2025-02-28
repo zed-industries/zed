@@ -195,7 +195,8 @@ Supported options:
 - `-i` - to use a specific key file
 - `-o` - to set custom options
 - `-J` / `-w` - to proxy the SSH connection
-- And also... `-4`, `-6`, `-A`, `-a`, `-C`, `-K`, `-k`, `-X`, `-x`, `-Y`, `-y`, `-B`, `-b`, `-c`, `-D`, `-I`, `-i`, `-J`, `-l`, `-m`, `-o`, `-P`, `-p`, `-w`
+- `-F` for specifying an `ssh_config`
+- And also... `-4`, `-6`, `-A`, `-B`, `-C`, `-D`, `-I`, `-K`, `-P`, `-X`, `-Y`, `-a`, `-b`, `-c`, `-i`, `-k`, `-l`, `-m`, `-o`, `-p`, `-w`, `-x`, `-y`
 
 Note that we deliberately disallow some options (for example `-t` or `-T`) that Zed will set for you.
 
@@ -203,7 +204,6 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
 
 - Zed extensions are not yet supported on remotes, so languages that need them for support do not work.
 - You can't open files from the remote Terminal by typing the `zed` command.
-- Zed does not yet support automatic port-forwarding. You can use `-R` and `-L` in your SSH arguments for now.
 
 ## Feedback
 

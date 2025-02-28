@@ -606,7 +606,7 @@
       "ctrl-n": "assistant2::NewThread",
       "new": "assistant2::NewThread",
       "ctrl-shift-h": "assistant2::OpenHistory",
-      "ctrl-alt-/": "assistant2::ToggleModelSelector",
+      "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-shift-a": "assistant2::ToggleContextPicker",
       "ctrl-e": "assistant2::ChatMode",
       "ctrl-alt-e": "assistant2::RemoveAllContext"

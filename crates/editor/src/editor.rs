@@ -994,7 +994,7 @@ struct RegisteredInlineCompletionProvider {
     _subscription: Subscription,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct ActiveDiagnosticGroup {
     primary_range: Range<Anchor>,
     primary_message: String,
@@ -1031,6 +1031,7 @@ pub enum GotoDefinitionKind {
 
 #[derive(Debug, Clone)]
 enum InlayHintRefreshReason {
+    ModifiersChanged(bool),
     Toggle(bool),
     SettingsChange(InlayHintSettings),
     NewLinesShown,
@@ -1042,6 +1043,7 @@ enum InlayHintRefreshReason {
 impl InlayHintRefreshReason {
     fn description(&self) -> &'static str {
         match self {
+            Self::ModifiersChanged(_) => "modifiers changed",
             Self::Toggle(_) => "toggle",
             Self::SettingsChange(_) => "settings change",
             Self::NewLinesShown => "new lines shown",
@@ -3668,7 +3670,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.refresh_inlay_hints(
-            InlayHintRefreshReason::Toggle(!self.inlay_hint_cache.enabled),
+            InlayHintRefreshReason::Toggle(!self.inlay_hints_enabled()),
             cx,
         );
     }
@@ -3690,21 +3692,44 @@ impl Editor {
                 | InlayHintRefreshReason::ExcerptsRemoved(_)
         );
         let (invalidate_cache, required_languages) = match reason {
+            InlayHintRefreshReason::ModifiersChanged(enabled) => {
+                match self.inlay_hint_cache.modifiers_override(enabled) {
+                    Some(enabled) => {
+                        if enabled {
+                            (InvalidationStrategy::RefreshRequested, None)
+                        } else {
+                            self.splice_inlays(
+                                &self
+                                    .visible_inlay_hints(cx)
+                                    .iter()
+                                    .map(|inlay| inlay.id)
+                                    .collect::<Vec<InlayId>>(),
+                                Vec::new(),
+                                cx,
+                            );
+                            return;
+                        }
+                    }
+                    None => return,
+                }
+            }
             InlayHintRefreshReason::Toggle(enabled) => {
-                self.inlay_hint_cache.enabled = enabled;
-                if enabled {
-                    (InvalidationStrategy::RefreshRequested, None)
+                if self.inlay_hint_cache.toggle(enabled) {
+                    if enabled {
+                        (InvalidationStrategy::RefreshRequested, None)
+                    } else {
+                        self.splice_inlays(
+                            &self
+                                .visible_inlay_hints(cx)
+                                .iter()
+                                .map(|inlay| inlay.id)
+                                .collect::<Vec<InlayId>>(),
+                            Vec::new(),
+                            cx,
+                        );
+                        return;
+                    }
                 } else {
-                    self.inlay_hint_cache.clear();
-                    self.splice_inlays(
-                        &self
-                            .visible_inlay_hints(cx)
-                            .iter()
-                            .map(|inlay| inlay.id)
-                            .collect::<Vec<InlayId>>(),
-                        Vec::new(),
-                        cx,
-                    );
                     return;
                 }
             }
@@ -4959,7 +4984,7 @@ impl Editor {
                 });
 
         let preview_requires_modifier =
-            all_language_settings(file, cx).edit_predictions_mode() == EditPredictionsMode::Auto;
+            all_language_settings(file, cx).edit_predictions_mode() == EditPredictionsMode::Subtle;
 
         EditPredictionSettings::Enabled {
             show_in_menu,
@@ -5005,7 +5030,7 @@ impl Editor {
                 return Some(true);
             };
             let settings = all_language_settings(Some(file), cx);
-            Some(settings.inline_completions_enabled_for_path(file.path()))
+            Some(settings.edit_predictions_enabled_for_file(file, cx))
         })
         .unwrap_or(false)
     }
@@ -7709,12 +7734,20 @@ impl Editor {
             for hunk in &hunks {
                 self.prepare_restore_change(&mut revert_changes, hunk, cx);
             }
-            Self::do_stage_or_unstage(project, false, buffer_id, hunks.into_iter(), &snapshot, cx);
+            Self::do_stage_or_unstage(
+                project,
+                false,
+                buffer_id,
+                hunks.into_iter(),
+                &snapshot,
+                window,
+                cx,
+            );
         }
         drop(chunk_by);
         if !revert_changes.is_empty() {
             self.transact(window, cx, |editor, window, cx| {
-                editor.revert(revert_changes, window, cx);
+                editor.restore(revert_changes, window, cx);
             });
         }
     }
@@ -8770,6 +8803,13 @@ impl Editor {
                 self.change_selections(None, window, cx, |s| {
                     s.select_anchors(selections.to_vec());
                 });
+            } else {
+                log::error!(
+                    "No entry in selection_history found for undo. \
+                     This may correspond to a bug where undo does not update the selection. \
+                     If this is occurring, please add details to \
+                     https://github.com/zed-industries/zed/issues/22692"
+                );
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
@@ -8791,6 +8831,13 @@ impl Editor {
                 self.change_selections(None, window, cx, |s| {
                     s.select_anchors(selections.to_vec());
                 });
+            } else {
+                log::error!(
+                    "No entry in selection_history found for redo. \
+                     This may correspond to a bug where undo does not update the selection. \
+                     If this is occurring, please add details to \
+                     https://github.com/zed-industries/zed/issues/22692"
+                );
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
@@ -12517,16 +12564,20 @@ impl Editor {
 
             if is_valid != active_diagnostics.is_valid {
                 active_diagnostics.is_valid = is_valid;
-                let mut new_styles = HashMap::default();
-                for (block_id, diagnostic) in &active_diagnostics.blocks {
-                    new_styles.insert(
-                        *block_id,
-                        diagnostic_block_renderer(diagnostic.clone(), None, true, is_valid),
-                    );
+                if is_valid {
+                    let mut new_styles = HashMap::default();
+                    for (block_id, diagnostic) in &active_diagnostics.blocks {
+                        new_styles.insert(
+                            *block_id,
+                            diagnostic_block_renderer(diagnostic.clone(), None, true),
+                        );
+                    }
+                    self.display_map.update(cx, |display_map, _cx| {
+                        display_map.replace_blocks(new_styles);
+                    });
+                } else {
+                    self.dismiss_diagnostics(cx);
                 }
-                self.display_map.update(cx, |display_map, _cx| {
-                    display_map.replace_blocks(new_styles)
-                });
             }
         }
     }
@@ -12577,7 +12628,7 @@ impl Editor {
                                 buffer.anchor_after(entry.range.start),
                             ),
                             height: message_height,
-                            render: diagnostic_block_renderer(diagnostic, None, true, true),
+                            render: diagnostic_block_renderer(diagnostic, None, true),
                             priority: 0,
                         }
                     }),
@@ -13288,8 +13339,9 @@ impl Editor {
             return;
         }
         let folded_excerpts = self.buffer().read(cx).excerpts_for_buffer(buffer_id, cx);
-        self.display_map
-            .update(cx, |display_map, cx| display_map.fold_buffer(buffer_id, cx));
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.fold_buffers([buffer_id], cx)
+        });
         cx.emit(EditorEvent::BufferFoldToggled {
             ids: folded_excerpts.iter().map(|&(id, _)| id).collect(),
             folded: true,
@@ -13303,7 +13355,7 @@ impl Editor {
         }
         let unfolded_excerpts = self.buffer().read(cx).excerpts_for_buffer(buffer_id, cx);
         self.display_map.update(cx, |display_map, cx| {
-            display_map.unfold_buffer(buffer_id, cx);
+            display_map.unfold_buffers([buffer_id], cx);
         });
         cx.emit(EditorEvent::BufferFoldToggled {
             ids: unfolded_excerpts.iter().map(|&(id, _)| id).collect(),
@@ -13424,13 +13476,13 @@ impl Editor {
     pub fn toggle_staged_selected_diff_hunks(
         &mut self,
         _: &::git::ToggleStaged,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
         let stage = self.has_stageable_diff_hunks_in_ranges(&ranges, &snapshot);
-        self.stage_or_unstage_diff_hunks(stage, &ranges, cx);
+        self.stage_or_unstage_diff_hunks(stage, &ranges, window, cx);
     }
 
     pub fn stage_and_next(
@@ -13455,6 +13507,7 @@ impl Editor {
         &mut self,
         stage: bool,
         ranges: &[Range<Anchor>],
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -13466,7 +13519,7 @@ impl Editor {
             .diff_hunks_in_ranges(&ranges, &snapshot)
             .chunk_by(|hunk| hunk.buffer_id);
         for (buffer_id, hunks) in &chunk_by {
-            Self::do_stage_or_unstage(project, stage, buffer_id, hunks, &snapshot, cx);
+            Self::do_stage_or_unstage(project, stage, buffer_id, hunks, &snapshot, window, cx);
         }
     }
 
@@ -13478,7 +13531,7 @@ impl Editor {
     ) {
         let mut ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
         if ranges.iter().any(|range| range.start != range.end) {
-            self.stage_or_unstage_diff_hunks(stage, &ranges[..], cx);
+            self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
             return;
         }
 
@@ -13521,7 +13574,7 @@ impl Editor {
                     buffer.read(cx).remote_id(),
                     range,
                 )];
-                self.stage_or_unstage_diff_hunks(stage, &ranges[..], cx);
+                self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
                 let snapshot = self.buffer().read(cx).snapshot(cx);
                 let mut point = ranges.last().unwrap().end.to_point(&snapshot);
                 if point.row < snapshot.max_row().0 {
@@ -13535,7 +13588,7 @@ impl Editor {
                 return;
             }
         }
-        self.stage_or_unstage_diff_hunks(stage, &ranges[..], cx);
+        self.stage_or_unstage_diff_hunks(stage, &ranges[..], window, cx);
         self.go_to_next_hunk(&Default::default(), window, cx);
     }
 
@@ -13545,6 +13598,7 @@ impl Editor {
         buffer_id: BufferId,
         hunks: impl Iterator<Item = MultiBufferDiffHunk>,
         snapshot: &MultiBufferSnapshot,
+        window: &mut Window,
         cx: &mut App,
     ) {
         let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) else {
@@ -13587,20 +13641,18 @@ impl Editor {
                 cx,
             )
         };
-
         if file_exists {
             let buffer_store = project.read(cx).buffer_store().clone();
             buffer_store
                 .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
                 .detach_and_log_err(cx);
         }
+        let recv = repo
+            .read(cx)
+            .set_index_text(&path, new_index_text.map(|rope| rope.to_string()));
 
-        cx.background_spawn(
-            repo.read(cx)
-                .set_index_text(&path, new_index_text.map(|rope| rope.to_string()))
-                .log_err(),
-        )
-        .detach();
+        cx.background_spawn(async move { recv.await? })
+            .detach_and_notify_err(window, cx);
     }
 
     pub fn expand_selected_diff_hunks(&mut self, cx: &mut Context<Self>) {
@@ -15186,8 +15238,16 @@ impl Editor {
                     .retain(|buffer_id, _| buffer.buffer(*buffer_id).is_some());
                 cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
             }
-            multi_buffer::Event::ExcerptsEdited { ids } => {
-                cx.emit(EditorEvent::ExcerptsEdited { ids: ids.clone() })
+            multi_buffer::Event::ExcerptsEdited {
+                excerpt_ids,
+                buffer_ids,
+            } => {
+                self.display_map.update(cx, |map, cx| {
+                    map.unfold_buffers(buffer_ids.iter().copied(), cx)
+                });
+                cx.emit(EditorEvent::ExcerptsEdited {
+                    ids: excerpt_ids.clone(),
+                })
             }
             multi_buffer::Event::ExcerptsExpanded { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
@@ -15804,11 +15864,12 @@ impl Editor {
         &mut self,
         event: FocusOutEvent,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         if event.blurred != self.focus_handle {
             self.last_focused_descendant = Some(event.blurred);
         }
+        self.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(false), cx);
     }
 
     pub fn handle_blur(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -15864,13 +15925,16 @@ impl Editor {
         FILE_HEADER_HEIGHT
     }
 
-    pub fn revert(
+    pub fn restore(
         &mut self,
         revert_changes: HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.buffer().update(cx, |multi_buffer, cx| {
+        let workspace = self.workspace();
+        let project = self.project.as_ref();
+        let save_tasks = self.buffer().update(cx, |multi_buffer, cx| {
+            let mut tasks = Vec::new();
             for (buffer_id, changes) in revert_changes {
                 if let Some(buffer) = multi_buffer.buffer(buffer_id) {
                     buffer.update(cx, |buffer, cx| {
@@ -15882,9 +15946,44 @@ impl Editor {
                             cx,
                         );
                     });
+
+                    if let Some(project) =
+                        project.filter(|_| multi_buffer.all_diff_hunks_expanded())
+                    {
+                        project.update(cx, |project, cx| {
+                            tasks.push((buffer.clone(), project.save_buffer(buffer, cx)));
+                        })
+                    }
                 }
             }
+            tasks
         });
+        cx.spawn_in(window, |_, mut cx| async move {
+            for (buffer, task) in save_tasks {
+                let result = task.await;
+                if result.is_err() {
+                    let Some(path) = buffer
+                        .read_with(&cx, |buffer, cx| buffer.project_path(cx))
+                        .ok()
+                    else {
+                        continue;
+                    };
+                    if let Some((workspace, path)) = workspace.as_ref().zip(path) {
+                        let Some(task) = cx
+                            .update_window_entity(&workspace, |workspace, window, cx| {
+                                workspace
+                                    .open_path_preview(path, None, false, false, false, window, cx)
+                            })
+                            .ok()
+                        else {
+                            continue;
+                        };
+                        task.await.log_err();
+                    }
+                }
+            }
+        })
+        .detach();
         self.change_selections(None, window, cx, |selections| selections.refresh());
     }
 
@@ -17735,7 +17834,6 @@ pub fn diagnostic_block_renderer(
     diagnostic: Diagnostic,
     max_message_rows: Option<u8>,
     allow_closing: bool,
-    _is_valid: bool,
 ) -> RenderBlock {
     let (text_without_backticks, code_ranges) =
         highlight_diagnostic_message(&diagnostic, max_message_rows);

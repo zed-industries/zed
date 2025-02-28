@@ -279,6 +279,7 @@ impl Prettier {
             server_binary,
             &prettier_dir,
             None,
+            Default::default(),
             cx.clone(),
         )
         .context("prettier server creation")?;

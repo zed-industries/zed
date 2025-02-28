@@ -5,7 +5,7 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
-use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
+use lsp::{LanguageServerBinary, LanguageServerName};
 use project::Fs;
 use regex::Regex;
 use serde_json::json;
@@ -372,14 +372,6 @@ impl super::LspAdapter for GoLspAdapter {
             text: text[display_range].to_string(),
             filter_range,
         })
-    }
-    fn prepare_initialize_params(
-        &self,
-        mut original: InitializeParams,
-    ) -> Result<InitializeParams> {
-        #[allow(deprecated)]
-        let _ = original.root_uri.take();
-        Ok(original)
     }
 }
 

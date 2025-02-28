@@ -146,7 +146,8 @@ impl SshConnectionOptions {
             "-4", "-6", "-A", "-a", "-C", "-K", "-k", "-X", "-x", "-Y", "-y",
         ];
         const ALLOWED_ARGS: &[&str] = &[
-            "-B", "-b", "-c", "-D", "-I", "-i", "-J", "-l", "-m", "-o", "-P", "-p", "-R", "-w",
+            "-B", "-b", "-c", "-D", "-F", "-I", "-i", "-J", "-l", "-m", "-o", "-P", "-p", "-R",
+            "-w",
         ];
 
         let mut tokens = shlex::split(input)
@@ -1910,7 +1911,6 @@ impl SshRemoteConnection {
                     .run_command(
                         "wget",
                         &[
-                            "--max-redirect=5",
                             "--method=GET",
                             "--header=Content-Type: application/json",
                             "--body-data",

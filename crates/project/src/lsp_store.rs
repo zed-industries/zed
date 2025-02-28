@@ -206,14 +206,14 @@ impl LocalLspStore {
         );
 
         let binary = self.get_language_server_binary(adapter.clone(), delegate.clone(), true, cx);
-
+        let pending_workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
         let pending_server = cx.spawn({
             let adapter = adapter.clone();
             let server_name = adapter.name.clone();
             let stderr_capture = stderr_capture.clone();
             #[cfg(any(test, feature = "test-support"))]
             let lsp_store = self.weak.clone();
-
+            let pending_workspace_folders = pending_workspace_folders.clone();
             move |cx| async move {
                 let binary = binary.await?;
                 #[cfg(any(test, feature = "test-support"))]
@@ -239,12 +239,12 @@ impl LocalLspStore {
                     binary,
                     &root_path,
                     adapter.code_action_kinds(),
+                    pending_workspace_folders,
                     cx,
                 )
             }
         });
 
-        let pending_workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
         let startup = {
             let server_name = adapter.name.0.clone();
             let delegate = delegate as Arc<dyn LspAdapterDelegate>;
@@ -7551,10 +7551,11 @@ impl LspStore {
 
         // Update language_servers collection with Running variant of LanguageServerState
         // indicating that the server is up and running and ready
+        let workspace_folders = workspace_folders.lock().clone();
         local.language_servers.insert(
             server_id,
             LanguageServerState::running(
-                workspace_folders.lock().clone(),
+                workspace_folders,
                 adapter.clone(),
                 language_server.clone(),
                 None,

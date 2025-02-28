@@ -358,24 +358,30 @@ impl GitRepository for RealGitRepository {
 
             log::debug!("indexing SHA: {sha}, path {path:?}");
 
-            let status = new_std_command(&self.git_binary_path)
+            let output = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
                 .args(["update-index", "--add", "--cacheinfo", "100644", &sha])
                 .arg(path.as_ref())
-                .status()?;
+                .output()?;
 
-            if !status.success() {
-                return Err(anyhow!("Failed to add to index: {status:?}"));
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "Failed to stage:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         } else {
-            let status = new_std_command(&self.git_binary_path)
+            let output = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
                 .args(["update-index", "--force-remove"])
                 .arg(path.as_ref())
-                .status()?;
+                .output()?;
 
-            if !status.success() {
-                return Err(anyhow!("Failed to remove from index: {status:?}"));
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "Failed to unstage:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         }
 
@@ -618,10 +624,9 @@ impl GitRepository for RealGitRepository {
                 "Failed to push:\n{}",
                 String::from_utf8_lossy(&output.stderr)
             ));
+        } else {
+            Ok(())
         }
-
-        // TODO: Get remote response out of this and show it to the user
-        Ok(())
     }
 
     fn pull(&self, branch_name: &str, remote_name: &str) -> Result<()> {
@@ -639,10 +644,9 @@ impl GitRepository for RealGitRepository {
                 "Failed to pull:\n{}",
                 String::from_utf8_lossy(&output.stderr)
             ));
+        } else {
+            return Ok(());
         }
-
-        // TODO: Get remote response out of this and show it to the user
-        Ok(())
     }
 
     fn fetch(&self) -> Result<()> {
@@ -658,10 +662,9 @@ impl GitRepository for RealGitRepository {
                 "Failed to fetch:\n{}",
                 String::from_utf8_lossy(&output.stderr)
             ));
+        } else {
+            return Ok(());
         }
-
-        // TODO: Get remote response out of this and show it to the user
-        Ok(())
     }
 
     fn get_remotes(&self, branch_name: Option<&str>) -> Result<Vec<Remote>> {

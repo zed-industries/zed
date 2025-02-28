@@ -472,6 +472,12 @@ const RUST_BIN_KIND_TASK_VARIABLE: VariableName =
 const RUST_TEST_FRAGMENT_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("RUST_TEST_FRAGMENT"));
 
+const RUST_DOC_TEST_NAME_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("RUST_DOC_TEST_NAME"));
+
+const RUST_TEST_NAME_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("RUST_TEST_NAME"));
+
 impl ContextProvider for RustContextProvider {
     fn build_context(
         &self,
@@ -516,6 +522,16 @@ impl ContextProvider for RustContextProvider {
             let fragment = test_fragment(&variables, path, stem);
             variables.insert(RUST_TEST_FRAGMENT_TASK_VARIABLE, fragment);
         };
+        if let Some(test_name) =
+            task_variables.get(&VariableName::Custom(Cow::Borrowed("_test_name")))
+        {
+            variables.insert(RUST_TEST_NAME_TASK_VARIABLE, test_name.into());
+        }
+        if let Some(doc_test_name) =
+            task_variables.get(&VariableName::Custom(Cow::Borrowed("_doc_test_name")))
+        {
+            variables.insert(RUST_DOC_TEST_NAME_TASK_VARIABLE, doc_test_name.into());
+        }
 
         Task::ready(Ok(variables))
     }
@@ -569,7 +585,7 @@ impl ContextProvider for RustContextProvider {
             TaskTemplate {
                 label: format!(
                     "Test '{}' (package: {})",
-                    VariableName::Symbol.template_value(),
+                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ),
                 command: "cargo".into(),
@@ -577,7 +593,7 @@ impl ContextProvider for RustContextProvider {
                     "test".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    VariableName::Symbol.template_value(),
+                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
                     "--".into(),
                     "--nocapture".into(),
                 ],
@@ -587,8 +603,8 @@ impl ContextProvider for RustContextProvider {
             },
             TaskTemplate {
                 label: format!(
-                    "DocTest '{}' (package: {})",
-                    VariableName::Symbol.template_value(),
+                    "Doc test '{}' (package: {})",
+                    RUST_DOC_TEST_NAME_TASK_VARIABLE.template_value(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ),
                 command: "cargo".into(),
@@ -597,7 +613,7 @@ impl ContextProvider for RustContextProvider {
                     "--doc".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    VariableName::Symbol.template_value(),
+                    RUST_DOC_TEST_NAME_TASK_VARIABLE.template_value(),
                     "--".into(),
                     "--nocapture".into(),
                 ],
@@ -607,7 +623,7 @@ impl ContextProvider for RustContextProvider {
             },
             TaskTemplate {
                 label: format!(
-                    "Test '{}' (package: {})",
+                    "Test mod '{}' (package: {})",
                     VariableName::Stem.template_value(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ),

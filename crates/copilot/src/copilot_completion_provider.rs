@@ -192,7 +192,7 @@ impl EditPredictionProvider for CopilotCompletionProvider {
     fn discard(&mut self, cx: &mut Context<Self>) {
         let settings = AllLanguageSettings::get_global(cx);
 
-        let copilot_enabled = settings.show_inline_completions(None, cx);
+        let copilot_enabled = settings.show_edit_predictions(None, cx);
 
         if !copilot_enabled {
             return;

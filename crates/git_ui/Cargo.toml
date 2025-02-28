@@ -12,6 +12,10 @@ workspace = true
 name = "git_ui"
 path = "src/git_ui.rs"
 
+[features]
+default = []
+test-support = ["multi_buffer/test-support"]
+
 [dependencies]
 anyhow.workspace = true
 buffer_diff.workspace = true
@@ -47,6 +51,10 @@ zed_actions.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
-[features]
-default = []
-test-support = ["multi_buffer/test-support"]
+[dev-dependencies]
+editor = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+unindent.workspace = true
+workspace = { workspace = true, features = ["test-support"] }

@@ -134,7 +134,13 @@ impl ThreadHistory {
                         })
                         .ok();
                 }
-                HistoryEntry::Context(_context) => {}
+                HistoryEntry::Context(context) => {
+                    self.assistant_panel
+                        .update(cx, |this, cx| {
+                            this.delete_context(context.path.clone(), cx);
+                        })
+                        .ok();
+                }
             }
 
             cx.notify();
@@ -248,18 +254,28 @@ impl RenderOnce for PastThread {
         );
 
         ListItem::new(SharedString::from(self.thread.id.to_string()))
-            .outlined()
+            .rounded()
             .toggle_state(self.selected)
-            .start_slot(
-                Icon::new(IconName::MessageCircle)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
-            )
             .spacing(ListItemSpacing::Sparse)
-            .child(Label::new(summary).size(LabelSize::Small).text_ellipsis())
+            .start_slot(
+                div()
+                    .max_w_4_5()
+                    .child(Label::new(summary).size(LabelSize::Small).text_ellipsis()),
+            )
             .end_slot(
                 h_flex()
                     .gap_1p5()
+                    .child(
+                        Label::new("Thread")
+                            .color(Color::Muted)
+                            .size(LabelSize::XSmall),
+                    )
+                    .child(
+                        div()
+                            .size(px(3.))
+                            .rounded_full()
+                            .bg(cx.theme().colors().text_disabled),
+                    )
                     .child(
                         Label::new(thread_timestamp)
                             .color(Color::Muted)
@@ -334,21 +350,50 @@ impl RenderOnce for PastContext {
         ListItem::new(SharedString::from(
             self.context.path.to_string_lossy().to_string(),
         ))
-        .outlined()
+        .rounded()
         .toggle_state(self.selected)
-        .start_slot(
-            Icon::new(IconName::Code)
-                .size(IconSize::Small)
-                .color(Color::Muted),
-        )
         .spacing(ListItemSpacing::Sparse)
-        .child(Label::new(summary).size(LabelSize::Small).text_ellipsis())
+        .start_slot(
+            div()
+                .max_w_4_5()
+                .child(Label::new(summary).size(LabelSize::Small).text_ellipsis()),
+        )
         .end_slot(
-            h_flex().gap_1p5().child(
-                Label::new(context_timestamp)
-                    .color(Color::Muted)
-                    .size(LabelSize::XSmall),
-            ),
+            h_flex()
+                .gap_1p5()
+                .child(
+                    Label::new("Prompt Editor")
+                        .color(Color::Muted)
+                        .size(LabelSize::XSmall),
+                )
+                .child(
+                    div()
+                        .size(px(3.))
+                        .rounded_full()
+                        .bg(cx.theme().colors().text_disabled),
+                )
+                .child(
+                    Label::new(context_timestamp)
+                        .color(Color::Muted)
+                        .size(LabelSize::XSmall),
+                )
+                .child(
+                    IconButton::new("delete", IconName::TrashAlt)
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::XSmall)
+                        .tooltip(Tooltip::text("Delete Prompt Editor"))
+                        .on_click({
+                            let assistant_panel = self.assistant_panel.clone();
+                            let path = self.context.path.clone();
+                            move |_event, _window, cx| {
+                                assistant_panel
+                                    .update(cx, |this, cx| {
+                                        this.delete_context(path.clone(), cx);
+                                    })
+                                    .ok();
+                            }
+                        }),
+                ),
         )
         .on_click({
             let assistant_panel = self.assistant_panel.clone();

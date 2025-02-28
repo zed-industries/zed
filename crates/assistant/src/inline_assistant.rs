@@ -35,7 +35,7 @@ use language_model::{
     report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelTextStream, Role,
 };
-use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
+use language_model_selector::{InlineLanguageModelSelector, LanguageModelSelector};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
@@ -1589,29 +1589,10 @@ impl Render for PromptEditor {
                     .w(gutter_dimensions.full_width() + (gutter_dimensions.margin / 2.0))
                     .justify_center()
                     .gap_2()
-                    .child(LanguageModelSelectorPopoverMenu::new(
-                        self.language_model_selector.clone(),
-                        IconButton::new("context", IconName::SettingsAlt)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted),
-                        move |window, cx| {
-                            Tooltip::with_meta(
-                                format!(
-                                    "Using {}",
-                                    LanguageModelRegistry::read_global(cx)
-                                        .active_model()
-                                        .map(|model| model.name().0)
-                                        .unwrap_or_else(|| "No model selected".into()),
-                                ),
-                                None,
-                                "Change Model",
-                                window,
-                                cx,
-                            )
-                        },
-                        gpui::Corner::TopRight,
-                    ))
+                    .child(
+                        InlineLanguageModelSelector::new(self.language_model_selector.clone())
+                            .render(window, cx),
+                    )
                     .map(|el| {
                         let CodegenStatus::Error(error) = self.codegen.read(cx).status(cx) else {
                             return el;

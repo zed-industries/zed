@@ -3009,6 +3009,92 @@ async fn test_enclosing_indent(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+fn test_summaries_for_anchors(cx: &mut TestAppContext) {
+    let base_text_1 = indoc!(
+        "
+        bar
+        "
+    );
+    let text_1 = indoc!(
+        "
+        BAR
+        "
+    );
+    let base_text_2 = indoc!(
+        "
+        foo
+        "
+    );
+    let text_2 = indoc!(
+        "
+        FOO
+        "
+    );
+
+    let buffer_1 = cx.new(|cx| Buffer::local(text_1, cx));
+    let buffer_2 = cx.new(|cx| Buffer::local(text_2, cx));
+    let diff_1 = cx.new(|cx| BufferDiff::new_with_base_text(base_text_1, &buffer_1, cx));
+    let diff_2 = cx.new(|cx| BufferDiff::new_with_base_text(base_text_2, &buffer_2, cx));
+    cx.run_until_parked();
+
+    let mut ids = vec![];
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        multibuffer.set_all_diff_hunks_expanded(cx);
+        ids.extend(multibuffer.push_excerpts(
+            buffer_1.clone(),
+            [ExcerptRange {
+                context: text::Anchor::MIN..text::Anchor::MAX,
+                primary: None,
+            }],
+            cx,
+        ));
+        ids.extend(multibuffer.push_excerpts(
+            buffer_2.clone(),
+            [ExcerptRange {
+                context: text::Anchor::MIN..text::Anchor::MAX,
+                primary: None,
+            }],
+            cx,
+        ));
+        multibuffer.add_diff(diff_1.clone(), cx);
+        multibuffer.add_diff(diff_2.clone(), cx);
+        multibuffer
+    });
+
+    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
+        (multibuffer.snapshot(cx), multibuffer.subscribe())
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+            - bar
+            + BAR
+
+            - foo
+            + FOO
+            "
+        ),
+    );
+
+    let id_1 = buffer_1.read_with(cx, |buffer, _| buffer.remote_id());
+    let id_2 = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
+
+    let anchor_1 = Anchor::in_buffer(ids[0], id_1, text::Anchor::MIN);
+    let point_1 = snapshot.summaries_for_anchors::<Point, _>([&anchor_1])[0];
+    assert_eq!(point_1, Point::new(0, 0));
+
+    let anchor_2 = Anchor::in_buffer(ids[1], id_2, text::Anchor::MIN);
+    let point_2 = snapshot.summaries_for_anchors::<Point, _>([&anchor_2])[0];
+    assert_eq!(point_2, Point::new(3, 0));
+}
+
 fn format_diff(
     text: &str,
     row_infos: &Vec<RowInfo>,
