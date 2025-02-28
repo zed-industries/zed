@@ -3059,19 +3059,23 @@ impl Editor {
 
         self.transact(window, cx, |this, window, cx| {
             let mut initial_buffer_versions = HashMap::<BufferId, clock::Global>::default();
-            // todo! don't do this unless we have to / be smarter about only doing it for
-            // buffers / ranges where edit behavior impls will run
-            for (edit_range, _) in &edits {
-                let edit_range_buffer = this
-                    .buffer()
-                    .read(cx)
-                    // todo! excerpt containing full edit_range?
-                    .excerpt_containing(edit_range.end, cx)
-                    .map(|e| e.1);
-                if let Some(buffer) = edit_range_buffer {
-                    let (buffer_id, buffer_version) = buffer
-                        .read_with(cx, |buffer, _| (buffer.remote_id(), buffer.version.clone()));
-                    initial_buffer_versions.insert(buffer_id, buffer_version);
+            let jsx_tag_auto_close_enabled_in_any_buffer =
+                jsx_tag_auto_close::enabled_in_any_buffer(&this.buffer, cx);
+
+            if jsx_tag_auto_close_enabled_in_any_buffer {
+                for (edit_range, _) in &edits {
+                    let edit_range_buffer = this
+                        .buffer()
+                        .read(cx)
+                        // todo! excerpt containing full edit_range?
+                        .excerpt_containing(edit_range.end, cx)
+                        .map(|e| e.1);
+                    if let Some(buffer) = edit_range_buffer {
+                        let (buffer_id, buffer_version) = buffer.read_with(cx, |buffer, _| {
+                            (buffer.remote_id(), buffer.version.clone())
+                        });
+                        initial_buffer_versions.insert(buffer_id, buffer_version);
+                    }
                 }
             }
 
@@ -3162,7 +3166,9 @@ impl Editor {
             this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
             linked_editing_ranges::refresh_linked_ranges(this, window, cx);
             this.refresh_inline_completion(true, false, window, cx);
-            this.handle_jsx_auto_closing_from(initial_buffer_versions, window, cx);
+            if jsx_tag_auto_close_enabled_in_any_buffer {
+                this.handle_jsx_auto_closing_from(initial_buffer_versions, window, cx);
+            }
         });
     }
 

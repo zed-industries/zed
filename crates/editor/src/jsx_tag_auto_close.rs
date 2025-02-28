@@ -1,8 +1,12 @@
 use anyhow::Result;
+use gpui::{Context, Entity};
+use multi_buffer::MultiBuffer;
 use std::ops::Range;
 
 use language::{BufferSnapshot, JsxTagAutoCloseConfig};
 use text::Anchor;
+
+use crate::Editor;
 
 pub struct JsxTagCompletionState {
     edit_index: usize,
@@ -75,14 +79,6 @@ pub fn should_auto_close(
     } else {
         return Some(to_auto_edit);
     }
-    // dbg!(edited_ranges
-    //     .iter()
-    //     .map(|range| (
-    //         range,
-    //         buffer.text_for_range(range.clone()).collect::<String>()
-    //     ))
-    //     .collect::<Vec<_>>());
-    // None
 }
 
 pub fn generate_auto_close_edits(
@@ -180,4 +176,29 @@ pub fn generate_auto_close_edits(
     }
     return Ok(edits);
     // Ok(vec![])
+}
+
+pub fn enabled_in_any_buffer(multi_buffer: &Entity<MultiBuffer>, cx: &mut Context<Editor>) -> bool {
+    let multi_buffer = multi_buffer.read(cx);
+    let mut found_enabled = false;
+    multi_buffer.for_each_buffer(|buffer| {
+        let buffer = buffer.read(cx);
+        let snapshot = buffer.snapshot();
+        for syntax_layer in snapshot.syntax_layers() {
+            let language = syntax_layer.language;
+            if language.config().jsx_tag_auto_close.is_none() {
+                continue;
+            }
+            let language_settings = language::language_settings::language_settings(
+                Some(language.name()),
+                snapshot.file(),
+                cx,
+            );
+            if language_settings.jsx_tag_auto_close.enabled {
+                found_enabled = true;
+            }
+        }
+    });
+
+    return found_enabled;
 }
