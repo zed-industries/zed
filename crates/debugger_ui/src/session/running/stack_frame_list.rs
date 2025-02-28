@@ -10,7 +10,7 @@ use gpui::{
 
 use language::Point;
 use project::debugger::session::{Session, StackFrame, ThreadId};
-use project::{ProjectItem, ProjectPath};
+use project::ProjectItem;
 use ui::{prelude::*, Tooltip};
 use workspace::Workspace;
 
@@ -212,7 +212,7 @@ impl StackFrameList {
 
         let row = (stack_frame.line.saturating_sub(1)) as u32;
 
-        let Some(abs_path) = self.abs_path_from_stack_frame(&stack_frame, cx) else {
+        let Some(abs_path) = self.abs_path_from_stack_frame(&stack_frame) else {
             return Task::ready(Err(anyhow!("Project path not found")));
         };
 
@@ -264,11 +264,7 @@ impl StackFrameList {
         })
     }
 
-    fn abs_path_from_stack_frame(
-        &self,
-        stack_frame: &dap::StackFrame,
-        cx: &mut Context<Self>,
-    ) -> Option<Arc<Path>> {
+    fn abs_path_from_stack_frame(&self, stack_frame: &dap::StackFrame) -> Option<Arc<Path>> {
         stack_frame.source.as_ref().and_then(|s| {
             s.path
                 .as_deref()

@@ -1,33 +1,22 @@
 //! Module for managing breakpoints in a project.
 //!
 //! Breakpoints are separate from a session because they're not associated with any particular debug session. They can also be set up without a session running.
-use crate::{
-    buffer_store::{BufferStore, BufferStoreEvent},
-    BufferId, ProjectItem as _, ProjectPath, WorktreeStore,
-};
-use anyhow::{Context as _, Result};
-use collections::{BTreeMap, HashMap, HashSet};
-use dap::{debugger_settings::DebuggerSettings, SourceBreakpoint};
-use gpui::{App, AsyncApp, Context, Entity, EventEmitter};
-use language::{
-    proto::{deserialize_anchor, serialize_anchor as serialize_text_anchor},
-    Buffer, BufferSnapshot,
-};
-use rpc::{proto, AnyProtoClient, TypedEnvelope};
+use collections::{BTreeMap, HashMap};
+use gpui::{App, Context, Entity};
+use language::{proto::serialize_anchor as serialize_text_anchor, Buffer, BufferSnapshot};
+use rpc::{proto, AnyProtoClient};
 use std::{
     hash::{Hash, Hasher},
-    num::NonZeroU32,
     ops::Range,
     path::Path,
     sync::Arc,
 };
-use text::{Anchor, Point};
-use util::{maybe, ResultExt as _};
+use text::Point;
 
 #[derive(Clone)]
 struct RemoteBreakpointStore {
-    upstream_client: Option<AnyProtoClient>,
-    upstream_project_id: u64,
+    _upstream_client: Option<AnyProtoClient>,
+    _upstream_project_id: u64,
 }
 
 #[derive(Clone)]
@@ -42,29 +31,25 @@ pub struct BreakpointStore {
     downstream_client: Option<(AnyProtoClient, u64)>,
     active_stack_frame: Option<(Arc<Path>, text::Anchor)>,
     // E.g ssh
-    upstream_client: Option<RemoteBreakpointStore>,
+    _upstream_client: Option<RemoteBreakpointStore>,
 }
 
 impl BreakpointStore {
     pub fn local() -> Self {
         BreakpointStore {
             breakpoints: BTreeMap::new(),
-            upstream_client: None,
+            _upstream_client: None,
             downstream_client: None,
             active_stack_frame: Default::default(),
         }
     }
 
-    pub(crate) fn remote(
-        upstream_project_id: u64,
-        upstream_client: AnyProtoClient,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub(crate) fn remote(upstream_project_id: u64, upstream_client: AnyProtoClient) -> Self {
         BreakpointStore {
             breakpoints: BTreeMap::new(),
-            upstream_client: Some(RemoteBreakpointStore {
-                upstream_client: Some(upstream_client),
-                upstream_project_id,
+            _upstream_client: Some(RemoteBreakpointStore {
+                _upstream_client: Some(upstream_client),
+                _upstream_project_id: upstream_project_id,
             }),
             downstream_client: None,
             active_stack_frame: Default::default(),
@@ -81,8 +66,8 @@ impl BreakpointStore {
         cx.notify();
     }
 
-    fn upstream_client(&self) -> Option<RemoteBreakpointStore> {
-        self.upstream_client.clone()
+    fn _upstream_client(&self) -> Option<RemoteBreakpointStore> {
+        self._upstream_client.clone()
     }
 
     fn abs_path_from_buffer(buffer: &Entity<Buffer>, cx: &App) -> Option<Arc<Path>> {
@@ -277,7 +262,11 @@ pub struct Breakpoint {
 }
 
 impl Breakpoint {
-    fn to_proto(&self, path: &Path, position: &text::Anchor) -> Option<client::proto::Breakpoint> {
+    fn _to_proto(
+        &self,
+        _path: &Path,
+        position: &text::Anchor,
+    ) -> Option<client::proto::Breakpoint> {
         Some(client::proto::Breakpoint {
             position: Some(serialize_text_anchor(position)),
 
@@ -293,7 +282,7 @@ impl Breakpoint {
         })
     }
 
-    fn from_proto(breakpoint: client::proto::Breakpoint) -> Option<Self> {
+    fn _from_proto(_breakpoint: client::proto::Breakpoint) -> Option<Self> {
         None
         // Some(Self {
         //     position: deserialize_anchor(breakpoint.position?)?,

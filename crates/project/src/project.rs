@@ -685,7 +685,7 @@ impl Project {
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
                 .detach();
 
-            let breakpoint_store = cx.new(|cx| BreakpointStore::local());
+            let breakpoint_store = cx.new(|_| BreakpointStore::local());
 
             let dap_store = cx.new(|cx| {
                 DapStore::new_local(
@@ -742,7 +742,6 @@ impl Project {
                 LspStore::new_local(
                     buffer_store.clone(),
                     worktree_store.clone(),
-                    dap_store.clone(),
                     prettier_store.clone(),
                     toolchain_store.clone(),
                     environment.clone(),
@@ -877,14 +876,13 @@ impl Project {
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
             let breakpoint_store =
-                cx.new(|cx| BreakpointStore::remote(SSH_PROJECT_ID, client.clone().into(), cx));
+                cx.new(|_| BreakpointStore::remote(SSH_PROJECT_ID, client.clone().into()));
 
             let dap_store = cx.new(|_| {
                 DapStore::new_remote(
                     SSH_PROJECT_ID,
                     client.clone().into(),
                     breakpoint_store.clone(),
-                    worktree_store.clone(),
                 )
             });
 
@@ -1068,19 +1066,14 @@ impl Project {
 
         let environment = cx.update(|cx| ProjectEnvironment::new(&worktree_store, None, cx))?;
 
-        let breakpoint_store = cx.new(|cx| {
-            let bp_store = { BreakpointStore::remote(remote_id, client.clone().into(), cx) };
+        let breakpoint_store = cx.new(|_| {
+            let bp_store = { BreakpointStore::remote(remote_id, client.clone().into()) };
 
             bp_store
         })?;
 
         let dap_store = cx.new(|_cx| {
-            DapStore::new_remote(
-                remote_id,
-                client.clone().into(),
-                breakpoint_store.clone(),
-                worktree_store.clone(),
-            )
+            DapStore::new_remote(remote_id, client.clone().into(), breakpoint_store.clone())
         })?;
 
         let lsp_store = cx.new(|cx| {

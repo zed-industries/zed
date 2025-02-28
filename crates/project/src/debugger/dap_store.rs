@@ -8,8 +8,8 @@ use super::{
     // },
     session::{self, Session},
 };
-use crate::{debugger, worktree_store::WorktreeStore, ProjectEnvironment, ProjectPath};
-use anyhow::{anyhow, Context as _, Result};
+use crate::{debugger, worktree_store::WorktreeStore, ProjectEnvironment};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
@@ -164,7 +164,11 @@ impl DapStore {
                                         .update(cx, |this, _| this.worktrees().next())
                                         .expect("worktree-less project");
 
-                                    let config = parent_session.read(cx).configuration();
+                                    let Some(config) = parent_session.read(cx).configuration()
+                                    else {
+                                        return;
+                                    };
+
                                     let new_session_task = this.new_session(
                                         DebugAdapterConfig {
                                             label: config.label,
@@ -197,7 +201,7 @@ impl DapStore {
                                     );
 
                                     let request_seq = request.seq;
-                                    cx.spawn(|this, mut cx| async move {
+                                    cx.spawn(|_, mut cx| async move {
                                         let (success, body) = match new_session_task.await {
                                             Ok(_) => (true, None),
                                             Err(error) => (
@@ -265,7 +269,6 @@ impl DapStore {
         project_id: u64,
         upstream_client: AnyProtoClient,
         breakpoint_store: Entity<BreakpointStore>,
-        worktree_store: Entity<WorktreeStore>,
     ) -> Self {
         Self {
             mode: DapStoreMode::Remote(RemoteDapStore {
@@ -338,7 +341,6 @@ impl DapStore {
                         session_id,
                         remote.upstream_client.clone(),
                         remote.upstream_project_id,
-                        self.breakpoint_store.clone(),
                         ignore.unwrap_or(false),
                     )
                 }),

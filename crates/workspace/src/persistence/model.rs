@@ -4,14 +4,12 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use async_recursion::async_recursion;
-use collections::HashMap;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
 use gpui::{AsyncWindowContext, Entity, WeakEntity};
 use itertools::Itertools as _;
-use project::debugger::breakpoint_store::SerializedBreakpoint;
 use project::Project;
 use remote::ssh_session::SshProjectId;
 use serde::{Deserialize, Serialize};

@@ -22,7 +22,7 @@ use dap::{
 };
 use dap_adapters::build_adapter;
 use futures::channel::oneshot;
-use futures::{future::join_all, future::Shared, FutureExt};
+use futures::{future::Shared, FutureExt};
 use gpui::{
     App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Task, WeakEntity,
 };
@@ -136,6 +136,7 @@ enum Mode {
 #[derive(Clone)]
 struct LocalMode {
     client: Arc<DebugAdapterClient>,
+    config: DebugAdapterConfig,
 }
 
 fn client_source(abs_path: &Path) -> dap::Source {
@@ -158,14 +159,13 @@ impl LocalMode {
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
         breakpoints: Entity<BreakpointStore>,
-        disposition: DebugAdapterConfig,
+        config: DebugAdapterConfig,
         delegate: DapAdapterDelegate,
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
         cx: AsyncApp,
     ) -> Task<Result<(Self, Capabilities)>> {
         cx.spawn(move |mut cx| async move {
-            let (adapter, binary) =
-                Self::get_adapter_binary(&disposition, delegate, &mut cx).await?;
+            let (adapter, binary) = Self::get_adapter_binary(&config, delegate, &mut cx).await?;
 
             let (initialized_tx, initialized_rx) = oneshot::channel();
             let mut initialized_tx = Some(initialized_tx);
@@ -196,17 +196,9 @@ impl LocalMode {
                         .await?
                 },
             );
-            let session = Self { client };
+            let session = Self { client, config };
 
-            Self::initialize(
-                session,
-                adapter,
-                &disposition,
-                breakpoints,
-                initialized_rx,
-                &mut cx,
-            )
-            .await
+            Self::initialize(session, adapter, breakpoints, initialized_rx, &mut cx).await
         })
     }
 
@@ -256,7 +248,6 @@ impl LocalMode {
     async fn initialize(
         this: Self,
         adapter: Arc<dyn DebugAdapter>,
-        disposition: &DebugAdapterConfig,
         breakpoints: Entity<BreakpointStore>,
         initialized_rx: oneshot::Receiver<()>,
         cx: &mut AsyncApp,
@@ -270,9 +261,9 @@ impl LocalMode {
             )
             .await?;
 
-        let mut raw = adapter.request_args(disposition);
+        let mut raw = adapter.request_args(&this.config);
         merge_json_value_into(
-            disposition.initialize_args.clone().unwrap_or(json!({})),
+            this.config.initialize_args.clone().unwrap_or(json!({})),
             &mut raw,
         );
 
@@ -424,11 +415,9 @@ impl ThreadStates {
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
 pub struct Session {
     mode: Mode,
-    config: DebugAdapterConfig,
     pub(super) capabilities: Capabilities,
     id: SessionId,
     parent_id: Option<SessionId>,
-    breakpoint_store: Entity<BreakpointStore>,
     ignore_breakpoints: bool,
     modules: Vec<dap::Module>,
     loaded_sources: Vec<dap::Source>,
@@ -575,9 +564,7 @@ impl Session {
                     mode: Mode::Local(mode),
                     id: session_id,
                     parent_id: parent_session.map(|session| session.read(cx).id),
-                    breakpoint_store: breakpoints,
                     variables: Default::default(),
-                    config,
                     capabilities,
                     thread_states: ThreadStates::default(),
                     ignore_breakpoints: false,
@@ -599,7 +586,6 @@ impl Session {
         session_id: SessionId,
         client: AnyProtoClient,
         upstream_project_id: u64,
-        breakpoint_store: Entity<BreakpointStore>,
         ignore_breakpoints: bool,
     ) -> Self {
         Self {
@@ -610,7 +596,6 @@ impl Session {
             id: session_id,
             parent_id: None,
             capabilities: Capabilities::default(),
-            breakpoint_store,
             ignore_breakpoints,
             variables: Default::default(),
             stack_frames: Default::default(),
@@ -622,7 +607,6 @@ impl Session {
             loaded_sources: Vec::default(),
             threads: IndexMap::default(),
             _background_tasks: Vec::default(),
-            config: todo!(),
             is_session_terminated: false,
         }
     }
@@ -639,8 +623,12 @@ impl Session {
         &self.capabilities
     }
 
-    pub fn configuration(&self) -> DebugAdapterConfig {
-        self.config.clone()
+    pub fn configuration(&self) -> Option<DebugAdapterConfig> {
+        if let Mode::Local(local_mode) = &self.mode {
+            Some(local_mode.config.clone())
+        } else {
+            None
+        }
     }
 
     pub fn is_terminated(&self) -> bool {
@@ -911,7 +899,7 @@ impl Session {
         self.set_ignore_breakpoints(!self.ignore_breakpoints, cx)
     }
 
-    pub(crate) fn set_ignore_breakpoints(&mut self, ignore: bool, cx: &App) -> Task<Result<()>> {
+    pub(crate) fn set_ignore_breakpoints(&mut self, ignore: bool, _cx: &App) -> Task<Result<()>> {
         if self.ignore_breakpoints == ignore {
             return Task::ready(Err(anyhow!(
                 "Can't set ignore breakpoint to state it's already at"

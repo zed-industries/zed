@@ -1,6 +1,5 @@
 use crate::{
     buffer_store::{BufferStore, BufferStoreEvent},
-    debugger::dap_store::DapStore,
     deserialize_code_actions,
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -151,7 +150,6 @@ pub struct LocalLspStore {
         HashMap<LanguageServerId, HashMap<String, Vec<FileSystemWatcher>>>,
     supplementary_language_servers:
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
-    dap_store: Entity<DapStore>,
     prettier_store: Entity<PrettierStore>,
     next_diagnostic_group_id: usize,
     diagnostics: HashMap<
@@ -2968,7 +2966,6 @@ impl LspStore {
     pub fn new_local(
         buffer_store: Entity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
-        dap_store: Entity<DapStore>,
         prettier_store: Entity<PrettierStore>,
         toolchain_store: Entity<ToolchainStore>,
         environment: Entity<ProjectEnvironment>,
@@ -3013,7 +3010,6 @@ impl LspStore {
                 buffers_being_formatted: Default::default(),
                 buffer_snapshots: Default::default(),
                 prettier_store,
-                dap_store,
                 environment,
                 http_client,
                 fs,

@@ -68,9 +68,6 @@ impl VariableList {
                     .unwrap_or(div().into_any())
             },
         );
-        list.set_scroll_handler(|_, _, _| {
-            dbg!("Scrolling");
-        });
 
         let set_variable_editor = cx.new(|cx| Editor::single_line(window, cx));
 

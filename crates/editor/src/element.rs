@@ -66,7 +66,6 @@ use std::{
     cmp::{self, Ordering},
     fmt::{self, Write},
     iter, mem,
-    num::NonZeroU32,
     ops::{Deref, Range},
     rc::Rc,
     sync::Arc,
@@ -90,7 +89,7 @@ const MIN_SCROLL_THUMB_SIZE: f32 = 25.;
 struct LineHighlightSpec {
     selection: bool,
     breakpoint: bool,
-    active_stack_frame: bool,
+    _active_stack_frame: bool,
 }
 
 struct SelectionLayout {

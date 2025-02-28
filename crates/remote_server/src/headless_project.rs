@@ -154,7 +154,6 @@ impl HeadlessProject {
             let mut lsp_store = LspStore::new_local(
                 buffer_store.clone(),
                 worktree_store.clone(),
-                dap_store.clone(),
                 prettier_store.clone(),
                 toolchain_store.clone(),
                 environment,

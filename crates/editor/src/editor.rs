@@ -141,10 +141,7 @@ use multi_buffer::{
 };
 use parking_lot::Mutex;
 use project::{
-    debugger::{
-        breakpoint_store::{Breakpoint, BreakpointKind},
-        dap_store::DapStore,
-    },
+    debugger::breakpoint_store::{Breakpoint, BreakpointKind},
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
@@ -8140,10 +8137,7 @@ impl Editor {
 
         let buffer_id = breakpoint_position.buffer_id?;
         let buffer = project?.read_with(cx, |project, cx| project.buffer_for_id(buffer_id, cx))?;
-        let (buffer_snapshot, project_path) = (
-            buffer.read(cx).snapshot(),
-            buffer.read(cx).project_path(cx)?,
-        );
+        let buffer_snapshot = buffer.read(cx).snapshot();
 
         let row = buffer_snapshot
             .summary_for_anchor::<Point>(&breakpoint_position)
@@ -14733,7 +14727,7 @@ impl Editor {
         let _ = maybe!({
             let breakpoint_store = self.breakpoint_store.as_ref()?;
 
-            let (path, active_position) = breakpoint_store.read(cx).active_position().cloned()?;
+            let (_, active_position) = breakpoint_store.read(cx).active_position().cloned()?;
             let snapshot = self
                 .project
                 .as_ref()?

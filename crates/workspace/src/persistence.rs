@@ -1,19 +1,12 @@
 pub mod model;
 
-use std::{
-    borrow::Cow,
-    num::NonZeroU32,
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::Arc,
-};
+use std::{borrow::Cow, path::Path, str::FromStr};
 
 use anyhow::{anyhow, bail, Context, Result};
 use client::DevServerProjectId;
-use collections::HashMap;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
-use project::debugger::breakpoint_store::{BreakpointKind, SerializedBreakpoint};
+use project::debugger::breakpoint_store::BreakpointKind;
 
 use language::{LanguageName, Toolchain};
 use project::WorktreeId;
@@ -1357,25 +1350,6 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: {
-                let mut map = HashMap::default();
-                map.insert(
-                    Arc::from(worktree),
-                    vec![
-                        SerializedBreakpoint {
-                            position: breakpoint.position,
-                            path: Arc::from(path),
-                            kind: breakpoint.kind.clone(),
-                        },
-                        SerializedBreakpoint {
-                            position: log_breakpoint.position,
-                            path: Arc::from(path),
-                            kind: log_breakpoint.kind.clone(),
-                        },
-                    ],
-                );
-                map
-            },
             window_id: None,
         };
 
@@ -1472,7 +1446,6 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: Default::default(),
             window_id: None,
         };
 
@@ -1485,7 +1458,6 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: Default::default(),
             window_id: None,
         };
 
@@ -1593,7 +1565,6 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: Default::default(),
             window_id: Some(999),
         };
 
@@ -1628,7 +1599,6 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: Default::default(),
             window_id: Some(1),
         };
 
@@ -1641,7 +1611,6 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: Default::default(),
             window_id: Some(2),
         };
 
@@ -1684,7 +1653,6 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: Default::default(),
             window_id: Some(3),
         };
 
@@ -1721,7 +1689,6 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("session-id-1".to_owned()),
-            breakpoints: Default::default(),
             window_id: Some(10),
         };
 
@@ -1734,7 +1701,6 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("session-id-1".to_owned()),
-            breakpoints: Default::default(),
             window_id: Some(20),
         };
 
@@ -1747,7 +1713,6 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("session-id-2".to_owned()),
-            breakpoints: Default::default(),
             window_id: Some(30),
         };
 
@@ -1760,7 +1725,6 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: Default::default(),
             window_id: None,
         };
 
@@ -1779,7 +1743,6 @@ mod tests {
             centered_layout: false,
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(50),
-            breakpoints: Default::default(),
         };
 
         let workspace_6 = SerializedWorkspace {
@@ -1795,7 +1758,6 @@ mod tests {
             centered_layout: false,
             session_id: Some("session-id-3".to_owned()),
             window_id: Some(60),
-            breakpoints: Default::default(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -1848,7 +1810,6 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: None,
-            breakpoints: Default::default(),
             window_id: None,
         }
     }
@@ -1894,7 +1855,6 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("one-session".to_owned()),
-            breakpoints: Default::default(),
             window_id: Some(window_id),
         })
         .collect::<Vec<_>>();
@@ -1987,7 +1947,6 @@ mod tests {
             centered_layout: false,
             session_id: Some("one-session".to_owned()),
             window_id: Some(window_id),
-            breakpoints: Default::default(),
         })
         .collect::<Vec<_>>();
 
