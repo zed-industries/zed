@@ -18256,7 +18256,6 @@ impl Render for MissingEditPredictionKeybindingTooltip {
                     v_flex()
                         .flex_1()
                         .text_ui_sm(cx)
-                        .text_color(cx.theme().colors().text_muted)
                         .child(Label::new("Conflict with Accept Keybinding"))
                         .child("Your keymap currently overrides the default accept keybinding. To continue, assign one keybinding for the `editor::AcceptEditPrediction` action.")
                 )
