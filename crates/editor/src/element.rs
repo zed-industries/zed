@@ -4344,6 +4344,8 @@ impl EditorElement {
     }
 
     fn paint_diff_hunks(layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
+        let is_light = cx.theme().appearance().is_light();
+
         if layout.display_hunks.is_empty() {
             return;
         }
@@ -4408,7 +4410,7 @@ impl EditorElement {
                     hunk_to_paint
                 {
                     let background_color = if secondary_status != DiffHunkSecondaryStatus::None {
-                        background_color.opacity(0.3)
+                        background_color.opacity(if is_light { 0.2 } else { 0.32 })
                     } else {
                         background_color.opacity(1.0)
                     };
@@ -5102,9 +5104,15 @@ impl EditorElement {
                                             end_display_row.0 -= 1;
                                         }
                                         let color = match &hunk.status().kind {
-                                            DiffHunkStatusKind::Added => theme.status().created,
-                                            DiffHunkStatusKind::Modified => theme.status().modified,
-                                            DiffHunkStatusKind::Deleted => theme.status().deleted,
+                                            DiffHunkStatusKind::Added => {
+                                                theme.colors().version_control_added
+                                            }
+                                            DiffHunkStatusKind::Modified => {
+                                                theme.colors().version_control_modified
+                                            }
+                                            DiffHunkStatusKind::Deleted => {
+                                                theme.colors().version_control_deleted
+                                            }
                                         };
                                         ColoredRange {
                                             start: start_display_row,
@@ -6700,12 +6708,14 @@ impl Element for EditorElement {
                         .editor
                         .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
 
+                    let is_light = cx.theme().appearance().is_light();
+
                     for (ix, row_info) in row_infos.iter().enumerate() {
                         let Some(diff_status) = row_info.diff_status else {
                             continue;
                         };
 
-                        let staged_opacity = 0.10;
+                        let staged_opacity = if is_light { 0.14 } else { 0.10 };
                         let unstaged_opacity = 0.04;
 
                         let background_color = match diff_status.kind {
