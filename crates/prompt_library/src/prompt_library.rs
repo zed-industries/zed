@@ -26,7 +26,7 @@ use util::{ResultExt, TryFutureExt};
 use workspace::Workspace;
 use zed_actions::assistant::InlineAssist;
 
-pub use prompt_store::*;
+use prompt_store::*;
 
 pub fn init(cx: &mut App) {
     prompt_store::init(cx);
