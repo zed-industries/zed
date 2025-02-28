@@ -3057,7 +3057,7 @@ impl Editor {
         drop(snapshot);
 
         self.transact(window, cx, |this, window, cx| {
-            let mut initial_buffer_versions_map = HashMap::<BufferId, clock::Global>::default();
+            let mut initial_buffer_versions = HashMap::<BufferId, clock::Global>::default();
             // todo! don't do this unless we have to / be smarter about only doing it for
             // buffers / ranges where edit behavior impls will run
             for (edit_range, _) in &edits {
@@ -3070,7 +3070,7 @@ impl Editor {
                 if let Some(buffer) = edit_range_buffer {
                     let (buffer_id, buffer_version) = buffer
                         .read_with(cx, |buffer, _| (buffer.remote_id(), buffer.version.clone()));
-                    initial_buffer_versions_map.insert(buffer_id, buffer_version);
+                    initial_buffer_versions.insert(buffer_id, buffer_version);
                 }
             }
 
@@ -3161,53 +3161,64 @@ impl Editor {
             this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
             linked_editing_ranges::refresh_linked_ranges(this, window, cx);
             this.refresh_inline_completion(true, false, window, cx);
-            this.handle_jsx_tag_auto_closing(initial_buffer_versions_map, window, cx);
+            this.handle_jsx_auto_closing_from(initial_buffer_versions, window, cx);
         });
     }
 
-    fn handle_jsx_tag_auto_closing(
+    fn handle_jsx_auto_closing_from(
         &mut self,
-        initial_buffer_versions_map: HashMap<BufferId, clock::Global>,
+        initial_buffer_versions: HashMap<BufferId, clock::Global>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut buffer_edit_ranges_map = HashMap::<
-            (BufferId, Arc<language::Language>),
-            (WeakEntity<Buffer>, Vec<Range<usize>>),
-        >::default();
+        struct JsxAutoCloseEditContext {
+            buffer: Entity<Buffer>,
+            config: language::JsxTagAutoCloseConfig,
+            edits: Vec<Range<usize>>,
+        }
 
-        for (buffer_id, buffer_version_initial) in initial_buffer_versions_map {
+        let mut edit_contexts =
+            HashMap::<(BufferId, language::LanguageId), JsxAutoCloseEditContext>::default();
+
+        for (buffer_id, buffer_version_initial) in initial_buffer_versions {
             let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
                 continue;
             };
             let snapshot = buffer.read(cx).snapshot();
             for edit in buffer.read(cx).edits_since(&buffer_version_initial) {
-                // todo! determine whether we need to ensure language is set by the time we're here
                 let Some(language) = snapshot.language_at(edit.new.end) else {
                     continue;
                 };
-                if language.config().jsx_tag_auto_close.is_none() {
+
+                let Some(config) = language.config().jsx_tag_auto_close.as_ref() else {
                     continue;
-                }
+                };
 
                 let language_settings = snapshot.settings_at(edit.new.end, cx);
                 if !language_settings.jsx_tag_auto_close.enabled {
                     continue;
                 }
 
-                buffer_edit_ranges_map
-                    .entry((snapshot.remote_id(), language.clone()))
-                    .or_insert((buffer.downgrade(), vec![]))
-                    .1
+                edit_contexts
+                    .entry((snapshot.remote_id(), language.id()))
+                    .or_insert_with(|| JsxAutoCloseEditContext {
+                        buffer: buffer.clone(),
+                        config: config.clone(),
+                        edits: vec![],
+                    })
+                    .edits
                     .push(edit.new);
             }
         }
 
-        for ((buffer_id, language), (buffer, edited_ranges)) in buffer_edit_ranges_map {
-            let Ok(buffer_version_initial) = buffer.read_with(cx, |buffer, _| buffer.version())
-            else {
-                continue;
-            };
+        for ((buffer_id, _), auto_close_context) in edit_contexts {
+            let JsxAutoCloseEditContext {
+                buffer,
+                config,
+                edits: edited_ranges,
+            } = auto_close_context;
+
+            let buffer_version_initial = buffer.read_with(cx, |buffer, _| buffer.version());
 
             let (reparsed_tx, reparsed_rx) = futures::channel::oneshot::channel();
             let subscription = {
@@ -3222,86 +3233,101 @@ impl Editor {
                 )
             };
 
-            cx.spawn_in(window,|this, mut cx| async move {
-                let _unsubscribe_from_subscription = defer(|| drop(subscription));
-                reparsed_rx.await?;
+            cx.spawn_in(window, |this, mut cx| async move {
+                let reparsed_result = reparsed_rx.await;
+                drop(subscription);
+                reparsed_result.ok()?;
 
-                let Ok(buffer_snapshot) = buffer.read_with(&cx, |buf, _| buf.snapshot()) else {
-                    return Err(anyhow!("Auto-close Operation Failed: Buffer Failed to Read"));
-                };
-                let Some(jsx_tag_auto_close) = language.config().jsx_tag_auto_close.clone() else {
-                    return Err(anyhow!("Auto-close Operation Failed: Language does not support JSX tag auto-closing"));
+                let buffer_snapshot = buffer.read_with(&cx, |buf, _| buf.snapshot()).ok()?;
+
+                let jsx_tag_auto_close = config;
+
+                let Some(edit_behavior_state) = language::jsx_tag_auto_close::should_auto_close(
+                    &buffer_snapshot,
+                    &edited_ranges,
+                    &jsx_tag_auto_close,
+                ) else {
+                    return Some(());
                 };
 
-                let Some(edit_behavior_state) = language::jsx_tag_auto_close::should_auto_close(&buffer_snapshot, &edited_ranges, &jsx_tag_auto_close) else {
-                    return Ok(());
-                };
-
-                {
-                    let has_edits_since_start = this.read_with(&cx, |this, cx| {
-                        this.buffer.read_with(cx, |buffer, cx|
-                            buffer.buffer(buffer_id).map_or(
-                                true,
-                                |buffer| buffer.read_with(cx,
-                                    |buffer, _| buffer.has_edits_since(&buffer_version_initial)
-                                )
-                            )
-                        )
-                    }).context("Auto-close Operation Failed")?;
+                let ensure_no_edits_since_start = || -> Option<()> {
+                    // <div>wef,wefwef
+                    let has_edits_since_start = this
+                        .read_with(&cx, |this, cx| {
+                            this.buffer.read_with(cx, |buffer, cx| {
+                                buffer.buffer(buffer_id).map_or(true, |buffer| {
+                                    buffer.read_with(cx, |buffer, _| {
+                                        buffer.has_edits_since(&buffer_version_initial)
+                                    })
+                                })
+                            })
+                        })
+                        .ok()?;
 
                     if has_edits_since_start {
-                        return Err(anyhow!("Auto-close Operation Failed - Buffer has edits since start"));
+                        Err(anyhow!(
+                            "Auto-close Operation Failed - Buffer has edits since start"
+                        ))
+                        .log_err()?;
                     }
-                }
 
-                let edits = cx.background_executor().spawn({
-                    let buffer_snapshot = buffer_snapshot.clone();
-                    async move {
-                        language::jsx_tag_auto_close::generate_auto_close_edits(&buffer_snapshot, &edited_ranges, &jsx_tag_auto_close, edit_behavior_state)
-                    }
-                }).await;
+                    Some(())
+                };
 
-                let edits = edits.context("Auto-close Operation Failed - Failed to compute edits")?;
+                ensure_no_edits_since_start()?;
 
-                {
-                    let has_edits_since_start = this.read_with(&cx, |this, cx| {
-                        this.buffer.read_with(cx, |buffer, cx|
-                            buffer.buffer(buffer_id).map_or(
-                                true,
-                                |buffer| buffer.read_with(cx,
-                                    |buffer, _| buffer.has_edits_since(&buffer_version_initial)
-                                )
+                let edits = cx
+                    .background_executor()
+                    .spawn({
+                        let buffer_snapshot = buffer_snapshot.clone();
+                        async move {
+                            language::jsx_tag_auto_close::generate_auto_close_edits(
+                                &buffer_snapshot,
+                                &edited_ranges,
+                                &jsx_tag_auto_close,
+                                edit_behavior_state,
                             )
-                        )
-                    }).context("Auto-close Operation Failed")?;
+                        }
+                    })
+                    .await;
 
-                    if has_edits_since_start {
-                        return Err(anyhow!("Auto-close Operation Failed - Buffer has edits since start"));
-                    }
-                }
+                let edits = edits
+                    .context("Auto-close Operation Failed - Failed to compute edits")
+                    .log_err()?;
 
-                let multi_buffer_snapshot = this.read_with(&cx, |this, cx| {
-                    this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
-                }).context("Auto-close Operation Failed - Failed to get buffer snapshot")?;
+                // check again after awaiting background task before applying edits
+                ensure_no_edits_since_start()?;
+
+                let multi_buffer_snapshot = this
+                    .read_with(&cx, |this, cx| {
+                        this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
+                    })
+                    .ok()?;
 
                 let mut base_selections = Vec::new();
                 let mut buffer_selection_map = HashMap::default();
 
                 {
-                    let selections = this.read_with(&cx, |this, _| {
-                        this.selections.disjoint_anchors().clone()
-                    }).context("Auto-close Operation Failed - Failed to get selections")?;
+                    let selections = this
+                        .read_with(&cx, |this, _| this.selections.disjoint_anchors().clone())
+                        .ok()?;
                     for selection in selections.iter() {
-                        let Some(selection_buffer_offset_head) = multi_buffer_snapshot.point_to_buffer_offset(selection.head()) else {
+                        let Some(selection_buffer_offset_head) =
+                            multi_buffer_snapshot.point_to_buffer_offset(selection.head())
+                        else {
                             base_selections.push(selection.clone());
                             continue;
                         };
-                        let Some(selection_buffer_offset_tail) = multi_buffer_snapshot.point_to_buffer_offset(selection.tail()) else {
+                        let Some(selection_buffer_offset_tail) =
+                            multi_buffer_snapshot.point_to_buffer_offset(selection.tail())
+                        else {
                             base_selections.push(selection.clone());
                             continue;
                         };
 
-                        let is_entirely_in_buffer = selection_buffer_offset_head.0.remote_id() == buffer_id && selection_buffer_offset_tail.0.remote_id() == buffer_id;
+                        let is_entirely_in_buffer = selection_buffer_offset_head.0.remote_id()
+                            == buffer_id
+                            && selection_buffer_offset_tail.0.remote_id() == buffer_id;
                         if !is_entirely_in_buffer {
                             base_selections.push(selection.clone());
                             continue;
@@ -3311,12 +3337,10 @@ impl Editor {
                         let selection_buffer_offset_tail = selection_buffer_offset_tail.1;
                         buffer_selection_map.insert(
                             (selection_buffer_offset_head, selection_buffer_offset_tail),
-                            (selection.clone(), None)
+                            (selection.clone(), None),
                         );
-
                     }
                 }
-
 
                 let mut any_selections_need_update = false;
                 for edit in &edits {
@@ -3324,28 +3348,39 @@ impl Editor {
                     if edit_range_offset.start != edit_range_offset.end {
                         continue;
                     }
-                    if let Some(selection) = buffer_selection_map.get_mut(&(edit_range_offset.start, edit_range_offset.end)) {
-                        if selection.0.head().bias() != Bias::Right || selection.0.tail().bias() != Bias::Right {
+                    if let Some(selection) = buffer_selection_map
+                        .get_mut(&(edit_range_offset.start, edit_range_offset.end))
+                    {
+                        if selection.0.head().bias() != Bias::Right
+                            || selection.0.tail().bias() != Bias::Right
+                        {
                             continue;
                         }
                         if selection.1.is_none() {
                             any_selections_need_update = true;
                             selection.1 = Some(
-                                selection.0.clone().map(|anchor| multi_buffer_snapshot.anchor_before(anchor))
+                                selection
+                                    .0
+                                    .clone()
+                                    .map(|anchor| multi_buffer_snapshot.anchor_before(anchor)),
                             );
                         }
                     }
                 }
 
-                buffer.update(&mut cx, |buffer, cx| {
-                    // todo! autoindent mode
-                    buffer.edit(edits, None, cx);
-                }).context("Auto-close Operation Failed - Failed to update buffer")?;
+                buffer
+                    .update(&mut cx, |buffer, cx| {
+                        // todo! autoindent mode
+                        buffer.edit(edits, None, cx);
+                    })
+                    .ok()?;
 
                 if any_selections_need_update {
-                    let multi_buffer_snapshot = this.read_with(&cx, |this, cx| {
-                        this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
-                    }).context("Auto-close Operation Failed - Failed to get buffer snapshot")?;
+                    let multi_buffer_snapshot = this
+                        .read_with(&cx, |this, cx| {
+                            this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
+                        })
+                        .ok()?;
 
                     base_selections.extend(buffer_selection_map.values().map(|selection| {
                         match &selection.1 {
@@ -3354,16 +3389,23 @@ impl Editor {
                         }
                     }));
 
-                    let base_selections = base_selections.into_iter().map(|selection| selection.map(|anchor| anchor.to_offset(&multi_buffer_snapshot))).collect::<Vec<_>>();
+                    let base_selections = base_selections
+                        .into_iter()
+                        .map(|selection| {
+                            selection.map(|anchor| anchor.to_offset(&multi_buffer_snapshot))
+                        })
+                        .collect::<Vec<_>>();
                     this.update_in(&mut cx, |this, window, cx| {
                         this.change_selections_inner(None, false, window, cx, |s| {
                             s.select(base_selections);
                         });
-                    }).context("Auto-close Operation Failed - Failed to update selections")?;
+                    })
+                    .ok()?;
                 }
 
-                Ok(())
-            }).detach_and_log_err(cx);
+                Some(())
+            })
+            .detach();
         }
     }
 

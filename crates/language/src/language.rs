@@ -901,7 +901,7 @@ pub struct BracketPair {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub(crate) struct LanguageId(usize);
+pub struct LanguageId(usize);
 
 impl LanguageId {
     pub(crate) fn new() -> Self {
@@ -1067,6 +1067,10 @@ struct BracketsPatternConfig {
 impl Language {
     pub fn new(config: LanguageConfig, ts_language: Option<tree_sitter::Language>) -> Self {
         Self::new_with_id(LanguageId::new(), config, ts_language)
+    }
+
+    pub fn id(&self) -> LanguageId {
+        self.id
     }
 
     fn new_with_id(
