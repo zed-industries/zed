@@ -411,10 +411,9 @@ impl PickerDelegate for BranchListDelegate {
         let shortened_branch_name =
             util::truncate_and_trailoff(&hit.name(), self.branch_name_trailoff_after);
 
-        let repo = self.workspace.upgrade().and_then(|workspace| {
-            let project_entity = workspace.read(cx).project();
-            project_entity.read(cx).active_repository(cx)
-        });
+        let repo = self
+            .project
+            .update(cx, |project, cx| project.active_repository(cx));
 
         let branch_name = match hit {
             BranchEntry::Branch(branch) => Some(branch.string.as_str()),
@@ -464,7 +463,7 @@ impl PickerDelegate for BranchListDelegate {
                                     OffsetDateTime::now_utc(),
                                     time_format::TimestampFormat::Relative,
                                 );
-                                (commit.short_sha(), formatted_time, commit_message)
+                                (commit.sha.clone(), formatted_time, commit_message)
                             })
                             .unwrap_or_else(|| {
                                 (
