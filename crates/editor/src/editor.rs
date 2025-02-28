@@ -12504,12 +12504,10 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let buffer = self.buffer.clone();
-        let Some(buffer_handle) = buffer.read(cx).as_singleton() else {
-            return Task::ready(Ok(()));
-        };
+        let buffers = buffer.read(cx).all_buffers();
         let mut timeout = cx.background_executor().timer(CODE_ACTION_TIMEOUT).fuse();
         let apply_action = project.update(cx, |project, cx| {
-            project.apply_code_action_kind(buffer_handle, kind, true, cx)
+            project.apply_code_action_kind(buffers, kind, true, cx)
         });
         cx.spawn_in(window, |_, mut cx| async move {
             let transaction = futures::select_biased! {

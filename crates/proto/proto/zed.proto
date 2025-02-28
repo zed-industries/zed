@@ -922,7 +922,7 @@ message ChannelBufferVersion {
 message ApplyCodeActionKind {
     uint64 project_id = 1;
     string kind = 2;
-    uint64 buffer_id = 3;
+    repeated uint64 buffer_ids = 3;
 }
 
 message ApplyCodeActionKindResponse {
