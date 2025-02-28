@@ -38,9 +38,9 @@ use workspace::{
     ui::IconName,
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
     ActivatePaneUp, ActivatePreviousPane, DraggedSelection, DraggedTab, ItemId, MoveItemToPane,
-    MoveItemToPaneInDirection, NewDiagnostics, NewTerminal, Pane, PaneGroup, SplitDirection,
-    SplitDown, SplitLeft, SplitRight, SplitUp, SwapPaneDown, SwapPaneLeft, SwapPaneRight,
-    SwapPaneUp, ToggleZoom, Workspace,
+    MoveItemToPaneInDirection, NewTerminal, Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft,
+    SplitRight, SplitUp, SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom,
+    Workspace,
 };
 
 use anyhow::{anyhow, Context as _, Result};
@@ -619,8 +619,6 @@ impl TerminalPanel {
             return;
         };
 
-        let kind = TerminalKind::Shell(default_working_directory(workspace, cx));
-
         terminal_panel
             .update(cx, |this, cx| {
                 this.add_diagnostics(RevealStrategy::Always, window, cx)
@@ -795,12 +793,9 @@ impl TerminalPanel {
             let pane = terminal_panel.update(&mut cx, |terminal_panel, _| {
                 terminal_panel.active_pane.clone()
             })?;
-            let project = workspace.update(&mut cx, |workspace, _| workspace.project().clone())?;
-            let window_handle = cx.window_handle();
             let result = workspace.update_in(&mut cx, |workspace, window, cx| {
                 let diagnostics_view = Box::new(DiagnosticsView::new(
                     workspace.weak_handle(),
-                    workspace.database_id(),
                     workspace.project().clone(),
                     window,
                     cx,

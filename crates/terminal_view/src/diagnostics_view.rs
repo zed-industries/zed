@@ -7,7 +7,7 @@ use diagnostics::{IncludeWarnings, ToggleWarnings};
 use editor::{actions, Editor};
 use gpui::{
     list, AppContext, ClickEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    ListAlignment, ListState, MouseButton, Subscription, Task, WeakEntity,
+    ListAlignment, ListState, Subscription, Task, WeakEntity,
 };
 use language::{
     Anchor, Buffer, DiagnosticEntry, DiagnosticSeverity, LanguageServerId, OffsetRangeExt,
@@ -44,7 +44,6 @@ pub struct DiagnosticsView {
 impl DiagnosticsView {
     pub fn new(
         workspace: WeakEntity<Workspace>,
-        workspace_id: Option<WorkspaceId>,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
@@ -62,9 +61,12 @@ impl DiagnosticsView {
             let project_event_subscription = cx.subscribe_in(
                 &project,
                 window,
-                |this, project, event, window, cx| match event {
+                |this, _project, event, window, cx| match event {
                     project::Event::DiskBasedDiagnosticsStarted { .. } => {
                         cx.notify();
+                    }
+                    project::Event::DiskBasedDiagnosticsFinished { .. } => {
+                        this.update_diagnostics(window, cx);
                     }
                     project::Event::DiagnosticsUpdated { .. } => {
                         this.update_diagnostics(window, cx);
@@ -89,12 +91,11 @@ impl DiagnosticsView {
                 paths_to_update.len(),
                 ListAlignment::Top,
                 px(100.),
-                move |ix, window, cx| {
+                move |ix, _window, cx| {
                     entity
                         .upgrade()
                         .and_then(|entity| {
-                            entity
-                                .update(cx, |this, cx| this.render_diagnostic_group(ix, window, cx))
+                            entity.update(cx, |this, cx| this.render_diagnostic_group(ix, cx))
                         })
                         .unwrap_or_else(|| div().into_any())
                 },
@@ -119,15 +120,15 @@ impl DiagnosticsView {
     }
 
     fn update_diagnostics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.update_diagnostics_task.is_some() {
-            return;
-        }
         let project = self.project.read(cx);
         self.paths_to_update = project
             .diagnostic_summaries(false, cx)
             .map(|(path, lsp_id, _)| (path, Some(lsp_id)))
             .collect::<BTreeSet<_>>();
         self.summary = project.diagnostic_summary(false, cx);
+        if self.update_diagnostics_task.is_some() {
+            return;
+        }
         let project_handle = self.project.clone();
         self.update_diagnostics_task = Some(cx.spawn_in(window, |this, mut cx| async move {
             cx.background_executor()
@@ -135,28 +136,28 @@ impl DiagnosticsView {
                 .await;
             let mut first = true;
             loop {
-                let Some((path, language_server_id)) = this
-                    .update(&mut cx, |this, _| {
-                        if first {
-                            this.diagnostic_groups.clear();
-                            first = false;
-                        }
+                let Some((path, language_server_id)) = this.update(&mut cx, |this, _| {
+                    if first {
+                        this.diagnostic_groups.clear();
+                        first = false;
+                    }
 
-                        let Some((path, language_server_id)) = this.paths_to_update.pop_first()
-                        else {
-                            this.update_diagnostics_task.take();
-                            return None;
-                        };
-                        Some((path, language_server_id))
-                    })
-                    .unwrap()
+                    let Some((path, language_server_id)) = this.paths_to_update.pop_first() else {
+                        this.update_diagnostics_task.take();
+                        return None;
+                    };
+                    Some((path, language_server_id))
+                })?
                 else {
+                    this.update(&mut cx, |_this, cx| {
+                        cx.notify();
+                    })
+                    .log_err();
                     break;
                 };
 
                 if let Some(buffer) = project_handle
-                    .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))
-                    .unwrap()
+                    .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))?
                     .await
                     .ok()
                 {
@@ -168,7 +169,6 @@ impl DiagnosticsView {
                                 .into_iter()
                                 .filter_map(|(lsp_id, mut diag_group)| {
                                     let diag = diag_group.entries.remove(diag_group.primary_ix);
-
                                     if diag_view.include_warnings {
                                         Some((buffer.clone(), lsp_id, diag))
                                     } else {
@@ -201,19 +201,22 @@ impl DiagnosticsView {
         }));
     }
 
+    /// When it's triggered from action listener
     fn toggle_warnings(&mut self, _: &ToggleWarnings, window: &mut Window, cx: &mut Context<Self>) {
+        self.include_warnings = !self.include_warnings;
+        self.update_diagnostics(window, cx);
+        cx.notify();
+    }
+
+    /// When it's triggered from a button click for example
+    fn toggle_warnings_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.include_warnings = !self.include_warnings;
         cx.set_global(IncludeWarnings(self.include_warnings));
         self.update_diagnostics(window, cx);
         cx.notify();
     }
 
-    fn render_diagnostic_group(
-        &mut self,
-        ix: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    fn render_diagnostic_group(&mut self, ix: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
         let (project_path, diags) = self.diagnostic_groups.get_index(ix)?;
         let task_workspace = self.workspace.clone();
         let task_project_path = project_path.clone();
@@ -221,7 +224,6 @@ impl DiagnosticsView {
         if diags.is_empty() {
             return None;
         }
-        let mut item_idx = 0;
         let diags_per_file: Vec<ListItem> = diags
             .iter()
             .enumerate()
@@ -241,8 +243,7 @@ impl DiagnosticsView {
                 let task_project_path = task_project_path.clone();
                 let task_sec_workspace = task_workspace.clone();
                 let task_sec_project_path = task_project_path.clone();
-                item_idx += 1;
-                ListItem::new(item_idx)
+                ListItem::new(idx)
                     .child(icon)
                     .child(
                         div().size_full().child(Label::new(
@@ -318,7 +319,7 @@ impl DiagnosticsView {
                         })
                         .detach();
                     }))
-                    .on_click(cx.listener(move |_, click: &ClickEvent, window, cx| {
+                    .on_click(cx.listener(move |_this, click: &ClickEvent, window, cx| {
                         let task_workspace = task_workspace.clone();
                         let task_project_path = task_project_path.clone();
                         let platofm_key_pressed = click.modifiers().platform;
@@ -396,6 +397,7 @@ impl Render for DiagnosticsView {
         } else {
             Color::Muted
         };
+
         v_flex()
             .id("diagnostics-view")
             .size_full()
@@ -409,7 +411,7 @@ impl Render for DiagnosticsView {
                         .icon_color(warning_color)
                         .shape(IconButtonShape::Square)
                         .on_click(cx.listener(|this, _, window, cx| {
-                            this.toggle_warnings(&ToggleWarnings {}, window, cx);
+                            this.toggle_warnings_click(window, cx);
                         })),
                 ),
             )
@@ -421,49 +423,66 @@ impl Render for DiagnosticsView {
 impl Item for DiagnosticsView {
     type Event = ItemEvent;
 
-    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+    fn tab_content(&self, _params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         const DIAG_TITLE: &str = "Diagnostics ";
-        let title = match (self.summary.error_count, self.summary.warning_count) {
-            (0, 0) => h_flex().map(|this| {
+        let title = if self.update_diagnostics_task.is_some()
+            || self
+                .project
+                .read(cx)
+                .language_servers_running_disk_based_diagnostics(cx)
+                .next()
+                .is_some()
+        {
+            h_flex().map(|this| {
                 this.child(Label::new(DIAG_TITLE)).child(
-                    Icon::new(IconName::Check)
+                    Icon::new(IconName::Update)
                         .size(IconSize::Small)
                         .color(Color::Default),
                 )
-            }),
-            (0, warning_count) => h_flex()
-                .gap_1()
-                .child(Label::new(DIAG_TITLE))
-                .child(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .color(Color::Warning),
-                )
-                .child(Label::new(warning_count.to_string()).size(LabelSize::Small)),
-            (error_count, 0) => h_flex()
-                .gap_1()
-                .child(Label::new(DIAG_TITLE))
-                .child(
-                    Icon::new(IconName::XCircle)
-                        .size(IconSize::Small)
-                        .color(Color::Error),
-                )
-                .child(Label::new(error_count.to_string()).size(LabelSize::Small)),
-            (error_count, warning_count) => h_flex()
-                .gap_1()
-                .child(Label::new(DIAG_TITLE))
-                .child(
-                    Icon::new(IconName::XCircle)
-                        .size(IconSize::Small)
-                        .color(Color::Error),
-                )
-                .child(Label::new(error_count.to_string()).size(LabelSize::Small))
-                .child(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::Small)
-                        .color(Color::Warning),
-                )
-                .child(Label::new(warning_count.to_string()).size(LabelSize::Small)),
+            })
+        } else {
+            match (self.summary.error_count, self.summary.warning_count) {
+                (0, 0) => h_flex().map(|this| {
+                    this.child(Label::new(DIAG_TITLE)).child(
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Small)
+                            .color(Color::Default),
+                    )
+                }),
+                (0, warning_count) => h_flex()
+                    .gap_1()
+                    .child(Label::new(DIAG_TITLE))
+                    .child(
+                        Icon::new(IconName::Warning)
+                            .size(IconSize::Small)
+                            .color(Color::Warning),
+                    )
+                    .child(Label::new(warning_count.to_string()).size(LabelSize::Small)),
+                (error_count, 0) => h_flex()
+                    .gap_1()
+                    .child(Label::new(DIAG_TITLE))
+                    .child(
+                        Icon::new(IconName::XCircle)
+                            .size(IconSize::Small)
+                            .color(Color::Error),
+                    )
+                    .child(Label::new(error_count.to_string()).size(LabelSize::Small)),
+                (error_count, warning_count) => h_flex()
+                    .gap_1()
+                    .child(Label::new(DIAG_TITLE))
+                    .child(
+                        Icon::new(IconName::XCircle)
+                            .size(IconSize::Small)
+                            .color(Color::Error),
+                    )
+                    .child(Label::new(error_count.to_string()).size(LabelSize::Small))
+                    .child(
+                        Icon::new(IconName::Warning)
+                            .size(IconSize::Small)
+                            .color(Color::Warning),
+                    )
+                    .child(Label::new(warning_count.to_string()).size(LabelSize::Small)),
+            }
         };
 
         h_flex()
@@ -496,7 +515,7 @@ impl SerializableItem for DiagnosticsView {
     fn deserialize(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
-        workspace_id: workspace::WorkspaceId,
+        _workspace_id: workspace::WorkspaceId,
         _item_id: workspace::ItemId,
         window: &mut Window,
         cx: &mut App,
@@ -507,7 +526,7 @@ impl SerializableItem for DiagnosticsView {
         window.spawn(cx, |mut cx| async move {
             gpui::Flatten::flatten(cx.update_window(window_handle, |_view, window, cx| {
                 workspace.update(cx, |_this, cx| {
-                    DiagnosticsView::new(workspace_diag, Some(workspace_id), project, window, cx)
+                    DiagnosticsView::new(workspace_diag, project, window, cx)
                 })
             }))
         })

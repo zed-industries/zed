@@ -1,7 +1,7 @@
 use anyhow::Result;
 use async_recursion::async_recursion;
 use collections::HashSet;
-use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt as _};
+use futures::{stream::FuturesUnordered, FutureExt, StreamExt as _};
 use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
 use project::{terminals::TerminalKind, Project};
 use serde::{Deserialize, Serialize};

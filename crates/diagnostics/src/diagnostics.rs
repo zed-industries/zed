@@ -122,8 +122,7 @@ impl Render for ProjectDiagnosticsEditor {
                     this.child(
                         Button::new("diagnostics-show-warning-label", label).on_click(cx.listener(
                             |this, _, window, cx| {
-                                this.toggle_warnings(&Default::default(), window, cx);
-                                cx.notify();
+                                this.toggle_warnings_click(window, cx);
                             },
                         )),
                     )
@@ -333,7 +332,15 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
+    /// When it's triggered from action listener
     fn toggle_warnings(&mut self, _: &ToggleWarnings, window: &mut Window, cx: &mut Context<Self>) {
+        self.include_warnings = !self.include_warnings;
+        self.update_all_excerpts(window, cx);
+        cx.notify();
+    }
+
+    /// When it's triggered from a button click for example
+    fn toggle_warnings_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.include_warnings = !self.include_warnings;
         cx.set_global(IncludeWarnings(self.include_warnings));
         self.update_all_excerpts(window, cx);
