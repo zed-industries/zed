@@ -6473,9 +6473,9 @@ impl Editor {
             )
             .when(!has_keybind, |el| {
                 el.child(
-                    div().ml_1().child(
+                    h_flex().ml_1().child(
                         Icon::new(IconName::Info)
-                            .size(IconSize::XSmall)
+                            .size(IconSize::Small)
                             .color(cx.theme().status().error.into()),
                     ),
                 )
