@@ -2574,7 +2574,9 @@ impl Pane {
                             .read(cx)
                             .item_for_entry(entry, cx)
                             .and_then(|item| item.project_path(cx))
-                            .map(|project_path| project_path.path);
+                            .map(|project_path| project_path.path)
+                            .filter(|path| !path.as_os_str().is_empty());
+                        let has_relative_path = relative_path.is_some();
 
                         let entry_id = entry.to_proto();
                         menu = menu
@@ -2603,21 +2605,23 @@ impl Pane {
                             })
                             .map(pin_tab_entries)
                             .separator()
-                            .entry(
-                                "Reveal In Project Panel",
-                                Some(Box::new(RevealInProjectPanel {
-                                    entry_id: Some(entry_id),
-                                })),
-                                window.handler_for(&pane, move |pane, _, cx| {
-                                    pane.project
-                                        .update(cx, |_, cx| {
-                                            cx.emit(project::Event::RevealInProjectPanel(
-                                                ProjectEntryId::from_proto(entry_id),
-                                            ))
-                                        })
-                                        .ok();
-                                }),
-                            )
+                            .when(has_relative_path, |menu| {
+                                menu.entry(
+                                    "Reveal In Project Panel",
+                                    Some(Box::new(RevealInProjectPanel {
+                                        entry_id: Some(entry_id),
+                                    })),
+                                    window.handler_for(&pane, move |pane, _, cx| {
+                                        pane.project
+                                            .update(cx, |_, cx| {
+                                                cx.emit(project::Event::RevealInProjectPanel(
+                                                    ProjectEntryId::from_proto(entry_id),
+                                                ))
+                                            })
+                                            .ok();
+                                    }),
+                                )
+                            })
                             .when_some(parent_abs_path, |menu, parent_abs_path| {
                                 menu.entry(
                                     "Open in Terminal",
