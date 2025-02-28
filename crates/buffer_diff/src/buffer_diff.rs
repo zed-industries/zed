@@ -49,6 +49,8 @@ pub enum DiffHunkSecondaryStatus {
     HasSecondaryHunk,
     OverlapsWithSecondaryHunk,
     None,
+    SecondaryHunkAdditionPending,
+    SecondaryHunkRemovalPending,
 }
 
 /// A diff hunk resolved to rows in the buffer.
@@ -181,7 +183,7 @@ impl BufferDiffInner {
         hunks: &[DiffHunk],
         buffer: &text::BufferSnapshot,
         file_exists: bool,
-    ) -> Option<Rope> {
+    ) -> (Option<Rope>, Vec<(usize, PendingHunk)>) {
         let head_text = self
             .base_text_exists
             .then(|| self.base_text.as_rope().clone());
@@ -196,24 +198,28 @@ impl BufferDiffInner {
             (_, head_text @ _) => {
                 if stage {
                     log::debug!("stage all");
-                    self.pending_hunks.insert(
-                        0,
-                        PendingHunk {
-                            buffer_version: buffer.version().clone(),
-                            new_status: DiffHunkSecondaryStatus::None,
-                        },
+                    return (
+                        file_exists.then(|| buffer.as_rope().clone()),
+                        vec![(
+                            0,
+                            PendingHunk {
+                                buffer_version: buffer.version().clone(),
+                                new_status: DiffHunkSecondaryStatus::SecondaryHunkRemovalPending,
+                            },
+                        )],
                     );
-                    return file_exists.then(|| buffer.as_rope().clone());
                 } else {
                     log::debug!("unstage all");
-                    self.pending_hunks.insert(
-                        0,
-                        PendingHunk {
-                            buffer_version: buffer.version().clone(),
-                            new_status: DiffHunkSecondaryStatus::HasSecondaryHunk,
-                        },
+                    return (
+                        head_text,
+                        vec![(
+                            0,
+                            PendingHunk {
+                                buffer_version: buffer.version().clone(),
+                                new_status: DiffHunkSecondaryStatus::SecondaryHunkAdditionPending,
+                            },
+                        )],
                     );
-                    return head_text;
                 }
             }
         };
@@ -221,6 +227,7 @@ impl BufferDiffInner {
         let mut unstaged_hunk_cursor = unstaged_diff.hunks.cursor::<DiffHunkSummary>(buffer);
         unstaged_hunk_cursor.next(buffer);
         let mut edits = Vec::new();
+        let mut pending_hunks = Vec::new();
         let mut prev_unstaged_hunk_buffer_offset = 0;
         let mut prev_unstaged_hunk_base_text_offset = 0;
         for DiffHunk {
@@ -287,17 +294,17 @@ impl BufferDiffInner {
                     .chunks_in_range(diff_base_byte_range.clone())
                     .collect::<String>()
             };
-            self.pending_hunks.insert(
+            pending_hunks.push((
                 diff_base_byte_range.start,
                 PendingHunk {
                     buffer_version: buffer.version().clone(),
                     new_status: if stage {
-                        DiffHunkSecondaryStatus::None
+                        DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
                     } else {
-                        DiffHunkSecondaryStatus::HasSecondaryHunk
+                        DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
                     },
                 },
-            );
+            ));
             edits.push((index_range, replacement_text));
         }
 
@@ -309,7 +316,7 @@ impl BufferDiffInner {
             new_index_text.push(&replacement_text);
         }
         new_index_text.append(index_cursor.suffix());
-        Some(new_index_text)
+        (Some(new_index_text), pending_hunks)
     }
 
     fn hunks_intersecting_range<'a>(
@@ -346,11 +353,14 @@ impl BufferDiffInner {
             ]
         });
 
-        let mut secondary_cursor = secondary.as_ref().map(|diff| {
-            let mut cursor = diff.hunks.cursor::<DiffHunkSummary>(buffer);
+        let mut secondary_cursor = None;
+        let mut pending_hunks = TreeMap::default();
+        if let Some(secondary) = secondary.as_ref() {
+            let mut cursor = secondary.hunks.cursor::<DiffHunkSummary>(buffer);
             cursor.next(buffer);
-            cursor
-        });
+            secondary_cursor = Some(cursor);
+            pending_hunks = secondary.pending_hunks.clone();
+        }
 
         let mut summaries = buffer.summaries_for_anchors_with_payload::<Point, _, _>(anchor_iter);
         iter::from_fn(move || loop {
@@ -370,7 +380,7 @@ impl BufferDiffInner {
             let mut secondary_status = DiffHunkSecondaryStatus::None;
 
             let mut has_pending = false;
-            if let Some(pending_hunk) = self.pending_hunks.get(&start_base) {
+            if let Some(pending_hunk) = pending_hunks.get(&start_base) {
                 if !buffer.has_edits_since_in_range(
                     &pending_hunk.buffer_version,
                     start_anchor..end_anchor,
@@ -394,7 +404,10 @@ impl BufferDiffInner {
                         secondary_range.end.row += 1;
                         secondary_range.end.column = 0;
                     }
-                    if secondary_range == (start_point..end_point) {
+                    if secondary_range.is_empty() && secondary_hunk.diff_base_byte_range.is_empty()
+                    {
+                        // ignore
+                    } else if secondary_range == (start_point..end_point) {
                         secondary_status = DiffHunkSecondaryStatus::HasSecondaryHunk;
                     } else if secondary_range.start <= end_point {
                         secondary_status = DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk;
@@ -712,8 +725,8 @@ impl BufferDiff {
             BufferDiffInner {
                 base_text,
                 hunks,
-                pending_hunks: TreeMap::default(),
                 base_text_exists,
+                pending_hunks: TreeMap::default(),
             }
         }
     }
@@ -761,13 +774,20 @@ impl BufferDiff {
         file_exists: bool,
         cx: &mut Context<Self>,
     ) -> Option<Rope> {
-        let new_index_text = self.inner.stage_or_unstage_hunks(
+        let (new_index_text, pending_hunks) = self.inner.stage_or_unstage_hunks(
             &self.secondary_diff.as_ref()?.read(cx).inner,
             stage,
             &hunks,
             buffer,
             file_exists,
         );
+        if let Some(unstaged_diff) = &self.secondary_diff {
+            unstaged_diff.update(cx, |diff, _| {
+                for (offset, pending_hunk) in pending_hunks {
+                    diff.inner.pending_hunks.insert(offset, pending_hunk);
+                }
+            });
+        }
         if let Some((first, last)) = hunks.first().zip(hunks.last()) {
             let changed_range = first.buffer_range.start..last.buffer_range.end;
             cx.emit(BufferDiffEvent::DiffChanged {
@@ -1030,6 +1050,15 @@ impl DiffHunk {
 }
 
 impl DiffHunkStatus {
+    pub fn has_secondary_hunk(&self) -> bool {
+        matches!(
+            self.secondary,
+            DiffHunkSecondaryStatus::HasSecondaryHunk
+                | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
+                | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
+        )
+    }
+
     pub fn is_deleted(&self) -> bool {
         self.kind == DiffHunkStatusKind::Deleted
     }
@@ -1063,7 +1092,6 @@ impl DiffHunkStatus {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn deleted_none() -> Self {
         Self {
             kind: DiffHunkStatusKind::Deleted,
@@ -1071,7 +1099,6 @@ impl DiffHunkStatus {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn added_none() -> Self {
         Self {
             kind: DiffHunkStatusKind::Added,
@@ -1079,7 +1106,6 @@ impl DiffHunkStatus {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn modified_none() -> Self {
         Self {
             kind: DiffHunkStatusKind::Modified,

@@ -229,14 +229,16 @@ impl ProjectDiff {
         let mut has_unstaged_hunks = false;
         for hunk in editor.diff_hunks_in_ranges(&ranges, &snapshot) {
             match hunk.secondary_status {
-                DiffHunkSecondaryStatus::HasSecondaryHunk => {
+                DiffHunkSecondaryStatus::HasSecondaryHunk
+                | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
                     has_unstaged_hunks = true;
                 }
                 DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
                     has_staged_hunks = true;
                     has_unstaged_hunks = true;
                 }
-                DiffHunkSecondaryStatus::None => {
+                DiffHunkSecondaryStatus::None
+                | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => {
                     has_staged_hunks = true;
                 }
             }

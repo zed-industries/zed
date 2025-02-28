@@ -5860,19 +5860,25 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         json!({
             ".git": {},
            "src": {
-               "main.rs": file_contents,
+               "modification.rs": file_contents,
            }
         }),
     )
     .await;
 
-    fs.set_index_for_repo(
-        Path::new("/dir/.git"),
-        &[("src/main.rs".into(), staged_contents)],
-    );
     fs.set_head_for_repo(
         Path::new("/dir/.git"),
-        &[("src/main.rs".into(), committed_contents)],
+        &[
+            ("src/modification.rs".into(), committed_contents),
+            ("src/deletion.rs".into(), "// the-deleted-contents\n".into()),
+        ],
+    );
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[
+            ("src/modification.rs".into(), staged_contents),
+            ("src/deletion.rs".into(), "// the-deleted-contents\n".into()),
+        ],
     );
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
@@ -5880,30 +5886,28 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     let language = rust_lang();
     language_registry.add(language.clone());
 
-    let buffer = project
+    let buffer_1 = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/dir/src/main.rs", cx)
+            project.open_local_buffer("/dir/src/modification.rs", cx)
         })
         .await
         .unwrap();
-    let uncommitted_diff = project
+    let diff_1 = project
         .update(cx, |project, cx| {
-            project.open_uncommitted_diff(buffer.clone(), cx)
+            project.open_uncommitted_diff(buffer_1.clone(), cx)
         })
         .await
         .unwrap();
-
-    uncommitted_diff.read_with(cx, |diff, _| {
+    diff_1.read_with(cx, |diff, _| {
         assert_eq!(diff.base_text().language().cloned(), Some(language))
     });
-
     cx.run_until_parked();
-    uncommitted_diff.update(cx, |uncommitted_diff, cx| {
-        let snapshot = buffer.read(cx).snapshot();
+    diff_1.update(cx, |diff, cx| {
+        let snapshot = buffer_1.read(cx).snapshot();
         assert_hunks(
-            uncommitted_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
-            &uncommitted_diff.base_text_string().unwrap(),
+            &diff.base_text_string().unwrap(),
             &[
                 (
                     0..1,
@@ -5921,30 +5925,84 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         );
     });
 
+    // Reset HEAD to a version that differs from both the buffer and the index.
     let committed_contents = r#"
         // print goodbye
         fn main() {
         }
     "#
     .unindent();
-
     fs.set_head_for_repo(
         Path::new("/dir/.git"),
-        &[("src/main.rs".into(), committed_contents)],
+        &[
+            ("src/modification.rs".into(), committed_contents.clone()),
+            ("src/deletion.rs".into(), "// the-deleted-contents\n".into()),
+        ],
     );
 
+    // Buffer now has an unstaged hunk.
     cx.run_until_parked();
-    uncommitted_diff.update(cx, |uncommitted_diff, cx| {
-        let snapshot = buffer.read(cx).snapshot();
+    diff_1.update(cx, |diff, cx| {
+        let snapshot = buffer_1.read(cx).snapshot();
         assert_hunks(
-            uncommitted_diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
             &snapshot,
-            &uncommitted_diff.base_text().text(),
+            &diff.base_text().text(),
             &[(
                 2..3,
                 "",
                 "    println!(\"goodbye world\");\n",
                 DiffHunkStatus::added_none(),
+            )],
+        );
+    });
+
+    // Open a buffer for a file that's been deleted.
+    let buffer_2 = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/src/deletion.rs", cx)
+        })
+        .await
+        .unwrap();
+    let diff_2 = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer_2.clone(), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    diff_2.update(cx, |diff, cx| {
+        let snapshot = buffer_2.read(cx).snapshot();
+        assert_hunks(
+            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[(
+                0..0,
+                "// the-deleted-contents\n",
+                "",
+                DiffHunkStatus::deleted(DiffHunkSecondaryStatus::HasSecondaryHunk),
+            )],
+        );
+    });
+
+    // Stage the deletion of this file
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/modification.rs".into(), committed_contents.clone())],
+    );
+    cx.run_until_parked();
+    diff_2.update(cx, |diff, cx| {
+        let snapshot = buffer_2.read(cx).snapshot();
+        assert_hunks(
+            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[(
+                0..0,
+                "// the-deleted-contents\n",
+                "",
+                DiffHunkStatus::deleted(DiffHunkSecondaryStatus::None),
             )],
         );
     });

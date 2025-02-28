@@ -4356,7 +4356,7 @@ impl EditorElement {
                             hunk_bounds,
                             cx.theme().colors().version_control_modified,
                             Corners::all(px(0.)),
-                            DiffHunkSecondaryStatus::None,
+                            DiffHunkStatus::modified_none(),
                         ))
                     }
                     DisplayDiffHunk::Unfolded {
@@ -4368,19 +4368,19 @@ impl EditorElement {
                             hunk_hitbox.bounds,
                             cx.theme().colors().version_control_added,
                             Corners::all(px(0.)),
-                            status.secondary,
+                            *status,
                         ),
                         DiffHunkStatusKind::Modified => (
                             hunk_hitbox.bounds,
                             cx.theme().colors().version_control_modified,
                             Corners::all(px(0.)),
-                            status.secondary,
+                            *status,
                         ),
                         DiffHunkStatusKind::Deleted if !display_row_range.is_empty() => (
                             hunk_hitbox.bounds,
                             cx.theme().colors().version_control_deleted,
                             Corners::all(px(0.)),
-                            status.secondary,
+                            *status,
                         ),
                         DiffHunkStatusKind::Deleted => (
                             Bounds::new(
@@ -4392,19 +4392,17 @@ impl EditorElement {
                             ),
                             cx.theme().colors().version_control_deleted,
                             Corners::all(1. * line_height),
-                            status.secondary,
+                            *status,
                         ),
                     }),
                 };
 
-                if let Some((hunk_bounds, background_color, corner_radii, secondary_status)) =
+                if let Some((hunk_bounds, mut background_color, corner_radii, secondary_status)) =
                     hunk_to_paint
                 {
-                    let background_color = if secondary_status != DiffHunkSecondaryStatus::None {
-                        background_color.opacity(0.3)
-                    } else {
-                        background_color.opacity(1.0)
-                    };
+                    if secondary_status.has_secondary_hunk() {
+                        background_color = background_color.opacity(0.3);
+                    }
                     window.paint_quad(quad(
                         hunk_bounds,
                         corner_radii,
@@ -6711,12 +6709,11 @@ impl Element for EditorElement {
                                 continue;
                             }
                         };
-                        let background_color =
-                            if diff_status.secondary == DiffHunkSecondaryStatus::None {
-                                background_color.opacity(staged_opacity)
-                            } else {
-                                background_color.opacity(unstaged_opacity)
-                            };
+                        let background_color = if diff_status.has_secondary_hunk() {
+                            background_color.opacity(unstaged_opacity)
+                        } else {
+                            background_color.opacity(staged_opacity)
+                        };
 
                         highlighted_rows
                             .entry(start_row + DisplayRow(ix as u32))
@@ -8763,9 +8760,18 @@ fn diff_hunk_controls(
         .rounded_b_lg()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
-        .when(status.secondary == DiffHunkSecondaryStatus::None, |el| {
-            el.child(
-                Button::new("unstage", "Unstage")
+        .child(match status.secondary {
+            DiffHunkSecondaryStatus::None
+            | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => {
+                Button::new(("unstage", row as u64), "Unstage")
+                    .alpha(
+                        if status.secondary == DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
+                        {
+                            0.5
+                        } else {
+                            1.0
+                        },
+                    )
                     .tooltip({
                         let focus_handle = editor.focus_handle(cx);
                         move |window, cx| {
@@ -8790,12 +8796,20 @@ fn diff_hunk_controls(
                                 );
                             });
                         }
-                    }),
-            )
-        })
-        .when(status.secondary != DiffHunkSecondaryStatus::None, |el| {
-            el.child(
-                Button::new("stage", "Stage")
+                    })
+            }
+            DiffHunkSecondaryStatus::HasSecondaryHunk
+            | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
+            | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
+                Button::new(("stage", row as u64), "Stage")
+                    .alpha(
+                        if status.secondary == DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
+                        {
+                            0.5
+                        } else {
+                            1.0
+                        },
+                    )
                     .tooltip({
                         let focus_handle = editor.focus_handle(cx);
                         move |window, cx| {
@@ -8820,8 +8834,8 @@ fn diff_hunk_controls(
                                 );
                             });
                         }
-                    }),
-            )
+                    })
+            }
         })
         .child(
             Button::new("discard", "Restore")
