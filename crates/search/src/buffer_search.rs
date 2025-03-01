@@ -814,7 +814,10 @@ impl BufferSearchBar {
 
         self.configured_options =
             SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
-        if self.dismissed && self.configured_options != self.default_options {
+        if self.dismissed
+            && (self.configured_options != self.default_options
+                || self.configured_options != self.search_options)
+        {
             self.search_options = self.configured_options;
             self.default_options = self.configured_options;
         }
