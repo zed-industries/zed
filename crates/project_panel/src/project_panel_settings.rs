@@ -43,6 +43,7 @@ pub struct ProjectPanelSettings {
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
     pub show_diagnostics: ShowDiagnostics,
+    pub hide_root: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -140,6 +141,10 @@ pub struct ProjectPanelSettingsContent {
     pub show_diagnostics: Option<ShowDiagnostics>,
     /// Settings related to indent guides in the project panel.
     pub indent_guides: Option<IndentGuidesSettingsContent>,
+    /// Hide main root dir
+    ///
+    /// Default: false
+    pub hide_root: Option<bool>,
 }
 
 impl Settings for ProjectPanelSettings {
