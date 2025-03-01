@@ -165,7 +165,7 @@ pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
 const ROW_COL_CAPTURE_REGEX: &str = r"(?x)
     ([^\(]+)(?:
-        \((\d+),(\d+)\) # filename(row,column)
+        \((\d+)[,:](\d+)\) # filename(row,column), filename(row:column)
         |
         \((\d+)\)()     # filename(row)
     )
@@ -647,6 +647,14 @@ mod tests {
                 path: PathBuf::from("crate/utils/src/test:today.log"),
                 row: Some(34),
                 column: None,
+            }
+        );
+        assert_eq!(
+            PathWithPosition::parse_str("/testing/out/src/file_finder.odin(7:15)"),
+            PathWithPosition {
+                path: PathBuf::from("/testing/out/src/file_finder.odin"),
+                row: Some(7),
+                column: Some(15),
             }
         );
     }
