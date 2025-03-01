@@ -3464,4 +3464,125 @@ mod test {
             Mode::Normal,
         );
     }
+
+    #[gpui::test]
+    async fn test_go_to_percentage(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        // Normal mode
+        cx.set_shared_state(indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("2 0 %").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown
+            fox ˇjumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"});
+
+        cx.set_shared_state(indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("2 5 %").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown
+            fox jumps over
+            the ˇlazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"});
+
+        cx.set_shared_state(indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("7 5 %").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The ˇquick brown
+            fox jumps over
+            the lazy dog"});
+
+        // Visual mode
+        cx.set_shared_state(indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("v 5 0 %").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The «quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jˇ»umps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"});
+
+        cx.set_shared_state(indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("v 1 0 0 %").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The «quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lazy dog
+            The quick brown
+            fox jumps over
+            the lˇ»azy dog"});
+    }
 }
