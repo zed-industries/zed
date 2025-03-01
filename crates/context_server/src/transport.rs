@@ -1,3 +1,4 @@
+mod sse_transport;
 mod stdio_transport;
 
 use std::pin::Pin;
@@ -6,6 +7,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use futures::Stream;
 
+pub use sse_transport::*;
 pub use stdio_transport::*;
 
 #[async_trait]
