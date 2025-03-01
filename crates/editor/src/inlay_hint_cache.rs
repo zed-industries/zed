@@ -581,6 +581,7 @@ impl InlayHintCache {
             self.version += 1;
         }
         self.update_tasks.clear();
+        self.refresh_task = Task::ready(());
         self.hints.clear();
     }
 
