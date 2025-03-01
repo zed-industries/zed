@@ -9516,7 +9516,7 @@ impl Editor {
 
     pub fn delete_to_beginning_of_line(
         &mut self,
-        _: &DeleteToBeginningOfLine,
+        action: &DeleteToBeginningOfLine,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -9530,7 +9530,7 @@ impl Editor {
             this.select_to_beginning_of_line(
                 &SelectToBeginningOfLine {
                     stop_at_soft_wraps: false,
-                    stop_at_indent: false,
+                    stop_at_indent: action.stop_at_indent,
                 },
                 window,
                 cx,
