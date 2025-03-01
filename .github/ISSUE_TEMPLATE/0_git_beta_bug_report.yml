@@ -2,7 +2,7 @@ name: Git Beta
 description: There is a bug related to new Git features in Zed
 type: "Bug"
 labels: [git]
-title: "Git Beta: <a short description of git bug>"
+title: "Git Beta: <a short description of the Git bug>"
 body:
   - type: textarea
     attributes:
