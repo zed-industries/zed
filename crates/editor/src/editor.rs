@@ -260,6 +260,7 @@ enum DisplayDiffHunk {
         display_row: DisplayRow,
     },
     Unfolded {
+        is_created_file: bool,
         diff_base_byte_range: Range<usize>,
         display_row_range: Range<DisplayRow>,
         multi_buffer_range: Range<Anchor>,
@@ -7768,6 +7769,9 @@ impl Editor {
         hunk: &MultiBufferDiffHunk,
         cx: &mut App,
     ) -> Option<()> {
+        if hunk.is_created_file() {
+            return None;
+        }
         let buffer = self.buffer.read(cx);
         let diff = buffer.diff_for(hunk.buffer_id)?;
         let buffer = buffer.buffer(hunk.buffer_id)?;
@@ -17149,6 +17153,7 @@ impl EditorSnapshot {
                     if hunk_display_end.column() > 0 {
                         end_row.0 += 1;
                     }
+                    let is_created_file = hunk.is_created_file();
                     DisplayDiffHunk::Unfolded {
                         status: hunk.status(),
                         diff_base_byte_range: hunk.diff_base_byte_range,
@@ -17158,6 +17163,7 @@ impl EditorSnapshot {
                             hunk.buffer_id,
                             hunk.buffer_range,
                         ),
+                        is_created_file,
                     }
                 };
 
